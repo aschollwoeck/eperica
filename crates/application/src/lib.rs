@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod auth;
+pub mod build;
 pub mod economy;
 pub mod ports;
 pub mod register;
@@ -17,6 +18,7 @@ mod tests;
 pub use eperica_domain as domain;
 
 pub use auth::{LoginError, authenticate};
+pub use build::{BuildError, order_build, process_due_builds};
 pub use economy::{VillageEconomy, load_economy};
 pub use ports::{
     AccountRepository, ActiveBuild, BuildRepository, DueBuild, DueEvent, EventStore, NewBuildOrder,

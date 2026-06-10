@@ -24,7 +24,7 @@ Ordered for dependency and testability (pure domain first).
 
 ## Application
 
-- [ ] **T5 — Use-cases.** `order_build` (validate max-level/prereq/affordability → start_build) with
+- [x] **T5 — Use-cases.** `order_build` (validate max-level/prereq/affordability → start_build) with
   `BuildError`; `process_due_builds` (claim → apply). Fake-based unit tests (**AC2**, **AC4**).
 - [ ] **T6 — Scheduler.** Infra `Scheduler` also runs `process_due_builds` each tick (System actor, AC5).
 
