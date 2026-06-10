@@ -31,6 +31,7 @@ eperica/
 │   ├── social-and-meta-features.md     ← app-layer features (chat, profiles, UX) — not sim rules
 │   ├── roles.md                        ← user roles & permissions (referenced by every spec)
 │   ├── roadmap.md                      ← dependency-ordered build order (slices 001 → end-game)
+│   ├── implementation-workflow.md      ← the build loop followed after spec/plan/tasks are approved
 │   ├── balance/                        ← numeric balance data (created when first needed)
 │   ├── templates/                      ← starting points — COPY these, don't edit in place
 │   │   ├── spec-template.md
@@ -64,6 +65,7 @@ spec's criteria become the tests).
 | `roles.md` | The **user roles & permissions** (Visitor, Player, Moderator, Administrator + ownership/in-game roles). Every spec's acceptance criteria must account for each applicable role. | When a role or permission is added/changed. |
 | `social-and-meta-features.md` | **App-layer** features that surround the game but aren't simulation rules (messaging, forum, profiles, notifications, admin). | When a meta/UX feature is added or reshaped. |
 | `roadmap.md` | The dependency-ordered list of slices (001 → end-game), grouped into milestones. The master build order. | When slices are added, split, merged, or reordered. |
+| `implementation-workflow.md` | The repeatable build loop (per-task + per-slice), the Definition of Done, and doc locations — followed once spec/plan/tasks are approved. | When the build/review/doc process changes. |
 | `balance/` | The actual **numbers** (production per level, costs, build times, unit stats) referenced by specs. | Whenever balance is tuned — without touching prose docs. |
 
 ---
@@ -197,6 +199,9 @@ shape above is exactly what every slice looks like.
 ---
 
 ## 11. Execution & review workflow (how slices get built)
+
+> **Full procedure:** [implementation-workflow.md](./implementation-workflow.md) — the per-task and
+> per-slice loop, the Definition of Done, and documentation locations. The summary below is the gist.
 
 How the *code* (step 4 of §6) is produced, checked, and accepted:
 

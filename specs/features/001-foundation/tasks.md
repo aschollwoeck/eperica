@@ -63,7 +63,19 @@ and verify in one sitting. AC references point back to `spec.md`.
 - [ ] **T19 — P11 smoke test.** Assert register/login/view handlers complete **< 50 ms** server-side
   under dev load (tracing spans).
 
+## Documentation & acceptance
+
+- [ ] **T20 — Technical docs.** rustdoc on public `domain`/`application` items; fill in `CLAUDE.md`
+  build/test/run/migrate commands now that they work; add `docs/architecture/` notes for the Cargo
+  workspace, the due-event scheduler, and the auth/session design.
+- [ ] **T21 — End-user docs.** `docs/manual/getting-started.md` — how to register, confirm (if
+  enabled), log in, and view your starting village.
+- [ ] **T22 — Review & accept.** Run the `eperica-reviewer` agent on `git diff main...HEAD`; address
+  every MUST-FIX; re-review until verdict = **APPROVE**.
+
 ## Done when
 
-All acceptance criteria **AC1–AC8** pass, the **P11 < 50 ms** budget holds, and **T1–T19** are checked.
-Then mark `spec.md` and `plan.md` **Verified** and slice 001 done in the roadmap.
+Per the [Definition of Done](../../implementation-workflow.md#definition-of-done-checklist--applies-to-every-slice):
+acceptance criteria **AC1–AC8** pass with tests, the **P11 < 50 ms** budget holds, all gates are green,
+**T1–T22** are checked, technical + end-user docs are written, the reviewer verdict is **APPROVE**, the
+**PR is merged**, and `spec.md`/`plan.md` are set to **Verified** with slice 001 marked done in the roadmap.
