@@ -37,8 +37,10 @@ and verify in one sitting. AC references point back to `spec.md`.
   (UNIQUE `(world_id,x,y)` — **AC3**; owner index), `village_fields`, `village_buildings`,
   `scheduled_events` (`seq` + `(status,due_at,seq)` index, P11); `timestamptz` throughout. Sessions
   table is created by the tower-sessions store at startup (T14). Verified applied against live DB.
-- [ ] **T9 — Repository adapters.** Implement the `application` ports (`UserRepository`,
-  `VillageRepository`, `EventStore`, `WorldConfigProvider`) with SQLx.
+- [x] **T9 — Repository adapters.** `Argon2Hasher` (PasswordHasher), `PgAccountRepository`
+  (AccountRepository: transactional `create_account` = user + village with savepoint-based placement;
+  `find_user_by_*`, `villages_of`), and `ensure_world`. Integration test against live Postgres covers
+  AC1/AC3/AC4. (EventStore arrives with the scheduler, T12.)
 
 ## Application (use-cases)
 

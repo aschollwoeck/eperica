@@ -8,9 +8,8 @@
 pub struct Timestamp(pub i64);
 
 /// The kind of a scheduled event. Extended in later slices; `Heartbeat` is the trivial event used to
-/// prove the scheduler in slice 001.
+/// prove the scheduler in slice 001. Exhaustive so new kinds must be handled everywhere.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum EventKind {
     /// A no-op event used to exercise the scheduler.
     Heartbeat,

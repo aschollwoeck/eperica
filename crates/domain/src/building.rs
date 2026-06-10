@@ -1,9 +1,8 @@
 //! Buildings that occupy a village's center slots.
 
-/// A type of center building. Extended in later slices; `#[non_exhaustive]` so adding variants is
-/// not a breaking change.
+/// A type of center building. Extended in later slices — exhaustive on purpose so that adding a
+/// variant produces a compile error everywhere it must be handled (e.g. persistence mapping).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum BuildingKind {
     /// Speeds construction; required by most other buildings.
     MainBuilding,
