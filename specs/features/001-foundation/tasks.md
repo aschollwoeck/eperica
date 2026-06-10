@@ -22,8 +22,9 @@ and verify in one sitting. AC references point back to `spec.md`.
 - [x] **T4 — Value objects.** `GameSpeed` (scale duration/rate), `Coordinate::in_bounds`,
   `WorldConfig`, hand-rolled `DomainError` (zero deps); unit tests for proportional scaling (**AC5**)
   and bounds (**AC3**).
-- [ ] **T5 — Balance data.** Introduce `specs/balance/` with starting field/building levels + the
-  default 18-field layout; a loader the domain consumes (no hardcoded values — **AC4**).
+- [x] **T5 — Balance data.** `specs/balance/starting-village.toml` (4-4-4-6 layout + core buildings);
+  infrastructure `balance::starting_village()` embeds and parses it into the domain `StartingVillage`
+  (serde DTOs keep the domain serialization-free). Test verifies the layout (**AC4**).
 - [x] **T6 — Village construction.** `PlayerId`/`VillageId`/`Tribe`, `ResourceField`/`BuildingSlot`,
   validated `StartingVillage`, and `Village::found` (18 fields + Main Building + Rally Point); unit
   tests (**AC4**).

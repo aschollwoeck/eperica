@@ -5,11 +5,13 @@
 //! sessions, and the event store.
 #![forbid(unsafe_code)]
 
+pub mod balance;
 pub mod config;
 pub mod db;
 
 /// Re-export of the application crate, whose ports this layer implements.
 pub use eperica_application as application;
 
+pub use balance::{BalanceError, starting_village};
 pub use config::{AppConfig, ConfigError};
 pub use db::{MIGRATOR, create_pool, run_migrations};
