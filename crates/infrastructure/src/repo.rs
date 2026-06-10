@@ -753,4 +753,68 @@ mod tests {
                 .is_empty()
         );
     }
+
+    #[tokio::test]
+    async fn process_due_builds_applies_due_orders() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping process_due_builds test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world_id = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world_id,
+            config.radius,
+            rules.starting_amounts,
+        );
+
+        let uname = format!("proc_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                },
+                &crate::starting_village().unwrap(),
+            )
+            .await
+            .expect("create account");
+        let village_id = repo.villages_of(user.id).await.unwrap()[0].id;
+
+        let now = Timestamp(2_000_000_000_000);
+        repo.start_build(
+            village_id,
+            ResourceAmounts {
+                wood: 700,
+                clay: 700,
+                iron: 700,
+                crop: 700,
+            },
+            Timestamp(now.0 - 10_000),
+            NewBuildOrder {
+                target: BuildTarget::Field { slot: 1 },
+                target_level: 1,
+                complete_at: Timestamp(now.0 - 1000), // already due at `now`
+            },
+        )
+        .await
+        .expect("start build");
+
+        // T6/AC5: the scheduler's use-case claims and applies the due order.
+        let applied = eperica_application::process_due_builds(&repo, now, 10)
+            .await
+            .expect("process due builds");
+        assert_eq!(applied, 1);
+        let fields = repo.villages_of(user.id).await.unwrap()[0].fields.clone();
+        assert_eq!(fields[1].level, 1);
+    }
 }

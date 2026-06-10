@@ -21,14 +21,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_migrations(&pool).await?;
     let world_id = ensure_world(&pool, &config.world).await?;
     let rules = economy_rules()?;
+    let accounts = PgAccountRepository::new(
+        pool.clone(),
+        world_id,
+        config.world.radius,
+        rules.starting_amounts,
+    );
+
+    // Background scheduler (P1) — processes due events and due builds.
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let scheduler = Scheduler::new(PgEventStore::new(pool.clone()), accounts.clone());
+    let scheduler_handle = tokio::spawn(scheduler.run(shutdown_rx));
 
     let state = AppState {
-        accounts: Arc::new(PgAccountRepository::new(
-            pool.clone(),
-            world_id,
-            config.world.radius,
-            rules.starting_amounts,
-        )),
+        accounts: Arc::new(accounts),
         hasher: Arc::new(Argon2Hasher),
         template: Arc::new(starting_village()?),
         rules: Arc::new(rules),
@@ -36,11 +42,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         require_email_confirmation: env_flag("REQUIRE_EMAIL_CONFIRMATION"),
         cookie_key: load_cookie_key(),
     };
-
-    // Background scheduler (P1).
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let scheduler = Scheduler::new(PgEventStore::new(pool.clone()));
-    let scheduler_handle = tokio::spawn(scheduler.run(shutdown_rx));
 
     let addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".to_owned());
     let listener = tokio::net::TcpListener::bind(&addr).await?;
