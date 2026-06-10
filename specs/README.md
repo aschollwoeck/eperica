@@ -30,6 +30,7 @@ eperica/
 │   ├── game-design.md                  ← Game Design Document: simulation mechanics ("what")
 │   ├── social-and-meta-features.md     ← app-layer features (chat, profiles, UX) — not sim rules
 │   ├── roles.md                        ← user roles & permissions (referenced by every spec)
+│   ├── ui-style-guide.md               ← visual design system + front-end conventions (web slices obey)
 │   ├── roadmap.md                      ← dependency-ordered build order (slices 001 → end-game)
 │   ├── implementation-workflow.md      ← the build loop followed after spec/plan/tasks are approved
 │   ├── balance/                        ← numeric balance data (created when first needed)
@@ -63,6 +64,7 @@ spec's criteria become the tests).
 | `constitution.md` | The fixed vision + 10 non-negotiable principles every other doc and all code must obey. | Rarely — only by a deliberate amendment recorded in its changelog. |
 | `game-design.md` | The **simulation mechanics**: resources, buildings, units, map, movement, combat, ranking, end-game. Models & formulas, **not** raw number tables. | When a *game rule* changes. |
 | `roles.md` | The **user roles & permissions** (Visitor, Player, Moderator, Administrator + ownership/in-game roles). Every spec's acceptance criteria must account for each applicable role. | When a role or permission is added/changed. |
+| `ui-style-guide.md` | The **visual design system & front-end conventions** (tokens, components, CSS/Askama/htmx rules). Every web slice conforms; new components are added here first. | When the design language or a UI component changes. |
 | `social-and-meta-features.md` | **App-layer** features that surround the game but aren't simulation rules (messaging, forum, profiles, notifications, admin). | When a meta/UX feature is added or reshaped. |
 | `roadmap.md` | The dependency-ordered list of slices (001 → end-game), grouped into milestones. The master build order. | When slices are added, split, merged, or reordered. |
 | `implementation-workflow.md` | The repeatable build loop (per-task + per-slice), the Definition of Done, and doc locations — followed once spec/plan/tasks are approved. | When the build/review/doc process changes. |

@@ -114,6 +114,9 @@ Cross-cutting:
 - `WorldConfig` is operator-set via config/env in 001 (no admin UI yet); a Player has no path to change
   speed (AC5 negative).
 - Templates: `base.html`, `index.html`, `register.html`, `login.html`, `village.html` (Askama).
+- **Conforms to [ui-style-guide.md](../../ui-style-guide.md).** This slice **establishes the front-end
+  foundation**: the token stylesheet, base/reset, the app-shell skeleton, and the button/field
+  components needed for register/login/village views.
 
 ## Test strategy
 

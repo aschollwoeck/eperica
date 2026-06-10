@@ -51,8 +51,10 @@ and verify in one sitting. AC references point back to `spec.md`.
   P5), tracing middleware (per-request latency spans).
 - [ ] **T15 — Auth extractor + guard.** Resolve session → current `Player`; reject unauthorized access
   (Visitor→`/village` blocked; world-config endpoints Administrator-only) (**AC7**).
-- [ ] **T16 — Routes + templates.** `GET /`, `GET/POST /register`, `GET/POST /login`, `POST /logout`,
-  `GET /village`; Askama `base/index/register/login/village` templates (**AC1, AC2, AC3** view).
+- [ ] **T16 — Routes + templates + CSS foundation.** `GET /`, `GET/POST /register`, `GET/POST /login`,
+  `POST /logout`, `GET /village`; Askama `base/index/register/login/village` templates (**AC1, AC2,
+  AC3** view). Establish the front-end foundation per `specs/ui-style-guide.md`: token stylesheet,
+  base/reset, app-shell skeleton, and button/field components.
 
 ## Verification
 

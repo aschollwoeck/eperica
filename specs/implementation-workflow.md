@@ -79,6 +79,8 @@ For each task `Tn`:
 - [ ] **Technical docs**: rustdoc on public items; `CLAUDE.md` commands current; architecture note if
       warranted; `spec.md`/`plan.md` in sync.
 - [ ] **End-user docs**: `docs/manual/` updated for any player-visible behavior (or "internal slice").
+- [ ] **UI conformance** (web slices): matches [ui-style-guide.md](./ui-style-guide.md); any new
+      component was added to the guide first.
 - [ ] `eperica-reviewer` verdict = **APPROVE**, no MUST-FIX outstanding.
 - [ ] PR opened, green, merged to `main`.
 - [ ] `spec.md`/`plan.md` = **Verified**; `roadmap.md` updated; feature branch deleted.
@@ -94,8 +96,9 @@ For each task `Tn`:
 | **Behavior (authoritative)** | `specs/` | the spec/plan/GDD — the source of truth, not duplicated into prose docs |
 | **End-user** | `docs/manual/` | player-facing, task-oriented guides, one area per file |
 
-The existing `docs/eperica_concept.docx` is the original concept and is superseded by `specs/` for
-design; it is kept for history.
+Documentation conventions and templates (technical + end-user) live in
+[docs/README.md](../docs/README.md). The existing `docs/eperica_concept.docx` is the original concept,
+superseded by `specs/` for design; it is kept for history.
 
 ---
 
