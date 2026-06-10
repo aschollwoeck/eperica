@@ -8,4 +8,8 @@ pub enum BuildingKind {
     MainBuilding,
     /// Required to send and return troops; present from founding.
     RallyPoint,
+    /// Stores wood, clay, and iron; higher levels raise their capacity.
+    Warehouse,
+    /// Stores crop; higher levels raise its capacity.
+    Granary,
 }

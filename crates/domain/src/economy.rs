@@ -55,9 +55,14 @@ pub struct EconomyRules {
     pub main_building_population_per_level: Vec<i64>,
     /// Population added per Rally Point level.
     pub rally_point_population_per_level: Vec<i64>,
-    /// Base storage before any Warehouse/Granary is built.
-    pub base_warehouse: i64,
-    pub base_granary: i64,
+    /// Population added per Warehouse level.
+    pub warehouse_population_per_level: Vec<i64>,
+    /// Population added per Granary level.
+    pub granary_population_per_level: Vec<i64>,
+    /// Warehouse capacity by Warehouse level (index 0 = base, i.e. no Warehouse).
+    pub warehouse_capacity_per_level: Vec<i64>,
+    /// Granary capacity by Granary level (index 0 = base, i.e. no Granary).
+    pub granary_capacity_per_level: Vec<i64>,
     /// Stored amounts a new village starts with.
     pub starting_amounts: ResourceAmounts,
 }
@@ -81,12 +86,13 @@ impl EconomyRules {
     }
 
     fn building_population(&self, kind: BuildingKind, level: u8) -> i64 {
-        match kind {
-            BuildingKind::MainBuilding => {
-                level_value(&self.main_building_population_per_level, level)
-            }
-            BuildingKind::RallyPoint => level_value(&self.rally_point_population_per_level, level),
-        }
+        let table = match kind {
+            BuildingKind::MainBuilding => &self.main_building_population_per_level,
+            BuildingKind::RallyPoint => &self.rally_point_population_per_level,
+            BuildingKind::Warehouse => &self.warehouse_population_per_level,
+            BuildingKind::Granary => &self.granary_population_per_level,
+        };
+        level_value(table, level)
     }
 }
 
@@ -135,11 +141,25 @@ pub fn production_rates(
     }
 }
 
-/// Storage capacities. Warehouse/Granary buildings (slice 003) will add to the base.
-pub fn capacities(_buildings: &[BuildingSlot], rules: &EconomyRules) -> Capacities {
+/// Storage capacities, derived from the highest Warehouse/Granary levels present (level 0 = base).
+pub fn capacities(buildings: &[BuildingSlot], rules: &EconomyRules) -> Capacities {
+    let level_of = |kind: BuildingKind| -> u8 {
+        buildings
+            .iter()
+            .filter(|b| b.kind == kind)
+            .map(|b| b.level)
+            .max()
+            .unwrap_or(0)
+    };
     Capacities {
-        warehouse: rules.base_warehouse,
-        granary: rules.base_granary,
+        warehouse: level_value(
+            &rules.warehouse_capacity_per_level,
+            level_of(BuildingKind::Warehouse),
+        ),
+        granary: level_value(
+            &rules.granary_capacity_per_level,
+            level_of(BuildingKind::Granary),
+        ),
     }
 }
 
@@ -186,8 +206,10 @@ mod tests {
             field_population_per_level: vec![0, 1, 2],
             main_building_population_per_level: vec![0, 2, 3],
             rally_point_population_per_level: vec![0, 1, 1],
-            base_warehouse: 800,
-            base_granary: 800,
+            warehouse_population_per_level: vec![0, 1, 1],
+            granary_population_per_level: vec![0, 1, 1],
+            warehouse_capacity_per_level: vec![800, 1200, 1700],
+            granary_capacity_per_level: vec![800, 1200, 1700],
             starting_amounts: ResourceAmounts {
                 wood: 750,
                 clay: 750,

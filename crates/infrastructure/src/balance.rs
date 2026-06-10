@@ -131,12 +131,14 @@ struct PopulationDto {
     field: Vec<i64>,
     main_building: Vec<i64>,
     rally_point: Vec<i64>,
+    warehouse: Vec<i64>,
+    granary: Vec<i64>,
 }
 
 #[derive(Deserialize)]
 struct CapacityDto {
-    base_warehouse: i64,
-    base_granary: i64,
+    warehouse: Vec<i64>,
+    granary: Vec<i64>,
 }
 
 #[derive(Deserialize)]
@@ -161,8 +163,10 @@ pub fn economy_rules() -> Result<EconomyRules, BalanceError> {
         field_population_per_level: dto.population.field,
         main_building_population_per_level: dto.population.main_building,
         rally_point_population_per_level: dto.population.rally_point,
-        base_warehouse: dto.capacity.base_warehouse,
-        base_granary: dto.capacity.base_granary,
+        warehouse_population_per_level: dto.population.warehouse,
+        granary_population_per_level: dto.population.granary,
+        warehouse_capacity_per_level: dto.capacity.warehouse,
+        granary_capacity_per_level: dto.capacity.granary,
         starting_amounts: ResourceAmounts {
             wood: dto.starting_amounts.wood,
             clay: dto.starting_amounts.clay,
