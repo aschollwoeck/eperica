@@ -10,7 +10,7 @@
 | Language | **Rust** | No GC pauses, predictable sub-ms latency (P11); strong type system for a correct domain (P3). |
 | Web framework | **Axum** (on Tokio) | High-performance async, ergonomic, the modern Rust default. |
 | Templating | **Askama** | Jinja-like `.html`, **compiled & type-checked** → no runtime parse, fastest SSR (P11). |
-| Persistence access | **SQLx** (async, compile-time-checked SQL) | Fast, no heavy ORM, queries verified at build time; keeps infra thin. |
+| Persistence access | **SQLx** (async; runtime-checked queries in v1, offline-cached compile-time checking optional later) | Fast, no heavy ORM; builds require no live DB. |
 | Database | **PostgreSQL** | Concurrency + scale, `timestamptz` µs precision (P11), pairs with a Redis hot-cache later. |
 | Auth | **argon2** password hashing + **tower-sessions** with a **Postgres-backed** session store | DB-backed sessions keep the web tier stateless (P5). |
 | Observability | **tracing** | Latency is measurable from day one (P11). |

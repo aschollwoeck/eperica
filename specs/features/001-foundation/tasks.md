@@ -13,8 +13,9 @@ and verify in one sitting. AC references point back to `spec.md`.
 - [x] **T2 — Tooling/CI.** `cargo fmt`, `clippy` (deny warnings), `cargo test` wired into CI
   (`.github/workflows/ci.yml`); `.gitattributes` normalizes line endings; basic `tracing` subscriber
   set up (P11 observability).
-- [ ] **T3 — Config & Postgres.** Load `WorldConfig { speed, radius }` from env/config (operator-set,
-  P7); add SQLx + a dev Postgres connection + migration runner.
+- [x] **T3 — Config & Postgres.** `AppConfig::from_env` loads `WorldConfig { speed, radius }` + DB URL
+  (operator-set, P7; `.env` support); SQLx `PgPool` + embedded `MIGRATOR`/`run_migrations`; dev
+  Postgres via Docker; connectivity test (skips without `DATABASE_URL`).
 
 ## Domain (pure, test-first)
 

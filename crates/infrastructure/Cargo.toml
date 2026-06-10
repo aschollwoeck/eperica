@@ -8,3 +8,13 @@ publish.workspace = true
 [dependencies]
 eperica-domain = { path = "../domain" }
 eperica-application = { path = "../application" }
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "migrate",
+    "macros",
+] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+dotenvy = "0.15"
+thiserror = "2"
