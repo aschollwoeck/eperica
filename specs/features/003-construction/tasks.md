@@ -38,9 +38,9 @@ Ordered for dependency and testability (pure domain first).
 
 ## Documentation & acceptance
 
-- [ ] **T9 — Technical docs.** rustdoc; `docs/architecture/` note on builds as due-events that mutate
+- [x] **T9 — Technical docs.** rustdoc; `docs/architecture/` note on builds as due-events that mutate
   state; update `CLAUDE.md` if needed.
-- [ ] **T10 — End-user docs.** `docs/manual/buildings.md` (upgrade fields/buildings, queue, costs);
+- [x] **T10 — End-user docs.** `docs/manual/buildings.md` (upgrade fields/buildings, queue, costs);
   link from the index.
 - [ ] **T11 — Review & accept.** Run `eperica-reviewer` on the slice diff; fix until APPROVE; open PR.
 
