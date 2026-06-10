@@ -198,6 +198,69 @@ async fn duplicate_username_is_rejected() {
 }
 
 #[tokio::test]
+async fn register_rejects_invalid_input() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    // AC1: server-side rejection (a too-short password) — no redirect, error shown, no account.
+    let res = client()
+        .post(format!("{base}/register"))
+        .form(&[
+            ("username", "validname"),
+            ("email", "valid@example.com"),
+            ("password", "short"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 200);
+    assert!(res.text().await.unwrap().contains("at least 8"));
+}
+
+#[tokio::test]
+async fn logout_ends_session() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    let user = unique("out");
+    let email = format!("{user}@example.com");
+    let c = client();
+
+    // Register logs the user in.
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        c.get(format!("{base}/village"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        200
+    );
+
+    // AC2: logout clears the session and returns to the landing page.
+    let out = c.post(format!("{base}/logout")).send().await.unwrap();
+    assert_eq!(out.status().as_u16(), 303);
+    assert_eq!(out.headers().get(LOCATION).unwrap().to_str().unwrap(), "/");
+
+    // The village is no longer reachable without logging in again.
+    let after = c.get(format!("{base}/village")).send().await.unwrap();
+    assert_eq!(after.status().as_u16(), 303);
+    assert_eq!(
+        after.headers().get(LOCATION).unwrap().to_str().unwrap(),
+        "/login"
+    );
+}
+
+#[tokio::test]
 async fn account_persists_across_restart() {
     let Some(base1) = spawn().await else {
         return;

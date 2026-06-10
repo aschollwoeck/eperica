@@ -134,6 +134,41 @@ async fn register_rejects_duplicate() {
 }
 
 #[tokio::test]
+async fn register_rejects_invalid_input() {
+    let accounts = InMemoryAccounts::default();
+
+    let mut blank = cmd("ignored");
+    blank.username = "   ".to_owned();
+    assert!(matches!(
+        register(&accounts, &FakeHasher, &template(), false, blank).await,
+        Err(RegisterError::Invalid(_))
+    ));
+
+    let mut bad_email = cmd("emailtest");
+    bad_email.email = "notanemail".to_owned();
+    assert!(matches!(
+        register(&accounts, &FakeHasher, &template(), false, bad_email).await,
+        Err(RegisterError::Invalid(_))
+    ));
+
+    let mut short_pw = cmd("pwtest");
+    short_pw.password = "short".to_owned();
+    assert!(matches!(
+        register(&accounts, &FakeHasher, &template(), false, short_pw).await,
+        Err(RegisterError::Invalid(_))
+    ));
+
+    // No account was created by any rejected attempt.
+    assert!(
+        accounts
+            .find_user_by_username("emailtest")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn register_requires_confirmation_when_enabled() {
     let accounts = InMemoryAccounts::default();
     let user = register(&accounts, &FakeHasher, &template(), true, cmd("carol"))

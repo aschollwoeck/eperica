@@ -1,5 +1,5 @@
 -- Initial schema (slice 001 — foundation).
--- The session table is managed by the tower-sessions Postgres store (created at startup), not here.
+-- Sessions are encrypted cookies (no server-side session store / table — see docs/architecture/0003).
 -- All identifiers are application-generated UUIDs; all timestamps are timestamptz (UTC, P11).
 
 CREATE TABLE worlds (

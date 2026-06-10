@@ -44,6 +44,19 @@ impl PgEventStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
+
+    /// Reset events stuck in `processing` (e.g. left by a crashed worker) back to `pending` so they
+    /// are reprocessed. Returns how many were requeued. (Once real, effectful events exist, handlers
+    /// must be idempotent or processed within a single transaction — see docs/architecture/0002.)
+    pub async fn requeue_orphaned(&self) -> Result<u64, RepoError> {
+        let result = sqlx::query(
+            "UPDATE scheduled_events SET status = 'pending' WHERE status = 'processing'",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(result.rows_affected())
+    }
 }
 
 #[async_trait]
@@ -123,6 +136,12 @@ impl Scheduler {
 
     /// Run until `shutdown` flips to `true`, processing due events each tick.
     pub async fn run(self, mut shutdown: tokio::sync::watch::Receiver<bool>) {
+        // Recover any events left mid-flight by a previous crash before starting the loop.
+        match self.store.requeue_orphaned().await {
+            Ok(n) if n > 0 => tracing::warn!(requeued = n, "requeued orphaned events at startup"),
+            Ok(_) => {}
+            Err(e) => tracing::error!(error = %e, "failed to requeue orphaned events"),
+        }
         loop {
             if *shutdown.borrow() {
                 break;

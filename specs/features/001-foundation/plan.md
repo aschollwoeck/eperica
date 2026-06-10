@@ -12,7 +12,7 @@
 | Templating | **Askama** | Jinja-like `.html`, **compiled & type-checked** → no runtime parse, fastest SSR (P11). |
 | Persistence access | **SQLx** (async; runtime-checked queries in v1, offline-cached compile-time checking optional later) | Fast, no heavy ORM; builds require no live DB. |
 | Database | **PostgreSQL** | Concurrency + scale, `timestamptz` µs precision (P11), pairs with a Redis hot-cache later. |
-| Auth | **argon2** password hashing + **tower-sessions** with a **Postgres-backed** session store | DB-backed sessions keep the web tier stateless (P5). |
+| Auth | **argon2** password hashing + **encrypted-cookie sessions** (`axum-extra` `PrivateCookieJar`) | Stateless: the player id lives in an encrypted cookie, so any instance serves any request (P5). No session store. *(Chosen over tower-sessions; recorded per P8.)* |
 | Observability | **tracing** | Latency is measurable from day one (P11). |
 
 **Frontend interactivity** (htmx + a small JS countdown helper) is **deferred to 002/003**; slice 001
@@ -41,8 +41,9 @@ SQLx (hexagonal style → DB is swappable, domain stays testable).
 - **P3 (pure domain):** game rules live in `domain`; the workspace forbids it from importing I/O crates.
 - **P4 (server authority):** every mutation runs in `application` services behind server-side
   authorization (roles); the client never supplies ownership or coordinates (AC7).
-- **P5 (stateless tier / DB truth):** Axum handlers hold no game state; sessions live in Postgres, so
-  any instance serves any request and a restart loses nothing (AC8).
+- **P5 (stateless tier / DB truth):** Axum handlers hold no game state; the session is an encrypted
+  cookie (no server-side session state), so any instance serves any request and a restart loses no
+  account/village data (AC8).
 - **P7 (configurable speed):** `WorldConfig { speed, radius }` is loaded at startup (operator-set) and
   passed into the domain; a `GameSpeed` value object provides `scale(base_duration) = base / speed`.
   No wall-clock constant is hardcoded (AC5).
@@ -85,7 +86,7 @@ Tables (all timestamps `timestamptz`):
 - `village_buildings (village_id, slot, building_type, level)` — Main Building + Rally Point (AC4).
 - `scheduled_events (id, kind, payload jsonb, due_at, seq bigserial, status, created_at)` — index on
   `(status, due_at, seq)` for the scheduler; `seq` gives deterministic same-instant ordering (P11).
-- `sessions (...)` — managed by tower-sessions Postgres store (P5).
+- *(No session table — sessions are encrypted cookies, P5.)*
 
 Balance values (starting levels, the 18-field default layout) live in `specs/balance/` and are loaded,
 not hardcoded (AC4).

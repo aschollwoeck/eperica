@@ -88,6 +88,9 @@ pub async fn register_submit(
             let jar = jar.add(auth_cookie(user.id.0));
             (jar, Redirect::to("/village")).into_response()
         }
+        Err(RegisterError::Invalid(message)) => page(&RegisterTemplate {
+            error: Some(message),
+        }),
         Err(RegisterError::Taken) => page(&RegisterTemplate {
             error: Some("That username or email is already taken.".to_owned()),
         }),
@@ -163,6 +166,7 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         }
     };
     let Some(v) = villages.into_iter().next() else {
+        tracing::error!(?player, "authenticated user has no village");
         return server_error();
     };
 
