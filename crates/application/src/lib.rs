@@ -19,7 +19,8 @@ pub use eperica_domain as domain;
 pub use auth::{LoginError, authenticate};
 pub use economy::{VillageEconomy, load_economy};
 pub use ports::{
-    AccountRepository, DueEvent, EventStore, NewUser, PasswordHasher, RepoError, UserRecord,
+    AccountRepository, ActiveBuild, BuildRepository, DueBuild, DueEvent, EventStore, NewBuildOrder,
+    NewUser, PasswordHasher, RepoError, UserRecord,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;

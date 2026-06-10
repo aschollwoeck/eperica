@@ -16,9 +16,9 @@ Ordered for dependency and testability (pure domain first).
 
 - [x] **T2 — Balance data.** `specs/balance/construction.toml` (cost + base time per target/level, MB
   factors, max levels, prerequisites, Warehouse/Granary capacity-per-level); loader → `BuildRules`.
-- [ ] **T3 — Migration.** `0004_build_orders.sql` (table + unique partial index `WHERE status='pending'`
+- [x] **T3 — Migration.** `0004_build_orders.sql` (table + unique partial index `WHERE status='pending'`
   + `(status, complete_at, id)` index).
-- [ ] **T4 — Repository.** `start_build` (settle+debit+insert, one tx; unique index → one order),
+- [x] **T4 — Repository.** `start_build` (settle+debit+insert, one tx; unique index → one order),
   `claim_due_builds`, `apply_build` (upsert level, mark done), `active_build`, `village_levels`.
   Integration tests: **AC1** (debit + order), **AC3** (one order), **AC5** (apply once + restart).
 

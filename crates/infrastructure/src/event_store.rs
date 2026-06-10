@@ -178,7 +178,8 @@ mod tests {
             .expect("truncate");
 
         let store = PgEventStore::new(pool.clone());
-        let due_past = Timestamp(now().0 - 1000);
+        // Wide margins so a jittery dev/container clock can't flip "past"/"future".
+        let due_past = Timestamp(now().0 - 600_000);
         let due_future = Timestamp(now().0 + 3_600_000);
         store
             .schedule(EventKind::Heartbeat, due_past)
