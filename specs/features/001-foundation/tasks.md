@@ -7,7 +7,7 @@ and verify in one sitting. AC references point back to `spec.md`.
 
 ## Scaffolding
 
-- [ ] **T1 — Cargo workspace.** Create the workspace + four crates (`domain`, `application`,
+- [x] **T1 — Cargo workspace.** Create the workspace + four crates (`domain`, `application`,
   `infrastructure`, `web`) with the dependency direction from the plan; confirm `domain` cannot
   reference `infrastructure`/`web` (P3).
 - [ ] **T2 — Tooling/CI.** `cargo fmt`, `clippy` (deny warnings), `cargo test` wired into CI; basic

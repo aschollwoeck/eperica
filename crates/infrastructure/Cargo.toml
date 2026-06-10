@@ -1,0 +1,10 @@
+[package]
+name = "eperica-infrastructure"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Implements the application's ports with concrete adapters (SQLx/Postgres, etc.). All I/O lives here.
+[dependencies]
+eperica-domain = { path = "../domain" }
+eperica-application = { path = "../application" }

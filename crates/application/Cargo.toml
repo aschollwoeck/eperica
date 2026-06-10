@@ -1,0 +1,9 @@
+[package]
+name = "eperica-application"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Depends only on the domain (P3 boundary). Infrastructure implements the ports defined here.
+[dependencies]
+eperica-domain = { path = "../domain" }
