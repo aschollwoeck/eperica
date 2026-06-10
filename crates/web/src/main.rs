@@ -4,8 +4,8 @@
 
 use axum_extra::extract::cookie::Key;
 use eperica_infrastructure::{
-    AppConfig, Argon2Hasher, PgAccountRepository, PgEventStore, Scheduler, create_pool,
-    economy_rules, ensure_world, run_migrations, starting_village,
+    AppConfig, Argon2Hasher, PgAccountRepository, PgEventStore, Scheduler, build_rules,
+    create_pool, economy_rules, ensure_world, run_migrations, starting_village,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -38,6 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         hasher: Arc::new(Argon2Hasher),
         template: Arc::new(starting_village()?),
         rules: Arc::new(rules),
+        build_rules: Arc::new(build_rules()?),
         world: config.world,
         require_email_confirmation: env_flag("REQUIRE_EMAIL_CONFIRMATION"),
         cookie_key: load_cookie_key(),

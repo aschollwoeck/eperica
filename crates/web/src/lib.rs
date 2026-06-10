@@ -27,6 +27,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/logout", post(handlers::logout))
         .route("/village", get(handlers::village))
+        .route("/village/build", post(handlers::build_submit))
         .route("/styleguide", get(handlers::styleguide))
         .nest_service("/static", ServeDir::new("crates/web/static"))
         .layer(TraceLayer::new_for_http())

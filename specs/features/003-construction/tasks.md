@@ -30,10 +30,10 @@ Ordered for dependency and testability (pure domain first).
 
 ## Web
 
-- [ ] **T7 — Village build UI.** `/village` shows level + next cost + **Order upgrade** (htmx) per
+- [x] **T7 — Village build UI.** `/village` shows level + next cost + **Order upgrade** (htmx) per
   target, **Build Warehouse/Granary** for empty slots, and active build + **live countdown**;
   `POST /village/build`; JS countdown helper; conforms to ui-style-guide (**AC8**).
-- [ ] **T8 — Integration test.** HTTP: order an upgrade, then `/village` shows the active build + a
+- [x] **T8 — Integration test.** HTTP: order an upgrade, then `/village` shows the active build + a
   countdown deadline; ordering when one is active is rejected.
 
 ## Documentation & acceptance

@@ -16,9 +16,95 @@
       <strong style="color:var(--c-warning)">({{ crop_rate }}/h — starving)</strong></li>
     {% endif %}
   </ul>
+</section>
 
-  <form method="post" action="/logout" class="actions">
+{% if let Some(build) = active %}
+<section class="panel">
+  <h2>Under construction</h2>
+  <p>{{ build.label }} → level {{ build.target_level }} —
+    completes in <span class="countdown num" data-deadline="{{ build.complete_ms }}">…</span></p>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Buildings</h2>
+  <table class="table">
+    <thead><tr><th>Building</th><th class="num">Level</th><th>Next cost (W/C/I/Cr)</th><th></th></tr></thead>
+    <tbody>
+      {% for b in buildings %}
+      <tr>
+        <td>{{ b.label }}</td>
+        <td class="num">{{ b.level }}</td>
+        <td>
+          {% if b.at_max %}—{% else %}
+          <span class="num">{{ b.cost_wood }}/{{ b.cost_clay }}/{{ b.cost_iron }}/{{ b.cost_crop }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if b.at_max %}<span class="muted">max</span>{% else if b.can_order %}
+          <form method="post" action="/village/build">
+            <input type="hidden" name="table" value="{{ b.table }}">
+            <input type="hidden" name="slot" value="{{ b.slot }}">
+            <input type="hidden" name="kind" value="{{ b.kind }}">
+            <button class="btn btn--primary" type="submit">{% if b.level > 0 %}Upgrade{% else %}Build{% endif %}</button>
+          </form>
+          {% else %}<span class="muted">unavailable</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Resource fields</h2>
+  <table class="table">
+    <thead><tr><th>Field</th><th class="num">Level</th><th>Next cost (W/C/I/Cr)</th><th></th></tr></thead>
+    <tbody>
+      {% for f in fields %}
+      <tr>
+        <td>{{ f.label }}</td>
+        <td class="num">{{ f.level }}</td>
+        <td>
+          {% if f.at_max %}—{% else %}
+          <span class="num">{{ f.cost_wood }}/{{ f.cost_clay }}/{{ f.cost_iron }}/{{ f.cost_crop }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if f.at_max %}<span class="muted">max</span>{% else if f.can_order %}
+          <form method="post" action="/village/build">
+            <input type="hidden" name="table" value="{{ f.table }}">
+            <input type="hidden" name="slot" value="{{ f.slot }}">
+            <button class="btn btn--primary" type="submit">Upgrade</button>
+          </form>
+          {% else %}<span class="muted">unavailable</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel actions">
+  <form method="post" action="/logout">
     <button class="btn btn--secondary" type="submit">Log out</button>
   </form>
 </section>
+
+<script>
+  // Live countdown from the server-provided completion timestamp (P1/P11).
+  for (const el of document.querySelectorAll(".countdown")) {
+    const deadline = Number(el.dataset.deadline);
+    const tick = () => {
+      let s = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+      const h = Math.floor(s / 3600); s -= h * 3600;
+      const m = Math.floor(s / 60); s -= m * 60;
+      const pad = (n) => String(n).padStart(2, "0");
+      el.textContent = `${h}:${pad(m)}:${pad(s)}`;
+      if (deadline - Date.now() <= 0) { clearInterval(timer); setTimeout(() => location.reload(), 1500); }
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+  }
+</script>
 {% endblock %}
