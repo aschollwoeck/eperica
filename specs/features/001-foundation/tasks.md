@@ -82,11 +82,11 @@ and verify in one sitting. AC references point back to `spec.md`.
 
 ## Documentation & acceptance
 
-- [ ] **T20 — Technical docs.** rustdoc on public `domain`/`application` items; fill in `CLAUDE.md`
-  build/test/run/migrate commands now that they work; add `docs/architecture/` notes for the Cargo
-  workspace, the due-event scheduler, and the auth/session design.
-- [ ] **T21 — End-user docs.** `docs/manual/getting-started.md` — how to register, confirm (if
-  enabled), log in, and view your starting village.
+- [x] **T20 — Technical docs.** rustdoc on public items; `CLAUDE.md` updated with working
+  build/test/run/db commands + the cargo/toolchain and migration gotchas; `docs/architecture/` notes
+  for workspace/layering, the event scheduler, and auth/sessions.
+- [x] **T21 — End-user docs.** `docs/manual/` index + `getting-started.md` (register, confirm if
+  enabled, log in, view your starting village).
 - [ ] **T22 — Review & accept.** Run the `eperica-reviewer` agent on `git diff main...HEAD`; address
   every MUST-FIX; re-review until verdict = **APPROVE**.
 

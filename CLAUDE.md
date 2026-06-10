@@ -32,14 +32,27 @@ domain rule (P3)** — `domain` cannot import I/O. Postgres runs via Docker in d
 
 ## Commands
 
-Filled in as scaffolding lands (slice 001, tasks T1–T3). Expected:
+> **Environment gotcha:** in this shell `cargo` is shadowed by the rustup proxy and a dependency
+> ships a stray toolchain pin. Call the real binary and force the toolchain:
+> ```bash
+> CARGO="$(rustup which cargo)"; export RUSTUP_TOOLCHAIN=stable
+> ```
 
-- `cargo build` · `cargo test` · `cargo run -p web`
-- `cargo fmt --check` · `cargo clippy --all-targets --all-features -- -D warnings`
-- Postgres (dev): run a container via Docker; apply migrations with `sqlx migrate run`.
+- **Build:** `"$CARGO" build --workspace`
+- **Test:** `"$CARGO" test --workspace` — DB-backed tests skip automatically without `DATABASE_URL`.
+- **Lint:** `"$CARGO" fmt --all -- --check` and `"$CARGO" clippy --all-targets --all-features -- -D warnings`
+- **Run:** `"$CARGO" run -p eperica-web` — serves `http://127.0.0.1:8080`.
 
-> Toolchain note: requires a **modern Rust** (`rustup update stable`) and the **`gh` CLI** for the
-> per-slice PR workflow.
+**Database (dev):** Postgres via Docker —
+```bash
+docker run -d --name eperica-pg -e POSTGRES_USER=eperica -e POSTGRES_PASSWORD=eperica \
+  -e POSTGRES_DB=eperica -p 5432:5432 postgres:16
+```
+Configure via `.env` (copy `.env.example`): `DATABASE_URL`, `WORLD_SPEED`, `WORLD_RADIUS`, `RUST_LOG`,
+and optionally `SESSION_SECRET` (≥64 bytes), `REQUIRE_EMAIL_CONFIRMATION`, `BIND_ADDR`.
+
+> **Migration gotcha:** adding a *new* migration file does not force `sqlx::migrate!` to re-embed.
+> Touch `crates/infrastructure/src/db.rs` (or `cargo clean -p eperica-infrastructure`) to pick it up.
 
 ## How work is done (operating model — see specs/README.md §11)
 
