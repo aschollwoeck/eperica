@@ -5,7 +5,8 @@
 //! types, keeping the domain itself free of serialization concerns.
 
 use eperica_domain::{
-    BuildingKind, BuildingSlot, DomainError, ResourceField, ResourceKind, StartingVillage,
+    BuildingKind, BuildingSlot, DomainError, EconomyRules, ResourceAmounts, ResourceField,
+    ResourceKind, StartingVillage,
 };
 use serde::Deserialize;
 
@@ -13,6 +14,12 @@ use serde::Deserialize;
 const STARTING_VILLAGE_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../specs/balance/starting-village.toml"
+));
+
+/// Embedded economy balance data.
+const ECONOMY_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/economy.toml"
 ));
 
 /// Errors that can occur while loading balance data.
@@ -103,9 +110,72 @@ fn parse_building(name: &str) -> Result<BuildingKind, BalanceError> {
     }
 }
 
+#[derive(Deserialize)]
+struct EconomyDto {
+    production: ProductionDto,
+    population: PopulationDto,
+    capacity: CapacityDto,
+    starting_amounts: AmountsDto,
+}
+
+#[derive(Deserialize)]
+struct ProductionDto {
+    wood: Vec<i64>,
+    clay: Vec<i64>,
+    iron: Vec<i64>,
+    crop: Vec<i64>,
+}
+
+#[derive(Deserialize)]
+struct PopulationDto {
+    field: Vec<i64>,
+    main_building: Vec<i64>,
+    rally_point: Vec<i64>,
+}
+
+#[derive(Deserialize)]
+struct CapacityDto {
+    base_warehouse: i64,
+    base_granary: i64,
+}
+
+#[derive(Deserialize)]
+struct AmountsDto {
+    wood: i64,
+    clay: i64,
+    iron: i64,
+    crop: i64,
+}
+
+/// Load the economy rules (production/population/capacity/starting amounts) from balance data.
+///
+/// # Errors
+/// Returns [`BalanceError`] if the data cannot be parsed.
+pub fn economy_rules() -> Result<EconomyRules, BalanceError> {
+    let dto: EconomyDto = toml::from_str(ECONOMY_TOML)?;
+    Ok(EconomyRules {
+        wood_per_level: dto.production.wood,
+        clay_per_level: dto.production.clay,
+        iron_per_level: dto.production.iron,
+        crop_per_level: dto.production.crop,
+        field_population_per_level: dto.population.field,
+        main_building_population_per_level: dto.population.main_building,
+        rally_point_population_per_level: dto.population.rally_point,
+        base_warehouse: dto.capacity.base_warehouse,
+        base_granary: dto.capacity.base_granary,
+        starting_amounts: ResourceAmounts {
+            wood: dto.starting_amounts.wood,
+            clay: dto.starting_amounts.clay,
+            iron: dto.starting_amounts.iron,
+            crop: dto.starting_amounts.crop,
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eperica_domain::{GameSpeed, production_rates};
 
     #[test]
     fn loads_balanced_starting_village() {
@@ -121,5 +191,22 @@ mod tests {
         let bkinds: Vec<_> = sv.buildings().iter().map(|b| b.kind).collect();
         assert!(bkinds.contains(&BuildingKind::MainBuilding));
         assert!(bkinds.contains(&BuildingKind::RallyPoint));
+    }
+
+    #[test]
+    fn starting_village_has_positive_economy() {
+        // AC6: the starting village produces wood/clay/iron and has positive net crop.
+        let sv = starting_village().expect("starting village");
+        let rules = economy_rules().expect("economy rules");
+        let rates = production_rates(
+            sv.fields(),
+            sv.buildings(),
+            &rules,
+            GameSpeed::new(1.0).unwrap(),
+        );
+        assert!(rates.wood > 0);
+        assert!(rates.clay > 0);
+        assert!(rates.iron > 0);
+        assert!(rates.crop_net > 0, "net crop was {}", rates.crop_net);
     }
 }

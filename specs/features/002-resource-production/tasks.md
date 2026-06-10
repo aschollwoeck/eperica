@@ -13,7 +13,7 @@ Ordered for dependency and testability (pure domain first). Integer units (`i64`
 
 ## Balance + persistence
 
-- [ ] **T2 — Balance data.** `specs/balance/economy.toml` (field production per level, field/building
+- [x] **T2 — Balance data.** `specs/balance/economy.toml` (field production per level, field/building
   population per level, base capacity, starting amounts); infra loader → `EconomyRules` (serde DTO →
   domain). Test: loads; starting village yields positive wood/clay/iron and **positive net crop** (**AC6**).
 - [ ] **T3 — Migration.** `0002_village_resources.sql` (`village_id` PK, `wood/clay/iron/crop bigint`,
