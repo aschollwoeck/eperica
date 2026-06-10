@@ -829,4 +829,93 @@ mod tests {
         let fields = repo.villages_of(user.id).await.unwrap()[0].fields.clone();
         assert_eq!(fields[1].level, 1);
     }
+
+    /// AC5 (building path): constructing a new building in an empty center slot exercises the
+    /// `apply_build` Building arm — the `INSERT ... ON CONFLICT` upsert taking its INSERT branch.
+    /// The starting village has only Main Building (slot 0) + Rally Point (slot 1), so building a
+    /// Warehouse at slot 2 creates a brand-new row (vs. the Field path, which only ever UPDATEs).
+    #[tokio::test]
+    async fn build_constructs_new_building_in_empty_slot() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping building construction test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world_id = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world_id,
+            config.radius,
+            rules.starting_amounts,
+        );
+
+        let uname = format!("warehouse_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                },
+                &crate::starting_village().unwrap(),
+            )
+            .await
+            .expect("create account");
+        let village_id = repo.villages_of(user.id).await.unwrap()[0].id;
+
+        // Precondition: the empty slot has no Warehouse yet.
+        assert!(
+            repo.villages_of(user.id).await.unwrap()[0]
+                .buildings
+                .iter()
+                .all(|b| b.kind != BuildingKind::Warehouse),
+            "starting village should not have a Warehouse"
+        );
+
+        let now = Timestamp(2_100_000_000_000);
+        repo.start_build(
+            village_id,
+            ResourceAmounts {
+                wood: 700,
+                clay: 700,
+                iron: 700,
+                crop: 700,
+            },
+            Timestamp(now.0 - 10_000),
+            NewBuildOrder {
+                target: BuildTarget::Building {
+                    slot: 2,
+                    kind: BuildingKind::Warehouse,
+                },
+                target_level: 1,
+                complete_at: Timestamp(now.0 - 1000), // already due at `now`
+            },
+        )
+        .await
+        .expect("start build");
+
+        // Claim + apply the due build; the empty slot now holds a level-1 Warehouse.
+        let due = repo.claim_due_builds(now, 1000).await.unwrap();
+        let mine = due
+            .iter()
+            .find(|d| d.village == village_id)
+            .copied()
+            .expect("this village's build is due");
+        repo.apply_build(mine).await.expect("apply build");
+
+        let warehouse = repo.villages_of(user.id).await.unwrap()[0]
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::Warehouse)
+            .copied()
+            .expect("Warehouse was constructed");
+        assert_eq!(warehouse.level, 1);
+    }
 }
