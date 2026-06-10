@@ -1,0 +1,8 @@
+[package]
+name = "eperica-domain"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The pure domain core has NO dependencies (P3): no I/O, framework, or database crates.
+[dependencies]

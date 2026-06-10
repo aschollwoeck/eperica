@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/domain",
+    "crates/application",
+    "crates/infrastructure",
+    "crates/web",
+]
+
+# Shared package settings inherited by every crate (keeps versions/edition in one place).
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false

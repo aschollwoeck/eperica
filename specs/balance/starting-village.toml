@@ -1,0 +1,33 @@
+# Starting-village balance data.
+#
+# A new village uses the balanced 4-4-4-6 field distribution (18 fields total) with fields at level 0,
+# and the two core buildings present at level 1. Loaded by the infrastructure balance loader and
+# mapped to the pure domain `StartingVillage` template (numbers are data, not hardcoded in logic).
+
+[[fields]]
+resource = "wood"
+count = 4
+level = 0
+
+[[fields]]
+resource = "clay"
+count = 4
+level = 0
+
+[[fields]]
+resource = "iron"
+count = 4
+level = 0
+
+[[fields]]
+resource = "crop"
+count = 6
+level = 0
+
+[[buildings]]
+building = "main_building"
+level = 1
+
+[[buildings]]
+building = "rally_point"
+level = 1

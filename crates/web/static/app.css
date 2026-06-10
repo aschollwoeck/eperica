@@ -1,0 +1,123 @@
+/* Eperica stylesheet — implements specs/ui-style-guide.md (tokens + base components). */
+
+:root {
+  /* Surfaces & ink */
+  --c-parchment: #F4ECD8;
+  --c-panel: #FBF6E9;
+  --c-panel-alt: #E8DCC0;
+  --c-ink: #2B2117;
+  --c-ink-muted: #5A4D3B;
+  --c-border: #C9B68C;
+  /* Brand & structural */
+  --c-wood: #6B4F2E;
+  --c-wood-dark: #4A3620;
+  --c-gold: #C9A227;
+  /* Resources (canonical) */
+  --c-lumber: #3F7D3F;
+  --c-clay: #B5652E;
+  --c-iron-res: #6C7A89;
+  --c-crop: #D8A92B;
+  /* Semantic */
+  --c-danger: #B33A3A;
+  --c-success: #2E7D4F;
+  /* Spacing & shape */
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --radius-md: 6px;
+  --shadow-sm: 0 1px 2px rgba(43, 33, 23, 0.12);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  color: var(--c-ink);
+  background: var(--c-parchment);
+}
+
+h1, h2, h3 { font-family: Georgia, "Times New Roman", serif; }
+
+a { color: var(--c-wood-dark); }
+
+/* Numbers/timers should not jitter as they change. */
+.res, .num { font-variant-numeric: tabular-nums; }
+
+.topbar {
+  background: var(--c-wood-dark);
+  padding: var(--space-3) var(--space-4);
+}
+.topbar__brand {
+  color: var(--c-parchment);
+  font-family: Georgia, serif;
+  font-size: 1.25rem;
+  font-weight: bold;
+  text-decoration: none;
+}
+
+.container {
+  max-width: 720px;
+  margin: var(--space-5) auto;
+  padding: 0 var(--space-4);
+}
+
+.footer {
+  color: var(--c-ink-muted);
+  text-align: center;
+  padding: var(--space-5);
+  font-size: 0.875rem;
+}
+
+.panel {
+  background: var(--c-panel);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-5);
+}
+
+.muted { color: var(--c-ink-muted); }
+
+.actions { margin-top: var(--space-4); display: flex; gap: var(--space-2); }
+
+/* Buttons */
+.btn {
+  display: inline-block;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+.btn:focus-visible { outline: 2px solid var(--c-gold); outline-offset: 2px; }
+.btn--primary { background: var(--c-gold); color: var(--c-wood-dark); border-color: var(--c-wood); }
+.btn--secondary { background: transparent; color: var(--c-wood-dark); border-color: var(--c-border); }
+
+/* Forms */
+.form { display: grid; gap: var(--space-4); max-width: 360px; }
+.field { display: grid; gap: var(--space-2); }
+.field label { font-weight: 600; }
+.field input {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  font: inherit;
+  min-height: 40px;
+}
+.field input:focus-visible { outline: 2px solid var(--c-gold); outline-offset: 1px; }
+
+/* Alerts */
+.alert { padding: var(--space-3); border-radius: var(--radius-md); }
+.alert--danger { background: #f6e3e3; color: var(--c-danger); border: 1px solid var(--c-danger); }
+
+/* Resources */
+.resource-list { list-style: none; padding: 0; display: grid; gap: var(--space-2); }
+.res { font-weight: 600; }
+.res--wood { color: var(--c-lumber); }
+.res--clay { color: var(--c-clay); }
+.res--iron { color: var(--c-iron-res); }
+.res--crop { color: var(--c-crop); }
