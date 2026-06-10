@@ -75,6 +75,9 @@ For each task `Tn`:
 - [ ] All tasks in `tasks.md` checked.
 - [ ] Every acceptance criterion implemented **and** covered by a passing test.
 - [ ] Full `cargo test` green; `cargo fmt` clean; `clippy -D warnings` clean.
+- [ ] **Migration safety**: a schema change that adds state *required for existing rows* backfills
+      them (data migration), with a test for the pre-existing-data (migration-boundary) case — not only
+      for entities the new code creates.
 - [ ] P11 latency budget verified on hot paths.
 - [ ] **Technical docs**: rustdoc on public items; `CLAUDE.md` commands current; architecture note if
       warranted; `spec.md`/`plan.md` in sync.

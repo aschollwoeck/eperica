@@ -404,4 +404,64 @@ mod tests {
         // Lookup works.
         assert!(repo.find_user_by_username(&uname).await.unwrap().is_some());
     }
+
+    /// Regression for the migration-boundary bug: a village that predates `village_resources`
+    /// (no resources row) must be repairable by the backfill. We reproduce the legacy state by
+    /// deleting the seeded row, then apply the same backfill as migration 0003.
+    #[tokio::test]
+    async fn backfill_repairs_legacy_village_without_resources() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping backfill test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world_id = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world_id,
+            config.radius,
+            rules.starting_amounts,
+        );
+
+        let uname = format!("legacy_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "hash".to_owned(),
+                    email_confirmed: true,
+                },
+                &crate::starting_village().unwrap(),
+            )
+            .await
+            .expect("create account");
+        let village_id = repo.villages_of(user.id).await.unwrap()[0].id;
+
+        // Reproduce the legacy state: a village with no resources row.
+        sqlx::query("DELETE FROM village_resources WHERE village_id = $1")
+            .bind(Uuid::from_u128(village_id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(repo.stored_resources(village_id).await.unwrap().is_none());
+
+        // Apply the backfill (same statement as migration 0003) and confirm it is repaired.
+        sqlx::query(
+            "INSERT INTO village_resources (village_id, wood, clay, iron, crop, updated_at) \
+             SELECT id, 750, 750, 750, 750, now() FROM villages \
+             ON CONFLICT (village_id) DO NOTHING",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(repo.stored_resources(village_id).await.unwrap().is_some());
+    }
 }

@@ -59,6 +59,9 @@ Run and report:
    blocking in async), clippy-clean.
 5. **Security** — passwords hashed with argon2; SQL parameterized (no injection); authz enforced
    server-side; no secrets committed; sound session handling.
+5b. **Migration safety** — if a migration adds a table/column that existing rows require, it must
+   **backfill** them, and a test must cover the **pre-existing-data** path (not just entities the new
+   code creates). Tests that only exercise freshly-created data miss migration-boundary bugs.
 6. **Tests** — determinism, isolation, meaningful assertions, edge + negative cases (incl. role denial).
 7. **Simplicity & reuse (P10)** — duplication, over-engineering, unclear naming.
 8. **Documentation** — rustdoc on public domain items; spec/plan updated if behavior changed (P8).
