@@ -35,8 +35,8 @@ and verify in one sitting. AC references point back to `spec.md`.
 
 - [x] **T8 — Migrations.** `0001_initial_schema.sql`: `worlds`, `users`, `villages`
   (UNIQUE `(world_id,x,y)` — **AC3**; owner index), `village_fields`, `village_buildings`,
-  `scheduled_events` (`seq` + `(status,due_at,seq)` index, P11); `timestamptz` throughout. Sessions
-  table is created by the tower-sessions store at startup (T14). Verified applied against live DB.
+  `scheduled_events` (`seq` + `(status,due_at,seq)` index, P11); `timestamptz` throughout. No session
+  table — sessions are encrypted cookies (T14). Verified applied against live DB.
 - [x] **T9 — Repository adapters.** `Argon2Hasher` (PasswordHasher), `PgAccountRepository`
   (AccountRepository: transactional `create_account` = user + village with savepoint-based placement;
   `find_user_by_*`, `villages_of`), and `ensure_world`. Integration test against live Postgres covers
@@ -44,10 +44,10 @@ and verify in one sitting. AC references point back to `spec.md`.
 
 ## Application (use-cases)
 
-- [ ] **T10 — Register.** Validate + uniqueness; argon2 hash; **single transaction** creating the user
+- [x] **T10 — Register.** Validate + uniqueness; argon2 hash; **single transaction** creating the user
   and their starting village server-side at a unique in-bounds coordinate; honor `email_confirmed`
   policy (**AC1, AC3, AC7**).
-- [ ] **T11 — Login / logout.** Verify credentials; establish/clear session (**AC2**).
+- [x] **T11 — Login / logout.** Verify credentials; establish/clear session (**AC2**).
 - [x] **T12 — Scheduler.** `EventStore` port + `PgEventStore` (schedule; atomic `claim_due`
   pending→processing with `FOR UPDATE SKIP LOCKED`, `(due_at,seq)` order — P11; `mark_done`).
   `process_due` use-case processes claimed events exactly once. `Scheduler::run` background poll loop.
@@ -87,8 +87,8 @@ and verify in one sitting. AC references point back to `spec.md`.
   for workspace/layering, the event scheduler, and auth/sessions.
 - [x] **T21 — End-user docs.** `docs/manual/` index + `getting-started.md` (register, confirm if
   enabled, log in, view your starting village).
-- [ ] **T22 — Review & accept.** Run the `eperica-reviewer` agent on `git diff main...HEAD`; address
-  every MUST-FIX; re-review until verdict = **APPROVE**.
+- [x] **T22 — Review & accept.** Ran the `eperica-reviewer` brief on `git diff main...HEAD`; first pass
+  CHANGES REQUIRED (2 MUST-FIX), fixed and re-reviewed → **APPROVE** with all gates green.
 
 ## Done when
 

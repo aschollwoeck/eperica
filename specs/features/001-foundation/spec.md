@@ -1,6 +1,6 @@
 # Feature 001 — Foundation & Skeleton
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** none (this is the first slice)
 **Roadmap:** M1 · slice 001 · GDD §3, §13
 

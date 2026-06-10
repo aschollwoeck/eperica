@@ -1,6 +1,6 @@
 # Feature 001 — Foundation & Skeleton — Technical Plan
 
-**Status:** Reviewed
+**Status:** Verified
 **Spec:** ./spec.md
 
 ## Stack decision (settled here — this is the first slice that writes code)

@@ -89,7 +89,7 @@ fn validate(cmd: &RegisterCommand) -> Result<(), RegisterError> {
             "a valid email address is required".to_owned(),
         ));
     }
-    if cmd.password.len() < MIN_PASSWORD_LEN {
+    if cmd.password.chars().count() < MIN_PASSWORD_LEN {
         return Err(RegisterError::Invalid(format!(
             "password must be at least {MIN_PASSWORD_LEN} characters"
         )));
