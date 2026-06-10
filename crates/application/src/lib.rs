@@ -7,6 +7,7 @@
 pub mod auth;
 pub mod ports;
 pub mod register;
+pub mod scheduler;
 
 #[cfg(test)]
 mod tests;
@@ -15,5 +16,8 @@ mod tests;
 pub use eperica_domain as domain;
 
 pub use auth::{LoginError, authenticate};
-pub use ports::{AccountRepository, NewUser, PasswordHasher, RepoError, UserRecord};
+pub use ports::{
+    AccountRepository, DueEvent, EventStore, NewUser, PasswordHasher, RepoError, UserRecord,
+};
 pub use register::{RegisterCommand, RegisterError, register};
+pub use scheduler::process_due;

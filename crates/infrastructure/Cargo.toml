@@ -16,11 +16,12 @@ sqlx = { version = "0.8", default-features = false, features = [
     "macros",
     "uuid",
 ] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 dotenvy = "0.15"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 async-trait = "0.1"
+tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 argon2 = { version = "0.5", features = ["std"] }

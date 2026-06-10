@@ -48,9 +48,11 @@ and verify in one sitting. AC references point back to `spec.md`.
   and their starting village server-side at a unique in-bounds coordinate; honor `email_confirmed`
   policy (**AC1, AC3, AC7**).
 - [ ] **T11 — Login / logout.** Verify credentials; establish/clear session (**AC2**).
-- [ ] **T12 — Scheduler.** Load pending events on startup; sleep-until-due loop; process exactly once
-  (transactional status flip, idempotent); `LISTEN/NOTIFY` to wake early; deterministic `(due_at,seq)`
-  ordering (**AC6**, P11).
+- [x] **T12 — Scheduler.** `EventStore` port + `PgEventStore` (schedule; atomic `claim_due`
+  pending→processing with `FOR UPDATE SKIP LOCKED`, `(due_at,seq)` order — P11; `mark_done`).
+  `process_due` use-case processes claimed events exactly once. `Scheduler::run` background poll loop.
+  Integration test covers **AC6** (once-only) + persistence. *Plan deviation (P8): short-poll loop now;
+  sleep-until-due + LISTEN/NOTIFY is a later refinement.*
 - [ ] **T13 — Authorization.** Role helpers mapping the spec's role table (Visitor/Player/Administrator)
   to server-side checks (**AC7**).
 

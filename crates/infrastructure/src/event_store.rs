@@ -1,0 +1,185 @@
+//! PostgreSQL event store and the background scheduler (P1 due-event engine).
+
+use async_trait::async_trait;
+use eperica_application::{DueEvent, EventStore, RepoError, process_due};
+use eperica_domain::{EventKind, Timestamp};
+use sqlx::{PgPool, Row};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
+
+/// The current wall-clock time as a domain [`Timestamp`] (Unix-ms, UTC).
+pub fn now() -> Timestamp {
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0);
+    Timestamp(ms)
+}
+
+fn backend(e: sqlx::Error) -> RepoError {
+    RepoError::Backend(e.to_string())
+}
+
+fn kind_str(kind: EventKind) -> &'static str {
+    match kind {
+        EventKind::Heartbeat => "heartbeat",
+    }
+}
+
+fn parse_kind(s: &str) -> Result<EventKind, RepoError> {
+    match s {
+        "heartbeat" => Ok(EventKind::Heartbeat),
+        other => Err(RepoError::Backend(format!("unknown event kind: {other}"))),
+    }
+}
+
+/// SQLx-backed [`EventStore`].
+#[derive(Debug, Clone)]
+pub struct PgEventStore {
+    pool: PgPool,
+}
+
+impl PgEventStore {
+    /// Create an event store over the given pool.
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl EventStore for PgEventStore {
+    async fn schedule(&self, kind: EventKind, due_at: Timestamp) -> Result<(), RepoError> {
+        sqlx::query(
+            "INSERT INTO scheduled_events (id, kind, due_at, status) \
+             VALUES ($1, $2, to_timestamp($3::double precision / 1000.0), 'pending')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(kind_str(kind))
+        .bind(due_at.0 as f64)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn claim_due(&self, now: Timestamp, limit: i64) -> Result<Vec<DueEvent>, RepoError> {
+        let rows = sqlx::query(
+            "UPDATE scheduled_events SET status = 'processing' \
+             WHERE id IN ( \
+                 SELECT id FROM scheduled_events \
+                 WHERE status = 'pending' AND due_at <= to_timestamp($1::double precision / 1000.0) \
+                 ORDER BY due_at, seq \
+                 LIMIT $2 \
+                 FOR UPDATE SKIP LOCKED \
+             ) \
+             RETURNING id, kind, (EXTRACT(EPOCH FROM due_at) * 1000)::bigint AS due_ms",
+        )
+        .bind(now.0 as f64)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let mut events = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let id: Uuid = r.try_get("id").map_err(backend)?;
+            let kind: String = r.try_get("kind").map_err(backend)?;
+            let due_ms: i64 = r.try_get("due_ms").map_err(backend)?;
+            events.push(DueEvent {
+                id: id.as_u128(),
+                kind: parse_kind(&kind)?,
+                due_at: Timestamp(due_ms),
+            });
+        }
+        Ok(events)
+    }
+
+    async fn mark_done(&self, id: u128) -> Result<(), RepoError> {
+        sqlx::query("UPDATE scheduled_events SET status = 'done' WHERE id = $1")
+            .bind(Uuid::from_u128(id))
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+}
+
+/// Background scheduler that processes due events. Slice 001 polls at a short interval; sleeping
+/// precisely until the next due event (and `LISTEN/NOTIFY` wake-ups) is a later refinement.
+#[derive(Debug, Clone)]
+pub struct Scheduler {
+    store: PgEventStore,
+    poll_interval: Duration,
+}
+
+impl Scheduler {
+    /// Create a scheduler over the given store with a default poll interval.
+    pub fn new(store: PgEventStore) -> Self {
+        Self {
+            store,
+            poll_interval: Duration::from_millis(200),
+        }
+    }
+
+    /// Run until `shutdown` flips to `true`, processing due events each tick.
+    pub async fn run(self, mut shutdown: tokio::sync::watch::Receiver<bool>) {
+        loop {
+            if *shutdown.borrow() {
+                break;
+            }
+            match process_due(&self.store, now(), 100).await {
+                Ok(n) if n > 0 => tracing::debug!(processed = n, "scheduler processed due events"),
+                Ok(_) => {}
+                Err(e) => tracing::error!(error = %e, "scheduler tick failed"),
+            }
+            tokio::select! {
+                () = tokio::time::sleep(self.poll_interval) => {}
+                _ = shutdown.changed() => {}
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn processes_due_events_once_and_leaves_future_pending() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping scheduler test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        sqlx::query("TRUNCATE scheduled_events")
+            .execute(&pool)
+            .await
+            .expect("truncate");
+
+        let store = PgEventStore::new(pool.clone());
+        let due_past = Timestamp(now().0 - 1000);
+        let due_future = Timestamp(now().0 + 3_600_000);
+        store
+            .schedule(EventKind::Heartbeat, due_past)
+            .await
+            .unwrap();
+        store
+            .schedule(EventKind::Heartbeat, due_future)
+            .await
+            .unwrap();
+
+        // AC6: the past event is processed exactly once; a second pass processes nothing more.
+        assert_eq!(process_due(&store, now(), 100).await.unwrap(), 1);
+        assert_eq!(process_due(&store, now(), 100).await.unwrap(), 0);
+
+        // The future event remains pending (persisted) — survives restarts (AC8 at the store level).
+        let pending: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM scheduled_events WHERE status = 'pending'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(pending, 1);
+    }
+}

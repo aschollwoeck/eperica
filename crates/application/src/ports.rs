@@ -4,7 +4,7 @@
 //! them here lets use-cases be written and tested against fakes, with no I/O dependency.
 
 use async_trait::async_trait;
-use eperica_domain::{PlayerId, StartingVillage, Village};
+use eperica_domain::{EventKind, PlayerId, StartingVillage, Timestamp, Village};
 
 /// Details for a new account to be created.
 #[derive(Debug, Clone)]
@@ -95,4 +95,39 @@ pub trait AccountRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn villages_of(&self, owner: PlayerId) -> Result<Vec<Village>, RepoError>;
+}
+
+/// A claimed, due event ready to be processed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DueEvent {
+    /// The event's identity (128-bit; mapped to a UUID by the infrastructure).
+    pub id: u128,
+    /// What should happen.
+    pub kind: EventKind,
+    /// When it became due (Unix-ms, UTC).
+    pub due_at: Timestamp,
+}
+
+/// Persistence and claiming of scheduled, due-timestamped events (P1).
+#[async_trait]
+pub trait EventStore: Send + Sync {
+    /// Persist a new pending event due at `due_at`.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn schedule(&self, kind: EventKind, due_at: Timestamp) -> Result<(), RepoError>;
+
+    /// Atomically claim up to `limit` due events (status `pending` → `processing`), nearest-due
+    /// first by `(due_at, seq)` so same-instant order is deterministic (P11). Claiming is exclusive
+    /// across workers (no event is processed twice).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn claim_due(&self, now: Timestamp, limit: i64) -> Result<Vec<DueEvent>, RepoError>;
+
+    /// Mark a claimed event as processed.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn mark_done(&self, id: u128) -> Result<(), RepoError>;
 }

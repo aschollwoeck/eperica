@@ -275,6 +275,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+ "tracing",
  "uuid",
 ]
 
