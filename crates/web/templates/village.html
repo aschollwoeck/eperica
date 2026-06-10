@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>{{ username }}'s village</h1>
+  <p class="muted">Location ({{ x }}, {{ y }})</p>
+
+  <h2>Resource fields</h2>
+  <ul class="resource-list">
+    <li><span class="res res--wood">Wood</span> &times; {{ wood }}</li>
+    <li><span class="res res--clay">Clay</span> &times; {{ clay }}</li>
+    <li><span class="res res--iron">Iron</span> &times; {{ iron }}</li>
+    <li><span class="res res--crop">Crop</span> &times; {{ crop }}</li>
+  </ul>
+
+  <h2>Buildings</h2>
+  <ul>
+    {% for building in buildings %}<li>{{ building }}</li>{% endfor %}
+  </ul>
+
+  <form method="post" action="/logout" class="actions">
+    <button class="btn btn--secondary" type="submit">Log out</button>
+  </form>
+</section>
+{% endblock %}

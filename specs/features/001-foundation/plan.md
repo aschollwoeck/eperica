@@ -52,9 +52,10 @@ SQLx (hexagonal style → DB is swappable, domain stays testable).
   scheduler re-reads pending events on startup (AC6, AC8).
 - **P11 (performance & timing):** Rust/Axum low-latency path; `timestamptz` at µs resolution; scheduler
   fires with minimal jitter (sleep-until-due + `LISTEN/NOTIFY` to wake early when a sooner event is
-  inserted); deterministic ordering by `(due_at, seq)`. **Latency budget for 001:** register/login/
-  view-village handlers complete **< 50 ms server-side** under dev load; a smoke test asserts it.
-  (Real load testing → slice 023.)
+  inserted); deterministic ordering by `(due_at, seq)`. **Latency budget for 001:** read/interactive
+  handlers (e.g. `GET /village`) complete **< 50 ms** under dev load; a smoke test asserts it. Auth
+  POSTs (`register`/`login`) are intentionally dominated by argon2 hashing and are exempt (security,
+  not a hot game path). (Real load testing → slice 023.)
 - **P6 (seeded randomness):** not exercised in 001; coordinate assignment uses a deterministic
   placeholder strategy (sequential/spiral), with seeded map generation arriving in 006.
 

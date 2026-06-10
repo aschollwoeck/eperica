@@ -53,28 +53,32 @@ and verify in one sitting. AC references point back to `spec.md`.
   `process_due` use-case processes claimed events exactly once. `Scheduler::run` background poll loop.
   Integration test covers **AC6** (once-only) + persistence. *Plan deviation (P8): short-poll loop now;
   sleep-until-due + LISTEN/NOTIFY is a later refinement.*
-- [ ] **T13 — Authorization.** Role helpers mapping the spec's role table (Visitor/Player/Administrator)
-  to server-side checks (**AC7**).
+- [x] **T13 — Authorization.** `AuthUser` extractor enforces Player-only access server-side (Visitors
+  redirected to `/login`); world config is Administrator-set via env, with no Player-reachable endpoint
+  (**AC7**, roles.md).
 
 ## Web (`web` — Axum + Askama)
 
-- [ ] **T14 — App skeleton.** Axum router, `tower-sessions` with the Postgres store (stateless tier,
-  P5), tracing middleware (per-request latency spans).
-- [ ] **T15 — Auth extractor + guard.** Resolve session → current `Player`; reject unauthorized access
-  (Visitor→`/village` blocked; world-config endpoints Administrator-only) (**AC7**).
-- [ ] **T16 — Routes + templates + CSS foundation.** `GET /`, `GET/POST /register`, `GET/POST /login`,
-  `POST /logout`, `GET /village`; Askama `base/index/register/login/village` templates (**AC1, AC2,
-  AC3** view). Establish the front-end foundation per `specs/ui-style-guide.md`: token stylesheet,
-  base/reset, app-shell skeleton, and button/field components.
+- [x] **T14 — App skeleton.** Axum router (`lib::router`) + `AppState` (DI via `Arc`), TraceLayer
+  (per-request spans), graceful shutdown, scheduler spawned. *Sessions use encrypted cookies
+  (`PrivateCookieJar`) — stateless (P5), no session store; plan deviation from tower-sessions (P8).*
+- [x] **T15 — Auth extractor + guard.** `AuthUser` reads the encrypted cookie → `PlayerId`; missing/
+  invalid → redirect to `/login`. Login/register set the cookie; logout clears it (**AC7**).
+- [x] **T16 — Routes + templates + CSS foundation.** `GET /`, `GET/POST /register`, `GET/POST /login`,
+  `POST /logout`, `GET /village`, `GET /static/app.css`; Askama `base/index/register/login/village`
+  templates (**AC1, AC2, AC3** view). Front-end foundation per `specs/ui-style-guide.md`: token
+  stylesheet, base, app shell, button/field/alert/resource components.
 
 ## Verification
 
-- [ ] **T17 — Test harness.** Ephemeral Postgres for integration tests (`sqlx::test` or testcontainers).
-- [ ] **T18 — Integration tests.** AC1 (register + rejections), AC2 (login/logout), AC3 (one village,
-  in-bounds, unique), AC6 (event fires once + survives a simulated scheduler restart), AC7 (authz
-  negatives), **AC8** (persist → restart → same account & village).
-- [ ] **T19 — P11 smoke test.** Assert register/login/view handlers complete **< 50 ms** server-side
-  under dev load (tracing spans).
+- [x] **T17 — Test harness.** `spawn()` boots the real `router` on an ephemeral port over the live DB;
+  cookie-aware `reqwest` client; tests skip without `DATABASE_URL`. (Spawned-app + reqwest rather than
+  `sqlx::test`.)
+- [x] **T18 — Integration tests.** End-to-end: register→village (AC1/AC3/AC4), login + bad password
+  (AC2), `/village` unauthenticated → `/login` (AC7), duplicate rejected (AC1), and persist → fresh
+  instance → same account & village (**AC8**). AC6 covered by the scheduler test (T12).
+- [x] **T19 — P11 smoke test.** Asserts the read path `GET /village` completes **< 50 ms** (auth POSTs
+  exempt — argon2 by design).
 
 ## Documentation & acceptance
 
