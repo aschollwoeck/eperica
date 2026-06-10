@@ -1,6 +1,6 @@
 # Feature 002 — Resource production
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 001 (foundation, village with resource fields)
 **Roadmap:** M1 · slice 002 · GDD §2, §3.1
 

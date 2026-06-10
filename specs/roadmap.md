@@ -48,7 +48,7 @@ timed construction. Proves the entire architecture end-to-end on the smallest po
 | #   | Slice | Depends on | Delivers / proves | GDD |
 |-----|-------|-----------|-------------------|-----|
 | 001 ✅ | **Foundation & skeleton** — solution + layers (Domain/Application/Infrastructure/Web), DB, EF, auth (register/login), a world with **configurable speed** (P7), the **due-event scheduler** skeleton (P1), test harness/CI. A player can register, log in, and see one starting village. | — | The architecture itself: layering (P3), stateless web + DB-as-truth (P5), speed config (P7), the event engine (P1). **Stack is chosen here.** | §3, §13 |
-| 002 | **Resource production (lazy accrual)** — 18 resource fields, production rate from field levels × speed, **compute-on-read** (`amount + rate × elapsed`), warehouse/granary caps + overflow, base crop upkeep. | 001 | P1 continuous-time model; reproducible state (P2). | §2, §3.1 |
+| 002 ✅ | **Resource production (lazy accrual)** — 18 resource fields, production rate from field levels × speed, **compute-on-read** (`amount + rate × elapsed`), warehouse/granary caps + overflow, base crop upkeep. | 001 | P1 continuous-time model; reproducible state (P2). | §2, §3.1 |
 | 003 | **Construction & build queue** — upgrade fields, build/upgrade center buildings, costs + prerequisites, **build time as due-events**, Main-Building speed-up, demolition. | 002 | P1 discrete events end-to-end; the first real queue. | §4 |
 
 ▶ **First playable** after 003: a single-player economy that runs while you're away.

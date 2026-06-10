@@ -36,7 +36,7 @@ Ordered for dependency and testability (pure domain first). Integer units (`i64`
   lazy-accrual economy; update `CLAUDE.md` if commands change (not expected).
 - [x] **T9 — End-user docs.** `docs/manual/resources.md` — how resources are produced, stored, and the
   crop/upkeep idea; link from the manual index.
-- [ ] **T10 — Review & accept.** Run the `eperica-reviewer` brief on the slice diff; fix until APPROVE;
+- [x] **T10 — Review & accept.** Run the `eperica-reviewer` brief on the slice diff; fix until APPROVE;
   open PR.
 
 ## Done when

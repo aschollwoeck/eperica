@@ -1,6 +1,6 @@
 # Feature 002 — Resource production — Technical Plan
 
-**Status:** Reviewed
+**Status:** Verified
 **Spec:** ./spec.md
 
 Builds on slice 001's stack and layering (Rust workspace; pure `domain`; `application` ports;
