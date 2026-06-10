@@ -1,6 +1,6 @@
 # Feature 003 — Construction & build queue
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 001 (village, fields, buildings), 002 (resources, spending base)
 **Roadmap:** M1 · slice 003 · GDD §4 — reaches the **First playable** milestone.
 

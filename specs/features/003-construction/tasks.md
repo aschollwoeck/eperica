@@ -42,7 +42,7 @@ Ordered for dependency and testability (pure domain first).
   state; update `CLAUDE.md` if needed.
 - [x] **T10 — End-user docs.** `docs/manual/buildings.md` (upgrade fields/buildings, queue, costs);
   link from the index.
-- [ ] **T11 — Review & accept.** Run `eperica-reviewer` on the slice diff; fix until APPROVE; open PR.
+- [x] **T11 — Review & accept.** Run `eperica-reviewer` on the slice diff; fix until APPROVE; open PR.
 
 ## Done when
 

@@ -1,6 +1,6 @@
 # Feature 003 — Construction & build queue — Technical Plan
 
-**Status:** Reviewed
+**Status:** Verified
 **Spec:** ./spec.md
 
 Builds on slices 001/002. No new external deps expected. This is the first slice where the **due-event
