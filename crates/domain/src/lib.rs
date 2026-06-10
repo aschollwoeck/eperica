@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod building;
+pub mod construction;
 pub mod economy;
 pub mod error;
 pub mod event;
@@ -14,6 +15,9 @@ pub mod village;
 pub mod world;
 
 pub use building::BuildingKind;
+pub use construction::{
+    BuildRules, BuildTarget, LevelSpec, build_time_secs, can_afford, debit, prerequisites_met,
+};
 pub use economy::{
     Capacities, Economy, EconomyRules, ProductionRates, ResourceAmounts, accrue, capacities,
     compute_economy, population, production_rates,

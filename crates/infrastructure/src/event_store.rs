@@ -1,7 +1,8 @@
 //! PostgreSQL event store and the background scheduler (P1 due-event engine).
 
+use crate::repo::PgAccountRepository;
 use async_trait::async_trait;
-use eperica_application::{DueEvent, EventStore, RepoError, process_due};
+use eperica_application::{DueEvent, EventStore, RepoError, process_due, process_due_builds};
 use eperica_domain::{EventKind, Timestamp};
 use sqlx::{PgPool, Row};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -122,25 +123,32 @@ impl EventStore for PgEventStore {
 #[derive(Debug, Clone)]
 pub struct Scheduler {
     store: PgEventStore,
+    builds: PgAccountRepository,
     poll_interval: Duration,
 }
 
 impl Scheduler {
-    /// Create a scheduler over the given store with a default poll interval.
-    pub fn new(store: PgEventStore) -> Self {
+    /// Create a scheduler over the event store and build repository with a default poll interval.
+    pub fn new(store: PgEventStore, builds: PgAccountRepository) -> Self {
         Self {
             store,
+            builds,
             poll_interval: Duration::from_millis(200),
         }
     }
 
-    /// Run until `shutdown` flips to `true`, processing due events each tick.
+    /// Run until `shutdown` flips to `true`, processing due events and due builds each tick.
     pub async fn run(self, mut shutdown: tokio::sync::watch::Receiver<bool>) {
-        // Recover any events left mid-flight by a previous crash before starting the loop.
+        // Recover any events/builds left mid-flight by a previous crash before starting the loop.
         match self.store.requeue_orphaned().await {
             Ok(n) if n > 0 => tracing::warn!(requeued = n, "requeued orphaned events at startup"),
             Ok(_) => {}
             Err(e) => tracing::error!(error = %e, "failed to requeue orphaned events"),
+        }
+        match self.builds.requeue_orphaned_builds().await {
+            Ok(n) if n > 0 => tracing::warn!(requeued = n, "requeued orphaned builds at startup"),
+            Ok(_) => {}
+            Err(e) => tracing::error!(error = %e, "failed to requeue orphaned builds"),
         }
         loop {
             if *shutdown.borrow() {
@@ -150,6 +158,11 @@ impl Scheduler {
                 Ok(n) if n > 0 => tracing::debug!(processed = n, "scheduler processed due events"),
                 Ok(_) => {}
                 Err(e) => tracing::error!(error = %e, "scheduler tick failed"),
+            }
+            match process_due_builds(&self.builds, now(), 100).await {
+                Ok(n) if n > 0 => tracing::debug!(applied = n, "scheduler applied due builds"),
+                Ok(_) => {}
+                Err(e) => tracing::error!(error = %e, "scheduler build tick failed"),
             }
             tokio::select! {
                 () = tokio::time::sleep(self.poll_interval) => {}
@@ -178,7 +191,8 @@ mod tests {
             .expect("truncate");
 
         let store = PgEventStore::new(pool.clone());
-        let due_past = Timestamp(now().0 - 1000);
+        // Wide margins so a jittery dev/container clock can't flip "past"/"future".
+        let due_past = Timestamp(now().0 - 600_000);
         let due_future = Timestamp(now().0 + 3_600_000);
         store
             .schedule(EventKind::Heartbeat, due_past)

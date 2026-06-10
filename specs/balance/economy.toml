@@ -12,11 +12,13 @@ crop = [5, 9, 15, 22, 33, 50, 70, 100, 145, 210, 280]
 field = [0, 1, 1, 2, 2, 3, 4, 5, 7, 9, 11]
 main_building = [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12]
 rally_point = [0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4]
+warehouse = [0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4]
+granary = [0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4]
 
-# Base storage before any Warehouse/Granary is built.
+# Storage capacity by building level (index 0 = base, i.e. no Warehouse/Granary built).
 [capacity]
-base_warehouse = 800
-base_granary = 800
+warehouse = [800, 1200, 1700, 2300, 3100, 4000, 5000, 6300, 8000, 10000, 12000]
+granary = [800, 1200, 1700, 2300, 3100, 4000, 5000, 6300, 8000, 10000, 12000]
 
 # Resources a new village starts with.
 [starting_amounts]

@@ -5,10 +5,11 @@
 //! types, keeping the domain itself free of serialization concerns.
 
 use eperica_domain::{
-    BuildingKind, BuildingSlot, DomainError, EconomyRules, ResourceAmounts, ResourceField,
-    ResourceKind, StartingVillage,
+    BuildRules, BuildingKind, BuildingSlot, DomainError, EconomyRules, LevelSpec, ResourceAmounts,
+    ResourceField, ResourceKind, StartingVillage,
 };
 use serde::Deserialize;
+use std::collections::HashMap;
 
 /// Embedded starting-village balance data.
 const STARTING_VILLAGE_TOML: &str = include_str!(concat!(
@@ -20,6 +21,12 @@ const STARTING_VILLAGE_TOML: &str = include_str!(concat!(
 const ECONOMY_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../specs/balance/economy.toml"
+));
+
+/// Embedded construction balance data.
+const CONSTRUCTION_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/construction.toml"
 ));
 
 /// Errors that can occur while loading balance data.
@@ -131,12 +138,14 @@ struct PopulationDto {
     field: Vec<i64>,
     main_building: Vec<i64>,
     rally_point: Vec<i64>,
+    warehouse: Vec<i64>,
+    granary: Vec<i64>,
 }
 
 #[derive(Deserialize)]
 struct CapacityDto {
-    base_warehouse: i64,
-    base_granary: i64,
+    warehouse: Vec<i64>,
+    granary: Vec<i64>,
 }
 
 #[derive(Deserialize)]
@@ -161,8 +170,10 @@ pub fn economy_rules() -> Result<EconomyRules, BalanceError> {
         field_population_per_level: dto.population.field,
         main_building_population_per_level: dto.population.main_building,
         rally_point_population_per_level: dto.population.rally_point,
-        base_warehouse: dto.capacity.base_warehouse,
-        base_granary: dto.capacity.base_granary,
+        warehouse_population_per_level: dto.population.warehouse,
+        granary_population_per_level: dto.population.granary,
+        warehouse_capacity_per_level: dto.capacity.warehouse,
+        granary_capacity_per_level: dto.capacity.granary,
         starting_amounts: ResourceAmounts {
             wood: dto.starting_amounts.wood,
             clay: dto.starting_amounts.clay,
@@ -172,10 +183,102 @@ pub fn economy_rules() -> Result<EconomyRules, BalanceError> {
     })
 }
 
+#[derive(Deserialize)]
+struct ConstructionDto {
+    speed: SpeedDto,
+    field: LevelSpecDto,
+    buildings: BuildingsDto,
+}
+
+#[derive(Deserialize)]
+struct SpeedDto {
+    main_building_factor: Vec<f64>,
+}
+
+#[derive(Deserialize)]
+struct CostDto {
+    wood: Vec<i64>,
+    clay: Vec<i64>,
+    iron: Vec<i64>,
+    crop: Vec<i64>,
+}
+
+#[derive(Deserialize)]
+struct PrereqDto {
+    building: String,
+    level: u8,
+}
+
+#[derive(Deserialize)]
+struct LevelSpecDto {
+    time_secs: Vec<i64>,
+    cost: CostDto,
+    #[serde(default)]
+    prerequisites: Vec<PrereqDto>,
+}
+
+#[derive(Deserialize)]
+struct BuildingsDto {
+    main_building: LevelSpecDto,
+    rally_point: LevelSpecDto,
+    warehouse: LevelSpecDto,
+    granary: LevelSpecDto,
+}
+
+fn level_spec(dto: &LevelSpecDto) -> LevelSpec {
+    let cost_per_level = (0..dto.time_secs.len())
+        .map(|i| ResourceAmounts {
+            wood: dto.cost.wood.get(i).copied().unwrap_or(0),
+            clay: dto.cost.clay.get(i).copied().unwrap_or(0),
+            iron: dto.cost.iron.get(i).copied().unwrap_or(0),
+            crop: dto.cost.crop.get(i).copied().unwrap_or(0),
+        })
+        .collect();
+    LevelSpec {
+        cost_per_level,
+        time_secs_per_level: dto.time_secs.clone(),
+    }
+}
+
+fn prereqs(dto: &LevelSpecDto) -> Result<Vec<(BuildingKind, u8)>, BalanceError> {
+    dto.prerequisites
+        .iter()
+        .map(|p| Ok((parse_building(&p.building)?, p.level)))
+        .collect()
+}
+
+/// Load construction rules (costs, times, MB speed factors, prerequisites) from balance data.
+///
+/// # Errors
+/// Returns [`BalanceError`] if the data cannot be parsed or names an unknown building.
+pub fn build_rules() -> Result<BuildRules, BalanceError> {
+    let dto: ConstructionDto = toml::from_str(CONSTRUCTION_TOML)?;
+    let mut buildings = HashMap::new();
+    let mut prerequisites = HashMap::new();
+    for (kind, spec_dto) in [
+        (BuildingKind::MainBuilding, &dto.buildings.main_building),
+        (BuildingKind::RallyPoint, &dto.buildings.rally_point),
+        (BuildingKind::Warehouse, &dto.buildings.warehouse),
+        (BuildingKind::Granary, &dto.buildings.granary),
+    ] {
+        buildings.insert(kind, level_spec(spec_dto));
+        let pr = prereqs(spec_dto)?;
+        if !pr.is_empty() {
+            prerequisites.insert(kind, pr);
+        }
+    }
+    Ok(BuildRules {
+        field: level_spec(&dto.field),
+        buildings,
+        prerequisites,
+        main_building_factor_per_level: dto.speed.main_building_factor,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eperica_domain::{GameSpeed, production_rates};
+    use eperica_domain::{BuildTarget, GameSpeed, production_rates};
 
     #[test]
     fn loads_balanced_starting_village() {
@@ -208,5 +311,23 @@ mod tests {
         assert!(rates.clay > 0);
         assert!(rates.iron > 0);
         assert!(rates.crop_net > 0, "net crop was {}", rates.crop_net);
+    }
+
+    #[test]
+    fn loads_construction_rules() {
+        let r = build_rules().expect("build rules");
+        let field = BuildTarget::Field { slot: 0 };
+        assert_eq!(r.max_level(field), 10);
+        assert!(r.cost(field, 0).is_some());
+        assert!(r.cost(field, 10).is_none()); // at max
+        assert_eq!(
+            r.prerequisites(BuildingKind::Warehouse),
+            &[(BuildingKind::MainBuilding, 1)]
+        );
+        let warehouse = BuildTarget::Building {
+            slot: 0,
+            kind: BuildingKind::Warehouse,
+        };
+        assert!(r.cost(warehouse, 0).is_some());
     }
 }

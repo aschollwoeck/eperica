@@ -43,6 +43,9 @@ mod tests {
             crop_rate,
             warehouse: 800,
             granary: 800,
+            active: None,
+            fields: Vec::new(),
+            buildings: Vec::new(),
         }
     }
 
@@ -53,6 +56,38 @@ mod tests {
         assert!(village(0).render().unwrap().contains("starving"));
         assert!(!village(5).render().unwrap().contains("starving"));
     }
+}
+
+/// A row in the build UI: a field or building, its level, next-level cost, and orderability.
+pub struct BuildRow {
+    /// `"field"` or `"building"` (the POST `table` value).
+    pub table: &'static str,
+    /// Slot number (the POST `slot` value).
+    pub slot: u8,
+    /// Building kind id for the POST `kind` value (empty for fields).
+    pub kind: &'static str,
+    /// Display label.
+    pub label: String,
+    /// Current level (0 = not built, for constructable buildings).
+    pub level: u8,
+    pub cost_wood: i64,
+    pub cost_clay: i64,
+    pub cost_iron: i64,
+    pub cost_crop: i64,
+    /// At max level (no further upgrade).
+    pub at_max: bool,
+    /// Whether an order can be placed now (affordable, not maxed, none active).
+    pub can_order: bool,
+}
+
+/// The active build, for display + countdown.
+pub struct ActiveView {
+    /// What is building.
+    pub label: String,
+    /// The level it reaches.
+    pub target_level: u8,
+    /// Completion time (Unix-ms UTC), for the client-side countdown.
+    pub complete_ms: i64,
 }
 
 #[derive(Template)]
@@ -77,4 +112,10 @@ pub struct VillageTemplate {
     /// Storage capacities.
     pub warehouse: i64,
     pub granary: i64,
+    /// The active build order, if any.
+    pub active: Option<ActiveView>,
+    /// Resource-field build rows.
+    pub fields: Vec<BuildRow>,
+    /// Building build rows.
+    pub buildings: Vec<BuildRow>,
 }

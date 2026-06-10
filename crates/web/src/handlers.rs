@@ -2,8 +2,10 @@
 
 use crate::auth::{AuthUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
-use crate::templates::StyleGuideTemplate;
-use crate::templates::{IndexTemplate, LoginTemplate, RegisterTemplate, VillageTemplate};
+use crate::templates::{
+    ActiveView, BuildRow, IndexTemplate, LoginTemplate, RegisterTemplate, StyleGuideTemplate,
+    VillageTemplate,
+};
 use askama::Template;
 use axum::Form;
 use axum::extract::State;
@@ -11,11 +13,71 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
-    AccountRepository, LoginError, RegisterCommand, RegisterError, authenticate, load_economy,
-    register,
+    AccountRepository, BuildRepository, LoginError, RegisterCommand, RegisterError, authenticate,
+    load_economy, order_build, register,
+};
+use eperica_domain::{
+    BuildTarget, BuildingKind, ResourceAmounts, ResourceKind, Village, can_afford,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
+
+fn resource_label(kind: ResourceKind) -> &'static str {
+    match kind {
+        ResourceKind::Wood => "Wood",
+        ResourceKind::Clay => "Clay",
+        ResourceKind::Iron => "Iron",
+        ResourceKind::Crop => "Crop",
+    }
+}
+
+fn building_label(kind: BuildingKind) -> &'static str {
+    match kind {
+        BuildingKind::MainBuilding => "Main Building",
+        BuildingKind::RallyPoint => "Rally Point",
+        BuildingKind::Warehouse => "Warehouse",
+        BuildingKind::Granary => "Granary",
+    }
+}
+
+fn building_kind_id(kind: BuildingKind) -> &'static str {
+    match kind {
+        BuildingKind::MainBuilding => "main_building",
+        BuildingKind::RallyPoint => "rally_point",
+        BuildingKind::Warehouse => "warehouse",
+        BuildingKind::Granary => "granary",
+    }
+}
+
+/// Fixed center slot per building kind (founding places Main Building/Rally Point at 0/1).
+fn building_slot(kind: BuildingKind) -> u8 {
+    match kind {
+        BuildingKind::MainBuilding => 0,
+        BuildingKind::RallyPoint => 1,
+        BuildingKind::Warehouse => 2,
+        BuildingKind::Granary => 3,
+    }
+}
+
+fn parse_building_kind(s: Option<&str>) -> Option<BuildingKind> {
+    match s {
+        Some("main_building") => Some(BuildingKind::MainBuilding),
+        Some("rally_point") => Some(BuildingKind::RallyPoint),
+        Some("warehouse") => Some(BuildingKind::Warehouse),
+        Some("granary") => Some(BuildingKind::Granary),
+        _ => None,
+    }
+}
+
+fn target_label(village: &Village, target: BuildTarget) -> String {
+    match target {
+        BuildTarget::Field { slot } => match village.fields.get(slot as usize) {
+            Some(f) => format!("{} field #{slot}", resource_label(f.kind)),
+            None => format!("field #{slot}"),
+        },
+        BuildTarget::Building { kind, .. } => building_label(kind).to_owned(),
+    }
+}
 
 /// Render a template to an HTML response (or 500 on failure).
 fn page<T: Template>(template: &T) -> Response {
@@ -178,14 +240,104 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         }
     };
 
+    let village = economy.village;
     let amounts = economy.economy.amounts;
     let rates = economy.economy.rates;
     let caps = economy.economy.capacities;
 
+    let active = match state.accounts.active_build(village.id).await {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::error!(error = %e, "active build lookup failed");
+            return server_error();
+        }
+    };
+    let has_active = active.is_some();
+    let build_rules = state.build_rules.as_ref();
+
+    let make_row = |table: &'static str,
+                    slot: u8,
+                    kind: &'static str,
+                    label: String,
+                    level: u8,
+                    target: BuildTarget|
+     -> BuildRow {
+        let cost = build_rules.cost(target, level);
+        let at_max = cost.is_none();
+        let can_order = !has_active && cost.is_some_and(|c| can_afford(amounts, c));
+        let c = cost.unwrap_or(ResourceAmounts {
+            wood: 0,
+            clay: 0,
+            iron: 0,
+            crop: 0,
+        });
+        BuildRow {
+            table,
+            slot,
+            kind,
+            label,
+            level,
+            cost_wood: c.wood,
+            cost_clay: c.clay,
+            cost_iron: c.iron,
+            cost_crop: c.crop,
+            at_max,
+            can_order,
+        }
+    };
+
+    let fields = village
+        .fields
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let slot = u8::try_from(i).unwrap_or(0);
+            make_row(
+                "field",
+                slot,
+                "",
+                format!("{} field #{slot}", resource_label(f.kind)),
+                f.level,
+                BuildTarget::Field { slot },
+            )
+        })
+        .collect();
+
+    let buildings = [
+        BuildingKind::MainBuilding,
+        BuildingKind::RallyPoint,
+        BuildingKind::Warehouse,
+        BuildingKind::Granary,
+    ]
+    .into_iter()
+    .map(|kind| {
+        let slot = building_slot(kind);
+        let level = village
+            .buildings
+            .iter()
+            .find(|b| b.kind == kind)
+            .map_or(0, |b| b.level);
+        make_row(
+            "building",
+            slot,
+            building_kind_id(kind),
+            building_label(kind).to_owned(),
+            level,
+            BuildTarget::Building { slot, kind },
+        )
+    })
+    .collect();
+
+    let active_view = active.map(|a| ActiveView {
+        label: target_label(&village, a.target),
+        target_level: a.target_level,
+        complete_ms: a.complete_at.0,
+    });
+
     page(&VillageTemplate {
         username: user.username,
-        x: economy.coordinate.x,
-        y: economy.coordinate.y,
+        x: village.coordinate.x,
+        y: village.coordinate.y,
         wood: amounts.wood,
         clay: amounts.clay,
         iron: amounts.iron,
@@ -196,5 +348,54 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         crop_rate: rates.crop_net,
         warehouse: caps.warehouse,
         granary: caps.granary,
+        active: active_view,
+        fields,
+        buildings,
     })
+}
+
+/// Build-order form fields.
+#[derive(Deserialize)]
+pub struct BuildForm {
+    table: String,
+    slot: u8,
+    #[serde(default)]
+    kind: Option<String>,
+}
+
+/// Order an upgrade/construction for the player's village, then return to it (Player only, P4).
+pub async fn build_submit(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<BuildForm>,
+) -> Response {
+    let target = match form.table.as_str() {
+        "field" => BuildTarget::Field { slot: form.slot },
+        "building" => match parse_building_kind(form.kind.as_deref()) {
+            // Slot is derived server-side from the kind — never trusted from the client (P4), so a
+            // crafted request cannot place a building in (clobber) another building's slot.
+            Some(kind) => BuildTarget::Building {
+                slot: building_slot(kind),
+                kind,
+            },
+            None => return Redirect::to("/village").into_response(),
+        },
+        _ => return Redirect::to("/village").into_response(),
+    };
+
+    if let Err(e) = order_build(
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.rules.as_ref(),
+        state.build_rules.as_ref(),
+        state.world.speed,
+        now(),
+        player,
+        target,
+    )
+    .await
+    {
+        tracing::warn!(error = %e, "build order rejected");
+    }
+    Redirect::to("/village").into_response()
 }

@@ -5,7 +5,8 @@
 
 use async_trait::async_trait;
 use eperica_domain::{
-    EventKind, PlayerId, ResourceAmounts, StartingVillage, Timestamp, Village, VillageId,
+    BuildTarget, EventKind, PlayerId, ResourceAmounts, StartingVillage, Timestamp, Village,
+    VillageId,
 };
 
 /// Details for a new account to be created.
@@ -142,4 +143,79 @@ pub trait EventStore: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn mark_done(&self, id: u128) -> Result<(), RepoError>;
+}
+
+/// A new build order to enqueue.
+#[derive(Debug, Clone, Copy)]
+pub struct NewBuildOrder {
+    /// What is being built/upgraded.
+    pub target: BuildTarget,
+    /// The level the target reaches on completion.
+    pub target_level: u8,
+    /// When the order completes (Unix-ms UTC).
+    pub complete_at: Timestamp,
+}
+
+/// A village's currently-active (pending) build order.
+#[derive(Debug, Clone, Copy)]
+pub struct ActiveBuild {
+    /// What is building.
+    pub target: BuildTarget,
+    /// The level it reaches.
+    pub target_level: u8,
+    /// Completion time (Unix-ms UTC).
+    pub complete_at: Timestamp,
+}
+
+/// A claimed, due build order ready to apply.
+#[derive(Debug, Clone, Copy)]
+pub struct DueBuild {
+    /// Order identity.
+    pub id: u128,
+    /// The village it belongs to.
+    pub village: VillageId,
+    /// What to apply.
+    pub target: BuildTarget,
+    /// The level to set.
+    pub target_level: u8,
+}
+
+/// Persistence for the build queue (due-timestamped orders, P1).
+#[async_trait]
+pub trait BuildRepository: Send + Sync {
+    /// Atomically settle the village's resources to `settled` (at `now`) and enqueue `order`. The
+    /// one-active-order rule is enforced by storage; a second active order returns
+    /// [`RepoError::Duplicate`].
+    ///
+    /// # Errors
+    /// [`RepoError`] on conflict or storage failure.
+    async fn start_build(
+        &self,
+        village: VillageId,
+        settled: ResourceAmounts,
+        now: Timestamp,
+        order: NewBuildOrder,
+    ) -> Result<(), RepoError>;
+
+    /// The village's active (pending) order, if any.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn active_build(&self, village: VillageId) -> Result<Option<ActiveBuild>, RepoError>;
+
+    /// Atomically claim up to `limit` due orders (`pending` → `processing`), nearest-due first.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn claim_due_builds(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueBuild>, RepoError>;
+
+    /// Apply a claimed order (set the target's level) and mark it done (idempotent).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn apply_build(&self, due: DueBuild) -> Result<(), RepoError>;
 }

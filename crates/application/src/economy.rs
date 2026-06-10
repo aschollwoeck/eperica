@@ -2,14 +2,14 @@
 
 use crate::ports::{AccountRepository, RepoError};
 use eperica_domain::{
-    Coordinate, Economy, EconomyRules, GameSpeed, PlayerId, Timestamp, compute_economy,
+    Economy, EconomyRules, GameSpeed, PlayerId, Timestamp, Village, compute_economy,
 };
 
-/// A village's computed economy plus the bits needed to display it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A village (its fields/buildings/levels) plus its computed economy.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VillageEconomy {
-    /// Where the village sits.
-    pub coordinate: Coordinate,
+    /// The village, including field/building levels and coordinate.
+    pub village: Village,
     /// Current amounts, rates, and capacities.
     pub economy: Economy,
 }
@@ -46,8 +46,5 @@ where
         rules,
         speed,
     );
-    Ok(Some(VillageEconomy {
-        coordinate: village.coordinate,
-        economy,
-    }))
+    Ok(Some(VillageEconomy { village, economy }))
 }
