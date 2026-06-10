@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod building;
+pub mod economy;
 pub mod error;
 pub mod event;
 pub mod resource;
@@ -13,6 +14,10 @@ pub mod village;
 pub mod world;
 
 pub use building::BuildingKind;
+pub use economy::{
+    Capacities, Economy, EconomyRules, ProductionRates, ResourceAmounts, accrue, capacities,
+    compute_economy, population, production_rates,
+};
 pub use error::DomainError;
 pub use event::{EventKind, ScheduledEvent, Timestamp};
 pub use resource::ResourceKind;

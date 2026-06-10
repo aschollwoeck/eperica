@@ -6,7 +6,8 @@
 use axum_extra::extract::cookie::Key;
 use eperica_domain::{GameSpeed, WorldConfig};
 use eperica_infrastructure::{
-    Argon2Hasher, PgAccountRepository, create_pool, ensure_world, run_migrations, starting_village,
+    Argon2Hasher, PgAccountRepository, create_pool, economy_rules, ensure_world, run_migrations,
+    starting_village,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -23,14 +24,17 @@ async fn spawn() -> Option<String> {
 
     let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
     let world_id = ensure_world(&pool, &config).await.expect("ensure world");
+    let rules = economy_rules().expect("economy rules");
     let state = AppState {
         accounts: Arc::new(PgAccountRepository::new(
             pool.clone(),
             world_id,
             config.radius,
+            rules.starting_amounts,
         )),
         hasher: Arc::new(Argon2Hasher),
         template: Arc::new(starting_village().unwrap()),
+        rules: Arc::new(rules),
         world: config,
         require_email_confirmation: false,
         cookie_key: Key::generate(),
@@ -97,8 +101,8 @@ async fn register_creates_village_and_view_is_fast() {
 
     let body = view.text().await.unwrap();
     assert!(body.contains(&user)); // AC3: owned by this player
-    assert!(body.contains("Wood")); // AC4: resource fields shown
-    assert!(body.contains("Buildings"));
+    assert!(body.contains("Wood")); // resources shown
+    assert!(body.contains("/h")); // production rate shown (AC7)
     assert!(
         elapsed.as_millis() < 50,
         "GET /village took {elapsed:?}, over the 50ms P11 budget"
@@ -258,6 +262,38 @@ async fn logout_ends_session() {
         after.headers().get(LOCATION).unwrap().to_str().unwrap(),
         "/login"
     );
+}
+
+#[tokio::test]
+async fn village_shows_economy() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    let user = unique("econ");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // AC7: the village shows current amount, capacity, and production per resource.
+    let body = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("Wood"));
+    assert!(body.contains("/ 800")); // base capacity from balance
+    assert!(body.contains("/h")); // production rate
 }
 
 #[tokio::test]

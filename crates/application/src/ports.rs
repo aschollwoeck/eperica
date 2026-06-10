@@ -4,7 +4,9 @@
 //! them here lets use-cases be written and tested against fakes, with no I/O dependency.
 
 use async_trait::async_trait;
-use eperica_domain::{EventKind, PlayerId, StartingVillage, Timestamp, Village};
+use eperica_domain::{
+    EventKind, PlayerId, ResourceAmounts, StartingVillage, Timestamp, Village, VillageId,
+};
 
 /// Details for a new account to be created.
 #[derive(Debug, Clone)]
@@ -95,6 +97,16 @@ pub trait AccountRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn villages_of(&self, owner: PlayerId) -> Result<Vec<Village>, RepoError>;
+
+    /// A village's stored resource amounts and the time they were last settled (Unix-ms UTC).
+    /// Resources accrue from this snapshot on read (P1); there is no background job.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn stored_resources(
+        &self,
+        village: VillageId,
+    ) -> Result<Option<(ResourceAmounts, Timestamp)>, RepoError>;
 }
 
 /// A claimed, due event ready to be processed.

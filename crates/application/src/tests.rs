@@ -5,7 +5,8 @@ use crate::ports::{AccountRepository, NewUser, PasswordHasher, RepoError, UserRe
 use crate::register::{RegisterCommand, RegisterError, register};
 use async_trait::async_trait;
 use eperica_domain::{
-    BuildingKind, BuildingSlot, PlayerId, ResourceField, ResourceKind, StartingVillage, Village,
+    BuildingKind, BuildingSlot, PlayerId, ResourceAmounts, ResourceField, ResourceKind,
+    StartingVillage, Timestamp, Village, VillageId,
 };
 use std::sync::Mutex;
 
@@ -89,6 +90,13 @@ impl AccountRepository for InMemoryAccounts {
 
     async fn villages_of(&self, _owner: PlayerId) -> Result<Vec<Village>, RepoError> {
         Ok(Vec::new())
+    }
+
+    async fn stored_resources(
+        &self,
+        _village: VillageId,
+    ) -> Result<Option<(ResourceAmounts, Timestamp)>, RepoError> {
+        Ok(None)
     }
 }
 
