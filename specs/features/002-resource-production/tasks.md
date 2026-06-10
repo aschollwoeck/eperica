@@ -23,11 +23,11 @@ Ordered for dependency and testability (pure domain first). Integer units (`i64`
 
 ## Application + web
 
-- [ ] **T5 — Economy use-case.** `load_economy(repo, rules, speed, now, owner) -> Option<VillageEconomy>`;
+- [x] **T5 — Economy use-case.** `load_economy(repo, rules, speed, now, owner) -> Option<VillageEconomy>`;
   thread `EconomyRules` + `GameSpeed` through `AppState`.
-- [ ] **T6 — Village view.** `/village` renders the economy: per resource `amount / capacity (+rate/h)`,
+- [x] **T6 — Village view.** `/village` renders the economy: per resource `amount / capacity (+rate/h)`,
   crop `/h` flagged when ≤ 0; resource color tokens + tabular figures (**AC7**, ui-style-guide).
-- [ ] **T7 — Integration test.** `GET /village` shows amount, capacity, and `/h` for each resource
+- [x] **T7 — Integration test.** `GET /village` shows amount, capacity, and `/h` for each resource
   (extends slice 001's HTTP suite).
 
 ## Documentation & acceptance

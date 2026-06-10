@@ -5,7 +5,7 @@
 use axum_extra::extract::cookie::Key;
 use eperica_infrastructure::{
     AppConfig, Argon2Hasher, PgAccountRepository, PgEventStore, Scheduler, create_pool,
-    ensure_world, run_migrations, starting_village,
+    economy_rules, ensure_world, run_migrations, starting_village,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -20,15 +20,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_pool(&config.database_url).await?;
     run_migrations(&pool).await?;
     let world_id = ensure_world(&pool, &config.world).await?;
+    let rules = economy_rules()?;
 
     let state = AppState {
         accounts: Arc::new(PgAccountRepository::new(
             pool.clone(),
             world_id,
             config.world.radius,
+            rules.starting_amounts,
         )),
         hasher: Arc::new(Argon2Hasher),
         template: Arc::new(starting_village()?),
+        rules: Arc::new(rules),
         world: config.world,
         require_email_confirmation: env_flag("REQUIRE_EMAIL_CONFIRMATION"),
         cookie_key: load_cookie_key(),

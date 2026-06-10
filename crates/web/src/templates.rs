@@ -33,14 +33,17 @@ pub struct VillageTemplate {
     pub x: i32,
     /// Village y coordinate.
     pub y: i32,
-    /// Count of wood fields.
-    pub wood: usize,
-    /// Count of clay fields.
-    pub clay: usize,
-    /// Count of iron fields.
-    pub iron: usize,
-    /// Count of crop fields.
-    pub crop: usize,
-    /// Building descriptions.
-    pub buildings: Vec<String>,
+    /// Current stored amounts.
+    pub wood: i64,
+    pub clay: i64,
+    pub iron: i64,
+    pub crop: i64,
+    /// Hourly production (crop is net of upkeep, may be negative).
+    pub wood_rate: i64,
+    pub clay_rate: i64,
+    pub iron_rate: i64,
+    pub crop_rate: i64,
+    /// Storage capacities.
+    pub warehouse: i64,
+    pub granary: i64,
 }

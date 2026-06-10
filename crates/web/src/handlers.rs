@@ -11,9 +11,10 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
-    AccountRepository, LoginError, RegisterCommand, RegisterError, authenticate, register,
+    AccountRepository, LoginError, RegisterCommand, RegisterError, authenticate, load_economy,
+    register,
 };
-use eperica_domain::ResourceKind;
+use eperica_infrastructure::now;
 use serde::Deserialize;
 
 /// Render a template to an HTML response (or 500 on failure).
@@ -146,7 +147,7 @@ pub async fn logout(jar: PrivateCookieJar) -> Response {
     (jar, Redirect::to("/")).into_response()
 }
 
-/// The player's starting village (Player only — AC3/AC4).
+/// The player's starting village with its live economy (Player only — AC3/AC4/AC7).
 pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
     let user = match state.accounts.find_user_by_id(player).await {
         Ok(Some(u)) => u,
@@ -156,33 +157,44 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
             return server_error();
         }
     };
-    let villages = match state.accounts.villages_of(player).await {
-        Ok(v) => v,
+
+    let economy = match load_economy(
+        state.accounts.as_ref(),
+        state.rules.as_ref(),
+        state.world.speed,
+        now(),
+        player,
+    )
+    .await
+    {
+        Ok(Some(e)) => e,
+        Ok(None) => {
+            tracing::error!(?player, "authenticated user has no village/economy");
+            return server_error();
+        }
         Err(e) => {
-            tracing::error!(error = %e, "lookup villages failed");
+            tracing::error!(error = %e, "load economy failed");
             return server_error();
         }
     };
-    let Some(v) = villages.into_iter().next() else {
-        tracing::error!(?player, "authenticated user has no village");
-        return server_error();
-    };
 
-    let count = |kind: ResourceKind| v.fields.iter().filter(|f| f.kind == kind).count();
-    let buildings = v
-        .buildings
-        .iter()
-        .map(|b| format!("{:?} (level {})", b.kind, b.level))
-        .collect();
+    let amounts = economy.economy.amounts;
+    let rates = economy.economy.rates;
+    let caps = economy.economy.capacities;
 
     page(&VillageTemplate {
         username: user.username,
-        x: v.coordinate.x,
-        y: v.coordinate.y,
-        wood: count(ResourceKind::Wood),
-        clay: count(ResourceKind::Clay),
-        iron: count(ResourceKind::Iron),
-        crop: count(ResourceKind::Crop),
-        buildings,
+        x: economy.coordinate.x,
+        y: economy.coordinate.y,
+        wood: amounts.wood,
+        clay: amounts.clay,
+        iron: amounts.iron,
+        crop: amounts.crop,
+        wood_rate: rates.wood,
+        clay_rate: rates.clay,
+        iron_rate: rates.iron,
+        crop_rate: rates.crop_net,
+        warehouse: caps.warehouse,
+        granary: caps.granary,
     })
 }

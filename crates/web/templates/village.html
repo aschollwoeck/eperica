@@ -4,17 +4,17 @@
   <h1>{{ username }}'s village</h1>
   <p class="muted">Location ({{ x }}, {{ y }})</p>
 
-  <h2>Resource fields</h2>
+  <h2>Resources</h2>
   <ul class="resource-list">
-    <li><span class="res res--wood">Wood</span> &times; {{ wood }}</li>
-    <li><span class="res res--clay">Clay</span> &times; {{ clay }}</li>
-    <li><span class="res res--iron">Iron</span> &times; {{ iron }}</li>
-    <li><span class="res res--crop">Crop</span> &times; {{ crop }}</li>
-  </ul>
-
-  <h2>Buildings</h2>
-  <ul>
-    {% for building in buildings %}<li>{{ building }}</li>{% endfor %}
+    <li class="res res--wood">Wood {{ wood }} / {{ warehouse }} (+{{ wood_rate }}/h)</li>
+    <li class="res res--clay">Clay {{ clay }} / {{ warehouse }} (+{{ clay_rate }}/h)</li>
+    <li class="res res--iron">Iron {{ iron }} / {{ warehouse }} (+{{ iron_rate }}/h)</li>
+    {% if crop_rate > 0 %}
+    <li class="res res--crop">Crop {{ crop }} / {{ granary }} (+{{ crop_rate }}/h)</li>
+    {% else %}
+    <li class="res res--crop">Crop {{ crop }} / {{ granary }}
+      <strong style="color:var(--c-warning)">({{ crop_rate }}/h — starving)</strong></li>
+    {% endif %}
   </ul>
 
   <form method="post" action="/logout" class="actions">
