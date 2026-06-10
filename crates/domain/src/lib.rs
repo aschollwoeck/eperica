@@ -5,11 +5,8 @@
 //! modules (resources, villages, combat, …) are introduced in later slices.
 #![forbid(unsafe_code)]
 
-#[cfg(test)]
-mod tests {
-    /// Smoke test proving the workspace compiles and the test harness runs.
-    #[test]
-    fn workspace_builds() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub mod error;
+pub mod world;
+
+pub use error::DomainError;
+pub use world::{Coordinate, GameSpeed, WorldConfig};

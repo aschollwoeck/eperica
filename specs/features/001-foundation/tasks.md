@@ -18,8 +18,9 @@ and verify in one sitting. AC references point back to `spec.md`.
 
 ## Domain (pure, test-first)
 
-- [ ] **T4 — Value objects.** `GameSpeed::scale`, `Coordinate::in_bounds`, `WorldConfig`; unit tests
-  for proportional scaling (**AC5**) and bounds (**AC3**).
+- [x] **T4 — Value objects.** `GameSpeed` (scale duration/rate), `Coordinate::in_bounds`,
+  `WorldConfig`, hand-rolled `DomainError` (zero deps); unit tests for proportional scaling (**AC5**)
+  and bounds (**AC3**).
 - [ ] **T5 — Balance data.** Introduce `specs/balance/` with starting field/building levels + the
   default 18-field layout; a loader the domain consumes (no hardcoded values — **AC4**).
 - [ ] **T6 — Village construction.** `Player`, `Village`, field/building slots, and
