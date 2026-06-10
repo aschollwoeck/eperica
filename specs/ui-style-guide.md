@@ -20,8 +20,9 @@ front-end conventions (CSS/Askama/htmx) for the Eperica web client.
    fonts); inline SVG icons; minimal JS. The UI must never be the latency bottleneck.
 2. **Legibility under density.** It's a numbers game (resources, timers, troop counts). Optimize for
    scannability: tabular figures, clear hierarchy, generous alignment.
-3. **Medieval, but restrained.** A parchment/wood/iron/gold palette evokes the setting without heavy
-   skeuomorphism that would cost performance or hurt readability.
+3. **Grim medieval, dark and warm.** A dark, near-black canvas lit by warm rust, bronze, and gold —
+   atmospheric and fire-lit, never the bright heraldic look — while staying legible and free of heavy
+   skeuomorphism. (Canonical theme: **"Ash & Rust"**.)
 4. **Server-authoritative, client-smooth (P1/P4/P11).** Countdowns and resource counters tick on the
    client from server-provided timestamps; the server remains the source of truth.
 5. **Accessible by default.** WCAG AA contrast, semantic HTML, keyboard navigability, reduced-motion
@@ -34,41 +35,44 @@ front-end conventions (CSS/Askama/htmx) for the Eperica web client.
 
 Declared once as CSS custom properties in `:root`. Never hardcode raw values in components.
 
+Theme-agnostic structure lives in `base.css`; these color tokens are defined by the active theme file
+(`static/theme-ash.css`, canonical).
+
 ### 2.1 Color — surfaces & ink
 | Token | Hex | Use |
 |-------|-----|-----|
-| `--c-parchment` | `#F4ECD8` | App background |
-| `--c-panel` | `#FBF6E9` | Cards/panels |
-| `--c-panel-alt` | `#E8DCC0` | Subtle panel/zebra rows |
-| `--c-ink` | `#2B2117` | Primary text |
-| `--c-ink-muted` | `#5A4D3B` | Secondary text |
-| `--c-border` | `#C9B68C` | Borders/dividers |
+| `--c-bg` | `#141110` | App background (near-black, warm) |
+| `--c-panel` | `#1D1714` | Cards/panels |
+| `--c-panel-alt` | `#261E19` | Raised/zebra surfaces, inputs, top bar |
+| `--c-ink` | `#E0D3C1` | Primary text (warm parchment) |
+| `--c-ink-muted` | `#9C8B78` | Secondary text |
+| `--c-border` | `#41342A` | Borders/dividers |
 
-### 2.2 Color — brand & structural
+### 2.2 Color — brand & accent
 | Token | Hex | Use |
 |-------|-----|-----|
-| `--c-wood` | `#6B4F2E` | Primary structural/brand brown |
-| `--c-wood-dark` | `#4A3620` | Headers, footers, nav |
-| `--c-iron` | `#3F4045` | Strong contrast surfaces |
-| `--c-gold` | `#C9A227` | Accents, medals, highlights |
+| `--c-accent` | `#C0623A` | Primary accent — buttons, active states (rust/copper) |
+| `--c-accent-ink` | `#141110` | Text/icons on accent surfaces |
+| `--c-gold` | `#C79350` | Brand wordmark, links, medals, highlights (bronze-gold) |
 
 ### 2.3 Color — resources (CANONICAL — identical everywhere a resource appears)
 | Token | Hex | Resource |
 |-------|-----|----------|
-| `--c-lumber` | `#3F7D3F` | Wood (lumber) |
-| `--c-clay` | `#B5652E` | Clay |
-| `--c-iron-res` | `#6C7A89` | Iron |
-| `--c-crop` | `#D8A92B` | Crop |
+| `--c-lumber` | `#98B266` | Wood (lumber) |
+| `--c-clay` | `#CE7A48` | Clay |
+| `--c-iron-res` | `#ABA08C` | Iron |
+| `--c-crop` | `#DDB14A` | Crop |
 
 ### 2.4 Color — semantic / state
 | Token | Hex | Meaning |
 |-------|-----|---------|
-| `--c-danger` | `#B33A3A` | Incoming attack, destructive actions, errors |
-| `--c-success` | `#2E7D4F` | Successful defense, confirmations |
-| `--c-warning` | `#C9772B` | Low/negative crop, cautions |
-| `--c-info` | `#3A6EA5` | Neutral information |
+| `--c-danger` | `#CB5A4C` | Incoming attack, destructive actions, errors |
+| `--c-success` | `#93AC5C` | Successful defense, confirmations |
+| `--c-warning` | `#D69640` | Low/negative crop, cautions |
 
-All text/background pairings must meet **WCAG AA (4.5:1)**; large text/UI elements **3:1** minimum.
+Resource and semantic colors are tuned to read clearly on the dark canvas. Text/background pairings
+must meet **WCAG AA (4.5:1)**; large text/UI elements **3:1** minimum. Translucent fills (e.g. alert
+backgrounds) are derived with `color-mix(in srgb, var(--c-…) 14%, transparent)` rather than new tokens.
 
 ### 2.5 Typography
 - **Body:** system stack — `-apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif`.
@@ -142,10 +146,12 @@ Each is a BEM block (§5). Specs are behavioral; exact CSS lives in the web crat
 - **Tokens only:** components reference `var(--…)`; no raw hex/px in component rules.
 - **Methodology:** **BEM** — `.block`, `.block__element`, `.block--modifier`. Plus a tiny utility set
   (`.u-mt-3`, `.u-text-muted`, `.u-tabular`).
-- **One stylesheet**, organized in layers and concatenated/served as a single cacheable file:
-  `tokens.css → base.css (reset + element defaults) → layout.css → components.css → utilities.css`.
-- **Location:** static assets in the `web` crate (e.g. `web/static/css/`), served with long cache
-  headers + content hashing.
+- **Two stylesheets:** `base.css` holds theme-agnostic structure (reset, layout, components,
+  spacing/radius/shadow), all referencing `--c-*` tokens; the active **theme file**
+  (`static/theme-ash.css`) defines those color tokens in `:root`. Pages load `base.css` + the theme.
+  Swapping themes is just swapping the theme file.
+- **Location:** `crates/web/static/`, served via `ServeDir` at `/static`. A living component gallery
+  is available at **`/styleguide`**.
 - **No CSS framework**, no runtime CSS-in-JS. Keep specificity low and flat.
 
 ---
@@ -193,3 +199,5 @@ Each is a BEM block (§5). Specs are behavioral; exact CSS lives in the web crat
 
 ## Changelog
 - **v1 (2026-06-10)** — Initial design system: principles, tokens, layout, components, conventions.
+- **v2 (2026-06-10)** — Adopt the dark, warm **"Ash & Rust"** palette (replacing the light
+  parchment/heraldic palette); split CSS into `base.css` + theme files; add the `/styleguide` gallery.
