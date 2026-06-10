@@ -21,6 +21,10 @@ pub struct LoginTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "styleguide.html")]
+pub struct StyleGuideTemplate;
+
+#[derive(Template)]
 #[template(path = "village.html")]
 pub struct VillageTemplate {
     /// Owner's username.

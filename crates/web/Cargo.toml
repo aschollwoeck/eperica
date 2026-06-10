@@ -12,7 +12,7 @@ eperica-infrastructure = { path = "../infrastructure" }
 axum = "0.8"
 axum-extra = { version = "0.10", features = ["cookie-private"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "net"] }
-tower-http = { version = "0.6", features = ["trace"] }
+tower-http = { version = "0.6", features = ["trace", "fs"] }
 askama = "0.12"
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Eperica — Component gallery</title>
+  <link rel="stylesheet" href="/static/base.css">
+  <link rel="stylesheet" href="/static/theme-ash.css">
+</head>
+<body>
+  <header class="topbar"><a class="topbar__brand" href="/styleguide">Eperica</a></header>
+  <main class="container gallery">
+    <p class="muted">Living component gallery — the canonical "Ash &amp; Rust" theme
+      (see specs/ui-style-guide.md).</p>
+
+    <section class="hero panel">
+      <h1>Eperica</h1>
+      <p>Forge a village, raise an army, and outlast your rivals in a grim medieval world.</p>
+      <div class="actions" style="justify-content:center">
+        <a class="btn btn--primary" href="#">Create account</a>
+        <a class="btn btn--secondary" href="#">Log in</a>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Palette</h2>
+      <div class="swatch-row">
+        <div class="swatch" style="background:var(--c-bg)">bg</div>
+        <div class="swatch" style="background:var(--c-panel)">panel</div>
+        <div class="swatch" style="background:var(--c-panel-alt)">panel2</div>
+        <div class="swatch" style="background:var(--c-accent)">accent</div>
+        <div class="swatch" style="background:var(--c-gold);color:#000">gold</div>
+        <div class="swatch" style="background:var(--c-danger)">danger</div>
+        <div class="swatch" style="background:var(--c-success)">success</div>
+        <div class="swatch" style="background:var(--c-warning)">warning</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Buttons &amp; badges</h2>
+      <div class="actions">
+        <button class="btn btn--primary">Primary action</button>
+        <button class="btn btn--secondary">Secondary</button>
+        <span class="badge">Top Attacker</span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Resources</h2>
+      <ul class="resource-list">
+        <li class="res res--wood">Wood 420</li>
+        <li class="res res--clay">Clay 380</li>
+        <li class="res res--iron">Iron 295</li>
+        <li class="res res--crop">Crop 510</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>Alerts</h2>
+      <p class="alert alert--danger">Your village is under attack — arrival in 4:12!</p>
+      <p class="alert alert--success">Your defense held; the raiders were routed.</p>
+      <p class="alert alert--warning">Crop production is negative — your troops will starve.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Form</h2>
+      <form class="form" onsubmit="return false">
+        <div class="field"><label for="u">Username</label><input id="u" value="aldric"></div>
+        <div class="field"><label for="p">Password</label><input id="p" type="password" value="secret123"></div>
+        <button class="btn btn--primary" type="submit">Register</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Leaderboard</h2>
+      <table class="table">
+        <thead><tr><th>Rank</th><th>Player</th><th class="num">Population</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Aldric the Bold</td><td class="num">1,204</td></tr>
+          <tr><td>2</td><td>Bryn Ironhand</td><td class="num">980</td></tr>
+          <tr><td>3</td><td>Cael of the Vale</td><td class="num">742</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+  <footer class="footer">Eperica — component gallery</footer>
+</body>
+</html>

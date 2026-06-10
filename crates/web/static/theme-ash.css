@@ -1,0 +1,19 @@
+/* Theme: Ash & Rust — grim near-black with rusted copper/bronze accents. */
+:root {
+  --c-bg: #141110;
+  --c-panel: #1D1714;
+  --c-panel-alt: #261E19;
+  --c-ink: #E0D3C1;
+  --c-ink-muted: #9C8B78;
+  --c-border: #41342A;
+  --c-accent: #C0623A;
+  --c-accent-ink: #141110;
+  --c-gold: #C79350;
+  --c-danger: #CB5A4C;
+  --c-success: #93AC5C;
+  --c-warning: #D69640;
+  --c-lumber: #98B266;
+  --c-clay: #CE7A48;
+  --c-iron-res: #ABA08C;
+  --c-crop: #DDB14A;
+}
