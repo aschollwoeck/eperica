@@ -32,9 +32,9 @@ Ordered for dependency and testability (pure domain first). Integer units (`i64`
 
 ## Documentation & acceptance
 
-- [ ] **T8 — Technical docs.** rustdoc on new public items; `docs/architecture/` note on the
+- [x] **T8 — Technical docs.** rustdoc on new public items; `docs/architecture/` note on the
   lazy-accrual economy; update `CLAUDE.md` if commands change (not expected).
-- [ ] **T9 — End-user docs.** `docs/manual/resources.md` — how resources are produced, stored, and the
+- [x] **T9 — End-user docs.** `docs/manual/resources.md` — how resources are produced, stored, and the
   crop/upkeep idea; link from the manual index.
 - [ ] **T10 — Review & accept.** Run the `eperica-reviewer` brief on the slice diff; fix until APPROVE;
   open PR.
