@@ -1,0 +1,301 @@
+//! Resource economy — lazy production accrual (P1), storage capacity, and crop upkeep.
+//!
+//! All math is pure integer arithmetic over injected balance data ([`EconomyRules`]); there is no
+//! background job — current amounts are computed on read from stored state + elapsed time (P1/P2).
+
+use crate::building::BuildingKind;
+use crate::resource::ResourceKind;
+use crate::village::{BuildingSlot, ResourceField};
+use crate::world::GameSpeed;
+
+/// Stored resource amounts (integer units).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceAmounts {
+    pub wood: i64,
+    pub clay: i64,
+    pub iron: i64,
+    pub crop: i64,
+}
+
+/// Hourly production rates (units/hour). `crop_net` is already net of upkeep and may be negative.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProductionRates {
+    pub wood: i64,
+    pub clay: i64,
+    pub iron: i64,
+    pub crop_net: i64,
+}
+
+/// Storage capacities: `warehouse` caps wood/clay/iron, `granary` caps crop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Capacities {
+    pub warehouse: i64,
+    pub granary: i64,
+}
+
+/// A village's computed economy at an instant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Economy {
+    pub amounts: ResourceAmounts,
+    pub rates: ProductionRates,
+    pub capacities: Capacities,
+}
+
+/// Injected balance data driving the economy (pure data; values come from the balance dataset).
+#[derive(Debug, Clone)]
+pub struct EconomyRules {
+    /// Hourly production by field level, per resource (index = level; clamped to the last entry).
+    pub wood_per_level: Vec<i64>,
+    pub clay_per_level: Vec<i64>,
+    pub iron_per_level: Vec<i64>,
+    pub crop_per_level: Vec<i64>,
+    /// Population added per resource-field level.
+    pub field_population_per_level: Vec<i64>,
+    /// Population added per Main Building level.
+    pub main_building_population_per_level: Vec<i64>,
+    /// Population added per Rally Point level.
+    pub rally_point_population_per_level: Vec<i64>,
+    /// Base storage before any Warehouse/Granary is built.
+    pub base_warehouse: i64,
+    pub base_granary: i64,
+    /// Stored amounts a new village starts with.
+    pub starting_amounts: ResourceAmounts,
+}
+
+fn level_value(table: &[i64], level: u8) -> i64 {
+    table
+        .get(level as usize)
+        .copied()
+        .unwrap_or_else(|| table.last().copied().unwrap_or(0))
+}
+
+impl EconomyRules {
+    fn field_production(&self, kind: ResourceKind, level: u8) -> i64 {
+        let table = match kind {
+            ResourceKind::Wood => &self.wood_per_level,
+            ResourceKind::Clay => &self.clay_per_level,
+            ResourceKind::Iron => &self.iron_per_level,
+            ResourceKind::Crop => &self.crop_per_level,
+        };
+        level_value(table, level)
+    }
+
+    fn building_population(&self, kind: BuildingKind, level: u8) -> i64 {
+        match kind {
+            BuildingKind::MainBuilding => {
+                level_value(&self.main_building_population_per_level, level)
+            }
+            BuildingKind::RallyPoint => level_value(&self.rally_point_population_per_level, level),
+        }
+    }
+}
+
+/// Total village population — each point consumes 1 crop/hour.
+pub fn population(
+    fields: &[ResourceField],
+    buildings: &[BuildingSlot],
+    rules: &EconomyRules,
+) -> i64 {
+    let from_fields: i64 = fields
+        .iter()
+        .map(|f| level_value(&rules.field_population_per_level, f.level))
+        .sum();
+    let from_buildings: i64 = buildings
+        .iter()
+        .map(|b| rules.building_population(b.kind, b.level))
+        .sum();
+    from_fields + from_buildings
+}
+
+/// Apply `speed` to a base per-hour value, rounded to the nearest integer.
+fn scale(base: i64, speed: GameSpeed) -> i64 {
+    (base as f64 * speed.multiplier()).round() as i64
+}
+
+/// Hourly production rates for a village's fields/buildings at the given world speed (P7).
+pub fn production_rates(
+    fields: &[ResourceField],
+    buildings: &[BuildingSlot],
+    rules: &EconomyRules,
+    speed: GameSpeed,
+) -> ProductionRates {
+    let base = |kind: ResourceKind| -> i64 {
+        fields
+            .iter()
+            .filter(|f| f.kind == kind)
+            .map(|f| rules.field_production(kind, f.level))
+            .sum()
+    };
+    let crop_base = base(ResourceKind::Crop) - population(fields, buildings, rules);
+    ProductionRates {
+        wood: scale(base(ResourceKind::Wood), speed),
+        clay: scale(base(ResourceKind::Clay), speed),
+        iron: scale(base(ResourceKind::Iron), speed),
+        crop_net: scale(crop_base, speed),
+    }
+}
+
+/// Storage capacities. Warehouse/Granary buildings (slice 003) will add to the base.
+pub fn capacities(_buildings: &[BuildingSlot], rules: &EconomyRules) -> Capacities {
+    Capacities {
+        warehouse: rules.base_warehouse,
+        granary: rules.base_granary,
+    }
+}
+
+/// Accrue a single resource: `(stored + rate·elapsed/3600)` clamped to `[0, capacity]`.
+pub fn accrue(stored: i64, rate_per_hour: i64, elapsed_secs: i64, capacity: i64) -> i64 {
+    let delta = rate_per_hour.saturating_mul(elapsed_secs.max(0)) / 3600;
+    (stored + delta).clamp(0, capacity)
+}
+
+/// Compute the current economy from stored amounts + elapsed time (the read path, P1/P2).
+pub fn compute_economy(
+    stored: ResourceAmounts,
+    elapsed_secs: i64,
+    fields: &[ResourceField],
+    buildings: &[BuildingSlot],
+    rules: &EconomyRules,
+    speed: GameSpeed,
+) -> Economy {
+    let rates = production_rates(fields, buildings, rules, speed);
+    let caps = capacities(buildings, rules);
+    let amounts = ResourceAmounts {
+        wood: accrue(stored.wood, rates.wood, elapsed_secs, caps.warehouse),
+        clay: accrue(stored.clay, rates.clay, elapsed_secs, caps.warehouse),
+        iron: accrue(stored.iron, rates.iron, elapsed_secs, caps.warehouse),
+        crop: accrue(stored.crop, rates.crop_net, elapsed_secs, caps.granary),
+    };
+    Economy {
+        amounts,
+        rates,
+        capacities: caps,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rules() -> EconomyRules {
+        EconomyRules {
+            wood_per_level: vec![10, 20, 40],
+            clay_per_level: vec![10, 20, 40],
+            iron_per_level: vec![10, 20, 40],
+            crop_per_level: vec![10, 20, 40],
+            field_population_per_level: vec![0, 1, 2],
+            main_building_population_per_level: vec![0, 2, 3],
+            rally_point_population_per_level: vec![0, 1, 1],
+            base_warehouse: 800,
+            base_granary: 800,
+            starting_amounts: ResourceAmounts {
+                wood: 750,
+                clay: 750,
+                iron: 750,
+                crop: 750,
+            },
+        }
+    }
+
+    fn field(kind: ResourceKind, level: u8) -> ResourceField {
+        ResourceField { kind, level }
+    }
+
+    // --- AC1: accrual ---
+    #[test]
+    fn accrues_linearly_over_time() {
+        assert_eq!(accrue(100, 30, 3600, 800), 130);
+        assert_eq!(accrue(100, 30, 7200, 800), 160);
+        assert_eq!(accrue(100, 30, 0, 800), 100);
+    }
+
+    // --- AC3: capacity / overflow ---
+    #[test]
+    fn clamps_at_capacity() {
+        assert_eq!(accrue(790, 30, 3600, 800), 800); // 820 -> capped
+    }
+
+    // --- AC4: negative crop drains, floored at zero ---
+    #[test]
+    fn negative_rate_drains_then_floors() {
+        assert_eq!(accrue(100, -10, 3600, 800), 90);
+        assert_eq!(accrue(5, -10, 3600, 800), 0);
+    }
+
+    // --- AC2: speed scales production ---
+    #[test]
+    fn production_scales_with_speed() {
+        let fields: Vec<_> = (0..4).map(|_| field(ResourceKind::Wood, 0)).collect();
+        let r1 = production_rates(&fields, &[], &rules(), GameSpeed::new(1.0).unwrap());
+        let r2 = production_rates(&fields, &[], &rules(), GameSpeed::new(2.0).unwrap());
+        assert_eq!(r1.wood, 40); // 4 fields x 10
+        assert_eq!(r2.wood, 80); // doubled
+    }
+
+    // --- AC4: net crop = production - population ---
+    #[test]
+    fn crop_net_subtracts_population() {
+        let fields = vec![field(ResourceKind::Crop, 0); 6]; // 6 x 10 = 60
+        let buildings = vec![
+            BuildingSlot {
+                kind: BuildingKind::MainBuilding,
+                level: 1,
+            }, // pop 2
+            BuildingSlot {
+                kind: BuildingKind::RallyPoint,
+                level: 1,
+            }, // pop 1
+        ];
+        let r = production_rates(&fields, &buildings, &rules(), GameSpeed::new(1.0).unwrap());
+        assert_eq!(r.crop_net, 60 - 3);
+    }
+
+    #[test]
+    fn crop_net_can_be_negative() {
+        let fields = vec![field(ResourceKind::Crop, 0)]; // 1 x 10 = 10
+        let buildings = vec![BuildingSlot {
+            kind: BuildingKind::MainBuilding,
+            level: 2,
+        }]; // pop 3
+        // population also includes the single field (level 0 -> 0). net = 10 - 3 = 7 (still positive)
+        // add many high-pop fields to force negative:
+        let mut fields = fields;
+        fields.extend(std::iter::repeat_n(field(ResourceKind::Wood, 2), 10)); // 10 x pop 2 = 20
+        let r = production_rates(&fields, &buildings, &rules(), GameSpeed::new(1.0).unwrap());
+        assert!(
+            r.crop_net < 0,
+            "expected negative net crop, got {}",
+            r.crop_net
+        );
+    }
+
+    // --- AC5: pure & reproducible ---
+    #[test]
+    fn compute_is_reproducible() {
+        let fields = vec![field(ResourceKind::Wood, 0); 4];
+        let stored = ResourceAmounts {
+            wood: 100,
+            clay: 0,
+            iron: 0,
+            crop: 0,
+        };
+        let a = compute_economy(
+            stored,
+            3600,
+            &fields,
+            &[],
+            &rules(),
+            GameSpeed::new(1.0).unwrap(),
+        );
+        let b = compute_economy(
+            stored,
+            3600,
+            &fields,
+            &[],
+            &rules(),
+            GameSpeed::new(1.0).unwrap(),
+        );
+        assert_eq!(a, b);
+        assert_eq!(a.amounts.wood, 140); // 100 + 40/h
+    }
+}
