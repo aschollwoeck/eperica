@@ -1,0 +1,69 @@
+# Feature 001 — Foundation & Skeleton — Tasks
+
+**Plan:** ./plan.md · **Spec:** ./spec.md
+
+Ordered for dependency and for testability (pure domain first). Each task is small enough to finish
+and verify in one sitting. AC references point back to `spec.md`.
+
+## Scaffolding
+
+- [ ] **T1 — Cargo workspace.** Create the workspace + four crates (`domain`, `application`,
+  `infrastructure`, `web`) with the dependency direction from the plan; confirm `domain` cannot
+  reference `infrastructure`/`web` (P3).
+- [ ] **T2 — Tooling/CI.** `cargo fmt`, `clippy` (deny warnings), `cargo test` wired into CI; basic
+  `tracing` subscriber set up (P11 observability).
+- [ ] **T3 — Config & Postgres.** Load `WorldConfig { speed, radius }` from env/config (operator-set,
+  P7); add SQLx + a dev Postgres connection + migration runner.
+
+## Domain (pure, test-first)
+
+- [ ] **T4 — Value objects.** `GameSpeed::scale`, `Coordinate::in_bounds`, `WorldConfig`; unit tests
+  for proportional scaling (**AC5**) and bounds (**AC3**).
+- [ ] **T5 — Balance data.** Introduce `specs/balance/` with starting field/building levels + the
+  default 18-field layout; a loader the domain consumes (no hardcoded values — **AC4**).
+- [ ] **T6 — Village construction.** `Player`, `Village`, field/building slots, and
+  `create_starting_village` (18 fields + Main Building + Rally Point from balance); unit test (**AC4**).
+- [ ] **T7 — Event types.** `ScheduledEvent` + `EventKind::Heartbeat` (the trivial event for **AC6**).
+
+## Persistence (`infrastructure` + `migrations/`)
+
+- [ ] **T8 — Migrations.** `worlds`, `users`, `villages` (UNIQUE `(world_id,x,y)` — **AC3**),
+  `village_fields`, `village_buildings`, `scheduled_events` (`seq` + `(status,due_at,seq)` index),
+  `sessions`; all timestamps `timestamptz` (P11).
+- [ ] **T9 — Repository adapters.** Implement the `application` ports (`UserRepository`,
+  `VillageRepository`, `EventStore`, `WorldConfigProvider`) with SQLx.
+
+## Application (use-cases)
+
+- [ ] **T10 — Register.** Validate + uniqueness; argon2 hash; **single transaction** creating the user
+  and their starting village server-side at a unique in-bounds coordinate; honor `email_confirmed`
+  policy (**AC1, AC3, AC7**).
+- [ ] **T11 — Login / logout.** Verify credentials; establish/clear session (**AC2**).
+- [ ] **T12 — Scheduler.** Load pending events on startup; sleep-until-due loop; process exactly once
+  (transactional status flip, idempotent); `LISTEN/NOTIFY` to wake early; deterministic `(due_at,seq)`
+  ordering (**AC6**, P11).
+- [ ] **T13 — Authorization.** Role helpers mapping the spec's role table (Visitor/Player/Administrator)
+  to server-side checks (**AC7**).
+
+## Web (`web` — Axum + Askama)
+
+- [ ] **T14 — App skeleton.** Axum router, `tower-sessions` with the Postgres store (stateless tier,
+  P5), tracing middleware (per-request latency spans).
+- [ ] **T15 — Auth extractor + guard.** Resolve session → current `Player`; reject unauthorized access
+  (Visitor→`/village` blocked; world-config endpoints Administrator-only) (**AC7**).
+- [ ] **T16 — Routes + templates.** `GET /`, `GET/POST /register`, `GET/POST /login`, `POST /logout`,
+  `GET /village`; Askama `base/index/register/login/village` templates (**AC1, AC2, AC3** view).
+
+## Verification
+
+- [ ] **T17 — Test harness.** Ephemeral Postgres for integration tests (`sqlx::test` or testcontainers).
+- [ ] **T18 — Integration tests.** AC1 (register + rejections), AC2 (login/logout), AC3 (one village,
+  in-bounds, unique), AC6 (event fires once + survives a simulated scheduler restart), AC7 (authz
+  negatives), **AC8** (persist → restart → same account & village).
+- [ ] **T19 — P11 smoke test.** Assert register/login/view handlers complete **< 50 ms** server-side
+  under dev load (tracing spans).
+
+## Done when
+
+All acceptance criteria **AC1–AC8** pass, the **P11 < 50 ms** budget holds, and **T1–T19** are checked.
+Then mark `spec.md` and `plan.md` **Verified** and slice 001 done in the roadmap.
