@@ -10,8 +10,9 @@ and verify in one sitting. AC references point back to `spec.md`.
 - [x] **T1 — Cargo workspace.** Create the workspace + four crates (`domain`, `application`,
   `infrastructure`, `web`) with the dependency direction from the plan; confirm `domain` cannot
   reference `infrastructure`/`web` (P3).
-- [ ] **T2 — Tooling/CI.** `cargo fmt`, `clippy` (deny warnings), `cargo test` wired into CI; basic
-  `tracing` subscriber set up (P11 observability).
+- [x] **T2 — Tooling/CI.** `cargo fmt`, `clippy` (deny warnings), `cargo test` wired into CI
+  (`.github/workflows/ci.yml`); `.gitattributes` normalizes line endings; basic `tracing` subscriber
+  set up (P11 observability).
 - [ ] **T3 — Config & Postgres.** Load `WorldConfig { speed, radius }` from env/config (operator-set,
   P7); add SQLx + a dev Postgres connection + migration runner.
 

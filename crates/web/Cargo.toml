@@ -8,3 +8,5 @@ publish.workspace = true
 [dependencies]
 eperica-application = { path = "../application" }
 eperica-infrastructure = { path = "../infrastructure" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
