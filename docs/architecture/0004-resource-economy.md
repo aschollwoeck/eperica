@@ -10,7 +10,8 @@ Resources must grow in real time while players are offline, at scale, without ti
 ## Design
 - Each village stores per-resource **integer amounts** + an **`updated_at`** timestamp
   (`village_resources`). Production **rate** is derived from field levels × world speed (P7);
-  `crop_net = cropProduction − population` (population from field/building levels).
+  `crop_net = cropProduction − population` (population from field/building levels). Both production and
+  upkeep scale with world speed, so net crop scales linearly with speed (P7).
 - **Compute on read:** `current = (stored + rate·elapsed/3600).clamp(0, capacity)` — pure integer math
   in `domain::economy`, with balance injected as `EconomyRules`. There is **no background job**.
 - The read path (`application::load_economy`) fetches stored state + village structure and calls the

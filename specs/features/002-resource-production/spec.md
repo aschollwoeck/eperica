@@ -48,7 +48,8 @@ amounts) are **balance data** in `specs/balance/`, not hardcoded in logic.
 - **AC4 — Crop upkeep / net production.** The crop rate is `cropFieldProduction − upkeep`, where
   upkeep is the village population (from field + building levels, balance data). The reported crop
   production reflects this net value and may be negative; when negative, stored crop decreases over
-  time (never below 0 in this slice — troop starvation arrives with troops).
+  time (never below 0 in this slice — troop starvation arrives with troops). **Both production and
+  upkeep scale with world speed**, so net crop scales linearly with speed (P7).
 
 - **AC5 — Settle on read is idempotent & reproducible (P2).** Reading twice in immediate succession
   yields the same value (within rounding); the computed value depends only on persisted state +

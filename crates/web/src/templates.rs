@@ -24,6 +24,37 @@ pub struct LoginTemplate {
 #[template(path = "styleguide.html")]
 pub struct StyleGuideTemplate;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn village(crop_rate: i64) -> VillageTemplate {
+        VillageTemplate {
+            username: "player".to_owned(),
+            x: 0,
+            y: 0,
+            wood: 1,
+            clay: 1,
+            iron: 1,
+            crop: 1,
+            wood_rate: 1,
+            clay_rate: 1,
+            iron_rate: 1,
+            crop_rate,
+            warehouse: 800,
+            granary: 800,
+        }
+    }
+
+    // AC7: crop production is flagged when net <= 0, and not when positive.
+    #[test]
+    fn crop_warning_shown_only_when_net_nonpositive() {
+        assert!(village(-5).render().unwrap().contains("starving"));
+        assert!(village(0).render().unwrap().contains("starving"));
+        assert!(!village(5).render().unwrap().contains("starving"));
+    }
+}
+
 #[derive(Template)]
 #[template(path = "village.html")]
 pub struct VillageTemplate {

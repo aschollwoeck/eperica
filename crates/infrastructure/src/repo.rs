@@ -246,11 +246,13 @@ impl AccountRepository for PgAccountRepository {
 
     async fn villages_of(&self, owner: PlayerId) -> Result<Vec<Village>, RepoError> {
         let owner_uuid = Uuid::from_u128(owner.0);
-        let village_rows = sqlx::query("SELECT id, x, y, tribe FROM villages WHERE owner_id = $1")
-            .bind(owner_uuid)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(backend)?;
+        let village_rows = sqlx::query(
+            "SELECT id, x, y, tribe FROM villages WHERE owner_id = $1 ORDER BY created_at, id",
+        )
+        .bind(owner_uuid)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
 
         let mut villages = Vec::with_capacity(village_rows.len());
         for r in &village_rows {

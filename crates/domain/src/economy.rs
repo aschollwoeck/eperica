@@ -146,7 +146,7 @@ pub fn capacities(_buildings: &[BuildingSlot], rules: &EconomyRules) -> Capaciti
 /// Accrue a single resource: `(stored + rate·elapsed/3600)` clamped to `[0, capacity]`.
 pub fn accrue(stored: i64, rate_per_hour: i64, elapsed_secs: i64, capacity: i64) -> i64 {
     let delta = rate_per_hour.saturating_mul(elapsed_secs.max(0)) / 3600;
-    (stored + delta).clamp(0, capacity)
+    stored.saturating_add(delta).clamp(0, capacity)
 }
 
 /// Compute the current economy from stored amounts + elapsed time (the read path, P1/P2).
@@ -248,6 +248,20 @@ mod tests {
         ];
         let r = production_rates(&fields, &buildings, &rules(), GameSpeed::new(1.0).unwrap());
         assert_eq!(r.crop_net, 60 - 3);
+    }
+
+    #[test]
+    fn crop_net_scales_with_speed() {
+        // Both crop production and upkeep scale with speed, so net crop scales linearly (P7).
+        let fields = vec![field(ResourceKind::Crop, 0); 6]; // 60 base
+        let buildings = vec![BuildingSlot {
+            kind: BuildingKind::MainBuilding,
+            level: 1,
+        }]; // pop 2
+        let r1 = production_rates(&fields, &buildings, &rules(), GameSpeed::new(1.0).unwrap());
+        let r2 = production_rates(&fields, &buildings, &rules(), GameSpeed::new(2.0).unwrap());
+        assert_eq!(r1.crop_net, 58);
+        assert_eq!(r2.crop_net, 2 * r1.crop_net);
     }
 
     #[test]
