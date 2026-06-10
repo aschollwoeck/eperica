@@ -66,6 +66,10 @@ impl Coordinate {
     }
 }
 
+/// Unique identifier of a world instance (mapped to a UUID column by the infrastructure).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WorldId(pub u128);
+
 /// Static, operator-set configuration for a single world instance.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WorldConfig {
@@ -80,6 +84,33 @@ impl WorldConfig {
     pub fn new(speed: GameSpeed, radius: u32) -> Self {
         Self { speed, radius }
     }
+}
+
+/// The coordinates forming the square ring at Chebyshev distance `ring` from the origin.
+fn ring_coordinates(ring: i32) -> Vec<Coordinate> {
+    if ring == 0 {
+        return vec![Coordinate::new(0, 0)];
+    }
+    let mut coords = Vec::new();
+    for x in -ring..=ring {
+        coords.push(Coordinate::new(x, -ring));
+        coords.push(Coordinate::new(x, ring));
+    }
+    for y in (-ring + 1)..ring {
+        coords.push(Coordinate::new(-ring, y));
+        coords.push(Coordinate::new(ring, y));
+    }
+    coords
+}
+
+/// Deterministic, finite enumeration of all coordinates within `radius` of the origin, ordered ring
+/// by ring (nearest first).
+///
+/// Used to place a new village on the first free tile in a stable order (P6: deterministic). This is
+/// the placeholder placement strategy for slice 001; map-aware placement arrives in slice 006.
+pub fn coordinates_within(radius: u32) -> impl Iterator<Item = Coordinate> {
+    let r = i32::try_from(radius).unwrap_or(i32::MAX);
+    (0..=r).flat_map(ring_coordinates)
 }
 
 #[cfg(test)]
@@ -138,5 +169,20 @@ mod tests {
         assert!(!Coordinate::new(501, 0).in_bounds(radius));
         assert!(!Coordinate::new(0, -501).in_bounds(radius));
         assert!(!Coordinate::new(i32::MIN, 0).in_bounds(radius));
+    }
+
+    // --- placement enumeration ---
+
+    #[test]
+    fn coordinates_within_are_ordered_complete_and_unique() {
+        let coords: Vec<_> = coordinates_within(1).collect();
+        assert_eq!(coords[0], Coordinate::new(0, 0)); // origin first
+        assert_eq!(coords.len(), 9); // (2*1 + 1)^2
+        assert!(coords.iter().all(|c| c.in_bounds(1)));
+
+        let mut unique = coords.clone();
+        unique.sort_by_key(|c| (c.x, c.y));
+        unique.dedup();
+        assert_eq!(unique.len(), 9);
     }
 }
