@@ -14,7 +14,7 @@ Ordered for dependency and testability (pure domain first).
 
 ## Balance + persistence
 
-- [ ] **T2 — Balance data.** `specs/balance/construction.toml` (cost + base time per target/level, MB
+- [x] **T2 — Balance data.** `specs/balance/construction.toml` (cost + base time per target/level, MB
   factors, max levels, prerequisites, Warehouse/Granary capacity-per-level); loader → `BuildRules`.
 - [ ] **T3 — Migration.** `0004_build_orders.sql` (table + unique partial index `WHERE status='pending'`
   + `(status, complete_at, id)` index).

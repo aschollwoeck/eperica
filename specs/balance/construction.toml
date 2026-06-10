@@ -1,0 +1,51 @@
+# Construction balance (interim, tunable). Arrays are indexed by the level being reached minus 1,
+# i.e. index 0 = cost/time to go from level 0 to level 1. Max level = array length (10).
+
+# Construction-speed multiplier by Main Building level (index = MB level; >= 1, higher => faster).
+[speed]
+main_building_factor = [1.0, 1.0, 1.12, 1.25, 1.4, 1.56, 1.74, 1.94, 2.16, 2.41, 2.69]
+
+# Resource fields (shared by wood/clay/iron/crop).
+[field]
+time_secs = [600, 1020, 1530, 2160, 2940, 3900, 5100, 6600, 8460, 10800]
+[field.cost]
+wood = [40, 65, 110, 185, 310, 520, 870, 1450, 2420, 4050]
+clay = [40, 65, 110, 185, 310, 520, 870, 1450, 2420, 4050]
+iron = [40, 65, 110, 185, 310, 520, 870, 1450, 2420, 4050]
+crop = [10, 15, 25, 40, 65, 110, 180, 300, 500, 840]
+
+[buildings.main_building]
+time_secs = [900, 1400, 2050, 2900, 4000, 5400, 7200, 9500, 12400, 16000]
+prerequisites = []
+[buildings.main_building.cost]
+wood = [70, 110, 175, 280, 445, 710, 1130, 1810, 2890, 4630]
+clay = [40, 65, 100, 160, 255, 405, 650, 1040, 1660, 2650]
+iron = [60, 95, 150, 240, 385, 615, 985, 1575, 2520, 4035]
+crop = [20, 30, 50, 80, 130, 205, 330, 525, 840, 1345]
+
+[buildings.rally_point]
+time_secs = [800, 1300, 1900, 2700, 3700, 5000, 6700, 8900, 11700, 15200]
+prerequisites = []
+[buildings.rally_point.cost]
+wood = [110, 175, 280, 445, 715, 1145, 1830, 2930, 4690, 7500]
+clay = [160, 255, 410, 655, 1050, 1680, 2685, 4300, 6875, 11000]
+iron = [90, 145, 230, 370, 590, 945, 1515, 2420, 3875, 6200]
+crop = [70, 110, 180, 290, 460, 740, 1180, 1890, 3025, 4840]
+
+[buildings.warehouse]
+time_secs = [1000, 1500, 2150, 3000, 4100, 5500, 7300, 9600, 12500, 16100]
+prerequisites = [{ building = "main_building", level = 1 }]
+[buildings.warehouse.cost]
+wood = [130, 165, 215, 275, 350, 445, 570, 730, 935, 1200]
+clay = [160, 205, 260, 335, 430, 550, 705, 900, 1155, 1475]
+iron = [90, 115, 145, 190, 240, 310, 395, 505, 645, 825]
+crop = [40, 50, 65, 85, 105, 135, 175, 220, 285, 365]
+
+[buildings.granary]
+time_secs = [1000, 1500, 2150, 3000, 4100, 5500, 7300, 9600, 12500, 16100]
+prerequisites = [{ building = "main_building", level = 1 }]
+[buildings.granary.cost]
+wood = [80, 100, 130, 170, 215, 275, 350, 445, 570, 730]
+clay = [100, 130, 165, 210, 270, 345, 440, 565, 720, 925]
+iron = [70, 90, 115, 145, 190, 240, 310, 395, 505, 645]
+crop = [20, 25, 35, 45, 55, 70, 90, 115, 145, 185]
