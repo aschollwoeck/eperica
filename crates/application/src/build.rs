@@ -143,11 +143,16 @@ where
     B: BuildRepository,
 {
     let due = builds.claim_due_builds(now, limit).await?;
-    let count = due.len();
+    let mut applied = 0;
     for order in due {
-        builds.apply_build(order).await?;
+        // Log-and-continue: one failed apply must not strand the rest of the claimed batch. Failed
+        // (still-`processing`) orders are recovered at scheduler startup; apply_build is idempotent.
+        match builds.apply_build(order).await {
+            Ok(()) => applied += 1,
+            Err(e) => tracing::error!(error = %e, "failed to apply due build"),
+        }
     }
-    Ok(count)
+    Ok(applied)
 }
 
 #[cfg(test)]
@@ -273,6 +278,7 @@ mod tests {
     struct FakeBuilds {
         duplicate: bool,
         last: Mutex<Option<NewBuildOrder>>,
+        last_settled: Mutex<Option<ResourceAmounts>>,
     }
 
     #[async_trait]
@@ -280,13 +286,14 @@ mod tests {
         async fn start_build(
             &self,
             _v: VillageId,
-            _settled: ResourceAmounts,
+            settled: ResourceAmounts,
             _now: Timestamp,
             order: NewBuildOrder,
         ) -> Result<(), RepoError> {
             if self.duplicate {
                 return Err(RepoError::Duplicate);
             }
+            *self.last_settled.lock().unwrap() = Some(settled);
             *self.last.lock().unwrap() = Some(order);
             Ok(())
         }
@@ -335,6 +342,13 @@ mod tests {
             .unwrap();
         let enqueued = builds.last.lock().unwrap().expect("an order was enqueued");
         assert_eq!(enqueued.target_level, 1);
+        // AC1: completes at now + buildTime (base 600s, MB lvl 1 factor 1.0, speed 1x => 600s).
+        assert_eq!(enqueued.complete_at, Timestamp(600_000));
+        // The cost (40) was debited from the current amount (100).
+        assert_eq!(
+            builds.last_settled.lock().unwrap().expect("settled"),
+            amounts(60)
+        );
     }
 
     #[tokio::test]
@@ -344,14 +358,13 @@ mod tests {
             village: make_village(0, true),
             stored: amounts(10),
         };
-        let err = order(
-            &accounts,
-            &FakeBuilds::default(),
-            BuildTarget::Field { slot: 0 },
-        )
-        .await
-        .unwrap_err();
+        let builds = FakeBuilds::default();
+        let err = order(&accounts, &builds, BuildTarget::Field { slot: 0 })
+            .await
+            .unwrap_err();
         assert_eq!(err, BuildError::Insufficient);
+        // AC2: nothing was enqueued (and thus nothing debited).
+        assert!(builds.last.lock().unwrap().is_none());
     }
 
     #[tokio::test]

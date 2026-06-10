@@ -9,6 +9,7 @@ publish.workspace = true
 eperica-domain = { path = "../domain" }
 thiserror = "2"
 async-trait = "0.1"
+tracing = "0.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

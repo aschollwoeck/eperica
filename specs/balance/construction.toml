@@ -2,6 +2,7 @@
 # i.e. index 0 = cost/time to go from level 0 to level 1. Max level = array length (10).
 
 # Construction-speed multiplier by Main Building level (index = MB level; >= 1, higher => faster).
+# Index 0 and 1 are intentionally equal: villages start at Main Building level 1 (the baseline).
 [speed]
 main_building_factor = [1.0, 1.0, 1.12, 1.25, 1.4, 1.56, 1.74, 1.94, 2.16, 2.41, 2.69]
 

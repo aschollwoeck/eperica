@@ -90,3 +90,9 @@ Per [roles.md](../../roles.md).
 - **Support constructing new buildings in empty center slots** via a small **build catalog**
   (Warehouse, Granary) — in addition to upgrading existing fields/buildings.
 - **Max level = 10** for this slice (balance), matching the production table.
+- **Order action via plain form POST + redirect** (not htmx partial-swap, despite the plan's
+  parenthetical). It works without JS; the live countdown is client JS reading the server deadline.
+  htmx partial-swap is deferred. (P8.)
+- **Building slots are fixed per kind** (Main Building 0, Rally Point 1, Warehouse 2, Granary 3) and
+  derived **server-side** from the kind — the client never supplies a building slot (P4). Dynamic
+  slots / parallel queues are later work.

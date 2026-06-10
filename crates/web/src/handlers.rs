@@ -372,8 +372,10 @@ pub async fn build_submit(
     let target = match form.table.as_str() {
         "field" => BuildTarget::Field { slot: form.slot },
         "building" => match parse_building_kind(form.kind.as_deref()) {
+            // Slot is derived server-side from the kind — never trusted from the client (P4), so a
+            // crafted request cannot place a building in (clobber) another building's slot.
             Some(kind) => BuildTarget::Building {
-                slot: form.slot,
+                slot: building_slot(kind),
                 kind,
             },
             None => return Redirect::to("/village").into_response(),

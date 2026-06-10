@@ -139,11 +139,16 @@ impl Scheduler {
 
     /// Run until `shutdown` flips to `true`, processing due events and due builds each tick.
     pub async fn run(self, mut shutdown: tokio::sync::watch::Receiver<bool>) {
-        // Recover any events left mid-flight by a previous crash before starting the loop.
+        // Recover any events/builds left mid-flight by a previous crash before starting the loop.
         match self.store.requeue_orphaned().await {
             Ok(n) if n > 0 => tracing::warn!(requeued = n, "requeued orphaned events at startup"),
             Ok(_) => {}
             Err(e) => tracing::error!(error = %e, "failed to requeue orphaned events"),
+        }
+        match self.builds.requeue_orphaned_builds().await {
+            Ok(n) if n > 0 => tracing::warn!(requeued = n, "requeued orphaned builds at startup"),
+            Ok(_) => {}
+            Err(e) => tracing::error!(error = %e, "failed to requeue orphaned builds"),
         }
         loop {
             if *shutdown.borrow() {

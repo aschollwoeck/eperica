@@ -38,6 +38,17 @@ impl PgAccountRepository {
             starting_amounts,
         }
     }
+
+    /// Reset build orders stuck in `processing` (e.g. left by a crash) back to `pending` so they are
+    /// reprocessed. `apply_build` is idempotent (it sets an absolute level), so this is safe.
+    pub async fn requeue_orphaned_builds(&self) -> Result<u64, RepoError> {
+        let result =
+            sqlx::query("UPDATE build_orders SET status = 'pending' WHERE status = 'processing'")
+                .execute(&self.pool)
+                .await
+                .map_err(backend)?;
+        Ok(result.rows_affected())
+    }
 }
 
 fn backend(e: sqlx::Error) -> RepoError {
@@ -809,11 +820,12 @@ mod tests {
         .await
         .expect("start build");
 
-        // T6/AC5: the scheduler's use-case claims and applies the due order.
-        let applied = eperica_application::process_due_builds(&repo, now, 10)
+        // T6/AC5: the scheduler's use-case claims and applies due orders. `claim_due_builds` is
+        // DB-global, and parallel tests may have their own due orders, so assert *this* village's
+        // outcome (its field reached level 1) rather than a global processed count.
+        eperica_application::process_due_builds(&repo, now, 1000)
             .await
             .expect("process due builds");
-        assert_eq!(applied, 1);
         let fields = repo.villages_of(user.id).await.unwrap()[0].fields.clone();
         assert_eq!(fields[1].level, 1);
     }
