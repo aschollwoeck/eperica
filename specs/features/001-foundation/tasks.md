@@ -24,9 +24,11 @@ and verify in one sitting. AC references point back to `spec.md`.
   and bounds (**AC3**).
 - [ ] **T5 — Balance data.** Introduce `specs/balance/` with starting field/building levels + the
   default 18-field layout; a loader the domain consumes (no hardcoded values — **AC4**).
-- [ ] **T6 — Village construction.** `Player`, `Village`, field/building slots, and
-  `create_starting_village` (18 fields + Main Building + Rally Point from balance); unit test (**AC4**).
-- [ ] **T7 — Event types.** `ScheduledEvent` + `EventKind::Heartbeat` (the trivial event for **AC6**).
+- [x] **T6 — Village construction.** `PlayerId`/`VillageId`/`Tribe`, `ResourceField`/`BuildingSlot`,
+  validated `StartingVillage`, and `Village::found` (18 fields + Main Building + Rally Point); unit
+  tests (**AC4**).
+- [x] **T7 — Event types.** `Timestamp` (Unix-ms UTC), `ScheduledEvent` + `EventKind::Heartbeat` (the
+  trivial event for **AC6**).
 
 ## Persistence (`infrastructure` + `migrations/`)
 

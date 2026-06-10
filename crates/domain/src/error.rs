@@ -10,6 +10,8 @@ use std::fmt;
 pub enum DomainError {
     /// A game speed that is not a finite, strictly-positive multiplier.
     InvalidGameSpeed,
+    /// A starting-village template that does not have exactly the required number of resource fields.
+    InvalidStartingVillage,
 }
 
 impl fmt::Display for DomainError {
@@ -17,6 +19,9 @@ impl fmt::Display for DomainError {
         match self {
             DomainError::InvalidGameSpeed => {
                 write!(f, "game speed must be a finite, positive multiplier")
+            }
+            DomainError::InvalidStartingVillage => {
+                write!(f, "a starting village must have exactly 18 resource fields")
             }
         }
     }

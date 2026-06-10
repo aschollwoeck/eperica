@@ -2,11 +2,22 @@
 //!
 //! Holds entities, value objects, and game rules. Per the project constitution (**P3**) this crate
 //! has **no I/O, framework, or database dependencies** and is unit-testable in isolation. Game
-//! modules (resources, villages, combat, …) are introduced in later slices.
+//! modules grow here slice by slice.
 #![forbid(unsafe_code)]
 
+pub mod building;
 pub mod error;
+pub mod event;
+pub mod resource;
+pub mod village;
 pub mod world;
 
+pub use building::BuildingKind;
 pub use error::DomainError;
+pub use event::{EventKind, ScheduledEvent, Timestamp};
+pub use resource::ResourceKind;
+pub use village::{
+    BuildingSlot, PlayerId, RESOURCE_FIELD_COUNT, ResourceField, StartingVillage, Tribe, Village,
+    VillageId,
+};
 pub use world::{Coordinate, GameSpeed, WorldConfig};
