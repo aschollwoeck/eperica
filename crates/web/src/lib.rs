@@ -10,6 +10,7 @@ pub mod templates;
 use axum::Router;
 use axum::routing::{get, post};
 use state::AppState;
+use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
 /// Build the application router for the given state.
@@ -26,7 +27,8 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/logout", post(handlers::logout))
         .route("/village", get(handlers::village))
-        .route("/static/app.css", get(handlers::app_css))
+        .route("/styleguide", get(handlers::styleguide))
+        .nest_service("/static", ServeDir::new("crates/web/static"))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

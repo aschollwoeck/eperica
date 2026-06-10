@@ -21,6 +21,13 @@ pub struct LoginTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "styleguide.html")]
+pub struct StyleGuideTemplate {
+    /// The selected theme name (`ember`, `ash`, or `hearth`).
+    pub theme: String,
+}
+
+#[derive(Template)]
 #[template(path = "village.html")]
 pub struct VillageTemplate {
     /// Owner's username.

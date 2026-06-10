@@ -2,11 +2,12 @@
 
 use crate::auth::{AuthUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
+use crate::templates::StyleGuideTemplate;
 use crate::templates::{IndexTemplate, LoginTemplate, RegisterTemplate, VillageTemplate};
 use askama::Template;
 use axum::Form;
-use axum::extract::State;
-use axum::http::{StatusCode, header};
+use axum::extract::{Query, State};
+use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
@@ -45,12 +46,21 @@ pub async fn login_form() -> Response {
     page(&LoginTemplate { error: None })
 }
 
-/// The bundled stylesheet (see specs/ui-style-guide.md).
-pub async fn app_css() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
-        include_str!("../static/app.css"),
-    )
+/// Theme query for the style preview.
+#[derive(Deserialize)]
+pub struct StyleQuery {
+    theme: Option<String>,
+}
+
+/// Live style-preview page showing the component set under a selectable theme.
+pub async fn styleguide(Query(query): Query<StyleQuery>) -> Response {
+    let theme = match query.theme.as_deref() {
+        Some("ash") => "ash",
+        Some("hearth") => "hearth",
+        _ => "ember",
+    }
+    .to_owned();
+    page(&StyleGuideTemplate { theme })
 }
 
 /// Registration form fields.
