@@ -3,8 +3,8 @@
 use async_trait::async_trait;
 use eperica_application::{AccountRepository, NewUser, RepoError, UserRecord};
 use eperica_domain::{
-    BuildingKind, BuildingSlot, Coordinate, PlayerId, ResourceField, ResourceKind, StartingVillage,
-    Tribe, Village, VillageId, WorldId, coordinates_within,
+    BuildingKind, BuildingSlot, Coordinate, PlayerId, ResourceAmounts, ResourceField, ResourceKind,
+    StartingVillage, Timestamp, Tribe, Village, VillageId, WorldId, coordinates_within,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use uuid::Uuid;
@@ -15,15 +15,23 @@ pub struct PgAccountRepository {
     pool: PgPool,
     world_id: WorldId,
     radius: u32,
+    starting_amounts: ResourceAmounts,
 }
 
 impl PgAccountRepository {
-    /// Create a repository for `world_id` (with map `radius`, used for placement).
-    pub fn new(pool: PgPool, world_id: WorldId, radius: u32) -> Self {
+    /// Create a repository for `world_id` (map `radius` for placement; `starting_amounts` seeded into
+    /// each new village's resources).
+    pub fn new(
+        pool: PgPool,
+        world_id: WorldId,
+        radius: u32,
+        starting_amounts: ResourceAmounts,
+    ) -> Self {
         Self {
             pool,
             world_id,
             radius,
+            starting_amounts,
         }
     }
 }
@@ -176,6 +184,19 @@ impl AccountRepository for PgAccountRepository {
                         .await
                         .map_err(backend)?;
                     }
+                    sqlx::query(
+                        "INSERT INTO village_resources (village_id, wood, clay, iron, crop, updated_at) \
+                         VALUES ($1, $2, $3, $4, $5, now())",
+                    )
+                    .bind(village_uuid)
+                    .bind(self.starting_amounts.wood)
+                    .bind(self.starting_amounts.clay)
+                    .bind(self.starting_amounts.iron)
+                    .bind(self.starting_amounts.crop)
+                    .execute(&mut *sp)
+                    .await
+                    .map_err(backend)?;
+
                     sp.commit().await.map_err(backend)?;
                     placed = true;
                     break;
@@ -285,6 +306,30 @@ impl AccountRepository for PgAccountRepository {
         }
         Ok(villages)
     }
+
+    async fn stored_resources(
+        &self,
+        village: VillageId,
+    ) -> Result<Option<(ResourceAmounts, Timestamp)>, RepoError> {
+        let row = sqlx::query(
+            "SELECT wood, clay, iron, crop, (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint AS updated_ms \
+             FROM village_resources WHERE village_id = $1",
+        )
+        .bind(Uuid::from_u128(village.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let Some(r) = row else { return Ok(None) };
+        let amounts = ResourceAmounts {
+            wood: r.try_get("wood").map_err(backend)?,
+            clay: r.try_get("clay").map_err(backend)?,
+            iron: r.try_get("iron").map_err(backend)?,
+            crop: r.try_get("crop").map_err(backend)?,
+        };
+        let updated_ms: i64 = r.try_get("updated_ms").map_err(backend)?;
+        Ok(Some((amounts, Timestamp(updated_ms))))
+    }
 }
 
 #[cfg(test)]
@@ -306,7 +351,13 @@ mod tests {
         let world_id = crate::world::ensure_world(&pool, &config)
             .await
             .expect("ensure world");
-        let repo = PgAccountRepository::new(pool.clone(), world_id, config.radius);
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world_id,
+            config.radius,
+            rules.starting_amounts,
+        );
         let template = crate::starting_village().expect("template");
 
         let uname = format!("user_{}", Uuid::new_v4().simple());
@@ -328,6 +379,13 @@ mod tests {
         assert_eq!(villages[0].fields.len(), 18);
         assert!(villages[0].buildings.len() >= 2);
         assert_eq!(villages[0].owner, user.id);
+
+        // T4: starting resources were seeded and are readable.
+        let stored = repo
+            .stored_resources(villages[0].id)
+            .await
+            .expect("stored resources");
+        assert!(stored.is_some());
 
         // AC1: duplicate username rejected.
         let dup = NewUser {

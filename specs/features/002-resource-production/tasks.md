@@ -16,9 +16,9 @@ Ordered for dependency and testability (pure domain first). Integer units (`i64`
 - [x] **T2 — Balance data.** `specs/balance/economy.toml` (field production per level, field/building
   population per level, base capacity, starting amounts); infra loader → `EconomyRules` (serde DTO →
   domain). Test: loads; starting village yields positive wood/clay/iron and **positive net crop** (**AC6**).
-- [ ] **T3 — Migration.** `0002_village_resources.sql` (`village_id` PK, `wood/clay/iron/crop bigint`,
+- [x] **T3 — Migration.** `0002_village_resources.sql` (`village_id` PK, `wood/clay/iron/crop bigint`,
   `updated_at timestamptz`).
-- [ ] **T4 — Repository.** Extend `create_account` to seed starting amounts in the same transaction;
+- [x] **T4 — Repository.** Extend `create_account` to seed starting amounts in the same transaction;
   add `stored_resources(village_id) -> Option<(ResourceAmounts, updated_at)>`. Integration test.
 
 ## Application + web
