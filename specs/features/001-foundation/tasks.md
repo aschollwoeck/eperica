@@ -33,9 +33,10 @@ and verify in one sitting. AC references point back to `spec.md`.
 
 ## Persistence (`infrastructure` + `migrations/`)
 
-- [ ] **T8 — Migrations.** `worlds`, `users`, `villages` (UNIQUE `(world_id,x,y)` — **AC3**),
-  `village_fields`, `village_buildings`, `scheduled_events` (`seq` + `(status,due_at,seq)` index),
-  `sessions`; all timestamps `timestamptz` (P11).
+- [x] **T8 — Migrations.** `0001_initial_schema.sql`: `worlds`, `users`, `villages`
+  (UNIQUE `(world_id,x,y)` — **AC3**; owner index), `village_fields`, `village_buildings`,
+  `scheduled_events` (`seq` + `(status,due_at,seq)` index, P11); `timestamptz` throughout. Sessions
+  table is created by the tower-sessions store at startup (T14). Verified applied against live DB.
 - [ ] **T9 — Repository adapters.** Implement the `application` ports (`UserRepository`,
   `VillageRepository`, `EventStore`, `WorldConfigProvider`) with SQLx.
 
