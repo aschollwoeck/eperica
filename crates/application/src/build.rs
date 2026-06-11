@@ -380,6 +380,7 @@ mod tests {
                     cost: amounts(1),
                     train_secs: 1,
                     trained_in: BuildingKind::Barracks,
+                    siege_kind: None,
                     research: (i > 0).then(|| ResearchSpec {
                         cost: amounts(1),
                         time_secs: 1,

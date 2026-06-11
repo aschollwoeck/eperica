@@ -3,12 +3,12 @@
 use crate::repo::PgAccountRepository;
 use async_trait::async_trait;
 use eperica_application::{
-    DueEvent, EventStore, RepoError, process_due, process_due_builds, process_due_movements,
-    process_due_starvation, process_due_trades, process_due_training, process_due_unit_orders,
-    sync_starvation_checks,
+    DueEvent, EventStore, RepoError, process_due, process_due_builds, process_due_combat,
+    process_due_movements, process_due_starvation, process_due_trades, process_due_training,
+    process_due_unit_orders, sync_starvation_checks,
 };
 use eperica_domain::{
-    EconomyRules, EventKind, GameSpeed, MerchantRules, Timestamp, UnitRules, WorldMap,
+    CombatRules, EconomyRules, EventKind, GameSpeed, MerchantRules, Timestamp, UnitRules, WorldMap,
 };
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
@@ -139,14 +139,17 @@ pub struct Scheduler {
     economy_rules: Arc<EconomyRules>,
     unit_rules: Arc<UnitRules>,
     merchant_rules: Arc<MerchantRules>,
+    combat_rules: Arc<CombatRules>,
     map: Arc<WorldMap>,
     speed: GameSpeed,
+    world_seed: u64,
     poll_interval: Duration,
 }
 
 impl Scheduler {
     /// Create a scheduler over the event store and repositories with a default poll interval.
-    /// The rules + speed drive starvation re-validation (005 AC7) and trade delivery (008).
+    /// The rules + speed drive starvation re-validation (005 AC7), trade delivery (008), and combat
+    /// resolution (009); the world seed seeds battle luck (P6).
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         store: PgEventStore,
@@ -154,8 +157,10 @@ impl Scheduler {
         economy_rules: Arc<EconomyRules>,
         unit_rules: Arc<UnitRules>,
         merchant_rules: Arc<MerchantRules>,
+        combat_rules: Arc<CombatRules>,
         map: Arc<WorldMap>,
         speed: GameSpeed,
+        world_seed: u64,
     ) -> Self {
         Self {
             store,
@@ -163,8 +168,10 @@ impl Scheduler {
             economy_rules,
             unit_rules,
             merchant_rules,
+            combat_rules,
             map,
             speed,
+            world_seed,
             poll_interval: Duration::from_millis(200),
         }
     }
@@ -297,6 +304,30 @@ impl Scheduler {
                 }
                 Ok(_) => {}
                 Err(e) => tracing::error!(error = %e, "scheduler trade tick failed"),
+            }
+            match process_due_combat(
+                &self.builds,
+                &self.builds,
+                &self.builds,
+                &self.builds,
+                &self.economy_rules,
+                &self.unit_rules,
+                &self.combat_rules,
+                &self.map,
+                self.speed,
+                self.world_seed,
+                now(),
+                100,
+            )
+            .await
+            {
+                Ok(targets) if !targets.is_empty() => {
+                    tracing::debug!(resolved = targets.len(), "scheduler resolved battles");
+                    // Defender garrisons shrank — re-sync those depletion checks (005 AC7).
+                    self.resync(&targets).await;
+                }
+                Ok(_) => {}
+                Err(e) => tracing::error!(error = %e, "scheduler combat tick failed"),
             }
             match process_due_starvation(
                 &self.builds,

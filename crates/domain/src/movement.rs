@@ -15,6 +15,10 @@ pub enum MovementKind {
     Reinforce,
     /// Stationed troops travel home and rejoin the source garrison.
     Return,
+    /// Troops travel to an enemy village to fight to destroy (009).
+    Attack,
+    /// Troops travel to an enemy village to fight to plunder (009).
+    Raid,
 }
 
 /// The slowest map speed among the unit types present in `troops` (fields/hour), or `None` if the
@@ -66,6 +70,7 @@ mod tests {
             train_secs: 1,
             trained_in: BuildingKind::Barracks,
             research: None,
+            siege_kind: None,
         }
     }
 

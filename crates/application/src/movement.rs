@@ -271,6 +271,7 @@ mod tests {
                 cost: amounts(1),
                 train_secs: 1,
                 trained_in: BuildingKind::Barracks,
+                siege_kind: None,
                 research: (i > 0).then(|| ResearchSpec {
                     cost: amounts(1),
                     time_secs: 1,
@@ -620,6 +621,7 @@ mod tests {
                 home_village: VillageId(1),
                 other_coord: Coordinate::new(3, 4),
                 other_owner: "bob".to_owned(),
+                home_tribe: Some(Tribe::Gauls),
                 troops: vec![(UnitId("u0".into()), 4)],
             }],
             ..FakeMovements::default()

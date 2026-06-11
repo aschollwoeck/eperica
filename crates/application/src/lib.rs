@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod build;
+pub mod combat;
 pub mod economy;
 pub mod map;
 pub mod movement;
@@ -24,15 +25,17 @@ pub use eperica_domain as domain;
 
 pub use auth::{LoginError, authenticate};
 pub use build::{BuildError, order_build, process_due_builds};
+pub use combat::{CombatError, order_attack, process_due_combat};
 pub use economy::{VillageEconomy, load_economy, settle_amounts};
 pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
 pub use movement::{MovementError, order_reinforcement, order_return, process_due_movements};
 pub use ports::{
-    AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BuildRepository, DueBuild,
-    DueEvent, DueMovement, DueTrade, DueTraining, DueUnitOrder, EventStore, MovementRepository,
-    MovementView, NewBuildOrder, NewTrainingOrder, NewUnitOrder, NewUser, PasswordHasher,
-    RepoError, StarvationRepository, StationedGroup, TradeRepository, TradeView,
-    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
+    BuildRepository, CombatRepository, DueAttack, DueBuild, DueEvent, DueMovement, DueTrade,
+    DueTraining, DueUnitOrder, EventStore, MovementRepository, MovementView, NewBattleReport,
+    NewBuildOrder, NewTrainingOrder, NewUnitOrder, NewUser, PasswordHasher, RepoError,
+    StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
+    UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;

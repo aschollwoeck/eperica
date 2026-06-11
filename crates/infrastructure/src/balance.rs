@@ -5,10 +5,11 @@
 //! types, keeping the domain itself free of serialization concerns.
 
 use eperica_domain::{
-    BuildRules, BuildingKind, BuildingSlot, DomainError, EconomyRules, FieldDistribution,
-    LevelSpec, MapRules, MerchantProfile, MerchantRules, OasisBonus, ResearchSpec, ResourceAmounts,
-    ResourceField, ResourceKind, SmithyRules, StartingVillage, TrainingRules, Tribe, UnitId,
-    UnitRole, UnitRules, UnitSpec, Weighted,
+    BuildRules, BuildingKind, BuildingSlot, CombatRules, DomainError, EconomyRules,
+    FieldDistribution, LevelSpec, MapRules, MerchantProfile, MerchantRules, OasisBonus,
+    ResearchSpec, ResourceAmounts, ResourceField, ResourceKind, SiegeKind, SmithyRules,
+    StartingVillage, TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec, WallProfile,
+    Weighted,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -47,6 +48,12 @@ const MAP_TOML: &str = include_str!(concat!(
 const TRADE_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../specs/balance/trade.toml"
+));
+
+/// Embedded combat balance data.
+const COMBAT_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/combat.toml"
 ));
 
 /// Errors that can occur while loading balance data.
@@ -139,6 +146,7 @@ fn parse_building(name: &str) -> Result<BuildingKind, BalanceError> {
         "warehouse" => Ok(BuildingKind::Warehouse),
         "granary" => Ok(BuildingKind::Granary),
         "marketplace" => Ok(BuildingKind::Marketplace),
+        "wall" => Ok(BuildingKind::Wall),
         "barracks" => Ok(BuildingKind::Barracks),
         "academy" => Ok(BuildingKind::Academy),
         "smithy" => Ok(BuildingKind::Smithy),
@@ -256,6 +264,7 @@ struct BuildingsDto {
     warehouse: LevelSpecDto,
     granary: LevelSpecDto,
     marketplace: LevelSpecDto,
+    wall: LevelSpecDto,
     barracks: LevelSpecDto,
     academy: LevelSpecDto,
     smithy: LevelSpecDto,
@@ -299,6 +308,7 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
         (BuildingKind::Warehouse, &dto.buildings.warehouse),
         (BuildingKind::Granary, &dto.buildings.granary),
         (BuildingKind::Marketplace, &dto.buildings.marketplace),
+        (BuildingKind::Wall, &dto.buildings.wall),
         (BuildingKind::Barracks, &dto.buildings.barracks),
         (BuildingKind::Academy, &dto.buildings.academy),
         (BuildingKind::Smithy, &dto.buildings.smithy),
@@ -368,6 +378,58 @@ pub fn merchant_rules() -> Result<MerchantRules, BalanceError> {
 }
 
 #[derive(Deserialize)]
+struct CombatDto {
+    loss_exponent: f64,
+    luck_range: f64,
+    morale_exponent: f64,
+    base_defense: f64,
+    smithy_bonus_per_level: f64,
+    walls: CombatWallsDto,
+}
+
+#[derive(Deserialize)]
+struct CombatWallsDto {
+    romans: WallDto,
+    teutons: WallDto,
+    gauls: WallDto,
+}
+
+#[derive(Deserialize)]
+struct WallDto {
+    bonus_per_level: Vec<f64>,
+    ram_durability: f64,
+}
+
+impl From<&WallDto> for WallProfile {
+    fn from(dto: &WallDto) -> Self {
+        WallProfile {
+            bonus_per_level: dto.bonus_per_level.clone(),
+            ram_durability: dto.ram_durability,
+        }
+    }
+}
+
+/// Load the combat rules (loss/luck/morale/base scalars + per-tribe Wall profiles) from balance data.
+///
+/// # Errors
+/// Returns [`BalanceError`] if the data cannot be parsed.
+pub fn combat_rules() -> Result<CombatRules, BalanceError> {
+    let dto: CombatDto = toml::from_str(COMBAT_TOML)?;
+    Ok(CombatRules {
+        loss_exponent: dto.loss_exponent,
+        luck_range: dto.luck_range,
+        morale_exponent: dto.morale_exponent,
+        base_defense: dto.base_defense,
+        smithy_bonus_per_level: dto.smithy_bonus_per_level,
+        walls: HashMap::from([
+            (Tribe::Romans, WallProfile::from(&dto.walls.romans)),
+            (Tribe::Teutons, WallProfile::from(&dto.walls.teutons)),
+            (Tribe::Gauls, WallProfile::from(&dto.walls.gauls)),
+        ]),
+    })
+}
+
+#[derive(Deserialize)]
 struct UnitsDto {
     training: TrainingDto,
     smithy: SmithyDto,
@@ -407,6 +469,9 @@ struct UnitDto {
     trained_in: String,
     cost: AmountsDto,
     research: Option<ResearchDto>,
+    /// Siege target for siege units (`"ram"`/`"catapult"`); absent for all other roles.
+    #[serde(default)]
+    siege: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -463,7 +528,17 @@ fn unit_spec(dto: &UnitDto) -> Result<UnitSpec, BalanceError> {
         train_secs: dto.train_secs,
         trained_in: parse_building(&dto.trained_in)?,
         research,
+        siege_kind: parse_siege(dto.siege.as_deref())?,
     })
+}
+
+fn parse_siege(s: Option<&str>) -> Result<Option<SiegeKind>, BalanceError> {
+    match s {
+        None => Ok(None),
+        Some("ram") => Ok(Some(SiegeKind::Ram)),
+        Some("catapult") => Ok(Some(SiegeKind::Catapult)),
+        Some(other) => Err(BalanceError::UnknownUnitRole(format!("siege:{other}"))),
+    }
 }
 
 /// Load the per-tribe unit rosters and Smithy upgrade tables from balance data.
@@ -750,6 +825,38 @@ mod tests {
         let full = UNITS_TOML;
         let truncated = &full[..full.rfind("[[gauls.units]]").expect("marker")];
         assert!(parse_unit_rules(truncated).is_err());
+    }
+
+    #[test]
+    fn loads_combat_rules() {
+        // 009: combat scalars are present and every tribe has a Wall profile.
+        let r = combat_rules().expect("combat rules");
+        assert!(r.loss_exponent > 1.0);
+        assert!((0.0..=1.0).contains(&r.luck_range));
+        assert_eq!(r.smithy_factor(0), 1.0);
+        assert!(r.smithy_factor(10) > 1.0);
+        // A Wall raises defence: resolving with a wall hurts the attacker more than without.
+        use eperica_domain::{AttackMode, AttackPower, BattleInput, resolve_battle};
+        let base = BattleInput {
+            attack: AttackPower {
+                infantry: 500.0,
+                cavalry: 0.0,
+                ram: 0.0,
+            },
+            def_infantry: 400.0,
+            def_cavalry: 0.0,
+            wall_tribe: Tribe::Romans,
+            wall_level: 0,
+            attacker_pop: 100,
+            defender_pop: 100,
+        };
+        let walled = BattleInput {
+            wall_level: 10,
+            ..base
+        };
+        let a = resolve_battle(AttackMode::Raid, base, &r, 1.0);
+        let b = resolve_battle(AttackMode::Raid, walled, &r, 1.0);
+        assert!(b.attacker_loss_frac > a.attacker_loss_frac);
     }
 
     #[test]

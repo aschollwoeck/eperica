@@ -132,6 +132,7 @@ research = { time_secs = 11300, cost = { wood = 3400, clay = 2660, iron = 6600, 
 
 [[romans.units]]
 id = "battering_ram"
+siege = "ram"
 name = "Battering Ram"
 role = "siege"
 attack = 60
@@ -150,6 +151,7 @@ research = { time_secs = 14600, cost = { wood = 5500, clay = 1540, iron = 4200, 
 
 [[romans.units]]
 id = "fire_catapult"
+siege = "catapult"
 name = "Fire Catapult"
 role = "siege"
 attack = 75
@@ -307,6 +309,7 @@ research = { time_secs = 8500, cost = { wood = 2580, clay = 2940, iron = 2760, c
 
 [[teutons.units]]
 id = "ram"
+siege = "ram"
 name = "Ram"
 role = "siege"
 attack = 65
@@ -325,6 +328,7 @@ research = { time_secs = 14000, cost = { wood = 5950, clay = 1730, iron = 2040, 
 
 [[teutons.units]]
 id = "catapult"
+siege = "catapult"
 name = "Catapult"
 role = "siege"
 attack = 50
@@ -484,6 +488,7 @@ research = { time_secs = 9700, cost = { wood = 2890, clay = 3320, iron = 3240, c
 
 [[gauls.units]]
 id = "ram"
+siege = "ram"
 name = "Ram"
 role = "siege"
 attack = 50
@@ -502,6 +507,7 @@ research = { time_secs = 14500, cost = { wood = 5500, clay = 2420, iron = 2400, 
 
 [[gauls.units]]
 id = "trebuchet"
+siege = "catapult"
 name = "Trebuchet"
 role = "siege"
 attack = 70

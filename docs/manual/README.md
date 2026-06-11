@@ -16,5 +16,6 @@ manual grows as the game does.
 - [Moving troops](troop-movement.md) — send reinforcements from the Rally Point, watch movements
   arrive, and recall your troops home.
 - [Trading](trade.md) — build a Marketplace and send resources to other villages via merchants.
+- [Attacking & defending](combat.md) — launch attacks and raids, build a Wall, and read battle reports.
 
-*(More chapters — combat, scouting, settling — arrive as those features ship.)*
+*(More chapters — scouting, siege & loot, settling — arrive as those features ship.)*

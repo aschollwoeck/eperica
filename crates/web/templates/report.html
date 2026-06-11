@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>{{ kind }} report</h1>
+  <p class="muted"><a href="/reports">← All reports</a></p>
+  <p><strong>{{ headline }}</strong> — {{ outcome }}</p>
+  <p class="muted">Luck {{ luck_pct }}% · Morale {{ morale_pct }}% · Wall {{ wall_before }} →
+    {{ wall_after }}</p>
+</section>
+
+<section class="panel">
+  <h2>{{ attacker_name }} (attacker)</h2>
+  <table class="table">
+    <thead><tr><th>Unit</th><th class="num">Sent</th><th class="num">Lost</th></tr></thead>
+    <tbody>
+      {% for u in attacker_rows %}
+      <tr><td>{{ u.name }}</td><td class="num">{{ u.count }}</td><td class="num">{{ u.lost }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>{{ defender_name }} (defender)</h2>
+  <table class="table">
+    <thead><tr><th>Unit</th><th class="num">Defending</th><th class="num">Lost</th></tr></thead>
+    <tbody>
+      {% for u in defender_rows %}
+      <tr><td>{{ u.name }}</td><td class="num">{{ u.count }}</td><td class="num">{{ u.lost }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

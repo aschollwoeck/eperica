@@ -15,7 +15,9 @@ sqlx = { version = "0.8", default-features = false, features = [
     "migrate",
     "macros",
     "uuid",
+    "json",
 ] }
+serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 dotenvy = "0.15"
 thiserror = "2"

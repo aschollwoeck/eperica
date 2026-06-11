@@ -4,11 +4,11 @@
 //! `DATABASE_URL` is not set, so `cargo test` stays green without a database.
 
 use axum_extra::extract::cookie::Key;
-use eperica_application::{process_due_movements, process_due_trades};
+use eperica_application::{process_due_combat, process_due_movements, process_due_trades};
 use eperica_domain::{GameSpeed, Timestamp, WorldConfig, WorldMap};
 use eperica_infrastructure::{
-    Argon2Hasher, PgAccountRepository, build_rules, create_pool, economy_rules, ensure_world,
-    map_rules, merchant_rules, now, run_migrations, starting_village, unit_rules,
+    Argon2Hasher, PgAccountRepository, build_rules, combat_rules, create_pool, economy_rules,
+    ensure_world, map_rules, merchant_rules, now, run_migrations, starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -1199,6 +1199,162 @@ async fn marketplace_send_and_deliver_flow() {
     // Visitors cannot reach the Marketplace (roles table, P4).
     let anon = client()
         .get(format!("{base}/village/market"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(anon.status().as_u16(), 303);
+}
+
+/// 009 AC8: launch a raid from the Rally Point; the System resolves it and a battle report appears
+/// in both the attacker's and the defender's inbox. Visitors cannot read reports.
+#[tokio::test]
+async fn combat_raid_and_reports_flow() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    let _ = dotenvy::dotenv();
+    let url = std::env::var("DATABASE_URL").unwrap();
+    let pool = create_pool(&url).await.unwrap();
+    let repo = movement_repo(&pool).await;
+
+    let attacker = unique("raidatk");
+    let defender = unique("raiddef");
+    let ca = client();
+    let cd = client();
+    for (c, u) in [(&ca, &attacker), (&cd, &defender)] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", "gauls"),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+
+    let atk_village: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&attacker)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (def_village, dx, dy): (uuid::Uuid, i32, i32) = sqlx::query_as(
+        "SELECT v.id, v.x, v.y FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&defender)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // An overwhelming attacker garrison vs a token defence.
+    sqlx::query(
+        "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'swordsman', 80)",
+    )
+    .bind(atk_village)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 3)")
+        .bind(def_village)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // AC1/AC8: launch a raid; PRG back to the village, which shows the attack in flight.
+    let res = ca
+        .post(format!("{base}/village/rally/send"))
+        .form(&[
+            ("mode", "raid"),
+            ("x", dx.to_string().as_str()),
+            ("y", dy.to_string().as_str()),
+            ("count_swordsman", "60"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+    let body = ca
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains(&format!("Raid on ({dx}|{dy})")));
+
+    // The System resolves the battle.
+    let econ = economy_rules().unwrap();
+    let units = unit_rules().unwrap();
+    let combat = combat_rules().unwrap();
+    let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+    let world = ensure_world(&pool, &config).await.unwrap();
+    let map = WorldMap::new(world.seed as u64, config.radius, map_rules().unwrap());
+    let future = Timestamp(now().0 + 10_000_000_000);
+    process_due_combat(
+        &repo,
+        &repo,
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        &combat,
+        &map,
+        GameSpeed::new(1.0).unwrap(),
+        world.seed as u64,
+        future,
+        100,
+    )
+    .await
+    .unwrap();
+
+    // AC8: both parties see a report. The attacker won; the defender sees the incoming raid.
+    let atk_reports = ca
+        .get(format!("{base}/reports"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(atk_reports.contains(&format!("Raid on {defender} ({dx}|{dy})")));
+    assert!(atk_reports.contains("Victory"));
+
+    let def_reports = cd
+        .get(format!("{base}/reports"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(def_reports.contains(&format!("Raid from {attacker}")));
+
+    // The report detail (reachable from the inbox) shows forces, luck, and morale.
+    let report_id: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM battle_reports WHERE attacker_village = $1")
+            .bind(atk_village)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let detail = ca
+        .get(format!("{base}/reports/{}", report_id.as_u128()))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(detail.contains("Swordsman"));
+    assert!(detail.contains("Luck"));
+    assert!(detail.contains("Morale"));
+
+    // Visitors cannot read reports (roles table, P4).
+    let anon = client()
+        .get(format!("{base}/reports"))
         .send()
         .await
         .unwrap();

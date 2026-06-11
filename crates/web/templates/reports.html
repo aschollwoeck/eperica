@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Battle reports</h1>
+  <p class="muted"><a href="/village">← Back to the village</a></p>
+
+  {% if reports.is_empty() %}
+  <p class="muted">No battle reports yet. Launch an attack or raid from the Rally Point.</p>
+  {% else %}
+  <table class="table">
+    <thead><tr><th>When</th><th>Battle</th><th>Result</th><th></th></tr></thead>
+    <tbody>
+      {% for r in reports %}
+      <tr>
+        <td class="muted"><span class="when" data-ms="{{ r.when_ms }}">…</span></td>
+        <td>{{ r.headline }}</td>
+        <td>{{ r.outcome }}</td>
+        <td><a href="/reports/{{ r.id }}">View</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+<script>
+  for (const el of document.querySelectorAll(".when")) {
+    const d = new Date(Number(el.dataset.ms));
+    el.textContent = d.toLocaleString();
+  }
+</script>
+{% endblock %}

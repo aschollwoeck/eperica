@@ -512,6 +512,7 @@ dependencies = [
  "eperica-application",
  "eperica-domain",
  "serde",
+ "serde_json",
  "sqlx",
  "thiserror",
  "tokio",

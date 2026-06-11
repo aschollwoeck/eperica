@@ -43,6 +43,8 @@ pub fn router(state: AppState) -> Router {
         .route("/village/rally/return", post(handlers::rally_return))
         .route("/village/market", get(handlers::market))
         .route("/village/market/send", post(handlers::market_send))
+        .route("/reports", get(handlers::reports))
+        .route("/reports/{id}", get(handlers::report_detail))
         .route("/styleguide", get(handlers::styleguide))
         .nest_service("/static", ServeDir::new("crates/web/static"))
         .layer(TraceLayer::new_for_http())

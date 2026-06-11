@@ -182,6 +182,8 @@ pub struct StationedGroup {
     pub other_coord: Coordinate,
     /// The counterparty owner's login name.
     pub other_owner: String,
+    /// The home village's tribe (selects the roster for combat defence, 009).
+    pub home_tribe: Option<Tribe>,
     /// The stationed composition.
     pub troops: UnitCounts,
 }
@@ -404,6 +406,166 @@ pub trait TradeRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn release_trade(&self, id: u128) -> Result<(), RepoError>;
+}
+
+/// A claimed, due attack/raid movement ready to resolve (009).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DueAttack {
+    /// The attack movement's identity (also seeds the battle's luck).
+    pub id: u128,
+    /// `Attack` or `Raid`.
+    pub kind: MovementKind,
+    /// The attacker.
+    pub owner: PlayerId,
+    /// The attacker's home village (survivors return here).
+    pub home_village: VillageId,
+    /// The village under attack.
+    pub target_village: VillageId,
+    /// The attacker's tile.
+    pub origin: Coordinate,
+    /// The target's tile.
+    pub dest: Coordinate,
+    /// When the attack arrives (the resolution instant).
+    pub arrive_at: Timestamp,
+    /// The attacking composition.
+    pub troops: UnitCounts,
+}
+
+/// A battle report to persist, visible to both parties (009 AC7).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewBattleReport {
+    /// `Attack` or `Raid`.
+    pub kind: MovementKind,
+    pub attacker_player: PlayerId,
+    pub attacker_village: VillageId,
+    pub defender_player: PlayerId,
+    pub defender_village: VillageId,
+    pub attacker_won: bool,
+    /// The luck factor that applied (`[1−L, 1+L]`).
+    pub luck: f64,
+    /// The morale factor that applied (`≤ 1`).
+    pub morale: f64,
+    pub wall_before: u8,
+    pub wall_after: u8,
+    /// Each side's forces (sent / defending) and losses, as unit→count maps.
+    pub attacker_forces: UnitCounts,
+    pub attacker_losses: UnitCounts,
+    pub defender_forces: UnitCounts,
+    pub defender_losses: UnitCounts,
+}
+
+/// The single-transaction application of a resolved battle (009 AC6/AC7).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BattleApply {
+    /// The attack movement to mark `done`.
+    pub movement_id: u128,
+    /// The attacker (for the survivor return movement).
+    pub owner: PlayerId,
+    /// The attacker's home village.
+    pub attacker_home: VillageId,
+    /// The attacker's tile (the return's destination).
+    pub attacker_origin: Coordinate,
+    /// The target village.
+    pub target: VillageId,
+    /// The target's tile (the return's origin).
+    pub target_coord: Coordinate,
+    /// Losses to subtract from the target garrison.
+    pub defender_losses: UnitCounts,
+    /// Losses to subtract from each reinforcement group (keyed by the group's home village).
+    pub reinforcement_losses: Vec<(VillageId, UnitCounts)>,
+    /// The attacker's surviving troops (sent home as a `return` movement; empty ⇒ no return).
+    pub survivors: UnitCounts,
+    /// The resolution instant (the survivor return departs then).
+    pub battle_at: Timestamp,
+    /// When the survivor return arrives home.
+    pub return_arrive: Timestamp,
+    /// The report to persist.
+    pub report: NewBattleReport,
+}
+
+/// A persisted battle report for the inbox/detail view (009 AC8).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BattleReportView {
+    pub id: u128,
+    pub occurred_at: Timestamp,
+    pub kind: MovementKind,
+    pub attacker_name: String,
+    pub attacker_coord: Coordinate,
+    pub defender_name: String,
+    pub defender_coord: Coordinate,
+    pub attacker_player: PlayerId,
+    pub defender_player: PlayerId,
+    pub attacker_won: bool,
+    pub luck: f64,
+    pub morale: f64,
+    pub wall_before: u8,
+    pub wall_after: u8,
+    pub attacker_forces: UnitCounts,
+    pub attacker_losses: UnitCounts,
+    pub defender_forces: UnitCounts,
+    pub defender_losses: UnitCounts,
+}
+
+/// Persistence for combat (009): launch attacks, claim due battles, apply resolutions, read reports.
+#[async_trait]
+pub trait CombatRepository: Send + Sync {
+    /// Atomically debit `troops` from the `home` garrison (guarded) and create an attack/raid
+    /// movement of `kind` to `deliver` arriving at `arrive_at`. The target id is fixed here (P4).
+    ///
+    /// # Errors
+    /// [`RepoError::Conflict`] if the garrison no longer covers a requested count; [`RepoError`]
+    /// otherwise.
+    #[allow(clippy::too_many_arguments)]
+    async fn start_attack(
+        &self,
+        home: VillageId,
+        deliver: VillageId,
+        owner: PlayerId,
+        origin: Coordinate,
+        dest: Coordinate,
+        now: Timestamp,
+        arrive_at: Timestamp,
+        kind: MovementKind,
+        troops: &[(UnitId, u32)],
+    ) -> Result<(), RepoError>;
+
+    /// Atomically claim attack/raid movements whose arrival is due (`in_transit → processing`).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn claim_due_attacks(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueAttack>, RepoError>;
+
+    /// Apply a resolved battle in **one** transaction — subtract the defender's garrison and
+    /// reinforcement losses, insert the report, schedule the survivor return (if any), and mark the
+    /// attack movement `done`. Exactly-once with the orphan requeue (AC6/AC7).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn apply_battle(&self, apply: BattleApply) -> Result<(), RepoError>;
+
+    /// The player's battle reports (as attacker or defender), newest first.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn reports_for(
+        &self,
+        player: PlayerId,
+        limit: i64,
+    ) -> Result<Vec<BattleReportView>, RepoError>;
+
+    /// One battle report, only if `player` is a party to it (P4).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn report(
+        &self,
+        id: u128,
+        player: PlayerId,
+    ) -> Result<Option<BattleReportView>, RepoError>;
 }
 
 /// A claimed, due event ready to be processed.

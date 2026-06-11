@@ -2,13 +2,22 @@
 {% block content %}
 <section class="panel">
   <h1>Rally Point</h1>
-  <p class="muted"><a href="/village">← Back to the village</a> · send troops to reinforce another
-    village. Travel time depends on distance and your slowest unit.</p>
+  <p class="muted"><a href="/village">← Back to the village</a> · send troops to
+    <strong>reinforce</strong> a friendly village or <strong>attack/raid</strong> an enemy. Travel
+    time depends on distance and your slowest unit. <a href="/reports">Battle reports →</a></p>
 
   {% if units.is_empty() %}
   <p class="muted">No troops to send — train some at the Barracks, Stable, or Workshop first.</p>
   {% else %}
   <form method="post" action="/village/rally/send" class="form">
+    <div class="field">
+      <label>Order</label>
+      <select name="mode">
+        <option value="reinforce">Reinforce (defend an ally)</option>
+        <option value="attack">Attack (fight to destroy)</option>
+        <option value="raid">Raid (fight to plunder)</option>
+      </select>
+    </div>
     <div class="field">
       <label>Target tile</label>
       <span class="map-controls">
