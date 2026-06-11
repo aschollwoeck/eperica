@@ -6,7 +6,7 @@ Ordered for dependency and testability (pure domain first).
 
 ## Domain (pure, test-first)
 
-- [ ] **T1 — Battle domain.** `MovementKind::Attack/Raid`; `UnitSpec.siege_kind`; `combat.rs`:
+- [x] **T1 — Battle domain.** `MovementKind::Attack/Raid`; `UnitSpec.siege_kind`; `combat.rs`:
   `CombatRules`/`WallProfile`, `AttackMode`, `luck_factor`, `resolve_battle` (inf/cav split, wall +
   rams, morale, luck, power-law losses), `apply_losses`, attack/defense split helpers. Unit tests:
   attack vs raid losses; wall & rams; morale; determinism (**AC3**, **AC4**, **AC5**).

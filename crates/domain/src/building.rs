@@ -27,4 +27,6 @@ pub enum BuildingKind {
     /// Trains settlers/administrators and gates expansion (013). Known so unit definitions can
     /// reference it; constructable in 013.
     Residence,
+    /// Boosts the garrison's defence; reduced by rams in combat (009). Tribe-flavoured by balance.
+    Wall,
 }
