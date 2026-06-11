@@ -1,4 +1,4 @@
-//! Units — per-tribe unit definitions, Academy research, and Smithy upgrade rules.
+﻿//! Units — per-tribe unit definitions, Academy research, and Smithy upgrade rules.
 //!
 //! Pure rules over injected balance data ([`UnitRules`]); all numbers live in the balance dataset.
 //! Training the units is slice 005; combat use of the stats is slice 009.
@@ -16,6 +16,10 @@ pub const ROSTER_SIZE: usize = 10;
 
 /// Highest Smithy upgrade level any unit can reach (also capped by the Smithy's own level).
 pub const MAX_UNIT_LEVEL: u8 = 20;
+
+/// Largest training batch a single order may request (005; a server-side sanity bound — resources
+/// are the real constraint).
+pub const MAX_TRAINING_BATCH: u32 = 9999;
 
 /// Stable identifier of a unit type within its tribe (slug from balance data, e.g. `legionnaire`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -130,11 +134,31 @@ impl SmithyRules {
     }
 }
 
+/// Training-speed balance (005). One shared table for all troop buildings.
+#[derive(Debug, Clone)]
+pub struct TrainingRules {
+    /// Training-speed multiplier by training-building level (≥ 1; higher ⇒ faster). Index = level;
+    /// clamped to the last entry.
+    pub building_factor_per_level: Vec<f64>,
+}
+
+impl TrainingRules {
+    /// The factor at `level` (clamped to the table).
+    pub fn building_factor(&self, level: u8) -> f64 {
+        self.building_factor_per_level
+            .get(level as usize)
+            .or_else(|| self.building_factor_per_level.last())
+            .copied()
+            .unwrap_or(1.0)
+    }
+}
+
 /// All unit balance data, validated on construction.
 #[derive(Debug, Clone)]
 pub struct UnitRules {
     rosters: HashMap<Tribe, Vec<UnitSpec>>,
     pub smithy: SmithyRules,
+    pub training: TrainingRules,
 }
 
 impl UnitRules {
@@ -142,17 +166,24 @@ impl UnitRules {
     ///
     /// # Errors
     /// Returns [`DomainError::InvalidUnitRules`] unless every tribe has exactly [`ROSTER_SIZE`]
-    /// units with per-tribe-unique ids and exactly one research-free (tier-1) unit, and the
-    /// Smithy tables are non-empty and of equal length (a mismatch would silently lower the cap).
+    /// units with per-tribe-unique ids and exactly one research-free (tier-1) unit, the Smithy
+    /// tables are non-empty and of equal length (a mismatch would silently lower the cap), and
+    /// the training factor table is non-empty.
     pub fn new(
         rosters: HashMap<Tribe, Vec<UnitSpec>>,
         smithy: SmithyRules,
+        training: TrainingRules,
     ) -> Result<Self, DomainError> {
         if smithy.cost_permille_per_level.is_empty()
             || smithy.cost_permille_per_level.len() != smithy.time_secs_per_level.len()
         {
             return Err(DomainError::InvalidUnitRules(
                 "smithy cost/time tables must be non-empty and the same length",
+            ));
+        }
+        if training.building_factor_per_level.is_empty() {
+            return Err(DomainError::InvalidUnitRules(
+                "the training factor table must not be empty",
             ));
         }
         for tribe in [Tribe::Romans, Tribe::Teutons, Tribe::Gauls] {
@@ -176,7 +207,11 @@ impl UnitRules {
                 ));
             }
         }
-        Ok(Self { rosters, smithy })
+        Ok(Self {
+            rosters,
+            smithy,
+            training,
+        })
     }
 
     /// The tribe's full roster, in balance order.
@@ -276,6 +311,75 @@ pub fn scaled_time_secs(base_secs: i64, speed: GameSpeed) -> i64 {
     ((base_secs as f64 / speed.multiplier()).round() as i64).max(1)
 }
 
+/// The buildings whose training queues exist in slice 005. `trained_in` kinds outside this set
+/// (Residence — settlers/administrators) are trainable in later slices.
+fn trains_here(kind: BuildingKind) -> bool {
+    matches!(
+        kind,
+        BuildingKind::Barracks | BuildingKind::Stable | BuildingKind::Workshop
+    )
+}
+
+/// Why a training batch is denied (beyond affordability and queue occupancy).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrainDenied {
+    /// The unit is not researched in this village.
+    NotResearched,
+    /// The unit's training building is not built in this village.
+    BuildingMissing,
+    /// The unit trains in a building no slice has made trainable yet (e.g. the Residence).
+    BuildingUnavailable,
+    /// The batch size is outside `1..=MAX_TRAINING_BATCH`.
+    CountOutOfRange,
+}
+
+/// Whether a batch of `count` × `unit` may be trained in a village with `buildings` (005 AC2/AC3).
+///
+/// # Errors
+/// Returns the [`TrainDenied`] reason when training may not start.
+pub fn can_train(
+    unit: &UnitSpec,
+    is_researched: bool,
+    count: u32,
+    buildings: &[BuildingSlot],
+) -> Result<(), TrainDenied> {
+    if !is_researched && !unit.researched_by_default() {
+        return Err(TrainDenied::NotResearched);
+    }
+    if count == 0 || count > MAX_TRAINING_BATCH {
+        return Err(TrainDenied::CountOutOfRange);
+    }
+    if !trains_here(unit.trained_in) {
+        return Err(TrainDenied::BuildingUnavailable);
+    }
+    if !building_levels_met(&[(unit.trained_in, 1)], buildings) {
+        return Err(TrainDenied::BuildingMissing);
+    }
+    Ok(())
+}
+
+/// The full cost of a batch (`count × unitCost`, saturating).
+pub fn batch_cost(unit: &UnitSpec, count: u32) -> ResourceAmounts {
+    let n = i64::from(count);
+    ResourceAmounts {
+        wood: unit.cost.wood.saturating_mul(n),
+        clay: unit.cost.clay.saturating_mul(n),
+        iron: unit.cost.iron.saturating_mul(n),
+        crop: unit.cost.crop.saturating_mul(n),
+    }
+}
+
+/// Per-unit training duration after the building factor and world speed (005 AC4, P7; ≥ 1 s).
+pub fn per_unit_time_secs(
+    train_secs: i64,
+    building_level: u8,
+    rules: &TrainingRules,
+    speed: GameSpeed,
+) -> i64 {
+    let divisor = speed.multiplier() * rules.building_factor(building_level);
+    ((train_secs as f64 / divisor).round() as i64).max(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,6 +429,12 @@ mod tests {
         }
     }
 
+    fn training_rules() -> TrainingRules {
+        TrainingRules {
+            building_factor_per_level: vec![1.0, 1.0, 1.25, 1.5],
+        }
+    }
+
     fn roster() -> Vec<UnitSpec> {
         let mut units = vec![unit("tier1", None)];
         for i in 1..ROSTER_SIZE {
@@ -339,7 +449,7 @@ mod tests {
             (Tribe::Teutons, roster()),
             (Tribe::Gauls, roster()),
         ]);
-        UnitRules::new(rosters, smithy_rules()).expect("valid rules")
+        UnitRules::new(rosters, smithy_rules(), training_rules()).expect("valid rules")
     }
 
     fn slots(pairs: &[(BuildingKind, u8)]) -> Vec<BuildingSlot> {
@@ -353,17 +463,17 @@ mod tests {
     #[test]
     fn rejects_incomplete_rosters() {
         let mut rosters = HashMap::from([(Tribe::Romans, roster()), (Tribe::Teutons, roster())]);
-        assert!(UnitRules::new(rosters.clone(), smithy_rules()).is_err()); // missing Gauls
+        assert!(UnitRules::new(rosters.clone(), smithy_rules(), training_rules()).is_err()); // missing Gauls
 
         let mut short = roster();
         short.pop();
         rosters.insert(Tribe::Gauls, short);
-        assert!(UnitRules::new(rosters.clone(), smithy_rules()).is_err()); // 9 units
+        assert!(UnitRules::new(rosters.clone(), smithy_rules(), training_rules()).is_err()); // 9 units
 
         let mut two_tier1 = roster();
         two_tier1[1] = unit("second_tier1", None);
         rosters.insert(Tribe::Gauls, two_tier1);
-        assert!(UnitRules::new(rosters.clone(), smithy_rules()).is_err()); // two tier-1
+        assert!(UnitRules::new(rosters.clone(), smithy_rules(), training_rules()).is_err()); // two tier-1
 
         rosters.insert(Tribe::Gauls, roster());
         // Mismatched smithy tables would silently lower the level cap — rejected at load.
@@ -371,9 +481,9 @@ mod tests {
             cost_permille_per_level: vec![1500, 1900],
             time_secs_per_level: vec![3600],
         };
-        assert!(UnitRules::new(rosters.clone(), lopsided).is_err());
+        assert!(UnitRules::new(rosters.clone(), lopsided, training_rules()).is_err());
 
-        assert!(UnitRules::new(rosters, smithy_rules()).is_ok());
+        assert!(UnitRules::new(rosters, smithy_rules(), training_rules()).is_ok());
     }
 
     #[test]
@@ -463,6 +573,69 @@ mod tests {
         assert_eq!(r.upgrade_cost(&u, 3), None); // at max
         assert_eq!(r.base_time_secs(1), Some(4500));
         assert_eq!(r.base_time_secs(3), None);
+    }
+
+    // --- 005 AC3 (domain side): training gates ---
+    #[test]
+    fn training_gates() {
+        let infantry = unit("tier1", None); // trained_in: Barracks
+        let barracks = slots(&[(BuildingKind::Barracks, 1)]);
+
+        assert_eq!(can_train(&infantry, false, 5, &barracks), Ok(()));
+        // Unresearched (non-tier-1).
+        let researchable = researchable("u1", vec![]);
+        assert_eq!(
+            can_train(&researchable, false, 5, &barracks),
+            Err(TrainDenied::NotResearched)
+        );
+        assert_eq!(can_train(&researchable, true, 5, &barracks), Ok(()));
+        // Count out of range.
+        assert_eq!(
+            can_train(&infantry, false, 0, &barracks),
+            Err(TrainDenied::CountOutOfRange)
+        );
+        assert_eq!(
+            can_train(&infantry, false, MAX_TRAINING_BATCH + 1, &barracks),
+            Err(TrainDenied::CountOutOfRange)
+        );
+        // Training building absent.
+        assert_eq!(
+            can_train(&infantry, false, 5, &slots(&[(BuildingKind::Stable, 1)])),
+            Err(TrainDenied::BuildingMissing)
+        );
+        // Residence-trained units are unavailable until 013.
+        let mut settler = unit("settler", None);
+        settler.trained_in = BuildingKind::Residence;
+        assert_eq!(
+            can_train(&settler, true, 1, &slots(&[(BuildingKind::Residence, 1)])),
+            Err(TrainDenied::BuildingUnavailable)
+        );
+    }
+
+    // --- 005 AC2: batch cost ---
+    #[test]
+    fn batch_cost_multiplies_unit_cost() {
+        let u = unit("tier1", None); // cost 100 each
+        assert_eq!(batch_cost(&u, 1), amounts(100));
+        assert_eq!(batch_cost(&u, 25), amounts(2500));
+    }
+
+    // --- 005 AC4: building level and world speed scale training ---
+    #[test]
+    fn training_time_scales_with_building_level_and_speed() {
+        let r = training_rules(); // factors [1.0, 1.0, 1.25, 1.5]
+        let s1 = GameSpeed::new(1.0).unwrap();
+        let t1 = per_unit_time_secs(1000, 1, &r, s1);
+        let t2 = per_unit_time_secs(1000, 2, &r, s1);
+        let t3 = per_unit_time_secs(1000, 3, &r, s1);
+        assert_eq!(t1, 1000);
+        assert!(t2 < t1 && t3 < t2, "{t1} {t2} {t3}");
+        // Levels beyond the table clamp to the last factor.
+        assert_eq!(per_unit_time_secs(1000, 9, &r, s1), t3);
+        // World speed scales proportionally (P7).
+        let s2 = GameSpeed::new(2.0).unwrap();
+        assert_eq!(per_unit_time_secs(1000, 1, &r, s2), 500);
+        assert_eq!(per_unit_time_secs(1, 9, &r, s2), 1); // floor at 1 s
     }
 
     // --- AC14: world speed scales research/upgrade durations ---

@@ -6,8 +6,8 @@
 
 use eperica_domain::{
     BuildRules, BuildingKind, BuildingSlot, DomainError, EconomyRules, LevelSpec, ResearchSpec,
-    ResourceAmounts, ResourceField, ResourceKind, SmithyRules, StartingVillage, Tribe, UnitId,
-    UnitRole, UnitRules, UnitSpec,
+    ResourceAmounts, ResourceField, ResourceKind, SmithyRules, StartingVillage, TrainingRules,
+    Tribe, UnitId, UnitRole, UnitRules, UnitSpec,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -301,10 +301,16 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
 
 #[derive(Deserialize)]
 struct UnitsDto {
+    training: TrainingDto,
     smithy: SmithyDto,
     romans: TribeUnitsDto,
     teutons: TribeUnitsDto,
     gauls: TribeUnitsDto,
+}
+
+#[derive(Deserialize)]
+struct TrainingDto {
+    building_factor: Vec<f64>,
 }
 
 #[derive(Deserialize)]
@@ -422,7 +428,10 @@ fn parse_unit_rules(toml_src: &str) -> Result<UnitRules, BalanceError> {
         cost_permille_per_level: dto.smithy.cost_permille_per_level,
         time_secs_per_level: dto.smithy.time_secs_per_level,
     };
-    UnitRules::new(rosters, smithy).map_err(BalanceError::Domain)
+    let training = TrainingRules {
+        building_factor_per_level: dto.training.building_factor,
+    };
+    UnitRules::new(rosters, smithy, training).map_err(BalanceError::Domain)
 }
 
 #[cfg(test)]

@@ -287,7 +287,7 @@ mod tests {
     use async_trait::async_trait;
     use eperica_domain::{
         BuildingKind, BuildingSlot, Coordinate, ResearchSpec, ResourceField, ResourceKind,
-        SmithyRules, StartingVillage, UnitRole, UnitSpec, VillageId,
+        SmithyRules, StartingVillage, TrainingRules, UnitRole, UnitSpec, VillageId,
     };
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -352,6 +352,9 @@ mod tests {
             SmithyRules {
                 cost_permille_per_level: vec![1500, 1900],
                 time_secs_per_level: vec![3600, 4500],
+            },
+            TrainingRules {
+                building_factor_per_level: vec![1.0, 1.0, 1.25],
             },
         )
         .expect("valid rules")

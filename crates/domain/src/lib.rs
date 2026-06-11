@@ -28,8 +28,9 @@ pub use error::DomainError;
 pub use event::{EventKind, ScheduledEvent, Timestamp};
 pub use resource::ResourceKind;
 pub use units::{
-    MAX_UNIT_LEVEL, ROSTER_SIZE, ResearchDenied, ResearchSpec, SmithyRules, UnitId, UnitRole,
-    UnitRules, UnitSpec, UpgradeDenied, can_research, can_upgrade, scaled_time_secs,
+    MAX_TRAINING_BATCH, MAX_UNIT_LEVEL, ROSTER_SIZE, ResearchDenied, ResearchSpec, SmithyRules,
+    TrainDenied, TrainingRules, UnitId, UnitRole, UnitRules, UnitSpec, UpgradeDenied, batch_cost,
+    can_research, can_train, can_upgrade, per_unit_time_secs, scaled_time_secs,
 };
 pub use village::{
     BuildingSlot, PlayerId, RESOURCE_FIELD_COUNT, ResourceField, StartingVillage, Tribe, Village,
