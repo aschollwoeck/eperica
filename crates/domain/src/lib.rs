@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod building;
+pub mod combat;
 pub mod construction;
 pub mod economy;
 pub mod error;
@@ -19,6 +20,10 @@ pub mod village;
 pub mod world;
 
 pub use building::BuildingKind;
+pub use combat::{
+    AttackMode, AttackPower, BattleInput, BattleOutcome, CombatRules, WallProfile, add_defense,
+    apply_losses, attack_power, luck_factor, resolve_battle,
+};
 pub use construction::{
     BuildRules, BuildTarget, LevelSpec, QueueLane, build_time_secs, building_levels_met,
     can_afford, debit, prerequisites_met, queue_lane,
@@ -37,10 +42,10 @@ pub use trade::{
     merchants_required,
 };
 pub use units::{
-    MAX_TRAINING_BATCH, MAX_UNIT_LEVEL, ROSTER_SIZE, ResearchDenied, ResearchSpec, SmithyRules,
-    TrainDenied, TrainingRules, UnitCounts, UnitId, UnitRole, UnitRules, UnitSpec, UpgradeDenied,
-    batch_cost, can_research, can_train, can_upgrade, depletion_secs, garrison_upkeep,
-    per_unit_time_secs, scaled_time_secs, starve,
+    MAX_TRAINING_BATCH, MAX_UNIT_LEVEL, ROSTER_SIZE, ResearchDenied, ResearchSpec, SiegeKind,
+    SmithyRules, TrainDenied, TrainingRules, UnitCounts, UnitId, UnitRole, UnitRules, UnitSpec,
+    UpgradeDenied, batch_cost, can_research, can_train, can_upgrade, depletion_secs,
+    garrison_upkeep, per_unit_time_secs, scaled_time_secs, starve,
 };
 pub use village::{
     BuildingSlot, PlayerId, RESOURCE_FIELD_COUNT, ResourceField, StartingVillage, Tribe, Village,

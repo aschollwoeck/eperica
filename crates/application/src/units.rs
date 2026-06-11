@@ -610,6 +610,7 @@ mod tests {
             cost: amounts(100),
             train_secs: 1600,
             trained_in: BuildingKind::Barracks,
+            siege_kind: None,
             research,
         }
     }

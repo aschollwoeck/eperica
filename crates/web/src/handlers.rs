@@ -472,6 +472,12 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
                 MovementKind::Return => {
                     format!("Returning to ({}|{})", m.destination.x, m.destination.y)
                 }
+                MovementKind::Attack => {
+                    format!("Attack on ({}|{})", m.destination.x, m.destination.y)
+                }
+                MovementKind::Raid => {
+                    format!("Raid on ({}|{})", m.destination.x, m.destination.y)
+                }
             },
             troops: troops_summary(unit_rules, &m.troops),
             arrive_ms: m.arrive_at.0,

@@ -7,8 +7,8 @@
 use eperica_domain::{
     BuildRules, BuildingKind, BuildingSlot, DomainError, EconomyRules, FieldDistribution,
     LevelSpec, MapRules, MerchantProfile, MerchantRules, OasisBonus, ResearchSpec, ResourceAmounts,
-    ResourceField, ResourceKind, SmithyRules, StartingVillage, TrainingRules, Tribe, UnitId,
-    UnitRole, UnitRules, UnitSpec, Weighted,
+    ResourceField, ResourceKind, SiegeKind, SmithyRules, StartingVillage, TrainingRules, Tribe,
+    UnitId, UnitRole, UnitRules, UnitSpec, Weighted,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -407,6 +407,9 @@ struct UnitDto {
     trained_in: String,
     cost: AmountsDto,
     research: Option<ResearchDto>,
+    /// Siege target for siege units (`"ram"`/`"catapult"`); absent for all other roles.
+    #[serde(default)]
+    siege: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -463,7 +466,17 @@ fn unit_spec(dto: &UnitDto) -> Result<UnitSpec, BalanceError> {
         train_secs: dto.train_secs,
         trained_in: parse_building(&dto.trained_in)?,
         research,
+        siege_kind: parse_siege(dto.siege.as_deref())?,
     })
+}
+
+fn parse_siege(s: Option<&str>) -> Result<Option<SiegeKind>, BalanceError> {
+    match s {
+        None => Ok(None),
+        Some("ram") => Ok(Some(SiegeKind::Ram)),
+        Some("catapult") => Ok(Some(SiegeKind::Catapult)),
+        Some(other) => Err(BalanceError::UnknownUnitRole(format!("siege:{other}"))),
+    }
 }
 
 /// Load the per-tribe unit rosters and Smithy upgrade tables from balance data.

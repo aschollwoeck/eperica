@@ -42,6 +42,15 @@ pub enum UnitRole {
     Expansion,
 }
 
+/// What a siege unit targets in combat (009/011). Non-siege units carry `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SiegeKind {
+    /// A ram — reduces the target's effective Wall level before the defence bonus (009).
+    Ram,
+    /// A catapult — damages targeted buildings (siege effect lands in 011; fights as a unit in 009).
+    Catapult,
+}
+
 /// Cost, duration, and building requirements for researching a unit type in the Academy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResearchSpec {
@@ -76,6 +85,8 @@ pub struct UnitSpec {
     pub trained_in: BuildingKind,
     /// `None` marks the tribe's tier-1 unit: researched from the start, no order needed (AC9).
     pub research: Option<ResearchSpec>,
+    /// For siege units, what they target in combat (009/011); `None` for all other roles.
+    pub siege_kind: Option<SiegeKind>,
 }
 
 impl UnitSpec {
@@ -485,6 +496,7 @@ mod tests {
             train_secs: 1600,
             trained_in: BuildingKind::Barracks,
             research,
+            siege_kind: None,
         }
     }
 
