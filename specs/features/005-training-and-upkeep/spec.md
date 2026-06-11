@@ -1,6 +1,6 @@
 # Feature 005 — Training & upkeep
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 004 (tribes, unit definitions, research, Smithy; due-event order machinery)
 **Roadmap:** M2 · slice 005 · GDD §6.4, §2.2 — the army economy and the natural army cap.
 

@@ -476,7 +476,9 @@ where
     T: TrainingRepository,
 {
     let per_unit = batch.per_unit_secs.max(1);
-    let elapsed_secs = (now.0 - batch.started_at.0) / 1000;
+    // `.max(0)` is defensive (the claim predicate implies ≥ per_unit): a corrupted `started_at`
+    // must fail safe (deliver nothing) instead of delivering the whole batch early.
+    let elapsed_secs = ((now.0 - batch.started_at.0) / 1000).max(0);
     let total_finished = u32::try_from(elapsed_secs / per_unit)
         .unwrap_or(u32::MAX)
         .min(batch.count_total);
@@ -776,8 +778,12 @@ mod tests {
     #[derive(Default)]
     struct FakeTraining {
         duplicate: bool,
+        due: Vec<crate::ports::DueTraining>,
         last: Mutex<Option<NewTrainingOrder>>,
         last_settled: Mutex<Option<ResourceAmounts>>,
+        /// `(completed, settled, settled_from, settle_to)` of the last apply.
+        applied: Mutex<Option<(u32, ResourceAmounts, Timestamp, Timestamp)>>,
+        released: Mutex<bool>,
     }
 
     #[async_trait]
@@ -808,22 +814,24 @@ mod tests {
             _now: Timestamp,
             _limit: i64,
         ) -> Result<Vec<crate::ports::DueTraining>, RepoError> {
-            Ok(Vec::new())
+            Ok(self.due.clone())
         }
         async fn apply_training(
             &self,
             _due: &crate::ports::DueTraining,
-            _completed: u32,
-            _settled: ResourceAmounts,
-            _settled_from: Timestamp,
-            _settle_to: Timestamp,
+            completed: u32,
+            settled: ResourceAmounts,
+            settled_from: Timestamp,
+            settle_to: Timestamp,
         ) -> Result<(), RepoError> {
+            *self.applied.lock().unwrap() = Some((completed, settled, settled_from, settle_to));
             Ok(())
         }
         async fn release_training(
             &self,
             _due: &crate::ports::DueTraining,
         ) -> Result<(), RepoError> {
+            *self.released.lock().unwrap() = true;
             Ok(())
         }
     }
@@ -914,6 +922,58 @@ mod tests {
             training.last_settled.lock().unwrap().expect("settled"),
             amounts(300)
         );
+    }
+
+    // --- 005 AC5/AC6: deliveries settle piecewise — upkeep starts at each completion instant ---
+    #[tokio::test]
+    async fn delivery_settles_piecewise() {
+        // Zero production (test economy rules), tier-1 upkeep 1 crop/h, perUnit = 3600 s, batch
+        // of 3 started at t=0, processed at t = 2.5 h ⇒ 2 units deliver. Segment [0, 1 h]: empty
+        // garrison, no drain; segment [1 h, 2 h]: one delivered unit eats 1 crop. A retroactive
+        // implementation would charge 2 units × 2 h = 4 crop instead of exactly 1.
+        let accounts = FakeAccounts {
+            village: make_village(&[(BuildingKind::Barracks, 1)]),
+            stored: amounts(1000),
+        };
+        let training = FakeTraining {
+            due: vec![crate::ports::DueTraining {
+                id: 1,
+                village: VillageId(1),
+                unit: UnitId("tier1".into()),
+                count_total: 3,
+                count_done: 0,
+                per_unit_secs: 3600,
+                started_at: Timestamp(0),
+            }],
+            ..FakeTraining::default()
+        };
+        let delivered = process_due_training(
+            &accounts,
+            &training,
+            &economy_rules(),
+            &unit_rules(),
+            GameSpeed::new(1.0).unwrap(),
+            Timestamp(9_000_000), // 2.5 h
+            10,
+        )
+        .await
+        .unwrap();
+        assert_eq!(delivered, vec![VillageId(1)]);
+        let (completed, settled, settled_from, settle_to) =
+            training.applied.lock().unwrap().expect("applied");
+        assert_eq!(completed, 2);
+        assert_eq!(settled_from, Timestamp(0));
+        assert_eq!(settle_to, Timestamp(7_200_000)); // t₂, not `now`
+        assert_eq!(
+            settled,
+            ResourceAmounts {
+                wood: 1000,
+                clay: 1000,
+                iron: 1000,
+                crop: 999, // exactly one unit-hour of upkeep, never retroactive
+            }
+        );
+        assert!(!*training.released.lock().unwrap());
     }
 
     // --- 005 AC3: every rejection leaves state untouched ---

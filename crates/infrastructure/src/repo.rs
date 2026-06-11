@@ -1216,8 +1216,8 @@ impl StarvationRepository for PgAccountRepository {
         let vid = Uuid::from_u128(village.0);
         let mut tx = self.pool.begin().await.map_err(backend)?;
 
-        // Optimistic settle — see `start_build`; on Conflict the claimed check stays `processing`
-        // and is retried after an orphan requeue (AC7 exactly-once still holds).
+        // Optimistic settle — see `start_build`; on Conflict nothing is applied and the caller
+        // re-pends the check for a next-tick retry (AC7 exactly-once still holds).
         let updated = sqlx::query(
             "UPDATE village_resources SET wood=$1, clay=$2, iron=$3, crop=$4, \
              updated_at = to_timestamp($5::double precision / 1000.0) \

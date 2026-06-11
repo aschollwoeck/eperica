@@ -509,8 +509,9 @@ pub trait StarvationRepository: Send + Sync {
     /// claimed check done — so starvation happens exactly once (AC7).
     ///
     /// # Errors
-    /// [`RepoError::Conflict`] when the snapshot moved (the check stays claimed and is retried
-    /// after an orphan requeue); [`RepoError::Backend`] on storage failure.
+    /// [`RepoError::Conflict`] when the snapshot moved — nothing is applied; the caller re-pends
+    /// the check (`resolve_starvation_check(Some(now))`) so the next tick re-validates from a
+    /// fresh snapshot. [`RepoError::Backend`] on storage failure.
     async fn apply_starvation(
         &self,
         village: VillageId,

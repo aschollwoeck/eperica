@@ -13,10 +13,12 @@ tick over villages, no event per trained unit.
 - **A batch is one due-event row that advances.** `training_orders` stores `started_at`,
   `per_unit_secs`, `count_total`, `count_done`, and `next_complete_at`; the `i`-th unit completes
   at `started + i × perUnit`. The processor claims rows whose next completion is due, computes
-  `k = elapsed ÷ perUnit − done` in the use-case, and `apply_training` moves the garrison **and**
-  the progress in one transaction — a crash between claim and apply re-derives the same `k`, so no
-  unit is lost or duplicated (AC5). One batch per troop building, enforced by a partial unique
-  index like every other queue (P4).
+  `k = elapsed ÷ perUnit − done` in the use-case, and `apply_training` moves the garrison, the
+  progress, **and a piecewise resource settle** in one transaction — the store is settled segment
+  by segment so each unit's upkeep starts at its own completion instant, never retroactively
+  (snapshot-guarded; a conflict releases the batch for a next-tick retry). A crash between claim
+  and apply re-derives the same `k`, so no unit is lost or duplicated (AC5). One batch per troop
+  building, enforced by a partial unique index like every other queue (P4).
 - **Upkeep is compute-on-read.** `production_rates` takes the garrison's total crop upkeep;
   `load_economy` (and every settle path) resolves it from `village_units` × roster. Nothing is
   stored that could drift (P2).

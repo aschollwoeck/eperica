@@ -1,6 +1,6 @@
 # Feature 005 — Training & upkeep — Technical Plan
 
-**Status:** Reviewed
+**Status:** Verified
 **Spec:** ./spec.md
 
 Builds on 004: training batches reuse the optimistic-settle + due-event order machinery; the
