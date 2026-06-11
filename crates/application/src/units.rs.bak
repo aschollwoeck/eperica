@@ -1,4 +1,4 @@
-//! Unit use-cases: order Academy research and Smithy upgrades, and process their due orders.
+﻿//! Unit use-cases: order Academy research and Smithy upgrades, and process their due orders.
 
 use crate::ports::{
     AccountRepository, NewTrainingOrder, NewUnitOrder, RepoError, TrainingRepository,
@@ -440,16 +440,8 @@ where
     let due = training.claim_due_training(now, limit).await?;
     let mut villages = Vec::new();
     for batch in due {
-        match deliver_batch(
-            accounts,
-            training,
-            economy_rules,
-            unit_rules,
-            speed,
-            now,
-            &batch,
-        )
-        .await
+        match deliver_batch(accounts, training, economy_rules, unit_rules, speed, now, &batch)
+            .await
         {
             Ok(true) => villages.push(batch.village),
             Ok(false) => {}

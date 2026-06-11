@@ -858,35 +858,35 @@ pub async fn troops(
         Vec::new() // the template only renders the building-required notice
     } else {
         unit_rules
-            .roster(tribe)
-            .iter()
-            .filter(|spec| spec.trained_in == building)
-            .filter(|spec| spec.researched_by_default() || researched.contains(&spec.id))
-            .map(|spec| TrainRow {
-                id: spec.id.as_str().to_owned(),
-                name: spec.name.clone(),
-                attack: spec.attack,
-                def_inf: spec.defense_infantry,
-                def_cav: spec.defense_cavalry,
-                upkeep: spec.crop_upkeep,
-                cost_wood: spec.cost.wood,
-                cost_clay: spec.cost.clay,
-                cost_iron: spec.cost.iron,
-                cost_crop: spec.cost.crop,
-                time: fmt_duration(per_unit_time_secs(
-                    spec.train_secs,
-                    building_level,
-                    &unit_rules.training,
-                    state.world.speed,
-                )),
-                can_order: batch.is_none(),
-                gate: if batch.is_some() {
-                    "training in progress".to_owned()
-                } else {
-                    String::new()
-                },
-            })
-            .collect()
+        .roster(tribe)
+        .iter()
+        .filter(|spec| spec.trained_in == building)
+        .filter(|spec| spec.researched_by_default() || researched.contains(&spec.id))
+        .map(|spec| TrainRow {
+            id: spec.id.as_str().to_owned(),
+            name: spec.name.clone(),
+            attack: spec.attack,
+            def_inf: spec.defense_infantry,
+            def_cav: spec.defense_cavalry,
+            upkeep: spec.crop_upkeep,
+            cost_wood: spec.cost.wood,
+            cost_clay: spec.cost.clay,
+            cost_iron: spec.cost.iron,
+            cost_crop: spec.cost.crop,
+            time: fmt_duration(per_unit_time_secs(
+                spec.train_secs,
+                building_level,
+                &unit_rules.training,
+                state.world.speed,
+            )),
+            can_order: batch.is_none(),
+            gate: if batch.is_some() {
+                "training in progress".to_owned()
+            } else {
+                String::new()
+            },
+        })
+        .collect()
     };
 
     page(&TroopsTemplate {

@@ -187,9 +187,18 @@ where
             Ok(true)
         }
         Err(RepoError::Conflict) => {
-            // Someone settled concurrently; the claimed check is requeued at startup or can be
-            // retried next tick once re-synced by whatever settled.
-            tracing::warn!(?village_id, "starvation settle conflicted; will retry");
+            // Someone settled concurrently (e.g. a training delivery) — re-pend the check so the
+            // next tick re-validates from the fresh snapshot. The snapshot guard also means a
+            // garrison change between our read and this commit always conflicts here (every
+            // garrison mutation settles the same resources row), so no delivered unit can be
+            // silently annihilated by the cull's garrison replacement.
+            tracing::warn!(
+                ?village_id,
+                "starvation settle conflicted; retrying next tick"
+            );
+            starvation
+                .resolve_starvation_check(village_id, Some(now))
+                .await?;
             Ok(false)
         }
         Err(e) => Err(e),

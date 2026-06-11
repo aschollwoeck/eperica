@@ -468,7 +468,26 @@ async fn training_flow_and_garrison() {
     assert!(body.contains("data-deadline"));
     assert!(body.contains("training in progress"));
 
-    // 005 AC6/AC9: a garrison shows on the village page and lowers the net crop rate.
+    // 005 AC6/AC9: a garrison shows on the village page and lowers the net crop rate by exactly
+    // its upkeep.
+    fn crop_rate(body: &str) -> i64 {
+        let crop = &body[body.find("res--crop").expect("crop line")..];
+        let open = crop.find('(').expect("rate parens");
+        let end = crop[open..].find("/h").expect("rate unit") + open;
+        crop[open + 1..end]
+            .trim_start_matches('+')
+            .parse()
+            .expect("rate number")
+    }
+    let before = crop_rate(
+        &c.get(format!("{base}/village"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+    );
     sqlx::query(
         "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 10)",
     )
@@ -488,6 +507,7 @@ async fn training_flow_and_garrison() {
     assert!(body.contains("Phalanx"));
     assert!(body.contains("Total upkeep: 10 crop/h"));
     assert!(body.contains("/village/troops/barracks"));
+    assert_eq!(crop_rate(&body), before - 10); // 10 phalanxes × 1 crop/h (AC6)
 
     // Visitors are redirected to login (roles table).
     let anon = client()

@@ -447,13 +447,31 @@ pub trait TrainingRepository: Send + Sync {
         limit: i64,
     ) -> Result<Vec<DueTraining>, RepoError>;
 
-    /// Deliver `completed` finished units to the garrison and advance the batch — in **one**
-    /// transaction, so a crash never loses or duplicates a unit (AC5). Re-marks the batch
-    /// `active` (or `done` when finished).
+    /// Deliver `completed` finished units to the garrison, settle the village's resources to
+    /// `settled` as of `settle_to` (computed piecewise by the caller so upkeep starts at each
+    /// unit's own completion instant — spec Decision "troops in training do not eat"), and
+    /// advance the batch — all in **one** transaction, so a crash never loses or duplicates a
+    /// unit (AC5/AC6). The settle is snapshot-guarded against `settled_from` (see
+    /// [`BuildRepository::start_build`]). Re-marks the batch `active` (or `done` when finished).
+    ///
+    /// # Errors
+    /// [`RepoError::Conflict`] when the snapshot moved (nothing applied; release and retry);
+    /// [`RepoError::Backend`] on storage failure.
+    async fn apply_training(
+        &self,
+        due: &DueTraining,
+        completed: u32,
+        settled: ResourceAmounts,
+        settled_from: Timestamp,
+        settle_to: Timestamp,
+    ) -> Result<(), RepoError>;
+
+    /// Return a claimed batch to `active` unchanged (a conflicting settle or a not-yet-due claim);
+    /// it is re-claimed on a later tick with a fresh snapshot.
     ///
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
-    async fn apply_training(&self, due: &DueTraining, completed: u32) -> Result<(), RepoError>;
+    async fn release_training(&self, due: &DueTraining) -> Result<(), RepoError>;
 }
 
 /// Persistence for per-village crop-depletion checks (005 AC7; at most one pending per village).

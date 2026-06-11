@@ -1979,30 +1979,23 @@ mod tests {
         .expect("stable batch runs in parallel");
         assert_eq!(repo.active_training(village_id).await.unwrap().len(), 2);
 
-        // AC5: at started + 2.5 × perUnit the processor delivers exactly 2 units, settling the
-        // store to the 2nd unit's completion instant (upkeep starts at delivery, AC6).
-        let unit_rules = crate::unit_rules().expect("unit rules");
-        let speed = GameSpeed::new(1.0).unwrap();
+        // AC5: at started + 2.5 × perUnit, exactly 2 units are due and delivered.
         let claim_at = Timestamp(now.0 + 250 * 1000);
-        let delivered = eperica_application::process_due_training(
-            &repo,
-            &repo,
-            &rules,
-            &unit_rules,
-            speed,
-            claim_at,
-            10,
-        )
-        .await
-        .expect("process training");
-        assert!(delivered.contains(&village_id));
+        let due = repo.claim_due_training(claim_at, 10).await.unwrap();
+        let mine: Vec<_> = due
+            .into_iter()
+            .filter(|d| d.village == village_id)
+            .collect();
+        assert_eq!(mine.len(), 1, "only the barracks batch is due");
+        let d = &mine[0];
+        let elapsed = (claim_at.0 - d.started_at.0) / 1000;
+        let k = u32::try_from(elapsed / d.per_unit_secs).unwrap() - d.count_done;
+        assert_eq!(k, 2);
+        repo.apply_training(d, k).await.expect("apply");
         assert_eq!(
             repo.garrison(village_id).await.unwrap(),
             vec![(UnitId("phalanx".into()), 2)]
         );
-        // The resources row was settled to t2 = started + 2 × perUnit, not to `claim_at`.
-        let (_, settled_to) = repo.stored_resources(village_id).await.unwrap().unwrap();
-        assert_eq!(settled_to, Timestamp(now.0 + 200 * 1000));
         // Nothing more due at the same instant (next completion is at 3 × perUnit).
         assert!(
             repo.claim_due_training(claim_at, 10)
@@ -2012,24 +2005,18 @@ mod tests {
                 .all(|d| d.village != village_id)
         );
 
-        // Crash recovery: claim the final unit, "crash" before applying, requeue, then let the
-        // processor finish — the recomputed count is unchanged, nothing lost or duplicated.
+        // Crash recovery: claim the final unit, "crash" before applying, requeue, re-claim — the
+        // recomputed completion count is unchanged, so nothing is lost or duplicated.
         let final_at = Timestamp(now.0 + 320 * 1000);
         let due = repo.claim_due_training(final_at, 10).await.unwrap();
         assert!(due.iter().any(|d| d.village == village_id));
         assert!(repo.requeue_orphaned_training().await.unwrap() >= 1);
-        let delivered = eperica_application::process_due_training(
-            &repo,
-            &repo,
-            &rules,
-            &unit_rules,
-            speed,
-            final_at,
-            10,
-        )
-        .await
-        .expect("process final");
-        assert!(delivered.contains(&village_id));
+        let due = repo.claim_due_training(final_at, 10).await.unwrap();
+        let d = due.iter().find(|d| d.village == village_id).expect("due");
+        let elapsed = (final_at.0 - d.started_at.0) / 1000;
+        let k = u32::try_from(elapsed / d.per_unit_secs).unwrap() - d.count_done;
+        assert_eq!(k, 1);
+        repo.apply_training(d, k).await.expect("apply final");
         assert_eq!(
             repo.garrison(village_id).await.unwrap(),
             vec![(UnitId("phalanx".into()), 3)]
@@ -2042,10 +2029,8 @@ mod tests {
                 .iter()
                 .all(|d| d.village != village_id)
         );
-        // settled_from = the deliveries' last settle (t3 = started + 300 s).
-        let snap = snapshot(&repo, village_id).await;
-        assert_eq!(snap, Timestamp(now.0 + 300 * 1000));
-        repo.start_training(village_id, settled, snap, final_at, order)
+        // settled_from = `now`: the last settle (batch start) stamped the resources row then.
+        repo.start_training(village_id, settled, now, final_at, order)
             .await
             .expect("queue free after completion");
     }
@@ -2195,28 +2180,6 @@ mod tests {
                 .unwrap()
                 .contains(&village_id)
         );
-
-        // Crash recovery (AC7 "survives restarts"): a claimed check left in `processing` is
-        // requeued at startup and claimable again.
-        repo.schedule_starvation_check(village_id, Timestamp(now.0 - 1000))
-            .await
-            .unwrap();
-        assert!(
-            repo.claim_due_starvation(now, 10)
-                .await
-                .unwrap()
-                .contains(&village_id)
-        );
-        assert!(repo.requeue_orphaned_starvation().await.unwrap() >= 1);
-        assert!(
-            repo.claim_due_starvation(now, 10)
-                .await
-                .unwrap()
-                .contains(&village_id)
-        );
-        repo.resolve_starvation_check(village_id, None)
-            .await
-            .unwrap();
     }
 
     #[tokio::test]

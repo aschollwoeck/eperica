@@ -1,4 +1,4 @@
-//! Units — per-tribe unit definitions, Academy research, and Smithy upgrade rules.
+﻿//! Units — per-tribe unit definitions, Academy research, and Smithy upgrade rules.
 //!
 //! Pure rules over injected balance data ([`UnitRules`]); all numbers live in the balance dataset.
 //! Training the units is slice 005; combat use of the stats is slice 009.
@@ -452,9 +452,8 @@ pub fn depletion_secs(crop_stored: i64, net_rate_per_hour: i64) -> Option<i64> {
         return None;
     }
     let deficit = -net_rate_per_hour;
-    let scaled = crop_stored.max(0).saturating_mul(3600);
-    // Manual ceiling division — immune to the `scaled + deficit - 1` overflow when saturated.
-    Some(scaled / deficit + i64::from(scaled % deficit != 0))
+    let stored = crop_stored.max(0);
+    Some(stored.saturating_mul(3600).div_ceil(deficit))
 }
 
 #[cfg(test)]
