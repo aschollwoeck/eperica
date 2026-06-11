@@ -1,13 +1,13 @@
-﻿//! PostgreSQL adapter for the application's [`AccountRepository`] port.
+//! PostgreSQL adapter for the application's [`AccountRepository`] port.
 
 use async_trait::async_trait;
 use eperica_application::{
-    AccountRepository, ActiveBuild, BuildRepository, DueBuild, NewBuildOrder, NewUser, RepoError,
-    UserRecord,
+    AccountRepository, ActiveBuild, ActiveUnitOrder, BuildRepository, DueBuild, DueUnitOrder,
+    NewBuildOrder, NewUnitOrder, NewUser, RepoError, UnitOrderKind, UnitRepository, UserRecord,
 };
 use eperica_domain::{
     BuildTarget, BuildingKind, BuildingSlot, Coordinate, PlayerId, ResourceAmounts, ResourceField,
-    ResourceKind, StartingVillage, Timestamp, Tribe, Village, VillageId, WorldId,
+    ResourceKind, StartingVillage, Timestamp, Tribe, UnitId, Village, VillageId, WorldId,
     coordinates_within,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
@@ -44,6 +44,17 @@ impl PgAccountRepository {
     pub async fn requeue_orphaned_builds(&self) -> Result<u64, RepoError> {
         let result =
             sqlx::query("UPDATE build_orders SET status = 'pending' WHERE status = 'processing'")
+                .execute(&self.pool)
+                .await
+                .map_err(backend)?;
+        Ok(result.rows_affected())
+    }
+
+    /// Reset unit orders stuck in `processing` back to `pending` (crash recovery).
+    /// `apply_unit_order` is idempotent, so reprocessing is safe.
+    pub async fn requeue_orphaned_unit_orders(&self) -> Result<u64, RepoError> {
+        let result =
+            sqlx::query("UPDATE unit_orders SET status = 'pending' WHERE status = 'processing'")
                 .execute(&self.pool)
                 .await
                 .map_err(backend)?;
@@ -565,6 +576,211 @@ impl BuildRepository for PgAccountRepository {
     }
 }
 
+fn unit_order_kind_str(kind: UnitOrderKind) -> &'static str {
+    match kind {
+        UnitOrderKind::Research => "research",
+        UnitOrderKind::SmithyUpgrade => "smithy",
+    }
+}
+
+fn parse_unit_order_kind(s: &str) -> Result<UnitOrderKind, RepoError> {
+    match s {
+        "research" => Ok(UnitOrderKind::Research),
+        "smithy" => Ok(UnitOrderKind::SmithyUpgrade),
+        other => Err(RepoError::Backend(format!(
+            "unknown unit order kind: {other}"
+        ))),
+    }
+}
+
+#[async_trait]
+impl UnitRepository for PgAccountRepository {
+    async fn start_unit_order(
+        &self,
+        village: VillageId,
+        settled: ResourceAmounts,
+        now: Timestamp,
+        order: NewUnitOrder,
+    ) -> Result<(), RepoError> {
+        let vid = Uuid::from_u128(village.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        sqlx::query(
+            "UPDATE village_resources SET wood=$1, clay=$2, iron=$3, crop=$4, \
+             updated_at = to_timestamp($5::double precision / 1000.0) WHERE village_id=$6",
+        )
+        .bind(settled.wood)
+        .bind(settled.clay)
+        .bind(settled.iron)
+        .bind(settled.crop)
+        .bind(now.0 as f64)
+        .bind(vid)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+
+        let insert = sqlx::query(
+            "INSERT INTO unit_orders (id, village_id, kind, unit_id, target_level, complete_at, status) \
+             VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0), 'pending')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(vid)
+        .bind(unit_order_kind_str(order.kind))
+        .bind(order.unit.as_str())
+        .bind(order.target_level.map(i16::from))
+        .bind(order.complete_at.0 as f64)
+        .execute(&mut *tx)
+        .await;
+        if let Err(e) = insert {
+            return Err(if is_unique_violation(&e) {
+                RepoError::Duplicate
+            } else {
+                backend(e)
+            });
+        }
+
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn active_unit_orders(
+        &self,
+        village: VillageId,
+    ) -> Result<Vec<ActiveUnitOrder>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT kind, unit_id, target_level, \
+             (EXTRACT(EPOCH FROM complete_at) * 1000)::bigint AS complete_ms \
+             FROM unit_orders WHERE village_id = $1 AND status = 'pending'",
+        )
+        .bind(Uuid::from_u128(village.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let kind: String = r.try_get("kind").map_err(backend)?;
+            let unit: String = r.try_get("unit_id").map_err(backend)?;
+            let target_level: Option<i16> = r.try_get("target_level").map_err(backend)?;
+            let complete_ms: i64 = r.try_get("complete_ms").map_err(backend)?;
+            out.push(ActiveUnitOrder {
+                kind: parse_unit_order_kind(&kind)?,
+                unit: UnitId(unit),
+                target_level: target_level.map(|l| u8::try_from(l).unwrap_or(0)),
+                complete_at: Timestamp(complete_ms),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn researched_units(&self, village: VillageId) -> Result<Vec<UnitId>, RepoError> {
+        let rows = sqlx::query("SELECT unit_id FROM village_research WHERE village_id = $1")
+            .bind(Uuid::from_u128(village.0))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend)?;
+        rows.iter()
+            .map(|r| Ok(UnitId(r.try_get("unit_id").map_err(backend)?)))
+            .collect()
+    }
+
+    async fn unit_levels(&self, village: VillageId) -> Result<Vec<(UnitId, u8)>, RepoError> {
+        let rows =
+            sqlx::query("SELECT unit_id, level FROM village_unit_levels WHERE village_id = $1")
+                .bind(Uuid::from_u128(village.0))
+                .fetch_all(&self.pool)
+                .await
+                .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let unit: String = r.try_get("unit_id").map_err(backend)?;
+                let level: i16 = r.try_get("level").map_err(backend)?;
+                Ok((UnitId(unit), u8::try_from(level).unwrap_or(0)))
+            })
+            .collect()
+    }
+
+    async fn claim_due_unit_orders(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueUnitOrder>, RepoError> {
+        let rows = sqlx::query(
+            "UPDATE unit_orders SET status = 'processing' WHERE id IN ( \
+                 SELECT id FROM unit_orders \
+                 WHERE status = 'pending' AND complete_at <= to_timestamp($1::double precision / 1000.0) \
+                 ORDER BY complete_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
+             ) RETURNING id, village_id, kind, unit_id, target_level",
+        )
+        .bind(now.0 as f64)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let id: Uuid = r.try_get("id").map_err(backend)?;
+            let village: Uuid = r.try_get("village_id").map_err(backend)?;
+            let kind: String = r.try_get("kind").map_err(backend)?;
+            let unit: String = r.try_get("unit_id").map_err(backend)?;
+            let target_level: Option<i16> = r.try_get("target_level").map_err(backend)?;
+            out.push(DueUnitOrder {
+                id: id.as_u128(),
+                village: VillageId(village.as_u128()),
+                kind: parse_unit_order_kind(&kind)?,
+                unit: UnitId(unit),
+                target_level: target_level.map(|l| u8::try_from(l).unwrap_or(0)),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn apply_unit_order(&self, due: DueUnitOrder) -> Result<(), RepoError> {
+        let vid = Uuid::from_u128(due.village.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        match due.kind {
+            UnitOrderKind::Research => {
+                // Idempotent: re-applying an already-researched unit is a no-op (AC8).
+                sqlx::query(
+                    "INSERT INTO village_research (village_id, unit_id) VALUES ($1, $2) \
+                     ON CONFLICT (village_id, unit_id) DO NOTHING",
+                )
+                .bind(vid)
+                .bind(due.unit.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+            }
+            UnitOrderKind::SmithyUpgrade => {
+                // Idempotent: sets the absolute target level (AC12).
+                let level = i16::from(due.target_level.unwrap_or(0));
+                sqlx::query(
+                    "INSERT INTO village_unit_levels (village_id, unit_id, level) \
+                     VALUES ($1, $2, $3) \
+                     ON CONFLICT (village_id, unit_id) DO UPDATE SET level = EXCLUDED.level",
+                )
+                .bind(vid)
+                .bind(due.unit.as_str())
+                .bind(level)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+            }
+        }
+
+        sqlx::query("UPDATE unit_orders SET status = 'done' WHERE id = $1")
+            .bind(Uuid::from_u128(due.id))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -858,6 +1074,159 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// 004 AC6/AC8/AC10/AC12: unit-order lifecycle — one active order per kind (DB-enforced),
+    /// settle+debit on start, apply-exactly-once (idempotent), pending orders survive a restart
+    /// (orphan requeue reproduces crash recovery).
+    #[tokio::test]
+    async fn unit_order_lifecycle() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping unit order test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world_id = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world_id,
+            config.radius,
+            rules.starting_amounts,
+        );
+
+        let uname = format!("unit_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &crate::starting_village().unwrap(),
+            )
+            .await
+            .expect("create account");
+        let village_id = repo.villages_of(user.id).await.unwrap()[0].id;
+
+        let now = Timestamp(1_700_000_000_000);
+        let settled = ResourceAmounts {
+            wood: 600,
+            clay: 600,
+            iron: 600,
+            crop: 600,
+        };
+        let research = NewUnitOrder {
+            kind: UnitOrderKind::Research,
+            unit: UnitId("swordsman".into()),
+            target_level: None,
+            complete_at: Timestamp(now.0 + 1000),
+        };
+
+        // AC6: starting a research settles resources and creates the order.
+        repo.start_unit_order(village_id, settled, now, research.clone())
+            .await
+            .expect("start research");
+        assert_eq!(
+            repo.stored_resources(village_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .0
+                .wood,
+            600
+        );
+
+        // A second research is rejected (one per kind, DB-enforced under races)...
+        assert!(matches!(
+            repo.start_unit_order(village_id, settled, now, research.clone())
+                .await,
+            Err(RepoError::Duplicate)
+        ));
+        // ...but a Smithy upgrade runs concurrently (independent queue)...
+        let upgrade = NewUnitOrder {
+            kind: UnitOrderKind::SmithyUpgrade,
+            unit: UnitId("phalanx".into()),
+            target_level: Some(1),
+            complete_at: Timestamp(now.0 + 1500),
+        };
+        repo.start_unit_order(village_id, settled, now, upgrade.clone())
+            .await
+            .expect("start upgrade");
+        // ...and a second upgrade is rejected too.
+        assert!(matches!(
+            repo.start_unit_order(village_id, settled, now, upgrade)
+                .await,
+            Err(RepoError::Duplicate)
+        ));
+        assert_eq!(repo.active_unit_orders(village_id).await.unwrap().len(), 2);
+
+        // AC8/AC12: claim both due orders and apply them — exactly once, idempotently.
+        let due = repo
+            .claim_due_unit_orders(Timestamp(now.0 + 2000), 10)
+            .await
+            .unwrap();
+        let mine: Vec<_> = due
+            .into_iter()
+            .filter(|d| d.village == village_id)
+            .collect();
+        assert_eq!(mine.len(), 2);
+        for d in &mine {
+            repo.apply_unit_order(d.clone()).await.expect("apply");
+            repo.apply_unit_order(d.clone())
+                .await
+                .expect("re-apply is a no-op");
+        }
+        let researched = repo.researched_units(village_id).await.unwrap();
+        assert_eq!(researched, vec![UnitId("swordsman".into())]);
+        let levels = repo.unit_levels(village_id).await.unwrap();
+        assert_eq!(levels, vec![(UnitId("phalanx".into()), 1)]);
+        assert!(
+            repo.claim_due_unit_orders(Timestamp(now.0 + 2000), 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Crash recovery: a claimed-but-unapplied order is requeued and claimable again (AC8).
+        repo.start_unit_order(
+            village_id,
+            settled,
+            now,
+            NewUnitOrder {
+                kind: UnitOrderKind::Research,
+                unit: UnitId("druidrider".into()),
+                target_level: None,
+                complete_at: Timestamp(now.0 + 1000),
+            },
+        )
+        .await
+        .expect("second research after first completed");
+        let claimed = repo
+            .claim_due_unit_orders(Timestamp(now.0 + 2000), 10)
+            .await
+            .unwrap();
+        assert!(claimed.iter().any(|d| d.village == village_id));
+        // "Crash" before applying: requeue orphans, then a fresh claim sees it again.
+        assert!(repo.requeue_orphaned_unit_orders().await.unwrap() >= 1);
+        let reclaimed = repo
+            .claim_due_unit_orders(Timestamp(now.0 + 2000), 10)
+            .await
+            .unwrap();
+        let mine: Vec<_> = reclaimed
+            .into_iter()
+            .filter(|d| d.village == village_id)
+            .collect();
+        assert_eq!(mine.len(), 1);
+        repo.apply_unit_order(mine[0].clone()).await.expect("apply");
+        assert_eq!(repo.researched_units(village_id).await.unwrap().len(), 2);
     }
 
     #[tokio::test]

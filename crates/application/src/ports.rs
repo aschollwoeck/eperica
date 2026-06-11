@@ -5,8 +5,8 @@
 
 use async_trait::async_trait;
 use eperica_domain::{
-    BuildTarget, EventKind, PlayerId, ResourceAmounts, StartingVillage, Timestamp, Tribe, Village,
-    VillageId,
+    BuildTarget, EventKind, PlayerId, ResourceAmounts, StartingVillage, Timestamp, Tribe, UnitId,
+    Village, VillageId,
 };
 
 /// Details for a new account to be created.
@@ -222,4 +222,111 @@ pub trait BuildRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn apply_build(&self, due: DueBuild) -> Result<(), RepoError>;
+}
+
+/// Which per-village unit queue an order occupies (004): each kind allows **one** active order per
+/// village, independently of the other and of the construction queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnitOrderKind {
+    /// Academy research of a unit type (AC6).
+    Research,
+    /// Smithy upgrade of a researched unit type by one level (AC10).
+    SmithyUpgrade,
+}
+
+/// A new research/upgrade order to enqueue.
+#[derive(Debug, Clone)]
+pub struct NewUnitOrder {
+    /// Which queue this order occupies.
+    pub kind: UnitOrderKind,
+    /// The unit type being researched/upgraded.
+    pub unit: UnitId,
+    /// The level reached on completion (Smithy upgrades); `None` for research.
+    pub target_level: Option<u8>,
+    /// When the order completes (Unix-ms UTC).
+    pub complete_at: Timestamp,
+}
+
+/// A village's currently-active (pending) research/upgrade order.
+#[derive(Debug, Clone)]
+pub struct ActiveUnitOrder {
+    /// Which queue the order occupies.
+    pub kind: UnitOrderKind,
+    /// The unit type being researched/upgraded.
+    pub unit: UnitId,
+    /// The level reached on completion (Smithy upgrades); `None` for research.
+    pub target_level: Option<u8>,
+    /// Completion time (Unix-ms UTC).
+    pub complete_at: Timestamp,
+}
+
+/// A claimed, due research/upgrade order ready to apply.
+#[derive(Debug, Clone)]
+pub struct DueUnitOrder {
+    /// Order identity.
+    pub id: u128,
+    /// The village it belongs to.
+    pub village: VillageId,
+    /// Which queue it occupied.
+    pub kind: UnitOrderKind,
+    /// The unit type to mark researched / level up.
+    pub unit: UnitId,
+    /// The level to set (Smithy upgrades); `None` for research.
+    pub target_level: Option<u8>,
+}
+
+/// Persistence for the per-village unit queues (research + Smithy upgrades; due-events, P1).
+#[async_trait]
+pub trait UnitRepository: Send + Sync {
+    /// Atomically settle the village's resources to `settled` (at `now`) and enqueue `order`. The
+    /// one-active-order-per-kind rule is enforced by storage; a second active order of the same
+    /// kind returns [`RepoError::Duplicate`] (AC6/AC10, P4).
+    ///
+    /// # Errors
+    /// [`RepoError`] on conflict or storage failure.
+    async fn start_unit_order(
+        &self,
+        village: VillageId,
+        settled: ResourceAmounts,
+        now: Timestamp,
+        order: NewUnitOrder,
+    ) -> Result<(), RepoError>;
+
+    /// The village's active (pending) unit orders — at most one per [`UnitOrderKind`].
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn active_unit_orders(
+        &self,
+        village: VillageId,
+    ) -> Result<Vec<ActiveUnitOrder>, RepoError>;
+
+    /// Unit types researched in this village (beyond the tier-1 implicit one).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn researched_units(&self, village: VillageId) -> Result<Vec<UnitId>, RepoError>;
+
+    /// Current Smithy upgrade level per unit type (absent = level 0).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn unit_levels(&self, village: VillageId) -> Result<Vec<(UnitId, u8)>, RepoError>;
+
+    /// Atomically claim up to `limit` due unit orders (`pending` → `processing`), nearest-due first.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn claim_due_unit_orders(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueUnitOrder>, RepoError>;
+
+    /// Apply a claimed order (mark researched / set the unit level) and mark it done (idempotent;
+    /// AC8/AC12).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn apply_unit_order(&self, due: DueUnitOrder) -> Result<(), RepoError>;
 }

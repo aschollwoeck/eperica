@@ -26,7 +26,7 @@ Ordered for dependency and testability (pure domain first).
 - [x] **T5 — Tribe migration + registration.** `0005_tribes.sql` (users.tribe + CHECK, backfill
   Gauls, villages backfill); `RegisterCommand.tribe` validated (**AC1/AC2**); `create_account`
   stores tribe on user + village. Tests incl. migration-boundary backfill (**AC3**).
-- [ ] **T6 — Unit tables + repository.** `0006_units.sql` (`village_research`,
+- [x] **T6 — Unit tables + repository.** `0006_units.sql` (`village_research`,
   `village_unit_levels`, `unit_orders` + partial unique indexes per kind + due index); repo:
   `start_unit_order`, `claim_due_unit_orders`, `apply_unit_order` (idempotent),
   `active_unit_orders`, `researched_units`, `unit_levels`, `requeue_orphaned_unit_orders`.
