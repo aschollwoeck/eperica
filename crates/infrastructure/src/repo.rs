@@ -1627,7 +1627,7 @@ impl MovementRepository for PgAccountRepository {
         village: VillageId,
     ) -> Result<Vec<StationedGroup>, RepoError> {
         let rows = sqlx::query(
-            "SELECT r.home_village, r.unit_id, r.count, hv.x, hv.y, u.username \
+            "SELECT r.home_village, r.unit_id, r.count, hv.x, hv.y, hv.tribe, u.username \
              FROM reinforcements r \
              JOIN villages hv ON hv.id = r.home_village \
              JOIN users u ON u.id = hv.owner_id \
@@ -1642,13 +1642,15 @@ impl MovementRepository for PgAccountRepository {
             home_village: home,
             other_coord: Coordinate::new(0, 0),
             other_owner: String::new(),
+            home_tribe: None,
             troops: Vec::new(),
         })
     }
 
     async fn reinforcements_of(&self, owner: PlayerId) -> Result<Vec<StationedGroup>, RepoError> {
         let rows = sqlx::query(
-            "SELECT r.host_village, r.home_village, r.unit_id, r.count, hostv.x, hostv.y, u.username \
+            "SELECT r.host_village, r.home_village, r.unit_id, r.count, hostv.x, hostv.y, \
+             homev.tribe, u.username \
              FROM reinforcements r \
              JOIN villages homev ON homev.id = r.home_village \
              JOIN villages hostv ON hostv.id = r.host_village \
@@ -1669,6 +1671,7 @@ impl MovementRepository for PgAccountRepository {
             let count: i32 = r.try_get("count").map_err(backend)?;
             let x: i32 = r.try_get("x").map_err(backend)?;
             let y: i32 = r.try_get("y").map_err(backend)?;
+            let tribe = parse_tribe(Some(r.try_get("tribe").map_err(backend)?))?;
             let username: String = r.try_get("username").map_err(backend)?;
             let host_id = VillageId(host.as_u128());
             let count = u32::try_from(count).unwrap_or(0);
@@ -1679,6 +1682,7 @@ impl MovementRepository for PgAccountRepository {
                     home_village: VillageId(home.as_u128()),
                     other_coord: Coordinate::new(x, y),
                     other_owner: username,
+                    home_tribe: tribe,
                     troops: vec![(UnitId(unit), count)],
                 }),
             }
@@ -1851,6 +1855,7 @@ fn group_reinforcements(
         let count: i32 = r.try_get("count").map_err(backend)?;
         let x: i32 = r.try_get("x").map_err(backend)?;
         let y: i32 = r.try_get("y").map_err(backend)?;
+        let tribe = parse_tribe(Some(r.try_get("tribe").map_err(backend)?))?;
         let username: String = r.try_get("username").map_err(backend)?;
         let home_id = VillageId(home.as_u128());
         let count = u32::try_from(count).unwrap_or(0);
@@ -1860,6 +1865,7 @@ fn group_reinforcements(
                 let mut g = seed(home_id);
                 g.other_coord = Coordinate::new(x, y);
                 g.other_owner = username;
+                g.home_tribe = tribe;
                 g.troops.push((UnitId(unit), count));
                 out.push(g);
             }
@@ -3413,6 +3419,121 @@ mod tests {
         // Survivors are heading home.
         let returning = repo.active_movements(attacker).await.unwrap();
         assert!(returning.iter().any(|m| m.kind == MovementKind::Return));
+    }
+
+    /// 009 AC6 (restart path): a battle claimed but not applied (a crash) is recovered by the shared
+    /// orphan requeue and resolved **exactly once** — one report, the defender reduced a single time.
+    #[tokio::test]
+    async fn combat_crash_resume_resolves_once() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping combat crash-resume test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let units = crate::unit_rules().expect("unit rules");
+        let combat = crate::combat_rules().expect("combat rules");
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (attacker, a) = account("crashatk").await;
+        let (_defender, d) = account("crashdef").await;
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'swordsman', 100)",
+        )
+        .bind(Uuid::from_u128(a.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 2)",
+        )
+        .bind(Uuid::from_u128(d.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let now = Timestamp(3_000_000_000_000);
+        let arrive = Timestamp(now.0 + 100_000);
+        repo.start_attack(
+            a.id,
+            d.id,
+            attacker,
+            a.coordinate,
+            d.coordinate,
+            now,
+            arrive,
+            MovementKind::Raid,
+            &[(UnitId("swordsman".into()), 100)],
+        )
+        .await
+        .expect("attack");
+
+        // Claim the battle then "crash" before applying; the orphan requeue recovers it.
+        let claimed = repo.claim_due_attacks(arrive, 100).await.unwrap();
+        assert!(claimed.iter().any(|x| x.home_village == a.id));
+        assert!(repo.requeue_orphaned_movements().await.unwrap() >= 1);
+
+        // Now resolve via the processor — twice; the second tick finds nothing (already done).
+        let run = async || {
+            eperica_application::process_due_combat(
+                &repo,
+                &repo,
+                &repo,
+                &repo,
+                &econ,
+                &units,
+                &combat,
+                &map,
+                GameSpeed::new(1.0).unwrap(),
+                world.seed as u64,
+                arrive,
+                100,
+            )
+            .await
+            .expect("resolve")
+        };
+        let first = run().await;
+        assert!(first.contains(&d.id));
+        let second = run().await;
+        assert!(!second.contains(&d.id)); // already resolved — not re-applied
+
+        // Exactly once: a single report, the defender reduced a single time.
+        assert_eq!(repo.reports_for(attacker, 10).await.unwrap().len(), 1);
+        assert!(repo.garrison(d.id).await.unwrap().is_empty());
     }
 
     #[tokio::test]

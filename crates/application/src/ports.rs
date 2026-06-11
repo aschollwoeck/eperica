@@ -182,6 +182,8 @@ pub struct StationedGroup {
     pub other_coord: Coordinate,
     /// The counterparty owner's login name.
     pub other_owner: String,
+    /// The home village's tribe (selects the roster for combat defence, 009).
+    pub home_tribe: Option<Tribe>,
     /// The stationed composition.
     pub troops: UnitCounts,
 }

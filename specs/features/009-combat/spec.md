@@ -127,6 +127,10 @@ Per [roles.md](../../roles.md).
   `[1−L, 1+L]`. Re-resolving is identical (P2/P6).
 - **Casualty rounding is deterministic** (round half to even on the per-type loss), applied to the
   defender's garrison first then its reinforcement groups, and to the attacker's movement troops.
+- **Defender reinforcements use base (level-0) Smithy strength**, while the target's own garrison is
+  scaled by the target's Smithy levels. The home village's *own* upgrades do not follow its troops
+  abroad in this slice (a faithful refinement would carry per-group levels); reinforcements still
+  contribute their full base def — only the upgrade bonus is omitted.
 - **The Wall is a new constructable building** (`BuildingKind::Wall`), tribe-flavoured by its balance
   bonus/durability; **rams** are identified by a `siege` tag in unit balance (`Ram`/`Catapult`).
 - The target village id is **fixed at send** (a later ownership change does not redirect an attack in

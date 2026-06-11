@@ -621,6 +621,7 @@ mod tests {
                 home_village: VillageId(1),
                 other_coord: Coordinate::new(3, 4),
                 other_owner: "bob".to_owned(),
+                home_tribe: Some(Tribe::Gauls),
                 troops: vec![(UnitId("u0".into()), 4)],
             }],
             ..FakeMovements::default()

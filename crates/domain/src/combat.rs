@@ -268,13 +268,13 @@ pub fn resolve_battle(
 }
 
 /// Apply a loss fraction to a composition, returning `(survivors, losses)` with deterministic
-/// rounding (round half away from zero, never more than the stack).
+/// rounding — **round half to even** (banker's rounding, spec Decision), never more than the stack.
 pub fn apply_losses(counts: &UnitCounts, frac: f64) -> (UnitCounts, UnitCounts) {
     let frac = frac.clamp(0.0, 1.0);
     let mut survivors = Vec::new();
     let mut losses = Vec::new();
     for (id, count) in counts {
-        let lost = ((f64::from(*count) * frac).round() as u32).min(*count);
+        let lost = ((f64::from(*count) * frac).round_ties_even() as u32).min(*count);
         let surviving = count - lost;
         if surviving > 0 {
             survivors.push((id.clone(), surviving));
@@ -550,12 +550,29 @@ mod tests {
     }
 
     #[test]
-    fn apply_losses_rounds_and_conserves() {
-        let counts = vec![(UnitId("a".into()), 10), (UnitId("b".into()), 3)];
+    fn apply_losses_rounds_half_to_even_and_conserves() {
+        // Round half to even (banker's): 5×0.5 = 2.5 → 2, 7×0.5 = 3.5 → 4, 3×0.5 = 1.5 → 2.
+        let counts = vec![
+            (UnitId("a".into()), 5),
+            (UnitId("b".into()), 7),
+            (UnitId("c".into()), 3),
+        ];
         let (surv, lost) = apply_losses(&counts, 0.5);
-        assert_eq!(surv, vec![(UnitId("a".into()), 5), (UnitId("b".into()), 1)]); // 1.5 → 2 lost
-        assert_eq!(lost, vec![(UnitId("a".into()), 5), (UnitId("b".into()), 2)]);
-        // total wipe and zero loss.
+        assert_eq!(
+            lost,
+            vec![
+                (UnitId("a".into()), 2),
+                (UnitId("b".into()), 4),
+                (UnitId("c".into()), 2),
+            ]
+        );
+        // Survivors + losses reconstruct each stack.
+        for (id, total) in &counts {
+            let s = surv.iter().find(|(u, _)| u == id).map_or(0, |(_, n)| *n);
+            let l = lost.iter().find(|(u, _)| u == id).map_or(0, |(_, n)| *n);
+            assert_eq!(s + l, *total);
+        }
+        // Total wipe and zero loss.
         assert_eq!(apply_losses(&counts, 1.0).0, Vec::new());
         assert_eq!(apply_losses(&counts, 0.0).1, Vec::new());
     }

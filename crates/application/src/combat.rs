@@ -275,10 +275,8 @@ where
     );
     let reinforcements = movements.reinforcements_at(target.id).await?;
     for group in &reinforcements {
-        let group_roster = match accounts.village_by_id(group.home_village).await? {
-            Some(v) => v.tribe.map_or(&[][..], |t| unit_rules.roster(t)),
-            None => &[][..],
-        };
+        // The group's home tribe (carried on the row) selects its roster — no per-group lookup (P11).
+        let group_roster = group.home_tribe.map_or(&[][..], |t| unit_rules.roster(t));
         add_defense(&mut totals, &group.troops, group_roster, &[], combat_rules);
     }
 
