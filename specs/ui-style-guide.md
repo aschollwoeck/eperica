@@ -127,6 +127,10 @@ Each is a BEM block (§5). Specs are behavioral; exact CSS lives in the web crat
 - **Panel / Card** — `.panel` on `--c-panel`, 1px border, `--radius-md`, optional header.
 - **Form controls** — `.field` (label + input + help/error). Errors use `--c-danger` text **and** an
   icon/message (not color alone). Inputs ≥44px touch target on mobile.
+- **Choice group** — `.choice` (a `<fieldset>` with a `<legend>`) of `.choice__option` radio labels,
+  each an outlined card (`--c-border`, `--radius-md`) holding the radio, a `.choice__title`, and a
+  one-line `.choice__desc` in `--c-ink-muted`; the checked card gets a `--c-gold` border. Used for
+  mutually-exclusive picks with consequences (e.g. tribe selection at registration).
 - **Resource bar** — `.resource-bar` / `.resource-bar__item` (see §3).
 - **Countdown** — see §6; the live-timer primitive.
 - **Progress bar** — `.progress` for build/training completion; pairs with a countdown.

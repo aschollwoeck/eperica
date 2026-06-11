@@ -17,8 +17,8 @@ use eperica_application::{
     load_economy, order_build, register,
 };
 use eperica_domain::{
-    BuildTarget, BuildingKind, QueueLane, ResourceAmounts, ResourceKind, Village, can_afford,
-    queue_lane,
+    BuildTarget, BuildingKind, QueueLane, ResourceAmounts, ResourceKind, Tribe, Village,
+    can_afford, queue_lane,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
@@ -29,6 +29,15 @@ fn resource_label(kind: ResourceKind) -> &'static str {
         ResourceKind::Clay => "Clay",
         ResourceKind::Iron => "Iron",
         ResourceKind::Crop => "Crop",
+    }
+}
+
+fn tribe_label(tribe: Option<Tribe>) -> &'static str {
+    match tribe {
+        Some(Tribe::Romans) => "Romans",
+        Some(Tribe::Teutons) => "Teutons",
+        Some(Tribe::Gauls) => "Gauls",
+        None => "—",
     }
 }
 
@@ -376,6 +385,7 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
 
     page(&VillageTemplate {
         username: user.username,
+        tribe: tribe_label(village.tribe),
         x: village.coordinate.x,
         y: village.coordinate.y,
         wood: amounts.wood,

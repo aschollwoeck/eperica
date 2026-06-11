@@ -16,14 +16,23 @@
       <label for="password">Password</label>
       <input id="password" name="password" type="password" required minlength="8">
     </div>
-    <fieldset class="field">
-      <legend>Tribe</legend>
-      <label><input type="radio" name="tribe" value="romans" required>
-        <strong>Romans</strong> — balanced all-rounders; build a field and a building at once.</label>
-      <label><input type="radio" name="tribe" value="teutons" required>
-        <strong>Teutons</strong> — cheap, aggressive raiders.</label>
-      <label><input type="radio" name="tribe" value="gauls" required>
-        <strong>Gauls</strong> — fast, defensive specialists. Recommended for beginners.</label>
+    <fieldset class="choice">
+      <legend>Tribe — chosen once, for keeps</legend>
+      <label class="choice__option">
+        <input type="radio" name="tribe" value="romans" required>
+        <span class="choice__title">Romans</span>
+        <span class="choice__desc">Balanced, expensive all-rounders; build a resource field and a center building at the same time.</span>
+      </label>
+      <label class="choice__option">
+        <input type="radio" name="tribe" value="teutons" required>
+        <span class="choice__title">Teutons</span>
+        <span class="choice__desc">Cheap, fast-trained troops; the best early raiders.</span>
+      </label>
+      <label class="choice__option">
+        <input type="radio" name="tribe" value="gauls" required>
+        <span class="choice__title">Gauls</span>
+        <span class="choice__desc">Defensive specialists with the fastest cavalry. Recommended for beginners.</span>
+      </label>
     </fieldset>
     <button class="btn btn--primary" type="submit">Register</button>
   </form>

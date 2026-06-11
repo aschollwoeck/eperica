@@ -31,6 +31,7 @@ mod tests {
     fn village(crop_rate: i64) -> VillageTemplate {
         VillageTemplate {
             username: "player".to_owned(),
+            tribe: "Gauls",
             x: 0,
             y: 0,
             wood: 1,
@@ -95,6 +96,8 @@ pub struct ActiveView {
 pub struct VillageTemplate {
     /// Owner's username.
     pub username: String,
+    /// The village's tribe display name (004).
+    pub tribe: &'static str,
     /// Village x coordinate.
     pub x: i32,
     /// Village y coordinate.

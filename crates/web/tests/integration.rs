@@ -173,6 +173,50 @@ async fn village_requires_login() {
 }
 
 #[tokio::test]
+async fn register_offers_tribes_and_village_shows_choice() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    // 004 AC15: the registration form offers the three tribes with descriptions.
+    let form = client()
+        .get(format!("{base}/register"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    for tribe in ["Romans", "Teutons", "Gauls"] {
+        assert!(form.contains(tribe), "register page missing {tribe}");
+    }
+    assert!(form.contains("name=\"tribe\""));
+
+    // 004 AC1/AC15: registering as Teutons shows that tribe on the village page.
+    let user = unique("tribe");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "teutons"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let body = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("Tribe: Teutons"));
+}
+
+#[tokio::test]
 async fn duplicate_username_is_rejected() {
     let Some(base) = spawn().await else {
         return;
