@@ -26,7 +26,7 @@ pub use ports::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BuildRepository, DueBuild,
     DueEvent, DueTraining, DueUnitOrder, EventStore, NewBuildOrder, NewTrainingOrder, NewUnitOrder,
     NewUser, PasswordHasher, RepoError, StarvationRepository, TrainingRepository, UnitOrderKind,
-    UnitRepository, UserRecord,
+    UnitRepository, UserRecord, VillageMarker,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;

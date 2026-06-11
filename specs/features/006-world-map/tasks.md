@@ -19,10 +19,10 @@ Ordered for dependency and testability (pure domain first).
 - [x] **T3 — Map balance data + loader.** `specs/balance/map.toml` (densities, distribution +
   oasis-bonus tables); `balance.rs` loader → `MapRules`, fail-fast. Move the `4-4-4-6` default into
   the table. Tests (**AC2**).
-- [ ] **T4 — Seed migration + ensure_world.** `0009_world_seed.sql` (add `seed`, backfill
+- [x] **T4 — Seed migration + ensure_world.** `0009_world_seed.sql` (add `seed`, backfill
   deterministic per-world, set NOT NULL); `ensure_world` generates a seed for new worlds and
   returns `{ id, seed }`. DB tests: backfill non-null + a pre-existing village unchanged (**AC6**).
-- [ ] **T5 — Valley placement + markers.** `Village::found` takes a `FieldDistribution`;
+- [x] **T5 — Valley placement + markers.** `Village::found` takes a `FieldDistribution`;
   `PgAccountRepository` holds a `WorldMap`, places on the first free **valley**, and builds fields
   from the tile; new `villages_in_area` port + query. DB tests: founded village on a valley with
   matching fields; non-valley tiles skipped (**AC5**).

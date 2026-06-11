@@ -5,11 +5,12 @@ use eperica_application::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BuildRepository, DueBuild,
     DueTraining, DueUnitOrder, NewBuildOrder, NewTrainingOrder, NewUnitOrder, NewUser, RepoError,
     StarvationRepository, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
+    VillageMarker,
 };
 use eperica_domain::{
     BuildTarget, BuildingKind, BuildingSlot, Coordinate, PlayerId, QueueLane, ResourceAmounts,
-    ResourceField, ResourceKind, StartingVillage, Timestamp, Tribe, UnitCounts, UnitId, Village,
-    VillageId, WorldId, WorldMap, coordinates_within,
+    ResourceField, ResourceKind, StartingVillage, TileKind, Timestamp, Tribe, UnitCounts, UnitId,
+    Village, VillageId, WorldId, WorldMap, coordinates_within,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use uuid::Uuid;
@@ -210,16 +211,21 @@ impl AccountRepository for PgAccountRepository {
         let owner = PlayerId(user_id.as_u128());
         let world_uuid = Uuid::from_u128(self.world_id.0);
 
-        // Place the village on the first free in-bounds tile. Each attempt is a SAVEPOINT so a
-        // coordinate clash rolls back just that insert (not the whole transaction).
+        // Place the village on the first free **valley** in the deterministic ring order (oases and
+        // Natar are skipped, 006 AC5); its fields come from that valley's distribution. Each attempt
+        // is a SAVEPOINT so a coordinate clash rolls back just that insert (not the whole tx).
         let mut placed = false;
         for coord in coordinates_within(self.map.radius()) {
+            let Some(TileKind::Valley(distribution)) = self.map.tile_at(coord) else {
+                continue;
+            };
             let village_uuid = Uuid::new_v4();
             let village = Village::found(
                 VillageId(village_uuid.as_u128()),
                 owner,
                 coord,
                 user.tribe,
+                distribution,
                 template,
             );
 
@@ -487,6 +493,36 @@ impl AccountRepository for PgAccountRepository {
                 let unit: String = r.try_get("unit_id").map_err(backend)?;
                 let count: i32 = r.try_get("count").map_err(backend)?;
                 Ok((UnitId(unit), u32::try_from(count).unwrap_or(0)))
+            })
+            .collect()
+    }
+
+    async fn villages_at(&self, coords: &[Coordinate]) -> Result<Vec<VillageMarker>, RepoError> {
+        if coords.is_empty() {
+            return Ok(Vec::new());
+        }
+        let xs: Vec<i32> = coords.iter().map(|c| c.x).collect();
+        let ys: Vec<i32> = coords.iter().map(|c| c.y).collect();
+        // Exact match on the requested tiles via the (world_id, x, y) unique index.
+        let rows = sqlx::query(
+            "SELECT v.x, v.y, u.username FROM villages v JOIN users u ON u.id = v.owner_id \
+             WHERE v.world_id = $1 AND (v.x, v.y) IN (SELECT * FROM unnest($2::int[], $3::int[]))",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(&xs)
+        .bind(&ys)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let x: i32 = r.try_get("x").map_err(backend)?;
+                let y: i32 = r.try_get("y").map_err(backend)?;
+                let owner_name: String = r.try_get("username").map_err(backend)?;
+                Ok(VillageMarker {
+                    coordinate: Coordinate::new(x, y),
+                    owner_name,
+                })
             })
             .collect()
     }
@@ -1442,6 +1478,83 @@ mod tests {
         let after = repo.villages_of(user.id).await.unwrap();
         assert_eq!(after[0].coordinate, coord);
         assert_eq!(after[0].fields, fields);
+    }
+
+    /// 006 AC5: a founded village sits on a valley (oases/Natar are skipped) and its 18 fields
+    /// match that valley tile's distribution; `villages_at` surfaces it as a map marker.
+    #[tokio::test]
+    async fn villages_are_placed_on_valleys_with_tile_fields() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping placement test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            rules.starting_amounts,
+        );
+        // The same map the repo placed with.
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+
+        let uname = format!("place_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &crate::starting_village().unwrap(),
+            )
+            .await
+            .expect("create account");
+        let v = repo.villages_of(user.id).await.unwrap()[0].clone();
+
+        // AC5: placed on a valley whose distribution dictates the village's fields.
+        assert!(
+            map.is_valley(v.coordinate),
+            "{:?} is not a valley",
+            v.coordinate
+        );
+        let Some(TileKind::Valley(d)) = map.tile_at(v.coordinate) else {
+            panic!("expected a valley tile");
+        };
+        let count = |k: ResourceKind| v.fields.iter().filter(|f| f.kind == k).count();
+        assert_eq!(count(ResourceKind::Wood), usize::from(d.wood));
+        assert_eq!(count(ResourceKind::Clay), usize::from(d.clay));
+        assert_eq!(count(ResourceKind::Iron), usize::from(d.iron));
+        assert_eq!(count(ResourceKind::Crop), usize::from(d.crop));
+
+        // AC7 support: villages_at returns the marker with the owner.
+        let markers = repo.villages_at(&[v.coordinate]).await.unwrap();
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].coordinate, v.coordinate);
+        assert_eq!(markers[0].owner_name, uname);
+        // A tile with no village yields no marker.
+        let empty = repo.villages_at(&[Coordinate::new(45, 45)]).await.unwrap();
+        assert!(
+            empty
+                .iter()
+                .all(|m| m.coordinate != Coordinate::new(45, 45))
+                || empty.is_empty()
+        );
     }
 
     /// Regression for the migration-boundary bug: a village that predates `village_resources`

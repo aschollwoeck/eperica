@@ -5,9 +5,19 @@
 
 use async_trait::async_trait;
 use eperica_domain::{
-    BuildTarget, BuildingKind, EventKind, PlayerId, QueueLane, ResourceAmounts, StartingVillage,
-    Timestamp, Tribe, UnitCounts, UnitId, Village, VillageId,
+    BuildTarget, BuildingKind, Coordinate, EventKind, PlayerId, QueueLane, ResourceAmounts,
+    StartingVillage, Timestamp, Tribe, UnitCounts, UnitId, Village, VillageId,
 };
+
+/// A village's public presence on the map: its tile and its owner's name (GDD §7.3 — layout and
+/// ownership are public; troops/resources are not).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VillageMarker {
+    /// The tile the village occupies.
+    pub coordinate: Coordinate,
+    /// The owner's login name.
+    pub owner_name: String,
+}
 
 /// Details for a new account to be created.
 #[derive(Debug, Clone)]
@@ -130,6 +140,13 @@ pub trait AccountRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn garrison(&self, village: VillageId) -> Result<UnitCounts, RepoError>;
+
+    /// Public markers for any villages occupying the given tiles — for the map view (006 AC7).
+    /// `coords` should already be canonical (in-bounds) coordinates.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn villages_at(&self, coords: &[Coordinate]) -> Result<Vec<VillageMarker>, RepoError>;
 }
 
 /// A claimed, due event ready to be processed.

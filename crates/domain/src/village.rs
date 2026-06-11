@@ -2,6 +2,7 @@
 
 use crate::building::BuildingKind;
 use crate::error::DomainError;
+use crate::map::FieldDistribution;
 use crate::resource::ResourceKind;
 use crate::world::Coordinate;
 
@@ -118,14 +119,16 @@ pub struct Village {
 }
 
 impl Village {
-    /// Found a new village for `owner` at `coordinate` from a starting template, carrying the
-    /// owner's `tribe` (004). Server-side callers supply the identity and coordinate (P4); the
-    /// domain never invents them.
+    /// Found a new village for `owner` at `coordinate`, carrying the owner's `tribe` (004). The 18
+    /// resource fields are built from the `distribution` of the valley tile being settled (006);
+    /// the center `buildings` come from the starting template. Server-side callers supply the
+    /// identity, coordinate, and tile (P4); the domain never invents them.
     pub fn found(
         id: VillageId,
         owner: PlayerId,
         coordinate: Coordinate,
         tribe: Tribe,
+        distribution: FieldDistribution,
         template: &StartingVillage,
     ) -> Self {
         Self {
@@ -133,7 +136,7 @@ impl Village {
             owner,
             coordinate,
             tribe: Some(tribe),
-            fields: template.fields().to_vec(),
+            fields: distribution.fields(),
             buildings: template.buildings().to_vec(),
         }
     }
@@ -173,14 +176,25 @@ mod tests {
 
     #[test]
     fn founded_village_has_18_fields_and_core_buildings() {
+        // The fields come from the settled valley's distribution (006), the buildings from the
+        // template.
+        let cropper = FieldDistribution::new(3, 3, 3, 9).unwrap();
         let v = Village::found(
             VillageId(1),
             PlayerId(42),
             Coordinate::new(0, 0),
             Tribe::Gauls,
+            cropper,
             &balanced_template(),
         );
         assert_eq!(v.fields.len(), RESOURCE_FIELD_COUNT);
+        assert_eq!(
+            v.fields
+                .iter()
+                .filter(|f| f.kind == ResourceKind::Crop)
+                .count(),
+            9
+        );
         assert_eq!(v.owner, PlayerId(42));
         assert_eq!(v.coordinate, Coordinate::new(0, 0));
         assert_eq!(v.tribe, Some(Tribe::Gauls));

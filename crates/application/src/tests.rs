@@ -107,6 +107,13 @@ impl AccountRepository for InMemoryAccounts {
     async fn garrison(&self, _village: VillageId) -> Result<UnitCounts, RepoError> {
         Ok(Vec::new())
     }
+
+    async fn villages_at(
+        &self,
+        _coords: &[eperica_domain::Coordinate],
+    ) -> Result<Vec<crate::ports::VillageMarker>, RepoError> {
+        Ok(Vec::new())
+    }
 }
 
 struct FakeHasher;

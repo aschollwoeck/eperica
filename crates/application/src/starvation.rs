@@ -364,6 +364,12 @@ mod tests {
         async fn garrison(&self, _v: VillageId) -> Result<UnitCounts, RepoError> {
             Ok(self.garrison.clone())
         }
+        async fn villages_at(
+            &self,
+            _coords: &[eperica_domain::Coordinate],
+        ) -> Result<Vec<crate::ports::VillageMarker>, RepoError> {
+            Ok(Vec::new())
+        }
     }
 
     #[derive(Default)]
