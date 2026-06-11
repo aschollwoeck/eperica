@@ -10,6 +10,7 @@ pub mod economy;
 pub mod ports;
 pub mod register;
 pub mod scheduler;
+pub mod units;
 
 #[cfg(test)]
 mod tests;
@@ -27,3 +28,6 @@ pub use ports::{
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;
+pub use units::{
+    ResearchError, UpgradeError, order_research, order_smithy_upgrade, process_due_unit_orders,
+};
