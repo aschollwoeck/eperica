@@ -15,5 +15,6 @@ manual grows as the game does.
 - [The world map](the-map.md) — read the map, find valleys and oases, and get around.
 - [Moving troops](troop-movement.md) — send reinforcements from the Rally Point, watch movements
   arrive, and recall your troops home.
+- [Trading](trade.md) — build a Marketplace and send resources to other villages via merchants.
 
-*(More chapters — combat, scouting, trade — arrive as those features ship.)*
+*(More chapters — combat, scouting, settling — arrive as those features ship.)*

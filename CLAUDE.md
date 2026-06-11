@@ -22,7 +22,7 @@ M1, M2, and the start of M3.
 - **`specs/roadmap.md`** — dependency-ordered build order (slices 001 → end-game).
 - **`specs/social-and-meta-features.md`** — app-layer features (chat, profiles, UX) — not sim rules.
 - **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the active slice. Currently:
-  `007-troop-movement`.
+  `008-marketplace-trade`.
 
 If behavior must change, **update the spec first**, then the code.
 

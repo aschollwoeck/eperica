@@ -33,15 +33,15 @@ Ordered for dependency and testability (pure domain first).
 
 ## Web
 
-- [ ] **T6 — Marketplace page + village panel.** `GET /village/market` (capacity, free/total
+- [x] **T6 — Marketplace page + village panel.** `GET /village/market` (capacity, free/total
   merchants, send form); `POST /village/market/send` (PRG); `/village` **Shipments in transit**
   (direction + contents + countdown); Marketplace link. Integration tests (**AC6**).
 
 ## Documentation & acceptance
 
-- [ ] **T7 — Technical docs.** rustdoc; `docs/architecture/0010-marketplace-trade.md`; `CLAUDE.md`
+- [x] **T7 — Technical docs.** rustdoc; `docs/architecture/0010-marketplace-trade.md`; `CLAUDE.md`
   active slice.
-- [ ] **T8 — End-user docs.** `docs/manual/` trade guide; link from index.
+- [x] **T8 — End-user docs.** `docs/manual/` trade guide; link from index.
 - [ ] **T9 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
   **APPROVE**; PR.
 
