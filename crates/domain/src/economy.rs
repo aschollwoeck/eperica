@@ -7,6 +7,7 @@ use crate::building::BuildingKind;
 use crate::resource::ResourceKind;
 use crate::village::{BuildingSlot, ResourceField};
 use crate::world::GameSpeed;
+use std::collections::HashMap;
 
 /// Stored resource amounts (integer units).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,14 +52,9 @@ pub struct EconomyRules {
     pub crop_per_level: Vec<i64>,
     /// Population added per resource-field level.
     pub field_population_per_level: Vec<i64>,
-    /// Population added per Main Building level.
-    pub main_building_population_per_level: Vec<i64>,
-    /// Population added per Rally Point level.
-    pub rally_point_population_per_level: Vec<i64>,
-    /// Population added per Warehouse level.
-    pub warehouse_population_per_level: Vec<i64>,
-    /// Population added per Granary level.
-    pub granary_population_per_level: Vec<i64>,
+    /// Population added per building level, by kind. A kind absent from the map contributes 0
+    /// (the balance loader is responsible for covering every constructable kind).
+    pub building_population_per_level: HashMap<BuildingKind, Vec<i64>>,
     /// Warehouse capacity by Warehouse level (index 0 = base, i.e. no Warehouse).
     pub warehouse_capacity_per_level: Vec<i64>,
     /// Granary capacity by Granary level (index 0 = base, i.e. no Granary).
@@ -86,13 +82,9 @@ impl EconomyRules {
     }
 
     fn building_population(&self, kind: BuildingKind, level: u8) -> i64 {
-        let table = match kind {
-            BuildingKind::MainBuilding => &self.main_building_population_per_level,
-            BuildingKind::RallyPoint => &self.rally_point_population_per_level,
-            BuildingKind::Warehouse => &self.warehouse_population_per_level,
-            BuildingKind::Granary => &self.granary_population_per_level,
-        };
-        level_value(table, level)
+        self.building_population_per_level
+            .get(&kind)
+            .map_or(0, |table| level_value(table, level))
     }
 }
 
@@ -204,10 +196,12 @@ mod tests {
             iron_per_level: vec![10, 20, 40],
             crop_per_level: vec![10, 20, 40],
             field_population_per_level: vec![0, 1, 2],
-            main_building_population_per_level: vec![0, 2, 3],
-            rally_point_population_per_level: vec![0, 1, 1],
-            warehouse_population_per_level: vec![0, 1, 1],
-            granary_population_per_level: vec![0, 1, 1],
+            building_population_per_level: HashMap::from([
+                (BuildingKind::MainBuilding, vec![0, 2, 3]),
+                (BuildingKind::RallyPoint, vec![0, 1, 1]),
+                (BuildingKind::Warehouse, vec![0, 1, 1]),
+                (BuildingKind::Granary, vec![0, 1, 1]),
+            ]),
             warehouse_capacity_per_level: vec![800, 1200, 1700],
             granary_capacity_per_level: vec![800, 1200, 1700],
             starting_amounts: ResourceAmounts {

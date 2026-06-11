@@ -12,4 +12,14 @@ pub enum BuildingKind {
     Warehouse,
     /// Stores crop; higher levels raise its capacity.
     Granary,
+    /// Trains infantry (005); required by the Academy.
+    Barracks,
+    /// Researches unit types so they can be trained.
+    Academy,
+    /// Upgrades unit types' combat strength in levels.
+    Smithy,
+    /// Trains cavalry (005). Known so research requirements can reference it; constructable in 005.
+    Stable,
+    /// Builds siege engines (005). Known so research requirements can reference it; constructable in 005.
+    Workshop,
 }

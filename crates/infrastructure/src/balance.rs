@@ -113,6 +113,13 @@ fn parse_building(name: &str) -> Result<BuildingKind, BalanceError> {
     match name {
         "main_building" => Ok(BuildingKind::MainBuilding),
         "rally_point" => Ok(BuildingKind::RallyPoint),
+        "warehouse" => Ok(BuildingKind::Warehouse),
+        "granary" => Ok(BuildingKind::Granary),
+        "barracks" => Ok(BuildingKind::Barracks),
+        "academy" => Ok(BuildingKind::Academy),
+        "smithy" => Ok(BuildingKind::Smithy),
+        "stable" => Ok(BuildingKind::Stable),
+        "workshop" => Ok(BuildingKind::Workshop),
         other => Err(BalanceError::UnknownBuilding(other.to_owned())),
     }
 }
@@ -136,10 +143,9 @@ struct ProductionDto {
 #[derive(Deserialize)]
 struct PopulationDto {
     field: Vec<i64>,
-    main_building: Vec<i64>,
-    rally_point: Vec<i64>,
-    warehouse: Vec<i64>,
-    granary: Vec<i64>,
+    /// Per-building tables keyed by building name.
+    #[serde(flatten)]
+    buildings: HashMap<String, Vec<i64>>,
 }
 
 #[derive(Deserialize)]
@@ -162,16 +168,17 @@ struct AmountsDto {
 /// Returns [`BalanceError`] if the data cannot be parsed.
 pub fn economy_rules() -> Result<EconomyRules, BalanceError> {
     let dto: EconomyDto = toml::from_str(ECONOMY_TOML)?;
+    let mut building_population_per_level = HashMap::new();
+    for (name, table) in dto.population.buildings {
+        building_population_per_level.insert(parse_building(&name)?, table);
+    }
     Ok(EconomyRules {
         wood_per_level: dto.production.wood,
         clay_per_level: dto.production.clay,
         iron_per_level: dto.production.iron,
         crop_per_level: dto.production.crop,
         field_population_per_level: dto.population.field,
-        main_building_population_per_level: dto.population.main_building,
-        rally_point_population_per_level: dto.population.rally_point,
-        warehouse_population_per_level: dto.population.warehouse,
-        granary_population_per_level: dto.population.granary,
+        building_population_per_level,
         warehouse_capacity_per_level: dto.capacity.warehouse,
         granary_capacity_per_level: dto.capacity.granary,
         starting_amounts: ResourceAmounts {
@@ -223,6 +230,9 @@ struct BuildingsDto {
     rally_point: LevelSpecDto,
     warehouse: LevelSpecDto,
     granary: LevelSpecDto,
+    barracks: LevelSpecDto,
+    academy: LevelSpecDto,
+    smithy: LevelSpecDto,
 }
 
 fn level_spec(dto: &LevelSpecDto) -> LevelSpec {
@@ -260,6 +270,9 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
         (BuildingKind::RallyPoint, &dto.buildings.rally_point),
         (BuildingKind::Warehouse, &dto.buildings.warehouse),
         (BuildingKind::Granary, &dto.buildings.granary),
+        (BuildingKind::Barracks, &dto.buildings.barracks),
+        (BuildingKind::Academy, &dto.buildings.academy),
+        (BuildingKind::Smithy, &dto.buildings.smithy),
     ] {
         buildings.insert(kind, level_spec(spec_dto));
         let pr = prereqs(spec_dto)?;
@@ -329,5 +342,44 @@ mod tests {
             kind: BuildingKind::Warehouse,
         };
         assert!(r.cost(warehouse, 0).is_some());
+    }
+
+    #[test]
+    fn military_buildings_have_spec_prerequisites() {
+        // 004 AC5: Barracks <- MB>=3; Academy <- MB>=3 + Barracks>=3; Smithy <- MB>=3 + Academy>=1.
+        let r = build_rules().expect("build rules");
+        assert_eq!(
+            r.prerequisites(BuildingKind::Barracks),
+            &[(BuildingKind::MainBuilding, 3)]
+        );
+        assert_eq!(
+            r.prerequisites(BuildingKind::Academy),
+            &[(BuildingKind::MainBuilding, 3), (BuildingKind::Barracks, 3)]
+        );
+        assert_eq!(
+            r.prerequisites(BuildingKind::Smithy),
+            &[(BuildingKind::MainBuilding, 3), (BuildingKind::Academy, 1)]
+        );
+        for kind in [
+            BuildingKind::Barracks,
+            BuildingKind::Academy,
+            BuildingKind::Smithy,
+        ] {
+            let target = BuildTarget::Building { slot: 0, kind };
+            assert_eq!(r.max_level(target), 10, "{kind:?} levels");
+        }
+    }
+
+    #[test]
+    fn every_constructable_kind_has_population_data() {
+        // A kind missing from the population map would silently contribute 0 population.
+        let build = build_rules().expect("build rules");
+        let economy = economy_rules().expect("economy rules");
+        for kind in build.buildings.keys() {
+            assert!(
+                economy.building_population_per_level.contains_key(kind),
+                "no population table for {kind:?}"
+            );
+        }
     }
 }

@@ -37,6 +37,11 @@ fn building_label(kind: BuildingKind) -> &'static str {
         BuildingKind::RallyPoint => "Rally Point",
         BuildingKind::Warehouse => "Warehouse",
         BuildingKind::Granary => "Granary",
+        BuildingKind::Barracks => "Barracks",
+        BuildingKind::Academy => "Academy",
+        BuildingKind::Smithy => "Smithy",
+        BuildingKind::Stable => "Stable",
+        BuildingKind::Workshop => "Workshop",
     }
 }
 
@@ -46,6 +51,11 @@ fn building_kind_id(kind: BuildingKind) -> &'static str {
         BuildingKind::RallyPoint => "rally_point",
         BuildingKind::Warehouse => "warehouse",
         BuildingKind::Granary => "granary",
+        BuildingKind::Barracks => "barracks",
+        BuildingKind::Academy => "academy",
+        BuildingKind::Smithy => "smithy",
+        BuildingKind::Stable => "stable",
+        BuildingKind::Workshop => "workshop",
     }
 }
 
@@ -56,6 +66,11 @@ fn building_slot(kind: BuildingKind) -> u8 {
         BuildingKind::RallyPoint => 1,
         BuildingKind::Warehouse => 2,
         BuildingKind::Granary => 3,
+        BuildingKind::Barracks => 4,
+        BuildingKind::Academy => 5,
+        BuildingKind::Smithy => 6,
+        BuildingKind::Stable => 7,
+        BuildingKind::Workshop => 8,
     }
 }
 
@@ -65,6 +80,9 @@ fn parse_building_kind(s: Option<&str>) -> Option<BuildingKind> {
         Some("rally_point") => Some(BuildingKind::RallyPoint),
         Some("warehouse") => Some(BuildingKind::Warehouse),
         Some("granary") => Some(BuildingKind::Granary),
+        Some("barracks") => Some(BuildingKind::Barracks),
+        Some("academy") => Some(BuildingKind::Academy),
+        Some("smithy") => Some(BuildingKind::Smithy),
         _ => None,
     }
 }
@@ -308,6 +326,9 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         BuildingKind::RallyPoint,
         BuildingKind::Warehouse,
         BuildingKind::Granary,
+        BuildingKind::Barracks,
+        BuildingKind::Academy,
+        BuildingKind::Smithy,
     ]
     .into_iter()
     .map(|kind| {

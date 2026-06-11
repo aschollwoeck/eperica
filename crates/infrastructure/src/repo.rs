@@ -74,6 +74,11 @@ fn building_str(kind: BuildingKind) -> &'static str {
         BuildingKind::RallyPoint => "rally_point",
         BuildingKind::Warehouse => "warehouse",
         BuildingKind::Granary => "granary",
+        BuildingKind::Barracks => "barracks",
+        BuildingKind::Academy => "academy",
+        BuildingKind::Smithy => "smithy",
+        BuildingKind::Stable => "stable",
+        BuildingKind::Workshop => "workshop",
     }
 }
 
@@ -95,6 +100,11 @@ fn parse_building(s: &str) -> Result<BuildingKind, RepoError> {
         "rally_point" => Ok(BuildingKind::RallyPoint),
         "warehouse" => Ok(BuildingKind::Warehouse),
         "granary" => Ok(BuildingKind::Granary),
+        "barracks" => Ok(BuildingKind::Barracks),
+        "academy" => Ok(BuildingKind::Academy),
+        "smithy" => Ok(BuildingKind::Smithy),
+        "stable" => Ok(BuildingKind::Stable),
+        "workshop" => Ok(BuildingKind::Workshop),
         other => Err(RepoError::Backend(format!(
             "unknown building_type: {other}"
         ))),

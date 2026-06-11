@@ -6,7 +6,7 @@ Ordered for dependency and testability (pure domain first).
 
 ## Domain (pure, test-first)
 
-- [ ] **T1 — Building kinds & catalog gates.** `BuildingKind` += `Barracks`, `Academy`, `Smithy`,
+- [x] **T1 — Building kinds & catalog gates.** `BuildingKind` += `Barracks`, `Academy`, `Smithy`,
   `Stable`, `Workshop` (fix every exhaustive match: mappers, labels, slots);
   `specs/balance/construction.toml` += barracks/academy/smithy (10 levels) + prerequisites per AC5.
   Unit tests: prerequisite gates (**AC5**).
