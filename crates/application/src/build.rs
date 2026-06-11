@@ -3,7 +3,8 @@
 use crate::ports::{AccountRepository, BuildRepository, NewBuildOrder, RepoError};
 use eperica_domain::{
     BuildRules, BuildTarget, BuildingKind, EconomyRules, GameSpeed, PlayerId, QueueLane, Timestamp,
-    Village, build_time_secs, can_afford, compute_economy, debit, prerequisites_met, queue_lane,
+    UnitRules, Village, build_time_secs, can_afford, compute_economy, debit, garrison_upkeep,
+    prerequisites_met, queue_lane,
 };
 
 /// Why ordering a build failed.
@@ -66,11 +67,13 @@ fn building_level(village: &Village, kind: BuildingKind) -> u8 {
 /// # Errors
 /// See [`BuildError`].
 #[allow(clippy::too_many_arguments)]
-pub async fn order_build<A, B>(
+pub async fn order_build<A, B, S>(
     accounts: &A,
     builds: &B,
+    starvation: &S,
     economy_rules: &EconomyRules,
     build_rules: &BuildRules,
+    unit_rules: &UnitRules,
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
@@ -79,6 +82,7 @@ pub async fn order_build<A, B>(
 where
     A: AccountRepository,
     B: BuildRepository,
+    S: crate::ports::StarvationRepository,
 {
     let Some(village) = accounts.villages_of(owner).await?.into_iter().next() else {
         return Err(BuildError::NotFound);
@@ -104,12 +108,17 @@ where
     let Some((stored, updated_at)) = accounts.stored_resources(village.id).await? else {
         return Err(BuildError::NotFound);
     };
+    let garrison = accounts.garrison(village.id).await?;
+    let upkeep = village
+        .tribe
+        .map_or(0, |t| garrison_upkeep(&garrison, unit_rules.roster(t)));
     let elapsed = (now.0 - updated_at.0) / 1000;
     let amounts = compute_economy(
         stored,
         elapsed,
         &village.fields,
         &village.buildings,
+        upkeep,
         economy_rules,
         speed,
     )
@@ -139,10 +148,22 @@ where
     builds
         .start_build(village.id, settled, updated_at, now, order)
         .await?;
+    // The settle changed the store; keep the depletion check exact (005 AC7).
+    crate::starvation::sync_starvation_check(
+        accounts,
+        starvation,
+        economy_rules,
+        unit_rules,
+        speed,
+        now,
+        village.id,
+    )
+    .await?;
     Ok(())
 }
 
-/// Claim and apply all builds due at `now` (up to `limit`); returns how many were applied (AC5).
+/// Claim and apply all builds due at `now` (up to `limit`); returns the villages whose levels
+/// changed (003 AC5; population moved — 005 callers re-sync starvation checks for them).
 ///
 /// # Errors
 /// Propagates [`RepoError`] from the repository.
@@ -150,21 +171,21 @@ pub async fn process_due_builds<B>(
     builds: &B,
     now: Timestamp,
     limit: i64,
-) -> Result<usize, RepoError>
+) -> Result<Vec<eperica_domain::VillageId>, RepoError>
 where
     B: BuildRepository,
 {
     let due = builds.claim_due_builds(now, limit).await?;
-    let mut applied = 0;
+    let mut villages = Vec::new();
     for order in due {
         // Log-and-continue: one failed apply must not strand the rest of the claimed batch. Failed
         // (still-`processing`) orders are recovered at scheduler startup; apply_build is idempotent.
         match builds.apply_build(order).await {
-            Ok(()) => applied += 1,
+            Ok(()) => villages.push(order.village),
             Err(e) => tracing::error!(error = %e, "failed to apply due build"),
         }
     }
-    Ok(applied)
+    Ok(villages)
 }
 
 #[cfg(test)]
@@ -173,8 +194,9 @@ mod tests {
     use crate::ports::{ActiveBuild, DueBuild, NewUser, UserRecord};
     use async_trait::async_trait;
     use eperica_domain::{
-        BuildingSlot, Coordinate, LevelSpec, ResourceAmounts, ResourceField, ResourceKind,
-        StartingVillage, Tribe, VillageId,
+        BuildingSlot, Coordinate, LevelSpec, ResearchSpec, ResourceAmounts, ResourceField,
+        ResourceKind, SmithyRules, StartingVillage, TrainingRules, Tribe, UnitId, UnitRole,
+        UnitSpec, VillageId,
     };
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -275,11 +297,17 @@ mod tests {
         async fn villages_of(&self, _owner: PlayerId) -> Result<Vec<Village>, RepoError> {
             Ok(vec![self.village.clone()])
         }
+        async fn village_by_id(&self, _v: VillageId) -> Result<Option<Village>, RepoError> {
+            Ok(Some(self.village.clone()))
+        }
         async fn stored_resources(
             &self,
             _v: VillageId,
         ) -> Result<Option<(ResourceAmounts, Timestamp)>, RepoError> {
             Ok(Some((self.stored, Timestamp(0))))
+        }
+        async fn garrison(&self, _v: VillageId) -> Result<eperica_domain::UnitCounts, RepoError> {
+            Ok(Vec::new())
         }
     }
 
@@ -322,6 +350,89 @@ mod tests {
         }
     }
 
+    fn unit_rules() -> UnitRules {
+        // A minimal-but-valid roster set (10 units per tribe, one tier-1 each); only the (empty)
+        // garrison's upkeep is read by order_build, so the contents are immaterial.
+        let roster = || -> Vec<UnitSpec> {
+            (0..10)
+                .map(|i| UnitSpec {
+                    id: UnitId(format!("u{i}")),
+                    name: format!("u{i}"),
+                    role: UnitRole::Infantry,
+                    attack: 1,
+                    defense_infantry: 1,
+                    defense_cavalry: 1,
+                    speed: 1,
+                    carry_capacity: 0,
+                    crop_upkeep: 1,
+                    cost: amounts(1),
+                    train_secs: 1,
+                    trained_in: BuildingKind::Barracks,
+                    research: (i > 0).then(|| ResearchSpec {
+                        cost: amounts(1),
+                        time_secs: 1,
+                        requirements: vec![],
+                    }),
+                })
+                .collect()
+        };
+        UnitRules::new(
+            HashMap::from([
+                (Tribe::Romans, roster()),
+                (Tribe::Teutons, roster()),
+                (Tribe::Gauls, roster()),
+            ]),
+            SmithyRules {
+                cost_permille_per_level: vec![1500],
+                time_secs_per_level: vec![3600],
+            },
+            TrainingRules {
+                building_factor_per_level: vec![1.0],
+            },
+        )
+        .expect("valid rules")
+    }
+
+    struct NoopStarvation;
+
+    #[async_trait]
+    impl crate::ports::StarvationRepository for NoopStarvation {
+        async fn schedule_starvation_check(
+            &self,
+            _v: VillageId,
+            _due: Timestamp,
+        ) -> Result<(), RepoError> {
+            Ok(())
+        }
+        async fn cancel_starvation_check(&self, _v: VillageId) -> Result<(), RepoError> {
+            Ok(())
+        }
+        async fn claim_due_starvation(
+            &self,
+            _now: Timestamp,
+            _limit: i64,
+        ) -> Result<Vec<VillageId>, RepoError> {
+            Ok(Vec::new())
+        }
+        async fn apply_starvation(
+            &self,
+            _v: VillageId,
+            _settled: ResourceAmounts,
+            _from: Timestamp,
+            _now: Timestamp,
+            _survivors: &eperica_domain::UnitCounts,
+        ) -> Result<(), RepoError> {
+            Ok(())
+        }
+        async fn resolve_starvation_check(
+            &self,
+            _v: VillageId,
+            _reschedule: Option<Timestamp>,
+        ) -> Result<(), RepoError> {
+            Ok(())
+        }
+    }
+
     async fn order(
         accounts: &FakeAccounts,
         builds: &FakeBuilds,
@@ -330,8 +441,10 @@ mod tests {
         order_build(
             accounts,
             builds,
+            &NoopStarvation,
             &economy_rules(),
             &build_rules(),
+            &unit_rules(),
             GameSpeed::new(1.0).unwrap(),
             Timestamp(0),
             PlayerId(1),

@@ -3,10 +3,12 @@
 use crate::repo::PgAccountRepository;
 use async_trait::async_trait;
 use eperica_application::{
-    DueEvent, EventStore, RepoError, process_due, process_due_builds, process_due_unit_orders,
+    DueEvent, EventStore, RepoError, process_due, process_due_builds, process_due_starvation,
+    process_due_training, process_due_unit_orders, sync_starvation_checks,
 };
-use eperica_domain::{EventKind, Timestamp};
+use eperica_domain::{EconomyRules, EventKind, GameSpeed, Timestamp, UnitRules};
 use sqlx::{PgPool, Row};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -122,26 +124,45 @@ impl EventStore for PgEventStore {
 
 /// Background scheduler that processes due events. Slice 001 polls at a short interval; sleeping
 /// precisely until the next due event (and `LISTEN/NOTIFY` wake-ups) is a later refinement.
-#[derive(Debug, Clone)]
+///
+/// Deployment assumption: **one active scheduler instance** — the startup orphan requeues would
+/// re-activate rows another live instance has claimed. Claiming itself (`SKIP LOCKED`) and every
+/// state mutation (snapshot-guarded settles, single-transaction applies) are already safe under
+/// concurrent workers; only the requeues need coordination before scaling out (P5 note).
+#[derive(Clone)]
 pub struct Scheduler {
     store: PgEventStore,
     builds: PgAccountRepository,
+    economy_rules: Arc<EconomyRules>,
+    unit_rules: Arc<UnitRules>,
+    speed: GameSpeed,
     poll_interval: Duration,
 }
 
 impl Scheduler {
-    /// Create a scheduler over the event store and build repository with a default poll interval.
-    pub fn new(store: PgEventStore, builds: PgAccountRepository) -> Self {
+    /// Create a scheduler over the event store and repositories with a default poll interval.
+    /// The rules + speed drive starvation re-validation (005 AC7).
+    pub fn new(
+        store: PgEventStore,
+        builds: PgAccountRepository,
+        economy_rules: Arc<EconomyRules>,
+        unit_rules: Arc<UnitRules>,
+        speed: GameSpeed,
+    ) -> Self {
         Self {
             store,
             builds,
+            economy_rules,
+            unit_rules,
+            speed,
             poll_interval: Duration::from_millis(200),
         }
     }
 
-    /// Run until `shutdown` flips to `true`, processing due events and due builds each tick.
+    /// Run until `shutdown` flips to `true`, processing due events, builds, unit orders, training
+    /// completions, and starvation checks each tick.
     pub async fn run(self, mut shutdown: tokio::sync::watch::Receiver<bool>) {
-        // Recover any events/builds left mid-flight by a previous crash before starting the loop.
+        // Recover anything left mid-flight by a previous crash before starting the loop.
         match self.store.requeue_orphaned().await {
             Ok(n) if n > 0 => tracing::warn!(requeued = n, "requeued orphaned events at startup"),
             Ok(_) => {}
@@ -159,6 +180,23 @@ impl Scheduler {
             Ok(_) => {}
             Err(e) => tracing::error!(error = %e, "failed to requeue orphaned unit orders"),
         }
+        match self.builds.requeue_orphaned_training().await {
+            Ok(n) if n > 0 => {
+                tracing::warn!(requeued = n, "requeued orphaned training at startup");
+            }
+            Ok(_) => {}
+            Err(e) => tracing::error!(error = %e, "failed to requeue orphaned training"),
+        }
+        match self.builds.requeue_orphaned_starvation().await {
+            Ok(n) if n > 0 => {
+                tracing::warn!(
+                    requeued = n,
+                    "requeued orphaned starvation checks at startup"
+                );
+            }
+            Ok(_) => {}
+            Err(e) => tracing::error!(error = %e, "failed to requeue orphaned starvation checks"),
+        }
         loop {
             if *shutdown.borrow() {
                 break;
@@ -169,7 +207,11 @@ impl Scheduler {
                 Err(e) => tracing::error!(error = %e, "scheduler tick failed"),
             }
             match process_due_builds(&self.builds, now(), 100).await {
-                Ok(n) if n > 0 => tracing::debug!(applied = n, "scheduler applied due builds"),
+                Ok(villages) if !villages.is_empty() => {
+                    tracing::debug!(applied = villages.len(), "scheduler applied due builds");
+                    // Population moved — re-sync the affected depletion checks (005 AC7).
+                    self.resync(&villages).await;
+                }
                 Ok(_) => {}
                 Err(e) => tracing::error!(error = %e, "scheduler build tick failed"),
             }
@@ -180,10 +222,63 @@ impl Scheduler {
                 Ok(_) => {}
                 Err(e) => tracing::error!(error = %e, "scheduler unit tick failed"),
             }
+            match process_due_training(
+                &self.builds,
+                &self.builds,
+                &self.economy_rules,
+                &self.unit_rules,
+                self.speed,
+                now(),
+                100,
+            )
+            .await
+            {
+                Ok(villages) if !villages.is_empty() => {
+                    tracing::debug!(
+                        villages = villages.len(),
+                        "scheduler delivered trained units"
+                    );
+                    // Upkeep rose — re-sync the affected depletion checks (005 AC7).
+                    self.resync(&villages).await;
+                }
+                Ok(_) => {}
+                Err(e) => tracing::error!(error = %e, "scheduler training tick failed"),
+            }
+            match process_due_starvation(
+                &self.builds,
+                &self.builds,
+                &self.economy_rules,
+                &self.unit_rules,
+                self.speed,
+                now(),
+                100,
+            )
+            .await
+            {
+                Ok(n) if n > 0 => tracing::info!(culled = n, "scheduler starved garrisons"),
+                Ok(_) => {}
+                Err(e) => tracing::error!(error = %e, "scheduler starvation tick failed"),
+            }
             tokio::select! {
                 () = tokio::time::sleep(self.poll_interval) => {}
                 _ = shutdown.changed() => {}
             }
+        }
+    }
+
+    async fn resync(&self, villages: &[eperica_domain::VillageId]) {
+        if let Err(e) = sync_starvation_checks(
+            &self.builds,
+            &self.builds,
+            &self.economy_rules,
+            &self.unit_rules,
+            self.speed,
+            now(),
+            villages,
+        )
+        .await
+        {
+            tracing::error!(error = %e, "starvation re-sync failed");
         }
     }
 }

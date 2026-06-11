@@ -6,8 +6,8 @@
 
 use eperica_domain::{
     BuildRules, BuildingKind, BuildingSlot, DomainError, EconomyRules, LevelSpec, ResearchSpec,
-    ResourceAmounts, ResourceField, ResourceKind, SmithyRules, StartingVillage, Tribe, UnitId,
-    UnitRole, UnitRules, UnitSpec,
+    ResourceAmounts, ResourceField, ResourceKind, SmithyRules, StartingVillage, TrainingRules,
+    Tribe, UnitId, UnitRole, UnitRules, UnitSpec,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -244,6 +244,8 @@ struct BuildingsDto {
     barracks: LevelSpecDto,
     academy: LevelSpecDto,
     smithy: LevelSpecDto,
+    stable: LevelSpecDto,
+    workshop: LevelSpecDto,
 }
 
 fn level_spec(dto: &LevelSpecDto) -> LevelSpec {
@@ -284,6 +286,8 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
         (BuildingKind::Barracks, &dto.buildings.barracks),
         (BuildingKind::Academy, &dto.buildings.academy),
         (BuildingKind::Smithy, &dto.buildings.smithy),
+        (BuildingKind::Stable, &dto.buildings.stable),
+        (BuildingKind::Workshop, &dto.buildings.workshop),
     ] {
         buildings.insert(kind, level_spec(spec_dto));
         let pr = prereqs(spec_dto)?;
@@ -301,10 +305,16 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
 
 #[derive(Deserialize)]
 struct UnitsDto {
+    training: TrainingDto,
     smithy: SmithyDto,
     romans: TribeUnitsDto,
     teutons: TribeUnitsDto,
     gauls: TribeUnitsDto,
+}
+
+#[derive(Deserialize)]
+struct TrainingDto {
+    building_factor: Vec<f64>,
 }
 
 #[derive(Deserialize)]
@@ -422,7 +432,10 @@ fn parse_unit_rules(toml_src: &str) -> Result<UnitRules, BalanceError> {
         cost_permille_per_level: dto.smithy.cost_permille_per_level,
         time_secs_per_level: dto.smithy.time_secs_per_level,
     };
-    UnitRules::new(rosters, smithy).map_err(BalanceError::Domain)
+    let training = TrainingRules {
+        building_factor_per_level: dto.training.building_factor,
+    };
+    UnitRules::new(rosters, smithy, training).map_err(BalanceError::Domain)
 }
 
 #[cfg(test)]
@@ -454,6 +467,7 @@ mod tests {
         let rates = production_rates(
             sv.fields(),
             sv.buildings(),
+            0,
             &rules,
             GameSpeed::new(1.0).unwrap(),
         );
@@ -505,6 +519,27 @@ mod tests {
             let target = BuildTarget::Building { slot: 0, kind };
             assert_eq!(r.max_level(target), 10, "{kind:?} levels");
         }
+    }
+
+    #[test]
+    fn troop_buildings_have_spec_prerequisites() {
+        // 005 AC1: Stable <- Academy>=5 + Smithy>=1; Workshop <- MB>=5 + Academy>=10.
+        let r = build_rules().expect("build rules");
+        assert_eq!(
+            r.prerequisites(BuildingKind::Stable),
+            &[(BuildingKind::Academy, 5), (BuildingKind::Smithy, 1)]
+        );
+        assert_eq!(
+            r.prerequisites(BuildingKind::Workshop),
+            &[(BuildingKind::MainBuilding, 5), (BuildingKind::Academy, 10)]
+        );
+        for kind in [BuildingKind::Stable, BuildingKind::Workshop] {
+            let target = BuildTarget::Building { slot: 0, kind };
+            assert_eq!(r.max_level(target), 10, "{kind:?} levels");
+        }
+        // The training factor table loaded and is usable (T1/T3).
+        let units = unit_rules().expect("unit rules");
+        assert!(units.training.building_factor(10) > units.training.building_factor(1));
     }
 
     #[test]

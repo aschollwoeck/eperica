@@ -3,8 +3,9 @@
 use crate::auth::{AuthUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
 use crate::templates::{
-    AcademyRow, AcademyTemplate, ActiveView, BuildRow, IndexTemplate, LoginTemplate, QueueView,
-    RegisterTemplate, SmithyRow, SmithyTemplate, StyleGuideTemplate, VillageTemplate,
+    AcademyRow, AcademyTemplate, ActiveView, BuildRow, GarrisonRow, IndexTemplate, LoginTemplate,
+    QueueView, RegisterTemplate, SmithyRow, SmithyTemplate, StyleGuideTemplate, TrainRow,
+    TroopsTemplate, VillageTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -13,14 +14,14 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
-    AccountRepository, BuildRepository, LoginError, RegisterCommand, RegisterError, UnitOrderKind,
-    UnitRepository, authenticate, load_economy, order_build, order_research, order_smithy_upgrade,
-    register,
+    AccountRepository, BuildRepository, LoginError, RegisterCommand, RegisterError,
+    TrainingRepository, UnitOrderKind, UnitRepository, authenticate, load_economy, order_build,
+    order_research, order_smithy_upgrade, order_train, register,
 };
 use eperica_domain::{
     BuildTarget, BuildingKind, QueueLane, ResearchDenied, ResourceAmounts, ResourceKind, Tribe,
     UnitId, UnitRole, UnitRules, UpgradeDenied, Village, can_afford, can_research, can_upgrade,
-    queue_lane, scaled_time_secs,
+    garrison_upkeep, per_unit_time_secs, queue_lane, scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
@@ -98,6 +99,8 @@ fn parse_building_kind(s: Option<&str>) -> Option<BuildingKind> {
         Some("barracks") => Some(BuildingKind::Barracks),
         Some("academy") => Some(BuildingKind::Academy),
         Some("smithy") => Some(BuildingKind::Smithy),
+        Some("stable") => Some(BuildingKind::Stable),
+        Some("workshop") => Some(BuildingKind::Workshop),
         _ => None,
     }
 }
@@ -260,6 +263,7 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
     let economy = match load_economy(
         state.accounts.as_ref(),
         state.rules.as_ref(),
+        state.unit_rules.as_ref(),
         state.world.speed,
         now(),
         player,
@@ -281,6 +285,46 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
     let amounts = economy.economy.amounts;
     let rates = economy.economy.rates;
     let caps = economy.economy.capacities;
+
+    // The garrison panel + total upkeep (005 AC6/AC9); names resolved via the tribe's roster.
+    let roster = village
+        .tribe
+        .map_or(&[][..], |t| state.unit_rules.roster(t));
+    let garrison_rows: Vec<GarrisonRow> = economy
+        .garrison
+        .iter()
+        .map(|(unit, count)| {
+            let spec = roster.iter().find(|s| &s.id == unit);
+            GarrisonRow {
+                name: spec.map_or_else(|| unit.as_str().to_owned(), |s| s.name.clone()),
+                count: *count,
+                upkeep: spec.map_or(0, |s| i64::from(s.crop_upkeep) * i64::from(*count)),
+            }
+        })
+        .collect();
+    let total_upkeep = garrison_upkeep(&economy.garrison, roster);
+    let troop_links: Vec<(&'static str, &'static str)> = [
+        (
+            BuildingKind::Barracks,
+            "Barracks",
+            "/village/troops/barracks",
+        ),
+        (BuildingKind::Stable, "Stable", "/village/troops/stable"),
+        (
+            BuildingKind::Workshop,
+            "Workshop",
+            "/village/troops/workshop",
+        ),
+    ]
+    .into_iter()
+    .filter(|(kind, _, _)| {
+        village
+            .buildings
+            .iter()
+            .any(|b| b.kind == *kind && b.level > 0)
+    })
+    .map(|(_, label, href)| (label, href))
+    .collect();
 
     let active = match state.accounts.active_builds(village.id).await {
         Ok(a) => a,
@@ -356,6 +400,8 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         BuildingKind::Barracks,
         BuildingKind::Academy,
         BuildingKind::Smithy,
+        BuildingKind::Stable,
+        BuildingKind::Workshop,
     ]
     .into_iter()
     .map(|kind| {
@@ -409,6 +455,9 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
             .buildings
             .iter()
             .any(|b| b.kind == BuildingKind::Smithy && b.level > 0),
+        troop_links,
+        garrison: garrison_rows,
+        garrison_upkeep: total_upkeep,
         fields,
         buildings,
     })
@@ -446,8 +495,10 @@ pub async fn build_submit(
     if let Err(e) = order_build(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
+        state.accounts.as_ref(),
         state.rules.as_ref(),
         state.build_rules.as_ref(),
+        state.unit_rules.as_ref(),
         state.world.speed,
         now(),
         player,
@@ -494,6 +545,7 @@ async fn village_view_data(
     match load_economy(
         state.accounts.as_ref(),
         state.rules.as_ref(),
+        state.unit_rules.as_ref(),
         state.world.speed,
         now(),
         player,
@@ -735,6 +787,7 @@ pub async fn research_submit(
     if let Err(e) = order_research(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
+        state.accounts.as_ref(),
         state.rules.as_ref(),
         state.unit_rules.as_ref(),
         state.world.speed,
@@ -749,6 +802,147 @@ pub async fn research_submit(
     Redirect::to("/village/academy").into_response()
 }
 
+fn parse_troop_building(slug: &str) -> Option<BuildingKind> {
+    match slug {
+        "barracks" => Some(BuildingKind::Barracks),
+        "stable" => Some(BuildingKind::Stable),
+        "workshop" => Some(BuildingKind::Workshop),
+        _ => None,
+    }
+}
+
+/// A troop building's training view: researched units it trains, the running batch (005 AC9;
+/// Player only, P4).
+pub async fn troops(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    axum::extract::Path(building_slug): axum::extract::Path<String>,
+) -> Response {
+    let Some(building) = parse_troop_building(&building_slug) else {
+        return Redirect::to("/village").into_response();
+    };
+    let (village, _amounts) = match village_view_data(&state, player).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let Some(tribe) = village.tribe else {
+        tracing::error!(?player, "village has no tribe");
+        return server_error();
+    };
+    let (researched, active) = match tokio::try_join!(
+        state.accounts.researched_units(village.id),
+        state.accounts.active_training(village.id),
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = %e, "troop view lookup failed");
+            return server_error();
+        }
+    };
+    let unit_rules: &UnitRules = state.unit_rules.as_ref();
+    let building_level = building_level(&village, building);
+    let batch = active.iter().find(|t| t.building == building);
+    let active_view = batch.map(|t| QueueView {
+        label: format!(
+            "Training {} × {} — {} remaining",
+            t.count_total,
+            unit_rules
+                .unit(tribe, &t.unit)
+                .map_or(t.unit.as_str(), |s| s.name.as_str()),
+            t.count_total - t.count_done
+        ),
+        complete_ms: t.next_complete_at.0,
+    });
+
+    let rows = if building_level == 0 {
+        Vec::new() // the template only renders the building-required notice
+    } else {
+        unit_rules
+            .roster(tribe)
+            .iter()
+            .filter(|spec| spec.trained_in == building)
+            .filter(|spec| spec.researched_by_default() || researched.contains(&spec.id))
+            .map(|spec| TrainRow {
+                id: spec.id.as_str().to_owned(),
+                name: spec.name.clone(),
+                attack: spec.attack,
+                def_inf: spec.defense_infantry,
+                def_cav: spec.defense_cavalry,
+                upkeep: spec.crop_upkeep,
+                cost_wood: spec.cost.wood,
+                cost_clay: spec.cost.clay,
+                cost_iron: spec.cost.iron,
+                cost_crop: spec.cost.crop,
+                time: fmt_duration(per_unit_time_secs(
+                    spec.train_secs,
+                    building_level,
+                    &unit_rules.training,
+                    state.world.speed,
+                )),
+                can_order: batch.is_none(),
+                gate: if batch.is_some() {
+                    "training in progress".to_owned()
+                } else {
+                    String::new()
+                },
+            })
+            .collect()
+    };
+
+    page(&TroopsTemplate {
+        building: building_label(building),
+        has_building: building_level > 0,
+        rows,
+        active: active_view,
+    })
+}
+
+/// Training form fields.
+#[derive(Deserialize)]
+pub struct TrainForm {
+    unit: String,
+    count: u32,
+}
+
+/// Order a training batch for the player's village, then return to the building page (Player
+/// only, P4).
+pub async fn train_submit(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<TrainForm>,
+) -> Response {
+    let unit = UnitId(form.unit);
+    if let Err(e) = order_train(
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.rules.as_ref(),
+        state.unit_rules.as_ref(),
+        state.world.speed,
+        now(),
+        player,
+        unit.clone(),
+        form.count,
+    )
+    .await
+    {
+        tracing::warn!(error = %e, "training order rejected");
+    }
+    // Land back on the unit's building page (the same kind across tribes).
+    let building = [Tribe::Romans, Tribe::Teutons, Tribe::Gauls]
+        .into_iter()
+        .find_map(|t| state.unit_rules.unit(t, &unit))
+        .map(|s| s.trained_in);
+    let target = match building {
+        Some(BuildingKind::Barracks) => "/village/troops/barracks",
+        Some(BuildingKind::Stable) => "/village/troops/stable",
+        Some(BuildingKind::Workshop) => "/village/troops/workshop",
+        _ => "/village",
+    };
+    Redirect::to(target).into_response()
+}
+
 /// Order a Smithy upgrade for the player's village, then return to the Smithy (Player only, P4).
 pub async fn smithy_upgrade_submit(
     State(state): State<AppState>,
@@ -756,6 +950,7 @@ pub async fn smithy_upgrade_submit(
     Form(form): Form<UnitForm>,
 ) -> Response {
     if let Err(e) = order_smithy_upgrade(
+        state.accounts.as_ref(),
         state.accounts.as_ref(),
         state.accounts.as_ref(),
         state.rules.as_ref(),

@@ -47,6 +47,9 @@ mod tests {
             active: Vec::new(),
             has_academy: false,
             has_smithy: false,
+            troop_links: Vec::new(),
+            garrison: Vec::new(),
+            garrison_upkeep: 0,
             fields: Vec::new(),
             buildings: Vec::new(),
         }
@@ -175,6 +178,52 @@ pub struct SmithyTemplate {
     pub active: Option<QueueView>,
 }
 
+/// One trainable unit row in a troop-building view (005 AC9).
+pub struct TrainRow {
+    /// Unit slug for the POST `unit` value.
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    pub attack: u32,
+    pub def_inf: u32,
+    pub def_cav: u32,
+    pub upkeep: u32,
+    /// Per-unit cost.
+    pub cost_wood: i64,
+    pub cost_clay: i64,
+    pub cost_iron: i64,
+    pub cost_crop: i64,
+    /// Per-unit training time at the current building level and world speed, `h:mm:ss`.
+    pub time: String,
+    /// The Train form is offered (no batch running at this building).
+    pub can_order: bool,
+    /// Why the action is unavailable; empty when orderable.
+    pub gate: String,
+}
+
+#[derive(Template)]
+#[template(path = "troops.html")]
+pub struct TroopsTemplate {
+    /// "Barracks" / "Stable" / "Workshop".
+    pub building: &'static str,
+    /// Whether the village has this building (otherwise the page explains the requirement).
+    pub has_building: bool,
+    /// Researched units this building trains.
+    pub rows: Vec<TrainRow>,
+    /// The running batch, if any.
+    pub active: Option<QueueView>,
+}
+
+/// One garrison line on the village page (005 AC9).
+pub struct GarrisonRow {
+    /// Display name.
+    pub name: String,
+    /// Units stationed.
+    pub count: u32,
+    /// Crop/hour this line consumes.
+    pub upkeep: i64,
+}
+
 #[derive(Template)]
 #[template(path = "village.html")]
 pub struct VillageTemplate {
@@ -205,6 +254,12 @@ pub struct VillageTemplate {
     pub has_academy: bool,
     /// Whether the village has a Smithy (shows the link).
     pub has_smithy: bool,
+    /// Built troop buildings, as (label, href) links (005 AC9).
+    pub troop_links: Vec<(&'static str, &'static str)>,
+    /// The standing garrison (005 AC9); empty hides the panel.
+    pub garrison: Vec<GarrisonRow>,
+    /// The garrison's total crop upkeep per hour.
+    pub garrison_upkeep: i64,
     /// Resource-field build rows.
     pub fields: Vec<BuildRow>,
     /// Building build rows.

@@ -5,8 +5,8 @@
 
 use async_trait::async_trait;
 use eperica_domain::{
-    BuildTarget, EventKind, PlayerId, QueueLane, ResourceAmounts, StartingVillage, Timestamp,
-    Tribe, UnitId, Village, VillageId,
+    BuildTarget, BuildingKind, EventKind, PlayerId, QueueLane, ResourceAmounts, StartingVillage,
+    Timestamp, Tribe, UnitCounts, UnitId, Village, VillageId,
 };
 
 /// Details for a new account to be created.
@@ -107,6 +107,13 @@ pub trait AccountRepository: Send + Sync {
     /// [`RepoError::Backend`] on storage failure.
     async fn villages_of(&self, owner: PlayerId) -> Result<Vec<Village>, RepoError>;
 
+    /// One village by id (with its fields and buildings) — used by system processors that only
+    /// hold a village id (005 starvation checks).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn village_by_id(&self, village: VillageId) -> Result<Option<Village>, RepoError>;
+
     /// A village's stored resource amounts and the time they were last settled (Unix-ms UTC).
     /// Resources accrue from this snapshot on read (P1); there is no background job.
     ///
@@ -116,6 +123,13 @@ pub trait AccountRepository: Send + Sync {
         &self,
         village: VillageId,
     ) -> Result<Option<(ResourceAmounts, Timestamp)>, RepoError>;
+
+    /// The village's garrison — standing troops per unit type (005; empty before any training).
+    /// Part of the economy read path: the garrison's upkeep feeds net crop (AC6).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn garrison(&self, village: VillageId) -> Result<UnitCounts, RepoError>;
 }
 
 /// A claimed, due event ready to be processed.
@@ -347,4 +361,174 @@ pub trait UnitRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn apply_unit_order(&self, due: DueUnitOrder) -> Result<(), RepoError>;
+}
+
+/// A new training batch to enqueue (005).
+#[derive(Debug, Clone)]
+pub struct NewTrainingOrder {
+    /// The troop building whose queue this batch occupies.
+    pub building: BuildingKind,
+    /// The unit type being trained.
+    pub unit: UnitId,
+    /// How many units the batch trains.
+    pub count: u32,
+    /// Seconds per unit (already building- and speed-scaled).
+    pub per_unit_secs: i64,
+}
+
+/// A village's currently-running training batch (one per troop building at most).
+#[derive(Debug, Clone)]
+pub struct ActiveTraining {
+    /// The troop building training it.
+    pub building: BuildingKind,
+    /// The unit type being trained.
+    pub unit: UnitId,
+    /// Batch size.
+    pub count_total: u32,
+    /// Units already delivered to the garrison.
+    pub count_done: u32,
+    /// Seconds per unit.
+    pub per_unit_secs: i64,
+    /// When the next unit completes (Unix-ms UTC).
+    pub next_complete_at: Timestamp,
+}
+
+/// A claimed training batch with at least one unit due.
+#[derive(Debug, Clone)]
+pub struct DueTraining {
+    /// Order identity.
+    pub id: u128,
+    /// The village it belongs to.
+    pub village: VillageId,
+    /// The unit type being trained.
+    pub unit: UnitId,
+    /// Batch size.
+    pub count_total: u32,
+    /// Units already delivered.
+    pub count_done: u32,
+    /// Seconds per unit.
+    pub per_unit_secs: i64,
+    /// When the batch started (Unix-ms UTC); completions fall at `started_at + i × per_unit`.
+    pub started_at: Timestamp,
+}
+
+/// Persistence for training batches and the garrison (due-events, P1; 005).
+#[async_trait]
+pub trait TrainingRepository: Send + Sync {
+    /// Atomically settle the village's resources to `settled` (computed from the snapshot read at
+    /// `settled_from`; see [`BuildRepository::start_build`]) and enqueue the batch. The
+    /// one-batch-per-building rule is enforced by storage; a busy building returns
+    /// [`RepoError::Duplicate`] (AC2, P4).
+    ///
+    /// # Errors
+    /// [`RepoError`] on conflict or storage failure.
+    async fn start_training(
+        &self,
+        village: VillageId,
+        settled: ResourceAmounts,
+        settled_from: Timestamp,
+        now: Timestamp,
+        order: NewTrainingOrder,
+    ) -> Result<(), RepoError>;
+
+    /// The village's running batches — at most one per troop building.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn active_training(&self, village: VillageId) -> Result<Vec<ActiveTraining>, RepoError>;
+
+    /// Atomically claim batches with a completion due (`active → processing`), nearest first.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn claim_due_training(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueTraining>, RepoError>;
+
+    /// Deliver `completed` finished units to the garrison, settle the village's resources to
+    /// `settled` as of `settle_to` (computed piecewise by the caller so upkeep starts at each
+    /// unit's own completion instant — spec Decision "troops in training do not eat"), and
+    /// advance the batch — all in **one** transaction, so a crash never loses or duplicates a
+    /// unit (AC5/AC6). The settle is snapshot-guarded against `settled_from` (see
+    /// [`BuildRepository::start_build`]). Re-marks the batch `active` (or `done` when finished).
+    ///
+    /// # Errors
+    /// [`RepoError::Conflict`] when the snapshot moved (nothing applied; release and retry);
+    /// [`RepoError::Backend`] on storage failure.
+    async fn apply_training(
+        &self,
+        due: &DueTraining,
+        completed: u32,
+        settled: ResourceAmounts,
+        settled_from: Timestamp,
+        settle_to: Timestamp,
+    ) -> Result<(), RepoError>;
+
+    /// Return a claimed batch to `active` unchanged (a conflicting settle or a not-yet-due claim);
+    /// it is re-claimed on a later tick with a fresh snapshot.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn release_training(&self, due: &DueTraining) -> Result<(), RepoError>;
+}
+
+/// Persistence for per-village crop-depletion checks (005 AC7; at most one pending per village).
+#[async_trait]
+pub trait StarvationRepository: Send + Sync {
+    /// Schedule (or move) the village's depletion check to `due_at` and mark it pending — an
+    /// upsert, so re-syncing at every mutation point keeps exactly one check per village.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn schedule_starvation_check(
+        &self,
+        village: VillageId,
+        due_at: Timestamp,
+    ) -> Result<(), RepoError>;
+
+    /// Remove the village's check (net crop is non-negative or there is no garrison, AC8).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn cancel_starvation_check(&self, village: VillageId) -> Result<(), RepoError>;
+
+    /// Atomically claim due checks (`pending → processing`); returns the affected villages.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn claim_due_starvation(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<VillageId>, RepoError>;
+
+    /// Apply a cull in **one** transaction: snapshot-guarded resource settle (see
+    /// [`BuildRepository::start_build`]), replace the garrison with `survivors`, and mark the
+    /// claimed check done — so starvation happens exactly once (AC7).
+    ///
+    /// # Errors
+    /// [`RepoError::Conflict`] when the snapshot moved — nothing is applied; the caller re-pends
+    /// the check (`resolve_starvation_check(Some(now))`) so the next tick re-validates from a
+    /// fresh snapshot. [`RepoError::Backend`] on storage failure.
+    async fn apply_starvation(
+        &self,
+        village: VillageId,
+        settled: ResourceAmounts,
+        settled_from: Timestamp,
+        now: Timestamp,
+        survivors: &UnitCounts,
+    ) -> Result<(), RepoError>;
+
+    /// Re-validate outcome: the claimed check is not needed now — reschedule it at the new
+    /// depletion time (`Some`) or mark it done (`None`).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn resolve_starvation_check(
+        &self,
+        village: VillageId,
+        reschedule_at: Option<Timestamp>,
+    ) -> Result<(), RepoError>;
 }

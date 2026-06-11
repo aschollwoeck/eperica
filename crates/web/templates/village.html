@@ -4,7 +4,8 @@
   <h1>{{ username }}'s village</h1>
   <p class="muted">Location ({{ x }}, {{ y }}) · Tribe: {{ tribe }}
     {% if has_academy %} · <a href="/village/academy">Academy</a>{% endif %}
-    {% if has_smithy %} · <a href="/village/smithy">Smithy</a>{% endif %}</p>
+    {% if has_smithy %} · <a href="/village/smithy">Smithy</a>{% endif %}
+    {% for link in troop_links %} · <a href="{{ link.1 }}">{{ link.0 }}</a>{% endfor %}</p>
 
   <h2>Resources</h2>
   <ul class="resource-list">
@@ -19,6 +20,21 @@
     {% endif %}
   </ul>
 </section>
+
+{% if !garrison.is_empty() %}
+<section class="panel">
+  <h2>Garrison</h2>
+  <table class="table">
+    <thead><tr><th>Unit</th><th class="num">Count</th><th class="num">Upkeep/h</th></tr></thead>
+    <tbody>
+      {% for g in garrison %}
+      <tr><td>{{ g.name }}</td><td class="num">{{ g.count }}</td><td class="num">{{ g.upkeep }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">Total upkeep: {{ garrison_upkeep }} crop/h (already part of the net rate above).</p>
+</section>
+{% endif %}
 
 {% if !active.is_empty() %}
 <section class="panel">

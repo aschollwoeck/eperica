@@ -10,5 +10,7 @@ manual grows as the game does.
 - [Building & upgrading](buildings.md) — grow your village by upgrading fields and constructing buildings.
 - [Tribes, the Academy & the Smithy](tribes-and-units.md) — choose your tribe, research units, and
   upgrade their strength.
+- [Training troops & feeding your army](training-and-upkeep.md) — train batches at the Barracks,
+  Stable, and Workshop, and keep your army fed.
 
 *(More chapters — troops, the map, combat — arrive as those features ship.)*

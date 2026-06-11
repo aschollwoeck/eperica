@@ -17,6 +17,10 @@ pub const ROSTER_SIZE: usize = 10;
 /// Highest Smithy upgrade level any unit can reach (also capped by the Smithy's own level).
 pub const MAX_UNIT_LEVEL: u8 = 20;
 
+/// Largest training batch a single order may request (005; a server-side sanity bound — resources
+/// are the real constraint).
+pub const MAX_TRAINING_BATCH: u32 = 9999;
+
 /// Stable identifier of a unit type within its tribe (slug from balance data, e.g. `legionnaire`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UnitId(pub String);
@@ -130,11 +134,31 @@ impl SmithyRules {
     }
 }
 
+/// Training-speed balance (005). One shared table for all troop buildings.
+#[derive(Debug, Clone)]
+pub struct TrainingRules {
+    /// Training-speed multiplier by training-building level (≥ 1; higher ⇒ faster). Index = level;
+    /// clamped to the last entry.
+    pub building_factor_per_level: Vec<f64>,
+}
+
+impl TrainingRules {
+    /// The factor at `level` (clamped to the table).
+    pub fn building_factor(&self, level: u8) -> f64 {
+        self.building_factor_per_level
+            .get(level as usize)
+            .or_else(|| self.building_factor_per_level.last())
+            .copied()
+            .unwrap_or(1.0)
+    }
+}
+
 /// All unit balance data, validated on construction.
 #[derive(Debug, Clone)]
 pub struct UnitRules {
     rosters: HashMap<Tribe, Vec<UnitSpec>>,
     pub smithy: SmithyRules,
+    pub training: TrainingRules,
 }
 
 impl UnitRules {
@@ -142,17 +166,24 @@ impl UnitRules {
     ///
     /// # Errors
     /// Returns [`DomainError::InvalidUnitRules`] unless every tribe has exactly [`ROSTER_SIZE`]
-    /// units with per-tribe-unique ids and exactly one research-free (tier-1) unit, and the
-    /// Smithy tables are non-empty and of equal length (a mismatch would silently lower the cap).
+    /// units with per-tribe-unique ids and exactly one research-free (tier-1) unit, the Smithy
+    /// tables are non-empty and of equal length (a mismatch would silently lower the cap), and
+    /// the training factor table is non-empty.
     pub fn new(
         rosters: HashMap<Tribe, Vec<UnitSpec>>,
         smithy: SmithyRules,
+        training: TrainingRules,
     ) -> Result<Self, DomainError> {
         if smithy.cost_permille_per_level.is_empty()
             || smithy.cost_permille_per_level.len() != smithy.time_secs_per_level.len()
         {
             return Err(DomainError::InvalidUnitRules(
                 "smithy cost/time tables must be non-empty and the same length",
+            ));
+        }
+        if training.building_factor_per_level.is_empty() {
+            return Err(DomainError::InvalidUnitRules(
+                "the training factor table must not be empty",
             ));
         }
         for tribe in [Tribe::Romans, Tribe::Teutons, Tribe::Gauls] {
@@ -176,7 +207,11 @@ impl UnitRules {
                 ));
             }
         }
-        Ok(Self { rosters, smithy })
+        Ok(Self {
+            rosters,
+            smithy,
+            training,
+        })
     }
 
     /// The tribe's full roster, in balance order.
@@ -276,6 +311,152 @@ pub fn scaled_time_secs(base_secs: i64, speed: GameSpeed) -> i64 {
     ((base_secs as f64 / speed.multiplier()).round() as i64).max(1)
 }
 
+/// The buildings whose training queues exist in slice 005. `trained_in` kinds outside this set
+/// (Residence — settlers/administrators) are trainable in later slices.
+fn trains_here(kind: BuildingKind) -> bool {
+    matches!(
+        kind,
+        BuildingKind::Barracks | BuildingKind::Stable | BuildingKind::Workshop
+    )
+}
+
+/// Why a training batch is denied (beyond affordability and queue occupancy).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrainDenied {
+    /// The unit is not researched in this village.
+    NotResearched,
+    /// The unit's training building is not built in this village.
+    BuildingMissing,
+    /// The unit trains in a building no slice has made trainable yet (e.g. the Residence).
+    BuildingUnavailable,
+    /// The batch size is outside `1..=MAX_TRAINING_BATCH`.
+    CountOutOfRange,
+}
+
+/// Whether a batch of `count` × `unit` may be trained in a village with `buildings` (005 AC2/AC3).
+///
+/// # Errors
+/// Returns the [`TrainDenied`] reason when training may not start.
+pub fn can_train(
+    unit: &UnitSpec,
+    is_researched: bool,
+    count: u32,
+    buildings: &[BuildingSlot],
+) -> Result<(), TrainDenied> {
+    if !is_researched && !unit.researched_by_default() {
+        return Err(TrainDenied::NotResearched);
+    }
+    if count == 0 || count > MAX_TRAINING_BATCH {
+        return Err(TrainDenied::CountOutOfRange);
+    }
+    if !trains_here(unit.trained_in) {
+        return Err(TrainDenied::BuildingUnavailable);
+    }
+    if !building_levels_met(&[(unit.trained_in, 1)], buildings) {
+        return Err(TrainDenied::BuildingMissing);
+    }
+    Ok(())
+}
+
+/// The full cost of a batch (`count × unitCost`, saturating).
+pub fn batch_cost(unit: &UnitSpec, count: u32) -> ResourceAmounts {
+    let n = i64::from(count);
+    ResourceAmounts {
+        wood: unit.cost.wood.saturating_mul(n),
+        clay: unit.cost.clay.saturating_mul(n),
+        iron: unit.cost.iron.saturating_mul(n),
+        crop: unit.cost.crop.saturating_mul(n),
+    }
+}
+
+/// Per-unit training duration after the building factor and world speed (005 AC4, P7; ≥ 1 s).
+pub fn per_unit_time_secs(
+    train_secs: i64,
+    building_level: u8,
+    rules: &TrainingRules,
+    speed: GameSpeed,
+) -> i64 {
+    let divisor = speed.multiplier() * rules.building_factor(building_level);
+    ((train_secs as f64 / divisor).round() as i64).max(1)
+}
+
+fn upkeep_of(roster: &[UnitSpec], unit: &UnitId) -> i64 {
+    roster
+        .iter()
+        .find(|s| &s.id == unit)
+        .map_or(0, |s| i64::from(s.crop_upkeep))
+}
+
+/// Per-unit-type counts — a garrison or a casualty list (005).
+pub type UnitCounts = Vec<(UnitId, u32)>;
+
+/// The garrison's total crop consumption per hour (005 AC6). Unknown unit ids count 0.
+pub fn garrison_upkeep(garrison: &[(UnitId, u32)], roster: &[UnitSpec]) -> i64 {
+    garrison
+        .iter()
+        .map(|(unit, count)| upkeep_of(roster, unit).saturating_mul(i64::from(*count)))
+        .sum()
+}
+
+/// Starve a garrison down to a sustainable size (005 AC7, GDD §2.2).
+///
+/// `net_without_troops` is the village's hourly crop balance **before** troop upkeep (fields −
+/// population; pre-speed-scaling — the sign is what matters). Units die deterministically:
+/// repeatedly one unit of the garrisoned type with the **highest `cropUpkeep`** (ties: roster
+/// order) until `net_without_troops − upkeep(remaining) ≥ 0` or no upkeep-bearing unit remains.
+///
+/// Returns `(survivors, casualties)`; both omit zero counts.
+pub fn starve(
+    garrison: &[(UnitId, u32)],
+    roster: &[UnitSpec],
+    net_without_troops: i64,
+) -> (UnitCounts, UnitCounts) {
+    let mut remaining: UnitCounts = garrison.to_vec();
+    // Kill order: highest upkeep first, ties by roster order (kept stable by sorting on the
+    // roster index). Unknown ids sort last and are never culled (upkeep 0).
+    let roster_index = |unit: &UnitId| {
+        roster
+            .iter()
+            .position(|s| &s.id == unit)
+            .unwrap_or(usize::MAX)
+    };
+    remaining.sort_by_key(|(unit, _)| (-upkeep_of(roster, unit), roster_index(unit)));
+
+    let mut deficit = garrison_upkeep(garrison, roster) - net_without_troops;
+    let mut casualties = Vec::new();
+    for (unit, count) in &mut remaining {
+        if deficit <= 0 {
+            break;
+        }
+        let upkeep = upkeep_of(roster, unit);
+        if upkeep <= 0 {
+            break; // only upkeep-bearing units can starve (or help)
+        }
+        // Killing one at a time from this (currently highest-upkeep) type is equivalent to the
+        // bulk count below.
+        let needed = u32::try_from(deficit.div_euclid(upkeep) + i64::from(deficit % upkeep != 0))
+            .unwrap_or(u32::MAX);
+        let killed = needed.min(*count);
+        deficit -= upkeep.saturating_mul(i64::from(killed));
+        *count -= killed;
+        casualties.push((unit.clone(), killed));
+    }
+    remaining.retain(|(_, count)| *count > 0);
+    (remaining, casualties)
+}
+
+/// Seconds until the crop store empties at the current (negative) net rate; `None` when net ≥ 0.
+/// An already-empty store depletes "now" (0 s). Rounded up so the check never fires early.
+pub fn depletion_secs(crop_stored: i64, net_rate_per_hour: i64) -> Option<i64> {
+    if net_rate_per_hour >= 0 {
+        return None;
+    }
+    let deficit = -net_rate_per_hour;
+    let scaled = crop_stored.max(0).saturating_mul(3600);
+    // Manual ceiling division — immune to the `scaled + deficit - 1` overflow when saturated.
+    Some(scaled / deficit + i64::from(scaled % deficit != 0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,6 +506,12 @@ mod tests {
         }
     }
 
+    fn training_rules() -> TrainingRules {
+        TrainingRules {
+            building_factor_per_level: vec![1.0, 1.0, 1.25, 1.5],
+        }
+    }
+
     fn roster() -> Vec<UnitSpec> {
         let mut units = vec![unit("tier1", None)];
         for i in 1..ROSTER_SIZE {
@@ -339,7 +526,7 @@ mod tests {
             (Tribe::Teutons, roster()),
             (Tribe::Gauls, roster()),
         ]);
-        UnitRules::new(rosters, smithy_rules()).expect("valid rules")
+        UnitRules::new(rosters, smithy_rules(), training_rules()).expect("valid rules")
     }
 
     fn slots(pairs: &[(BuildingKind, u8)]) -> Vec<BuildingSlot> {
@@ -353,17 +540,17 @@ mod tests {
     #[test]
     fn rejects_incomplete_rosters() {
         let mut rosters = HashMap::from([(Tribe::Romans, roster()), (Tribe::Teutons, roster())]);
-        assert!(UnitRules::new(rosters.clone(), smithy_rules()).is_err()); // missing Gauls
+        assert!(UnitRules::new(rosters.clone(), smithy_rules(), training_rules()).is_err()); // missing Gauls
 
         let mut short = roster();
         short.pop();
         rosters.insert(Tribe::Gauls, short);
-        assert!(UnitRules::new(rosters.clone(), smithy_rules()).is_err()); // 9 units
+        assert!(UnitRules::new(rosters.clone(), smithy_rules(), training_rules()).is_err()); // 9 units
 
         let mut two_tier1 = roster();
         two_tier1[1] = unit("second_tier1", None);
         rosters.insert(Tribe::Gauls, two_tier1);
-        assert!(UnitRules::new(rosters.clone(), smithy_rules()).is_err()); // two tier-1
+        assert!(UnitRules::new(rosters.clone(), smithy_rules(), training_rules()).is_err()); // two tier-1
 
         rosters.insert(Tribe::Gauls, roster());
         // Mismatched smithy tables would silently lower the level cap — rejected at load.
@@ -371,9 +558,9 @@ mod tests {
             cost_permille_per_level: vec![1500, 1900],
             time_secs_per_level: vec![3600],
         };
-        assert!(UnitRules::new(rosters.clone(), lopsided).is_err());
+        assert!(UnitRules::new(rosters.clone(), lopsided, training_rules()).is_err());
 
-        assert!(UnitRules::new(rosters, smithy_rules()).is_ok());
+        assert!(UnitRules::new(rosters, smithy_rules(), training_rules()).is_ok());
     }
 
     #[test]
@@ -463,6 +650,130 @@ mod tests {
         assert_eq!(r.upgrade_cost(&u, 3), None); // at max
         assert_eq!(r.base_time_secs(1), Some(4500));
         assert_eq!(r.base_time_secs(3), None);
+    }
+
+    // --- 005 AC3 (domain side): training gates ---
+    #[test]
+    fn training_gates() {
+        let infantry = unit("tier1", None); // trained_in: Barracks
+        let barracks = slots(&[(BuildingKind::Barracks, 1)]);
+
+        assert_eq!(can_train(&infantry, false, 5, &barracks), Ok(()));
+        // Unresearched (non-tier-1).
+        let researchable = researchable("u1", vec![]);
+        assert_eq!(
+            can_train(&researchable, false, 5, &barracks),
+            Err(TrainDenied::NotResearched)
+        );
+        assert_eq!(can_train(&researchable, true, 5, &barracks), Ok(()));
+        // Count out of range.
+        assert_eq!(
+            can_train(&infantry, false, 0, &barracks),
+            Err(TrainDenied::CountOutOfRange)
+        );
+        assert_eq!(
+            can_train(&infantry, false, MAX_TRAINING_BATCH + 1, &barracks),
+            Err(TrainDenied::CountOutOfRange)
+        );
+        // Training building absent.
+        assert_eq!(
+            can_train(&infantry, false, 5, &slots(&[(BuildingKind::Stable, 1)])),
+            Err(TrainDenied::BuildingMissing)
+        );
+        // Residence-trained units are unavailable until 013.
+        let mut settler = unit("settler", None);
+        settler.trained_in = BuildingKind::Residence;
+        assert_eq!(
+            can_train(&settler, true, 1, &slots(&[(BuildingKind::Residence, 1)])),
+            Err(TrainDenied::BuildingUnavailable)
+        );
+    }
+
+    // --- 005 AC2: batch cost ---
+    #[test]
+    fn batch_cost_multiplies_unit_cost() {
+        let u = unit("tier1", None); // cost 100 each
+        assert_eq!(batch_cost(&u, 1), amounts(100));
+        assert_eq!(batch_cost(&u, 25), amounts(2500));
+    }
+
+    // --- 005 AC4: building level and world speed scale training ---
+    #[test]
+    fn training_time_scales_with_building_level_and_speed() {
+        let r = training_rules(); // factors [1.0, 1.0, 1.25, 1.5]
+        let s1 = GameSpeed::new(1.0).unwrap();
+        let t1 = per_unit_time_secs(1000, 1, &r, s1);
+        let t2 = per_unit_time_secs(1000, 2, &r, s1);
+        let t3 = per_unit_time_secs(1000, 3, &r, s1);
+        assert_eq!(t1, 1000);
+        assert!(t2 < t1 && t3 < t2, "{t1} {t2} {t3}");
+        // Levels beyond the table clamp to the last factor.
+        assert_eq!(per_unit_time_secs(1000, 9, &r, s1), t3);
+        // World speed scales proportionally (P7).
+        let s2 = GameSpeed::new(2.0).unwrap();
+        assert_eq!(per_unit_time_secs(1000, 1, &r, s2), 500);
+        assert_eq!(per_unit_time_secs(1, 9, &r, s2), 1); // floor at 1 s
+    }
+
+    // --- 005 AC6: garrison upkeep ---
+    #[test]
+    fn garrison_upkeep_sums_per_unit_consumption() {
+        let mut heavy = unit("knight", None);
+        heavy.crop_upkeep = 3;
+        let light = unit("militia", None); // upkeep 1
+        let roster = vec![light.clone(), heavy.clone()];
+        let garrison = vec![(UnitId("militia".into()), 10), (UnitId("knight".into()), 4)];
+        assert_eq!(garrison_upkeep(&garrison, &roster), 10 + 12);
+        // Unknown ids count 0.
+        assert_eq!(garrison_upkeep(&[(UnitId("ghost".into()), 99)], &roster), 0);
+    }
+
+    // --- 005 AC7: the starvation cull is deterministic, highest-upkeep first ---
+    #[test]
+    fn starve_culls_highest_upkeep_first_until_sustainable() {
+        let mut heavy = unit("knight", None);
+        heavy.crop_upkeep = 3;
+        let light = unit("militia", None); // upkeep 1
+        let roster = vec![light.clone(), heavy.clone()];
+        let garrison = vec![(UnitId("militia".into()), 10), (UnitId("knight".into()), 4)];
+        // Upkeep 22, net without troops 12 => deficit 10: kill 4 knights (12), done.
+        let (survivors, casualties) = starve(&garrison, &roster, 12);
+        assert_eq!(casualties, vec![(UnitId("knight".into()), 4)]);
+        assert_eq!(survivors, vec![(UnitId("militia".into()), 10)]);
+
+        // Deficit 15: 4 knights (12) + 3 militia.
+        let (survivors, casualties) = starve(&garrison, &roster, 7);
+        assert_eq!(
+            casualties,
+            vec![(UnitId("knight".into()), 4), (UnitId("militia".into()), 3)]
+        );
+        assert_eq!(survivors, vec![(UnitId("militia".into()), 7)]);
+
+        // Ties broken by roster order: two upkeep-1 types — the earlier roster entry dies first.
+        let militia2 = unit("levy", None);
+        let roster2 = vec![light.clone(), militia2];
+        let garrison2 = vec![(UnitId("levy".into()), 5), (UnitId("militia".into()), 5)];
+        let (_, casualties) = starve(&garrison2, &roster2, 7); // deficit 3
+        assert_eq!(casualties, vec![(UnitId("militia".into()), 3)]);
+
+        // Net never recoverable (buildings alone overconsume): everything dies, nothing panics.
+        let (survivors, _) = starve(&garrison, &roster, -5);
+        assert!(survivors.is_empty());
+
+        // No deficit: nothing dies.
+        let (survivors, casualties) = starve(&garrison, &roster, 22);
+        assert!(casualties.is_empty());
+        assert_eq!(survivors.len(), 2);
+    }
+
+    // --- 005 AC7: depletion scheduling ---
+    #[test]
+    fn depletion_time_rounds_up_and_handles_signs() {
+        assert_eq!(depletion_secs(100, -100), Some(3600)); // exactly one hour
+        assert_eq!(depletion_secs(100, -101), Some(3565)); // ceil(360000/101)
+        assert_eq!(depletion_secs(0, -10), Some(0)); // already empty
+        assert_eq!(depletion_secs(100, 0), None);
+        assert_eq!(depletion_secs(100, 5), None);
     }
 
     // --- AC14: world speed scales research/upgrade durations ---

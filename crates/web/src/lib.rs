@@ -35,6 +35,8 @@ pub fn router(state: AppState) -> Router {
             "/village/smithy/upgrade",
             post(handlers::smithy_upgrade_submit),
         )
+        .route("/village/troops/{building}", get(handlers::troops))
+        .route("/village/train", post(handlers::train_submit))
         .route("/styleguide", get(handlers::styleguide))
         .nest_service("/static", ServeDir::new("crates/web/static"))
         .layer(TraceLayer::new_for_http())

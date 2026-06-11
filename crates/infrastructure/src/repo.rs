@@ -2,13 +2,14 @@
 
 use async_trait::async_trait;
 use eperica_application::{
-    AccountRepository, ActiveBuild, ActiveUnitOrder, BuildRepository, DueBuild, DueUnitOrder,
-    NewBuildOrder, NewUnitOrder, NewUser, RepoError, UnitOrderKind, UnitRepository, UserRecord,
+    AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BuildRepository, DueBuild,
+    DueTraining, DueUnitOrder, NewBuildOrder, NewTrainingOrder, NewUnitOrder, NewUser, RepoError,
+    StarvationRepository, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
 };
 use eperica_domain::{
     BuildTarget, BuildingKind, BuildingSlot, Coordinate, PlayerId, QueueLane, ResourceAmounts,
-    ResourceField, ResourceKind, StartingVillage, Timestamp, Tribe, UnitId, Village, VillageId,
-    WorldId, coordinates_within,
+    ResourceField, ResourceKind, StartingVillage, Timestamp, Tribe, UnitCounts, UnitId, Village,
+    VillageId, WorldId, coordinates_within,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use uuid::Uuid;
@@ -58,6 +59,30 @@ impl PgAccountRepository {
                 .execute(&self.pool)
                 .await
                 .map_err(backend)?;
+        Ok(result.rows_affected())
+    }
+
+    /// Reset training batches stuck in `processing` back to `active` (crash recovery). Safe:
+    /// `apply_training` moves garrison and progress in one transaction, so a re-claim recomputes
+    /// completions from the unchanged `count_done` (AC5).
+    pub async fn requeue_orphaned_training(&self) -> Result<u64, RepoError> {
+        let result =
+            sqlx::query("UPDATE training_orders SET status = 'active' WHERE status = 'processing'")
+                .execute(&self.pool)
+                .await
+                .map_err(backend)?;
+        Ok(result.rows_affected())
+    }
+
+    /// Reset starvation checks stuck in `processing` back to `pending` (crash recovery). Safe:
+    /// the handler re-validates from live state at fire time (AC7).
+    pub async fn requeue_orphaned_starvation(&self) -> Result<u64, RepoError> {
+        let result = sqlx::query(
+            "UPDATE starvation_checks SET status = 'pending' WHERE status = 'processing'",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
         Ok(result.rows_affected())
     }
 }
@@ -363,6 +388,65 @@ impl AccountRepository for PgAccountRepository {
         Ok(villages)
     }
 
+    async fn village_by_id(&self, village: VillageId) -> Result<Option<Village>, RepoError> {
+        let vid = Uuid::from_u128(village.0);
+        let Some(r) = sqlx::query("SELECT owner_id, x, y, tribe FROM villages WHERE id = $1")
+            .bind(vid)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(backend)?
+        else {
+            return Ok(None);
+        };
+        let owner: Uuid = r.try_get("owner_id").map_err(backend)?;
+        let x: i32 = r.try_get("x").map_err(backend)?;
+        let y: i32 = r.try_get("y").map_err(backend)?;
+        let tribe_raw: Option<String> = r.try_get("tribe").map_err(backend)?;
+
+        let field_rows = sqlx::query(
+            "SELECT resource_type, level FROM village_fields WHERE village_id = $1 ORDER BY slot",
+        )
+        .bind(vid)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut fields = Vec::with_capacity(field_rows.len());
+        for fr in &field_rows {
+            let kind = parse_resource(&fr.try_get::<String, _>("resource_type").map_err(backend)?)?;
+            let level: i16 = fr.try_get("level").map_err(backend)?;
+            fields.push(ResourceField {
+                kind,
+                level: u8::try_from(level).unwrap_or(0),
+            });
+        }
+
+        let building_rows = sqlx::query(
+            "SELECT building_type, level FROM village_buildings WHERE village_id = $1 ORDER BY slot",
+        )
+        .bind(vid)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut buildings = Vec::with_capacity(building_rows.len());
+        for br in &building_rows {
+            let kind = parse_building(&br.try_get::<String, _>("building_type").map_err(backend)?)?;
+            let level: i16 = br.try_get("level").map_err(backend)?;
+            buildings.push(BuildingSlot {
+                kind,
+                level: u8::try_from(level).unwrap_or(0),
+            });
+        }
+
+        Ok(Some(Village {
+            id: village,
+            owner: PlayerId(owner.as_u128()),
+            coordinate: Coordinate::new(x, y),
+            tribe: parse_tribe(tribe_raw)?,
+            fields,
+            buildings,
+        }))
+    }
+
     async fn stored_resources(
         &self,
         village: VillageId,
@@ -385,6 +469,23 @@ impl AccountRepository for PgAccountRepository {
         };
         let updated_ms: i64 = r.try_get("updated_ms").map_err(backend)?;
         Ok(Some((amounts, Timestamp(updated_ms))))
+    }
+
+    async fn garrison(&self, village: VillageId) -> Result<UnitCounts, RepoError> {
+        let rows = sqlx::query(
+            "SELECT unit_id, count FROM village_units WHERE village_id = $1 ORDER BY unit_id",
+        )
+        .bind(Uuid::from_u128(village.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let unit: String = r.try_get("unit_id").map_err(backend)?;
+                let count: i32 = r.try_get("count").map_err(backend)?;
+                Ok((UnitId(unit), u32::try_from(count).unwrap_or(0)))
+            })
+            .collect()
     }
 }
 
@@ -811,6 +912,385 @@ impl UnitRepository for PgAccountRepository {
             .map_err(backend)?;
 
         tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl TrainingRepository for PgAccountRepository {
+    async fn start_training(
+        &self,
+        village: VillageId,
+        settled: ResourceAmounts,
+        settled_from: Timestamp,
+        now: Timestamp,
+        order: NewTrainingOrder,
+    ) -> Result<(), RepoError> {
+        let vid = Uuid::from_u128(village.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        // Optimistic settle — see `start_build`: a stale snapshot must not overwrite a concurrent
+        // debit from another queue (P2/P4).
+        let updated = sqlx::query(
+            "UPDATE village_resources SET wood=$1, clay=$2, iron=$3, crop=$4, \
+             updated_at = to_timestamp($5::double precision / 1000.0) \
+             WHERE village_id=$6 \
+               AND (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint = $7",
+        )
+        .bind(settled.wood)
+        .bind(settled.clay)
+        .bind(settled.iron)
+        .bind(settled.crop)
+        .bind(now.0 as f64)
+        .bind(vid)
+        .bind(settled_from.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if updated.rows_affected() == 0 {
+            // Also covers a missing resources row — callers just read it, so that is unreachable.
+            return Err(RepoError::Conflict);
+        }
+
+        let next_ms = now.0 + order.per_unit_secs.saturating_mul(1000);
+        let insert = sqlx::query(
+            "INSERT INTO training_orders \
+             (id, village_id, building, unit_id, count_total, per_unit_secs, started_at, \
+              next_complete_at, status) \
+             VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7::double precision / 1000.0), \
+                     to_timestamp($8::double precision / 1000.0), 'active')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(vid)
+        .bind(building_str(order.building))
+        .bind(order.unit.as_str())
+        .bind(i32::try_from(order.count).unwrap_or(i32::MAX))
+        .bind(order.per_unit_secs)
+        .bind(now.0 as f64)
+        .bind(next_ms as f64)
+        .execute(&mut *tx)
+        .await;
+        if let Err(e) = insert {
+            return Err(if is_unique_violation(&e) {
+                RepoError::Duplicate
+            } else {
+                backend(e)
+            });
+        }
+
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn active_training(&self, village: VillageId) -> Result<Vec<ActiveTraining>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT building, unit_id, count_total, count_done, per_unit_secs, \
+             (EXTRACT(EPOCH FROM next_complete_at) * 1000)::bigint AS next_ms \
+             FROM training_orders \
+             WHERE village_id = $1 AND status IN ('active', 'processing') \
+             ORDER BY building",
+        )
+        .bind(Uuid::from_u128(village.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let building: String = r.try_get("building").map_err(backend)?;
+            let unit: String = r.try_get("unit_id").map_err(backend)?;
+            let count_total: i32 = r.try_get("count_total").map_err(backend)?;
+            let count_done: i32 = r.try_get("count_done").map_err(backend)?;
+            let per_unit_secs: i64 = r.try_get("per_unit_secs").map_err(backend)?;
+            let next_ms: i64 = r.try_get("next_ms").map_err(backend)?;
+            out.push(ActiveTraining {
+                building: parse_building(&building)?,
+                unit: UnitId(unit),
+                count_total: u32::try_from(count_total).unwrap_or(0),
+                count_done: u32::try_from(count_done).unwrap_or(0),
+                per_unit_secs,
+                next_complete_at: Timestamp(next_ms),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn claim_due_training(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueTraining>, RepoError> {
+        let rows = sqlx::query(
+            "UPDATE training_orders SET status = 'processing' WHERE id IN ( \
+                 SELECT id FROM training_orders \
+                 WHERE status = 'active' AND next_complete_at <= to_timestamp($1::double precision / 1000.0) \
+                 ORDER BY next_complete_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
+             ) RETURNING id, village_id, unit_id, count_total, count_done, per_unit_secs, \
+                         (EXTRACT(EPOCH FROM started_at) * 1000)::bigint AS started_ms",
+        )
+        .bind(now.0 as f64)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let id: Uuid = r.try_get("id").map_err(backend)?;
+            let village: Uuid = r.try_get("village_id").map_err(backend)?;
+            let unit: String = r.try_get("unit_id").map_err(backend)?;
+            let count_total: i32 = r.try_get("count_total").map_err(backend)?;
+            let count_done: i32 = r.try_get("count_done").map_err(backend)?;
+            let per_unit_secs: i64 = r.try_get("per_unit_secs").map_err(backend)?;
+            let started_ms: i64 = r.try_get("started_ms").map_err(backend)?;
+            out.push(DueTraining {
+                id: id.as_u128(),
+                village: VillageId(village.as_u128()),
+                unit: UnitId(unit),
+                count_total: u32::try_from(count_total).unwrap_or(0),
+                count_done: u32::try_from(count_done).unwrap_or(0),
+                per_unit_secs,
+                started_at: Timestamp(started_ms),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn apply_training(
+        &self,
+        due: &DueTraining,
+        completed: u32,
+        settled: ResourceAmounts,
+        settled_from: Timestamp,
+        settle_to: Timestamp,
+    ) -> Result<(), RepoError> {
+        let vid = Uuid::from_u128(due.village.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        // Optimistic settle — see `start_build`. Delivering a unit changes the upkeep rate, so
+        // the store must be settled (with the pre-delivery rate) up to the delivery instant in
+        // the SAME transaction as the garrison change (AC6; spec: troops in training do not eat).
+        let updated = sqlx::query(
+            "UPDATE village_resources SET wood=$1, clay=$2, iron=$3, crop=$4, \
+             updated_at = to_timestamp($5::double precision / 1000.0) \
+             WHERE village_id=$6 \
+               AND (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint = $7",
+        )
+        .bind(settled.wood)
+        .bind(settled.clay)
+        .bind(settled.iron)
+        .bind(settled.crop)
+        .bind(settle_to.0 as f64)
+        .bind(vid)
+        .bind(settled_from.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if updated.rows_affected() == 0 {
+            return Err(RepoError::Conflict);
+        }
+
+        if completed > 0 {
+            sqlx::query(
+                "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, $2, $3) \
+                 ON CONFLICT (village_id, unit_id) \
+                 DO UPDATE SET count = village_units.count + EXCLUDED.count",
+            )
+            .bind(vid)
+            .bind(due.unit.as_str())
+            .bind(i32::try_from(completed).unwrap_or(i32::MAX))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        }
+
+        let new_done = due
+            .count_done
+            .saturating_add(completed)
+            .min(due.count_total);
+        if new_done >= due.count_total {
+            sqlx::query(
+                "UPDATE training_orders SET count_done = $1, status = 'done' WHERE id = $2",
+            )
+            .bind(i32::try_from(new_done).unwrap_or(i32::MAX))
+            .bind(Uuid::from_u128(due.id))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        } else {
+            // The (done+1)-th unit of the batch completes next.
+            let next_ms = due.started_at.0
+                + due
+                    .per_unit_secs
+                    .saturating_mul(i64::from(new_done) + 1)
+                    .saturating_mul(1000);
+            sqlx::query(
+                "UPDATE training_orders SET count_done = $1, status = 'active', \
+                 next_complete_at = to_timestamp($2::double precision / 1000.0) WHERE id = $3",
+            )
+            .bind(i32::try_from(new_done).unwrap_or(i32::MAX))
+            .bind(next_ms as f64)
+            .bind(Uuid::from_u128(due.id))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        }
+
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn release_training(&self, due: &DueTraining) -> Result<(), RepoError> {
+        sqlx::query("UPDATE training_orders SET status = 'active' WHERE id = $1")
+            .bind(Uuid::from_u128(due.id))
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl StarvationRepository for PgAccountRepository {
+    async fn schedule_starvation_check(
+        &self,
+        village: VillageId,
+        due_at: Timestamp,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            "INSERT INTO starvation_checks (village_id, due_at, status) \
+             VALUES ($1, to_timestamp($2::double precision / 1000.0), 'pending') \
+             ON CONFLICT (village_id) DO UPDATE \
+             SET due_at = EXCLUDED.due_at, status = 'pending'",
+        )
+        .bind(Uuid::from_u128(village.0))
+        .bind(due_at.0 as f64)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn cancel_starvation_check(&self, village: VillageId) -> Result<(), RepoError> {
+        sqlx::query("DELETE FROM starvation_checks WHERE village_id = $1")
+            .bind(Uuid::from_u128(village.0))
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn claim_due_starvation(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<VillageId>, RepoError> {
+        let rows = sqlx::query(
+            "UPDATE starvation_checks SET status = 'processing' WHERE village_id IN ( \
+                 SELECT village_id FROM starvation_checks \
+                 WHERE status = 'pending' AND due_at <= to_timestamp($1::double precision / 1000.0) \
+                 ORDER BY due_at, village_id LIMIT $2 FOR UPDATE SKIP LOCKED \
+             ) RETURNING village_id",
+        )
+        .bind(now.0 as f64)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let id: Uuid = r.try_get("village_id").map_err(backend)?;
+                Ok(VillageId(id.as_u128()))
+            })
+            .collect()
+    }
+
+    async fn apply_starvation(
+        &self,
+        village: VillageId,
+        settled: ResourceAmounts,
+        settled_from: Timestamp,
+        now: Timestamp,
+        survivors: &UnitCounts,
+    ) -> Result<(), RepoError> {
+        let vid = Uuid::from_u128(village.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        // Optimistic settle — see `start_build`; on Conflict nothing is applied and the caller
+        // re-pends the check for a next-tick retry (AC7 exactly-once still holds).
+        let updated = sqlx::query(
+            "UPDATE village_resources SET wood=$1, clay=$2, iron=$3, crop=$4, \
+             updated_at = to_timestamp($5::double precision / 1000.0) \
+             WHERE village_id=$6 \
+               AND (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint = $7",
+        )
+        .bind(settled.wood)
+        .bind(settled.clay)
+        .bind(settled.iron)
+        .bind(settled.crop)
+        .bind(now.0 as f64)
+        .bind(vid)
+        .bind(settled_from.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if updated.rows_affected() == 0 {
+            return Err(RepoError::Conflict);
+        }
+
+        sqlx::query("DELETE FROM village_units WHERE village_id = $1")
+            .bind(vid)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        for (unit, count) in survivors.iter().filter(|(_, c)| *c > 0) {
+            sqlx::query(
+                "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, $2, $3)",
+            )
+            .bind(vid)
+            .bind(unit.as_str())
+            .bind(i32::try_from(*count).unwrap_or(i32::MAX))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        }
+
+        sqlx::query("UPDATE starvation_checks SET status = 'done' WHERE village_id = $1")
+            .bind(vid)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn resolve_starvation_check(
+        &self,
+        village: VillageId,
+        reschedule_at: Option<Timestamp>,
+    ) -> Result<(), RepoError> {
+        match reschedule_at {
+            Some(due_at) => {
+                sqlx::query(
+                    "UPDATE starvation_checks \
+                     SET due_at = to_timestamp($1::double precision / 1000.0), status = 'pending' \
+                     WHERE village_id = $2",
+                )
+                .bind(due_at.0 as f64)
+                .bind(Uuid::from_u128(village.0))
+                .execute(&self.pool)
+                .await
+                .map_err(backend)?;
+            }
+            None => {
+                sqlx::query("UPDATE starvation_checks SET status = 'done' WHERE village_id = $1")
+                    .bind(Uuid::from_u128(village.0))
+                    .execute(&self.pool)
+                    .await
+                    .map_err(backend)?;
+            }
+        }
         Ok(())
     }
 }
@@ -1411,6 +1891,332 @@ mod tests {
         assert_eq!(mine.len(), 1);
         repo.apply_unit_order(mine[0].clone()).await.expect("apply");
         assert_eq!(repo.researched_units(village_id).await.unwrap().len(), 2);
+    }
+
+    /// 005 AC2/AC5: training-batch lifecycle — settle+debit on start, one batch per building
+    /// (DB-enforced), partial completions delivered exactly (k units after k × perUnit), crash
+    /// recovery via orphan requeue, and no unit lost or duplicated.
+    #[tokio::test]
+    async fn training_batch_lifecycle() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping training test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world_id = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world_id,
+            config.radius,
+            rules.starting_amounts,
+        );
+
+        let uname = format!("train_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &crate::starting_village().unwrap(),
+            )
+            .await
+            .expect("create account");
+        let village_id = repo.villages_of(user.id).await.unwrap()[0].id;
+
+        let now = Timestamp(1_700_000_000_000);
+        let settled = ResourceAmounts {
+            wood: 400,
+            clay: 400,
+            iron: 400,
+            crop: 400,
+        };
+        let order = NewTrainingOrder {
+            building: BuildingKind::Barracks,
+            unit: UnitId("phalanx".into()),
+            count: 3,
+            per_unit_secs: 100,
+        };
+
+        // AC2: starting a batch settles + debits and creates the order.
+        let snap = snapshot(&repo, village_id).await;
+        repo.start_training(village_id, settled, snap, now, order.clone())
+            .await
+            .expect("start training");
+        assert_eq!(
+            repo.stored_resources(village_id).await.unwrap().unwrap().0,
+            settled
+        );
+        // A second batch at the same building is rejected (DB-enforced)...
+        assert!(matches!(
+            repo.start_training(village_id, settled, now, now, order.clone())
+                .await,
+            Err(RepoError::Duplicate)
+        ));
+        // ...but another building's queue is free.
+        repo.start_training(
+            village_id,
+            settled,
+            now,
+            now,
+            NewTrainingOrder {
+                building: BuildingKind::Stable,
+                unit: UnitId("pathfinder".into()),
+                count: 1,
+                per_unit_secs: 5_000,
+            },
+        )
+        .await
+        .expect("stable batch runs in parallel");
+        assert_eq!(repo.active_training(village_id).await.unwrap().len(), 2);
+
+        // AC5: at started + 2.5 × perUnit the processor delivers exactly 2 units, settling the
+        // store to the 2nd unit's completion instant (upkeep starts at delivery, AC6).
+        let unit_rules = crate::unit_rules().expect("unit rules");
+        let speed = GameSpeed::new(1.0).unwrap();
+        let claim_at = Timestamp(now.0 + 250 * 1000);
+        let delivered = eperica_application::process_due_training(
+            &repo,
+            &repo,
+            &rules,
+            &unit_rules,
+            speed,
+            claim_at,
+            10,
+        )
+        .await
+        .expect("process training");
+        assert!(delivered.contains(&village_id));
+        assert_eq!(
+            repo.garrison(village_id).await.unwrap(),
+            vec![(UnitId("phalanx".into()), 2)]
+        );
+        // The resources row was settled to t2 = started + 2 × perUnit, not to `claim_at`.
+        let (_, settled_to) = repo.stored_resources(village_id).await.unwrap().unwrap();
+        assert_eq!(settled_to, Timestamp(now.0 + 200 * 1000));
+        // Nothing more due at the same instant (next completion is at 3 × perUnit).
+        assert!(
+            repo.claim_due_training(claim_at, 10)
+                .await
+                .unwrap()
+                .iter()
+                .all(|d| d.village != village_id)
+        );
+
+        // Crash recovery: claim the final unit, "crash" before applying, requeue, then let the
+        // processor finish — the recomputed count is unchanged, nothing lost or duplicated.
+        let final_at = Timestamp(now.0 + 320 * 1000);
+        let due = repo.claim_due_training(final_at, 10).await.unwrap();
+        assert!(due.iter().any(|d| d.village == village_id));
+        assert!(repo.requeue_orphaned_training().await.unwrap() >= 1);
+        let delivered = eperica_application::process_due_training(
+            &repo,
+            &repo,
+            &rules,
+            &unit_rules,
+            speed,
+            final_at,
+            10,
+        )
+        .await
+        .expect("process final");
+        assert!(delivered.contains(&village_id));
+        assert_eq!(
+            repo.garrison(village_id).await.unwrap(),
+            vec![(UnitId("phalanx".into()), 3)]
+        );
+        // The finished batch never claims again; the building's queue is free for a new batch.
+        assert!(
+            repo.claim_due_training(Timestamp(final_at.0 + 1_000_000), 10)
+                .await
+                .unwrap()
+                .iter()
+                .all(|d| d.village != village_id)
+        );
+        // settled_from = the deliveries' last settle (t3 = started + 300 s).
+        let snap = snapshot(&repo, village_id).await;
+        assert_eq!(snap, Timestamp(now.0 + 300 * 1000));
+        repo.start_training(village_id, settled, snap, final_at, order)
+            .await
+            .expect("queue free after completion");
+    }
+
+    /// 005 AC7 (persistence side): the depletion check is claimable once, the cull replaces the
+    /// garrison and settles in one snapshot-guarded transaction, a stale snapshot conflicts
+    /// without side effects, and resolve can reschedule or finish a claimed check.
+    #[tokio::test]
+    async fn starvation_check_lifecycle() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping starvation test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world_id = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world_id,
+            config.radius,
+            rules.starting_amounts,
+        );
+
+        let uname = format!("starve_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &crate::starting_village().unwrap(),
+            )
+            .await
+            .expect("create account");
+        let village_id = repo.villages_of(user.id).await.unwrap()[0].id;
+
+        // Seed a garrison directly (training delivery is covered by the training test).
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 5)",
+        )
+        .bind(Uuid::from_u128(village_id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let now = Timestamp(1_700_000_000_000);
+        let starved = ResourceAmounts {
+            wood: 750,
+            clay: 750,
+            iron: 750,
+            crop: 0,
+        };
+
+        // A due check is claimed exactly once.
+        repo.schedule_starvation_check(village_id, Timestamp(now.0 - 1000))
+            .await
+            .expect("schedule");
+        let due = repo.claim_due_starvation(now, 10).await.unwrap();
+        assert!(due.contains(&village_id));
+        assert!(
+            !repo
+                .claim_due_starvation(now, 10)
+                .await
+                .unwrap()
+                .contains(&village_id)
+        );
+
+        // A stale snapshot conflicts and leaves garrison + resources untouched.
+        assert!(matches!(
+            repo.apply_starvation(
+                village_id,
+                starved,
+                Timestamp(123),
+                now,
+                &vec![(UnitId("phalanx".into()), 2)],
+            )
+            .await,
+            Err(RepoError::Conflict)
+        ));
+        assert_eq!(
+            repo.garrison(village_id).await.unwrap(),
+            vec![(UnitId("phalanx".into()), 5)]
+        );
+
+        // The cull applies once: settle + survivors + check done, in one transaction.
+        let snap = snapshot(&repo, village_id).await;
+        repo.apply_starvation(
+            village_id,
+            starved,
+            snap,
+            now,
+            &vec![(UnitId("phalanx".into()), 2)],
+        )
+        .await
+        .expect("apply starvation");
+        assert_eq!(
+            repo.garrison(village_id).await.unwrap(),
+            vec![(UnitId("phalanx".into()), 2)]
+        );
+        assert_eq!(
+            repo.stored_resources(village_id).await.unwrap().unwrap().0,
+            starved
+        );
+
+        // A claimed check can be rescheduled (recovered village) or finished.
+        repo.schedule_starvation_check(village_id, Timestamp(now.0 - 1000))
+            .await
+            .unwrap();
+        let due = repo.claim_due_starvation(now, 10).await.unwrap();
+        assert!(due.contains(&village_id));
+        repo.resolve_starvation_check(village_id, Some(Timestamp(now.0 + 3_600_000)))
+            .await
+            .unwrap();
+        assert!(
+            !repo
+                .claim_due_starvation(now, 10)
+                .await
+                .unwrap()
+                .contains(&village_id)
+        );
+        let due = repo
+            .claim_due_starvation(Timestamp(now.0 + 3_600_001), 10)
+            .await
+            .unwrap();
+        assert!(due.contains(&village_id));
+        repo.resolve_starvation_check(village_id, None)
+            .await
+            .unwrap();
+
+        // Cancel removes a pending check entirely (AC8 path).
+        repo.schedule_starvation_check(village_id, Timestamp(now.0 - 1000))
+            .await
+            .unwrap();
+        repo.cancel_starvation_check(village_id).await.unwrap();
+        assert!(
+            !repo
+                .claim_due_starvation(now, 10)
+                .await
+                .unwrap()
+                .contains(&village_id)
+        );
+
+        // Crash recovery (AC7 "survives restarts"): a claimed check left in `processing` is
+        // requeued at startup and claimable again.
+        repo.schedule_starvation_check(village_id, Timestamp(now.0 - 1000))
+            .await
+            .unwrap();
+        assert!(
+            repo.claim_due_starvation(now, 10)
+                .await
+                .unwrap()
+                .contains(&village_id)
+        );
+        assert!(repo.requeue_orphaned_starvation().await.unwrap() >= 1);
+        assert!(
+            repo.claim_due_starvation(now, 10)
+                .await
+                .unwrap()
+                .contains(&village_id)
+        );
+        repo.resolve_starvation_check(village_id, None)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

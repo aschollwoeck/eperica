@@ -9,6 +9,11 @@
 # durations are global per target level. Max unit level = table length (20), additionally capped by
 # the Smithy's building level.
 
+# Training-speed multiplier by training-building level (index = level; >= 1, higher => faster).
+# Shared by Barracks/Stable/Workshop. Index 0 and 1 equal: level 1 is the baseline.
+[training]
+building_factor = [1.0, 1.0, 1.11, 1.23, 1.37, 1.52, 1.69, 1.87, 2.08, 2.31, 2.57]
+
 [smithy]
 cost_permille_per_level = [
     1500, 1900, 2410, 3060, 3890, 4940, 6270, 7960, 10110, 12840,
