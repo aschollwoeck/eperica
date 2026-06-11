@@ -42,9 +42,9 @@ Ordered for dependency and testability (pure domain first).
 
 ## Documentation & acceptance
 
-- [ ] **T8 — Technical docs.** rustdoc; `docs/architecture/0008-world-map.md` (generate-on-read
+- [x] **T8 — Technical docs.** rustdoc; `docs/architecture/0008-world-map.md` (generate-on-read
   terrain, toroidal distance); `CLAUDE.md` active slice.
-- [ ] **T9 — End-user docs.** `docs/manual/` map guide (reading the map, valleys/oases); link from
+- [x] **T9 — End-user docs.** `docs/manual/` map guide (reading the map, valleys/oases); link from
   index.
 - [ ] **T10 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
   **APPROVE**; PR.
