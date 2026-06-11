@@ -15,7 +15,7 @@ Ordered for dependency and testability (pure domain first).
   `can_research` / `can_upgrade`, `research_time` / `upgrade_time` (÷ speed), tier-1 =
   `research: None`. Unit tests: gates (**AC6/AC7/AC10/AC11** domain side), tier-1 (**AC9**),
   speed scaling (**AC14**).
-- [ ] **T3 — Lane rule.** `queue_lane(tribe, target)` — Romans get field/building lanes, others
+- [x] **T3 — Lane rule.** `queue_lane(tribe, target)` — Romans get field/building lanes, others
   `all`. Unit tests (**AC13** domain side).
 
 ## Balance + persistence

@@ -17,8 +17,8 @@ pub mod world;
 
 pub use building::BuildingKind;
 pub use construction::{
-    BuildRules, BuildTarget, LevelSpec, build_time_secs, building_levels_met, can_afford, debit,
-    prerequisites_met,
+    BuildRules, BuildTarget, LevelSpec, QueueLane, build_time_secs, building_levels_met,
+    can_afford, debit, prerequisites_met, queue_lane,
 };
 pub use economy::{
     Capacities, Economy, EconomyRules, ProductionRates, ResourceAmounts, accrue, capacities,
