@@ -25,6 +25,9 @@ pub enum ResearchError {
     /// The village or unit does not exist (or the unit is not of the owner's tribe).
     #[error("not found")]
     NotFound,
+    /// The village's resources changed while ordering (another order settled first); retry.
+    #[error("resources changed; try again")]
+    Conflict,
     /// A storage/backend failure.
     #[error("storage error: {0}")]
     Backend(String),
@@ -34,6 +37,7 @@ impl From<RepoError> for ResearchError {
     fn from(e: RepoError) -> Self {
         match e {
             RepoError::Duplicate => ResearchError::InProgress,
+            RepoError::Conflict => ResearchError::Conflict,
             other => ResearchError::Backend(other.to_string()),
         }
     }
@@ -63,6 +67,9 @@ pub enum UpgradeError {
     /// The village or unit does not exist (or the unit is not of the owner's tribe).
     #[error("not found")]
     NotFound,
+    /// The village's resources changed while ordering (another order settled first); retry.
+    #[error("resources changed; try again")]
+    Conflict,
     /// A storage/backend failure.
     #[error("storage error: {0}")]
     Backend(String),
@@ -72,19 +79,21 @@ impl From<RepoError> for UpgradeError {
     fn from(e: RepoError) -> Self {
         match e {
             RepoError::Duplicate => UpgradeError::InProgress,
+            RepoError::Conflict => UpgradeError::Conflict,
             other => UpgradeError::Backend(other.to_string()),
         }
     }
 }
 
-/// The owner's (first) village, its tribe, and its settled-to-now resource amounts.
+/// The owner's (first) village, its tribe, its settled-to-now resource amounts, and the snapshot
+/// time the amounts were computed from (for the optimistic settle).
 async fn village_and_amounts<A: AccountRepository>(
     accounts: &A,
     economy_rules: &EconomyRules,
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
-) -> Result<Option<(Village, Tribe, ResourceAmounts)>, RepoError> {
+) -> Result<Option<(Village, Tribe, ResourceAmounts, Timestamp)>, RepoError> {
     let Some(village) = accounts.villages_of(owner).await?.into_iter().next() else {
         return Ok(None);
     };
@@ -104,7 +113,7 @@ async fn village_and_amounts<A: AccountRepository>(
         speed,
     )
     .amounts;
-    Ok(Some((village, tribe, amounts)))
+    Ok(Some((village, tribe, amounts, updated_at)))
 }
 
 /// Order the research of `unit` in `owner`'s village (AC6/AC7, P4).
@@ -131,7 +140,7 @@ where
     A: AccountRepository,
     U: UnitRepository,
 {
-    let Some((village, tribe, amounts)) =
+    let Some((village, tribe, amounts, settled_from)) =
         village_and_amounts(accounts, economy_rules, speed, now, owner).await?
     else {
         return Err(ResearchError::NotFound);
@@ -162,7 +171,7 @@ where
         complete_at: Timestamp(now.0 + duration * 1000),
     };
     units
-        .start_unit_order(village.id, settled, now, order)
+        .start_unit_order(village.id, settled, settled_from, now, order)
         .await?;
     Ok(())
 }
@@ -190,7 +199,7 @@ where
     A: AccountRepository,
     U: UnitRepository,
 {
-    let Some((village, tribe, amounts)) =
+    let Some((village, tribe, amounts, settled_from)) =
         village_and_amounts(accounts, economy_rules, speed, now, owner).await?
     else {
         return Err(UpgradeError::NotFound);
@@ -240,7 +249,7 @@ where
         complete_at: Timestamp(now.0 + duration * 1000),
     };
     units
-        .start_unit_order(village.id, settled, now, order)
+        .start_unit_order(village.id, settled, settled_from, now, order)
         .await?;
     Ok(())
 }
@@ -427,6 +436,7 @@ mod tests {
             &self,
             _v: VillageId,
             settled: ResourceAmounts,
+            _settled_from: Timestamp,
             _now: Timestamp,
             order: NewUnitOrder,
         ) -> Result<(), RepoError> {

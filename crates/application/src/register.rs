@@ -39,7 +39,8 @@ impl From<RepoError> for RegisterError {
         match e {
             RepoError::Duplicate => RegisterError::Taken,
             RepoError::WorldFull => RegisterError::WorldFull,
-            RepoError::Backend(s) => RegisterError::Backend(s),
+            // Registration performs no optimistic settle; treat a conflict as a backend anomaly.
+            RepoError::Conflict | RepoError::Backend(_) => RegisterError::Backend(e.to_string()),
         }
     }
 }

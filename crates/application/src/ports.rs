@@ -47,6 +47,10 @@ pub enum RepoError {
     /// A uniqueness constraint was violated (e.g. duplicate username or email).
     #[error("a unique constraint was violated")]
     Duplicate,
+    /// The state the caller computed from changed concurrently (optimistic check failed); the
+    /// operation was not applied and can be retried from a fresh read.
+    #[error("the state changed concurrently; retry")]
+    Conflict,
     /// No free tile remained to place a starting village.
     #[error("the world is full")]
     WorldFull,
@@ -194,12 +198,18 @@ pub trait BuildRepository: Send + Sync {
     /// get a field and a building lane, 004 AC13); a conflicting active order returns
     /// [`RepoError::Duplicate`].
     ///
+    /// `settled` was computed from the snapshot read at `settled_from` (the resources row's
+    /// last-settled time); the settle applies **only if the row is still at that snapshot**,
+    /// otherwise [`RepoError::Conflict`] — so concurrent orders on different queues can never
+    /// overwrite each other's debit (P2/P4).
+    ///
     /// # Errors
     /// [`RepoError`] on conflict or storage failure.
     async fn start_build(
         &self,
         village: VillageId,
         settled: ResourceAmounts,
+        settled_from: Timestamp,
         now: Timestamp,
         order: NewBuildOrder,
     ) -> Result<(), RepoError>;
@@ -285,12 +295,17 @@ pub trait UnitRepository: Send + Sync {
     /// one-active-order-per-kind rule is enforced by storage; a second active order of the same
     /// kind returns [`RepoError::Duplicate`] (AC6/AC10, P4).
     ///
+    /// `settled` was computed from the snapshot read at `settled_from`; the settle applies **only
+    /// if the row is still at that snapshot**, otherwise [`RepoError::Conflict`] (see
+    /// [`BuildRepository::start_build`]).
+    ///
     /// # Errors
     /// [`RepoError`] on conflict or storage failure.
     async fn start_unit_order(
         &self,
         village: VillageId,
         settled: ResourceAmounts,
+        settled_from: Timestamp,
         now: Timestamp,
         order: NewUnitOrder,
     ) -> Result<(), RepoError>;

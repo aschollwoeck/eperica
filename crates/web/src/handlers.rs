@@ -525,17 +525,13 @@ pub async fn academy(State(state): State<AppState>, AuthUser(player): AuthUser) 
         tracing::error!(?player, "village has no tribe");
         return server_error();
     };
-    let researched = match state.accounts.researched_units(village.id).await {
-        Ok(r) => r,
+    let (researched, orders) = match tokio::try_join!(
+        state.accounts.researched_units(village.id),
+        state.accounts.active_unit_orders(village.id),
+    ) {
+        Ok(t) => t,
         Err(e) => {
-            tracing::error!(error = %e, "researched units lookup failed");
-            return server_error();
-        }
-    };
-    let orders = match state.accounts.active_unit_orders(village.id).await {
-        Ok(o) => o,
-        Err(e) => {
-            tracing::error!(error = %e, "active unit orders lookup failed");
+            tracing::error!(error = %e, "academy state lookup failed");
             return server_error();
         }
     };

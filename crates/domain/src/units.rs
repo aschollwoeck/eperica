@@ -22,6 +22,7 @@ pub const MAX_UNIT_LEVEL: u8 = 20;
 pub struct UnitId(pub String);
 
 impl UnitId {
+    /// The id as the slug string used in forms, URLs, and storage.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -141,11 +142,19 @@ impl UnitRules {
     ///
     /// # Errors
     /// Returns [`DomainError::InvalidUnitRules`] unless every tribe has exactly [`ROSTER_SIZE`]
-    /// units with per-tribe-unique ids and exactly one research-free (tier-1) unit.
+    /// units with per-tribe-unique ids and exactly one research-free (tier-1) unit, and the
+    /// Smithy tables are non-empty and of equal length (a mismatch would silently lower the cap).
     pub fn new(
         rosters: HashMap<Tribe, Vec<UnitSpec>>,
         smithy: SmithyRules,
     ) -> Result<Self, DomainError> {
+        if smithy.cost_permille_per_level.is_empty()
+            || smithy.cost_permille_per_level.len() != smithy.time_secs_per_level.len()
+        {
+            return Err(DomainError::InvalidUnitRules(
+                "smithy cost/time tables must be non-empty and the same length",
+            ));
+        }
         for tribe in [Tribe::Romans, Tribe::Teutons, Tribe::Gauls] {
             let roster = rosters
                 .get(&tribe)
@@ -357,6 +366,13 @@ mod tests {
         assert!(UnitRules::new(rosters.clone(), smithy_rules()).is_err()); // two tier-1
 
         rosters.insert(Tribe::Gauls, roster());
+        // Mismatched smithy tables would silently lower the level cap — rejected at load.
+        let lopsided = SmithyRules {
+            cost_permille_per_level: vec![1500, 1900],
+            time_secs_per_level: vec![3600],
+        };
+        assert!(UnitRules::new(rosters.clone(), lopsided).is_err());
+
         assert!(UnitRules::new(rosters, smithy_rules()).is_ok());
     }
 

@@ -24,6 +24,9 @@ pub enum BuildError {
     /// The village or target does not exist.
     #[error("not found")]
     NotFound,
+    /// The village's resources changed while ordering (another order settled first); retry.
+    #[error("resources changed; try again")]
+    Conflict,
     /// A storage/backend failure.
     #[error("storage error: {0}")]
     Backend(String),
@@ -33,6 +36,7 @@ impl From<RepoError> for BuildError {
     fn from(e: RepoError) -> Self {
         match e {
             RepoError::Duplicate => BuildError::AlreadyBuilding,
+            RepoError::Conflict => BuildError::Conflict,
             other => BuildError::Backend(other.to_string()),
         }
     }
@@ -132,7 +136,9 @@ where
         complete_at: Timestamp(now.0 + duration * 1000),
         lane,
     };
-    builds.start_build(village.id, settled, now, order).await?;
+    builds
+        .start_build(village.id, settled, updated_at, now, order)
+        .await?;
     Ok(())
 }
 
@@ -290,6 +296,7 @@ mod tests {
             &self,
             _v: VillageId,
             settled: ResourceAmounts,
+            _settled_from: Timestamp,
             _now: Timestamp,
             order: NewBuildOrder,
         ) -> Result<(), RepoError> {

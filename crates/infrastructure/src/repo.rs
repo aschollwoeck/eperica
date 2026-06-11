@@ -432,6 +432,7 @@ impl BuildRepository for PgAccountRepository {
         &self,
         village: VillageId,
         settled: ResourceAmounts,
+        settled_from: Timestamp,
         now: Timestamp,
         order: NewBuildOrder,
     ) -> Result<(), RepoError> {
@@ -439,9 +440,14 @@ impl BuildRepository for PgAccountRepository {
         let vid = Uuid::from_u128(village.0);
         let mut tx = self.pool.begin().await.map_err(backend)?;
 
-        sqlx::query(
+        // Optimistic settle: only applies if the row is still at the snapshot the caller computed
+        // `settled` from — a concurrent order on another queue cannot have its debit overwritten
+        // (P2/P4). The comparison uses the same ms expression `stored_resources` reads.
+        let updated = sqlx::query(
             "UPDATE village_resources SET wood=$1, clay=$2, iron=$3, crop=$4, \
-             updated_at = to_timestamp($5::double precision / 1000.0) WHERE village_id=$6",
+             updated_at = to_timestamp($5::double precision / 1000.0) \
+             WHERE village_id=$6 \
+               AND (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint = $7",
         )
         .bind(settled.wood)
         .bind(settled.clay)
@@ -449,9 +455,13 @@ impl BuildRepository for PgAccountRepository {
         .bind(settled.crop)
         .bind(now.0 as f64)
         .bind(vid)
+        .bind(settled_from.0)
         .execute(&mut *tx)
         .await
         .map_err(backend)?;
+        if updated.rows_affected() == 0 {
+            return Err(RepoError::Conflict);
+        }
 
         let insert = sqlx::query(
             "INSERT INTO build_orders \
@@ -612,15 +622,20 @@ impl UnitRepository for PgAccountRepository {
         &self,
         village: VillageId,
         settled: ResourceAmounts,
+        settled_from: Timestamp,
         now: Timestamp,
         order: NewUnitOrder,
     ) -> Result<(), RepoError> {
         let vid = Uuid::from_u128(village.0);
         let mut tx = self.pool.begin().await.map_err(backend)?;
 
-        sqlx::query(
+        // Optimistic settle — see `start_build`: a stale snapshot must not overwrite a concurrent
+        // debit from another queue (P2/P4).
+        let updated = sqlx::query(
             "UPDATE village_resources SET wood=$1, clay=$2, iron=$3, crop=$4, \
-             updated_at = to_timestamp($5::double precision / 1000.0) WHERE village_id=$6",
+             updated_at = to_timestamp($5::double precision / 1000.0) \
+             WHERE village_id=$6 \
+               AND (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint = $7",
         )
         .bind(settled.wood)
         .bind(settled.clay)
@@ -628,9 +643,13 @@ impl UnitRepository for PgAccountRepository {
         .bind(settled.crop)
         .bind(now.0 as f64)
         .bind(vid)
+        .bind(settled_from.0)
         .execute(&mut *tx)
         .await
         .map_err(backend)?;
+        if updated.rows_affected() == 0 {
+            return Err(RepoError::Conflict);
+        }
 
         let insert = sqlx::query(
             "INSERT INTO unit_orders (id, village_id, kind, unit_id, target_level, complete_at, status) \
@@ -799,6 +818,11 @@ mod tests {
     use super::*;
     use eperica_domain::{GameSpeed, WorldConfig};
 
+    /// The resources row's last-settled time — the snapshot orders must be computed from.
+    async fn snapshot(repo: &PgAccountRepository, village: VillageId) -> Timestamp {
+        repo.stored_resources(village).await.unwrap().unwrap().1
+    }
+
     #[tokio::test]
     async fn create_account_persists_user_and_one_village() {
         let _ = dotenvy::dotenv();
@@ -935,6 +959,10 @@ mod tests {
     /// 004 AC3 migration-boundary guard: a village row that predates the tribe column being
     /// populated (tribe NULL — the pre-004 state; the column stays nullable) must be repaired by
     /// the 0005 backfill, which copies the owner's tribe.
+    ///
+    /// The *users* half of the backfill cannot be reproduced post-hoc (the column is NOT NULL
+    /// after 0005); it is guaranteed by the migration itself — its `SET NOT NULL` aborts if any
+    /// row were left without a tribe — so only the villages half needs a data-level test.
     #[tokio::test]
     async fn tribe_backfill_repairs_pre_004_village() {
         let _ = dotenvy::dotenv();
@@ -1047,7 +1075,8 @@ mod tests {
         };
 
         // AC1: starting a build settles resources + creates the order.
-        repo.start_build(village_id, settled, now, order)
+        let snap = snapshot(&repo, village_id).await;
+        repo.start_build(village_id, settled, snap, now, order)
             .await
             .expect("start build");
         let active = repo.active_builds(village_id).await.unwrap();
@@ -1063,9 +1092,10 @@ mod tests {
             700
         );
 
-        // AC3: a second order is rejected (one active order, DB-enforced).
+        // AC3: a second order is rejected (one active order, DB-enforced). The first settle moved
+        // the snapshot to `now`, so a fresh caller computes from there.
         assert!(matches!(
-            repo.start_build(village_id, settled, now, order).await,
+            repo.start_build(village_id, settled, now, now, order).await,
             Err(RepoError::Duplicate)
         ));
 
@@ -1148,10 +1178,11 @@ mod tests {
             .await
             .expect("create roman");
         let rv = repo.villages_of(roman.id).await.unwrap()[0].id;
-        repo.start_build(rv, settled, now, order(field, QueueLane::Field))
+        let snap = snapshot(&repo, rv).await;
+        repo.start_build(rv, settled, snap, now, order(field, QueueLane::Field))
             .await
             .expect("field lane");
-        repo.start_build(rv, settled, now, order(building, QueueLane::Building))
+        repo.start_build(rv, settled, now, now, order(building, QueueLane::Building))
             .await
             .expect("building lane runs in parallel");
         assert_eq!(repo.active_builds(rv).await.unwrap().len(), 2);
@@ -1160,6 +1191,7 @@ mod tests {
             repo.start_build(
                 rv,
                 settled,
+                now,
                 now,
                 order(BuildTarget::Field { slot: 1 }, QueueLane::Field)
             )
@@ -1183,11 +1215,12 @@ mod tests {
             .await
             .expect("create gaul");
         let gv = repo.villages_of(gaul.id).await.unwrap()[0].id;
-        repo.start_build(gv, settled, now, order(field, QueueLane::All))
+        let snap = snapshot(&repo, gv).await;
+        repo.start_build(gv, settled, snap, now, order(field, QueueLane::All))
             .await
             .expect("first order");
         assert!(matches!(
-            repo.start_build(gv, settled, now, order(building, QueueLane::All))
+            repo.start_build(gv, settled, now, now, order(building, QueueLane::All))
                 .await,
             Err(RepoError::Duplicate)
         ));
@@ -1248,9 +1281,40 @@ mod tests {
         };
 
         // AC6: starting a research settles resources and creates the order.
-        repo.start_unit_order(village_id, settled, now, research.clone())
+        let snap = snapshot(&repo, village_id).await;
+        repo.start_unit_order(village_id, settled, snap, now, research.clone())
             .await
             .expect("start research");
+
+        // The race the optimistic settle exists for: a caller that computed from the now-stale
+        // snapshot must conflict instead of overwriting the research debit (P2/P4).
+        let stale = NewUnitOrder {
+            kind: UnitOrderKind::SmithyUpgrade,
+            unit: UnitId("phalanx".into()),
+            target_level: Some(1),
+            complete_at: Timestamp(now.0 + 1500),
+        };
+        assert!(matches!(
+            repo.start_unit_order(
+                village_id,
+                ResourceAmounts {
+                    wood: 450,
+                    clay: 450,
+                    iron: 450,
+                    crop: 450,
+                },
+                snap,
+                now,
+                stale,
+            )
+            .await,
+            Err(RepoError::Conflict)
+        ));
+        // The research debit survived the conflicting attempt.
+        assert_eq!(
+            repo.stored_resources(village_id).await.unwrap().unwrap().0,
+            settled
+        );
         assert_eq!(
             repo.stored_resources(village_id)
                 .await
@@ -1263,23 +1327,23 @@ mod tests {
 
         // A second research is rejected (one per kind, DB-enforced under races)...
         assert!(matches!(
-            repo.start_unit_order(village_id, settled, now, research.clone())
+            repo.start_unit_order(village_id, settled, now, now, research.clone())
                 .await,
             Err(RepoError::Duplicate)
         ));
-        // ...but a Smithy upgrade runs concurrently (independent queue)...
+        // ...but a Smithy upgrade (computed from the fresh snapshot) runs concurrently...
         let upgrade = NewUnitOrder {
             kind: UnitOrderKind::SmithyUpgrade,
             unit: UnitId("phalanx".into()),
             target_level: Some(1),
             complete_at: Timestamp(now.0 + 1500),
         };
-        repo.start_unit_order(village_id, settled, now, upgrade.clone())
+        repo.start_unit_order(village_id, settled, now, now, upgrade.clone())
             .await
             .expect("start upgrade");
         // ...and a second upgrade is rejected too.
         assert!(matches!(
-            repo.start_unit_order(village_id, settled, now, upgrade)
+            repo.start_unit_order(village_id, settled, now, now, upgrade)
                 .await,
             Err(RepoError::Duplicate)
         ));
@@ -1316,6 +1380,7 @@ mod tests {
         repo.start_unit_order(
             village_id,
             settled,
+            now,
             now,
             NewUnitOrder {
                 kind: UnitOrderKind::Research,
@@ -1384,6 +1449,7 @@ mod tests {
         let village_id = repo.villages_of(user.id).await.unwrap()[0].id;
 
         let now = Timestamp(2_000_000_000_000);
+        let snap = snapshot(&repo, village_id).await;
         repo.start_build(
             village_id,
             ResourceAmounts {
@@ -1392,6 +1458,7 @@ mod tests {
                 iron: 700,
                 crop: 700,
             },
+            snap,
             Timestamp(now.0 - 10_000),
             NewBuildOrder {
                 target: BuildTarget::Field { slot: 1 },
@@ -1464,6 +1531,7 @@ mod tests {
         );
 
         let now = Timestamp(2_100_000_000_000);
+        let snap = snapshot(&repo, village_id).await;
         repo.start_build(
             village_id,
             ResourceAmounts {
@@ -1472,6 +1540,7 @@ mod tests {
                 iron: 700,
                 crop: 700,
             },
+            snap,
             Timestamp(now.0 - 10_000),
             NewBuildOrder {
                 target: BuildTarget::Building {
