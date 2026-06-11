@@ -28,7 +28,7 @@ Ordered for dependency and testability (pure domain first).
 
 ## Application
 
-- [ ] **T6 — Training use-cases.** `order_train` (gates → settle/debit → batch) with `TrainError`;
+- [x] **T6 — Training use-cases.** `order_train` (gates → settle/debit → batch) with `TrainError`;
   `process_due_training` (claim → apply k → resync). Fake-based tests: success + every rejection
   (**AC2**, **AC3**).
 - [ ] **T7 — Starvation use-cases.** `sync_starvation_check` (cancel / upsert at depletion) wired

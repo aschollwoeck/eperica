@@ -1,10 +1,14 @@
-﻿//! Unit use-cases: order Academy research and Smithy upgrades, and process their due orders.
+//! Unit use-cases: order Academy research and Smithy upgrades, and process their due orders.
 
-use crate::ports::{AccountRepository, NewUnitOrder, RepoError, UnitOrderKind, UnitRepository};
+use crate::ports::{
+    AccountRepository, NewTrainingOrder, NewUnitOrder, RepoError, TrainingRepository,
+    UnitOrderKind, UnitRepository,
+};
 use eperica_domain::{
-    EconomyRules, GameSpeed, PlayerId, ResearchDenied, ResourceAmounts, Timestamp, Tribe, UnitId,
-    UnitRules, UpgradeDenied, Village, can_afford, can_research, can_upgrade, compute_economy,
-    debit, garrison_upkeep, scaled_time_secs,
+    EconomyRules, GameSpeed, PlayerId, ResearchDenied, ResourceAmounts, Timestamp, TrainDenied,
+    Tribe, UnitId, UnitRules, UpgradeDenied, Village, VillageId, batch_cost, can_afford,
+    can_research, can_train, can_upgrade, compute_economy, debit, garrison_upkeep,
+    per_unit_time_secs, scaled_time_secs,
 };
 
 /// Why ordering a research failed (AC6/AC7).
@@ -259,6 +263,150 @@ where
     Ok(())
 }
 
+/// Why ordering a training batch failed (005 AC2/AC3).
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum TrainError {
+    /// Not enough resources for `count × cost`.
+    #[error("not enough resources")]
+    Insufficient,
+    /// The unit's training building already runs a batch.
+    #[error("a batch is already training at this building")]
+    QueueBusy,
+    /// The unit is not researched in this village.
+    #[error("not researched")]
+    NotResearched,
+    /// The unit's training building is not built in this village.
+    #[error("the training building is missing")]
+    BuildingMissing,
+    /// The unit trains in a building from a later slice (Residence).
+    #[error("that unit cannot be trained yet")]
+    BuildingUnavailable,
+    /// The batch size is outside the allowed range.
+    #[error("batch size out of range")]
+    CountOutOfRange,
+    /// The village or unit does not exist (or the unit is not of the owner's tribe).
+    #[error("not found")]
+    NotFound,
+    /// The village's resources changed while ordering (another order settled first); retry.
+    #[error("resources changed; try again")]
+    Conflict,
+    /// A storage/backend failure.
+    #[error("storage error: {0}")]
+    Backend(String),
+}
+
+impl From<RepoError> for TrainError {
+    fn from(e: RepoError) -> Self {
+        match e {
+            RepoError::Duplicate => TrainError::QueueBusy,
+            RepoError::Conflict => TrainError::Conflict,
+            other => TrainError::Backend(other.to_string()),
+        }
+    }
+}
+
+/// Order a batch of `count × unit` in `owner`'s village (005 AC2/AC3, P4).
+///
+/// Validates tribe membership, research, the training building, and the batch size; debits the
+/// full batch cost after settling; enqueues a batch whose `i`-th unit completes at
+/// `now + i × perUnitTime` (building- and speed-scaled, AC4). The one-batch-per-building rule is
+/// enforced by storage even under races.
+///
+/// # Errors
+/// See [`TrainError`].
+#[allow(clippy::too_many_arguments)]
+pub async fn order_train<A, U, T>(
+    accounts: &A,
+    units: &U,
+    training: &T,
+    economy_rules: &EconomyRules,
+    unit_rules: &UnitRules,
+    speed: GameSpeed,
+    now: Timestamp,
+    owner: PlayerId,
+    unit: UnitId,
+    count: u32,
+) -> Result<(), TrainError>
+where
+    A: AccountRepository,
+    U: UnitRepository,
+    T: TrainingRepository,
+{
+    let Some((village, tribe, amounts, settled_from)) =
+        village_and_amounts(accounts, economy_rules, unit_rules, speed, now, owner).await?
+    else {
+        return Err(TrainError::NotFound);
+    };
+    let spec = unit_rules.unit(tribe, &unit).ok_or(TrainError::NotFound)?;
+    let researched = units.researched_units(village.id).await?;
+
+    can_train(spec, researched.contains(&unit), count, &village.buildings).map_err(
+        |d| match d {
+            TrainDenied::NotResearched => TrainError::NotResearched,
+            TrainDenied::BuildingMissing => TrainError::BuildingMissing,
+            TrainDenied::BuildingUnavailable => TrainError::BuildingUnavailable,
+            TrainDenied::CountOutOfRange => TrainError::CountOutOfRange,
+        },
+    )?;
+
+    let cost = batch_cost(spec, count);
+    if !can_afford(amounts, cost) {
+        return Err(TrainError::Insufficient);
+    }
+    let settled = debit(amounts, cost);
+    let building_level = village
+        .buildings
+        .iter()
+        .find(|b| b.kind == spec.trained_in)
+        .map_or(0, |b| b.level);
+    let order = NewTrainingOrder {
+        building: spec.trained_in,
+        unit,
+        count,
+        per_unit_secs: per_unit_time_secs(
+            spec.train_secs,
+            building_level,
+            &unit_rules.training,
+            speed,
+        ),
+    };
+    training
+        .start_training(village.id, settled, settled_from, now, order)
+        .await?;
+    Ok(())
+}
+
+/// Claim batches with due completions and deliver them (the System actor, AC5); returns the
+/// villages that received units (their upkeep rose — callers re-sync starvation checks).
+///
+/// # Errors
+/// Propagates [`RepoError`] from the repository.
+pub async fn process_due_training<T>(
+    training: &T,
+    now: Timestamp,
+    limit: i64,
+) -> Result<Vec<VillageId>, RepoError>
+where
+    T: TrainingRepository,
+{
+    let due = training.claim_due_training(now, limit).await?;
+    let mut villages = Vec::new();
+    for batch in due {
+        let elapsed_secs = (now.0 - batch.started_at.0) / 1000;
+        let total_finished = u32::try_from(elapsed_secs / batch.per_unit_secs.max(1))
+            .unwrap_or(u32::MAX)
+            .min(batch.count_total);
+        let completed = total_finished.saturating_sub(batch.count_done);
+        // Log-and-continue: a failed apply must not strand the batch (requeued at startup).
+        match training.apply_training(&batch, completed).await {
+            Ok(()) if completed > 0 => villages.push(batch.village),
+            Ok(()) => {}
+            Err(e) => tracing::error!(error = %e, "failed to apply due training"),
+        }
+    }
+    Ok(villages)
+}
+
 /// Claim and apply all unit orders due at `now` (up to `limit`); returns how many were applied —
 /// the System actor completing research/upgrades (AC8/AC12).
 ///
@@ -480,6 +628,165 @@ mod tests {
         async fn apply_unit_order(&self, _due: DueUnitOrder) -> Result<(), RepoError> {
             Ok(())
         }
+    }
+
+    #[derive(Default)]
+    struct FakeTraining {
+        duplicate: bool,
+        last: Mutex<Option<NewTrainingOrder>>,
+        last_settled: Mutex<Option<ResourceAmounts>>,
+    }
+
+    #[async_trait]
+    impl TrainingRepository for FakeTraining {
+        async fn start_training(
+            &self,
+            _v: VillageId,
+            settled: ResourceAmounts,
+            _settled_from: Timestamp,
+            _now: Timestamp,
+            order: NewTrainingOrder,
+        ) -> Result<(), RepoError> {
+            if self.duplicate {
+                return Err(RepoError::Duplicate);
+            }
+            *self.last_settled.lock().unwrap() = Some(settled);
+            *self.last.lock().unwrap() = Some(order);
+            Ok(())
+        }
+        async fn active_training(
+            &self,
+            _v: VillageId,
+        ) -> Result<Vec<crate::ports::ActiveTraining>, RepoError> {
+            Ok(Vec::new())
+        }
+        async fn claim_due_training(
+            &self,
+            _now: Timestamp,
+            _limit: i64,
+        ) -> Result<Vec<crate::ports::DueTraining>, RepoError> {
+            Ok(Vec::new())
+        }
+        async fn apply_training(
+            &self,
+            _due: &crate::ports::DueTraining,
+            _completed: u32,
+        ) -> Result<(), RepoError> {
+            Ok(())
+        }
+    }
+
+    async fn train(
+        accounts: &FakeAccounts,
+        units: &FakeUnits,
+        training: &FakeTraining,
+        unit: &str,
+        count: u32,
+    ) -> Result<(), TrainError> {
+        order_train(
+            accounts,
+            units,
+            training,
+            &economy_rules(),
+            &unit_rules(),
+            GameSpeed::new(1.0).unwrap(),
+            Timestamp(0),
+            PlayerId(1),
+            UnitId(unit.to_owned()),
+            count,
+        )
+        .await
+    }
+
+    // --- 005 AC2: training success path ---
+    #[tokio::test]
+    async fn ordering_a_batch_debits_and_enqueues() {
+        let accounts = FakeAccounts {
+            village: make_village(&[(BuildingKind::Barracks, 1)]),
+            stored: amounts(800),
+        };
+        let units = FakeUnits::default();
+        let training = FakeTraining::default();
+        // Tier-1 trains without research (AC9 of 004 carries over).
+        train(&accounts, &units, &training, "tier1", 5)
+            .await
+            .unwrap();
+        let order = training.last.lock().unwrap().clone().expect("enqueued");
+        assert_eq!(order.building, BuildingKind::Barracks);
+        assert_eq!(order.count, 5);
+        // train_secs 1600 ÷ (speed 1 × factor(level 1) = 1.0) = 1600 s per unit (AC4).
+        assert_eq!(order.per_unit_secs, 1600);
+        // The full batch cost (5 × 100) was debited from 800.
+        assert_eq!(
+            training.last_settled.lock().unwrap().expect("settled"),
+            amounts(300)
+        );
+    }
+
+    // --- 005 AC3: every rejection leaves state untouched ---
+    #[tokio::test]
+    async fn training_rejections() {
+        let barracks = || make_village(&[(BuildingKind::Barracks, 1)]);
+        let units = FakeUnits::default();
+        let training = FakeTraining::default();
+
+        // Unresearched.
+        let accounts = FakeAccounts {
+            village: barracks(),
+            stored: amounts(800),
+        };
+        assert_eq!(
+            train(&accounts, &units, &training, "spearman", 1).await,
+            Err(TrainError::NotResearched)
+        );
+        assert!(training.last.lock().unwrap().is_none());
+
+        // Building missing.
+        let no_barracks = FakeAccounts {
+            village: make_village(&[(BuildingKind::Academy, 1)]),
+            stored: amounts(800),
+        };
+        assert_eq!(
+            train(&no_barracks, &units, &training, "tier1", 1).await,
+            Err(TrainError::BuildingMissing)
+        );
+
+        // Count out of range.
+        let accounts = FakeAccounts {
+            village: barracks(),
+            stored: amounts(800),
+        };
+        assert_eq!(
+            train(&accounts, &units, &training, "tier1", 0).await,
+            Err(TrainError::CountOutOfRange)
+        );
+
+        // Insufficient (5 × 100 > 400).
+        let poor = FakeAccounts {
+            village: barracks(),
+            stored: amounts(400),
+        };
+        assert_eq!(
+            train(&poor, &units, &training, "tier1", 5).await,
+            Err(TrainError::Insufficient)
+        );
+
+        // Not in this tribe's roster.
+        assert_eq!(
+            train(&accounts, &units, &training, "legionnaire", 1).await,
+            Err(TrainError::NotFound)
+        );
+
+        // Queue busy (storage-enforced).
+        let busy = FakeTraining {
+            duplicate: true,
+            ..FakeTraining::default()
+        };
+        assert_eq!(
+            train(&accounts, &units, &busy, "tier1", 1).await,
+            Err(TrainError::QueueBusy)
+        );
+        assert!(training.last.lock().unwrap().is_none());
     }
 
     async fn research(

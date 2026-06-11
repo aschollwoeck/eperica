@@ -30,5 +30,6 @@ pub use ports::{
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;
 pub use units::{
-    ResearchError, UpgradeError, order_research, order_smithy_upgrade, process_due_unit_orders,
+    ResearchError, TrainError, UpgradeError, order_research, order_smithy_upgrade, order_train,
+    process_due_training, process_due_unit_orders,
 };
