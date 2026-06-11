@@ -29,14 +29,14 @@ Ordered for dependency and testability (pure domain first).
 
 ## Web
 
-- [ ] **T5 — Rally Point page + send/return.** `GET /village/rally` send form (target + per-unit
+- [x] **T5 — Rally Point page + send/return.** `GET /village/rally` send form (target + per-unit
   counts); `POST /village/rally/send`, `POST /village/rally/return` (PRG). Integration tests (**AC7**).
-- [ ] **T6 — Village movement panels.** Reinforcements-here (owners), troops-abroad (send-back),
+- [x] **T6 — Village movement panels.** Reinforcements-here (owners), troops-abroad (send-back),
   movements-in-progress (direction + countdown); Rally Point link. Integration test (**AC7**).
 
 ## Documentation & acceptance
 
-- [ ] **T7 — Technical docs.** rustdoc; `docs/architecture/0009-troop-movement.md`; `CLAUDE.md`
+- [x] **T7 — Technical docs.** rustdoc; `docs/architecture/0009-troop-movement.md`; `CLAUDE.md`
   active slice.
 - [ ] **T8 — End-user docs.** `docs/manual/` movement guide; link from index.
 - [ ] **T9 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
