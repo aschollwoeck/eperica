@@ -1,6 +1,6 @@
 # Feature 008 — Marketplace & trade — Technical Plan
 
-**Status:** Draft
+**Status:** Verified
 **Spec:** ./spec.md
 
 A resource-carry engine: a new due-event queue (`trade_movements`) over the 002 economy/storage caps,

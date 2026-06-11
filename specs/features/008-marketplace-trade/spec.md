@@ -1,6 +1,6 @@
 # Feature 008 — Marketplace & trade
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 002 (resource economy + storage caps), 006 (map, toroidal distance), 007 (movement engine)
 **Roadmap:** M3 · slice 008 · GDD §2.4, §4.2 — resource logistics; reuses the movement engine.
 
