@@ -1,10 +1,10 @@
-//! Unit use-cases: order Academy research and Smithy upgrades, and process their due orders.
+﻿//! Unit use-cases: order Academy research and Smithy upgrades, and process their due orders.
 
 use crate::ports::{AccountRepository, NewUnitOrder, RepoError, UnitOrderKind, UnitRepository};
 use eperica_domain::{
     EconomyRules, GameSpeed, PlayerId, ResearchDenied, ResourceAmounts, Timestamp, Tribe, UnitId,
     UnitRules, UpgradeDenied, Village, can_afford, can_research, can_upgrade, compute_economy,
-    debit, scaled_time_secs,
+    debit, garrison_upkeep, scaled_time_secs,
 };
 
 /// Why ordering a research failed (AC6/AC7).
@@ -85,11 +85,13 @@ impl From<RepoError> for UpgradeError {
     }
 }
 
-/// The owner's (first) village, its tribe, its settled-to-now resource amounts, and the snapshot
-/// time the amounts were computed from (for the optimistic settle).
+/// The owner's (first) village, its tribe, its settled-to-now resource amounts (net of garrison
+/// upkeep, 005 AC6), and the snapshot time the amounts were computed from (for the optimistic
+/// settle).
 async fn village_and_amounts<A: AccountRepository>(
     accounts: &A,
     economy_rules: &EconomyRules,
+    unit_rules: &UnitRules,
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
@@ -103,14 +105,15 @@ async fn village_and_amounts<A: AccountRepository>(
     let Some((stored, updated_at)) = accounts.stored_resources(village.id).await? else {
         return Ok(None);
     };
+    let garrison = accounts.garrison(village.id).await?;
+    let upkeep = garrison_upkeep(&garrison, unit_rules.roster(tribe));
     let elapsed = (now.0 - updated_at.0) / 1000;
     let amounts = compute_economy(
         stored,
         elapsed,
         &village.fields,
         &village.buildings,
-        // 005 T4 wires the garrison's upkeep here once it is persisted.
-        0,
+        upkeep,
         economy_rules,
         speed,
     )
@@ -143,7 +146,7 @@ where
     U: UnitRepository,
 {
     let Some((village, tribe, amounts, settled_from)) =
-        village_and_amounts(accounts, economy_rules, speed, now, owner).await?
+        village_and_amounts(accounts, economy_rules, unit_rules, speed, now, owner).await?
     else {
         return Err(ResearchError::NotFound);
     };
@@ -202,7 +205,7 @@ where
     U: UnitRepository,
 {
     let Some((village, tribe, amounts, settled_from)) =
-        village_and_amounts(accounts, economy_rules, speed, now, owner).await?
+        village_and_amounts(accounts, economy_rules, unit_rules, speed, now, owner).await?
     else {
         return Err(UpgradeError::NotFound);
     };
@@ -423,6 +426,9 @@ mod tests {
             _v: VillageId,
         ) -> Result<Option<(ResourceAmounts, Timestamp)>, RepoError> {
             Ok(Some((self.stored, Timestamp(0))))
+        }
+        async fn garrison(&self, _v: VillageId) -> Result<eperica_domain::UnitCounts, RepoError> {
+            Ok(Vec::new())
         }
     }
 

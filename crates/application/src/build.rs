@@ -3,7 +3,8 @@
 use crate::ports::{AccountRepository, BuildRepository, NewBuildOrder, RepoError};
 use eperica_domain::{
     BuildRules, BuildTarget, BuildingKind, EconomyRules, GameSpeed, PlayerId, QueueLane, Timestamp,
-    Village, build_time_secs, can_afford, compute_economy, debit, prerequisites_met, queue_lane,
+    UnitRules, Village, build_time_secs, can_afford, compute_economy, debit, garrison_upkeep,
+    prerequisites_met, queue_lane,
 };
 
 /// Why ordering a build failed.
@@ -71,6 +72,7 @@ pub async fn order_build<A, B>(
     builds: &B,
     economy_rules: &EconomyRules,
     build_rules: &BuildRules,
+    unit_rules: &UnitRules,
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
@@ -104,14 +106,17 @@ where
     let Some((stored, updated_at)) = accounts.stored_resources(village.id).await? else {
         return Err(BuildError::NotFound);
     };
+    let garrison = accounts.garrison(village.id).await?;
+    let upkeep = village
+        .tribe
+        .map_or(0, |t| garrison_upkeep(&garrison, unit_rules.roster(t)));
     let elapsed = (now.0 - updated_at.0) / 1000;
     let amounts = compute_economy(
         stored,
         elapsed,
         &village.fields,
         &village.buildings,
-        // 005 T4 wires the garrison's upkeep here once it is persisted.
-        0,
+        upkeep,
         economy_rules,
         speed,
     )
@@ -175,8 +180,9 @@ mod tests {
     use crate::ports::{ActiveBuild, DueBuild, NewUser, UserRecord};
     use async_trait::async_trait;
     use eperica_domain::{
-        BuildingSlot, Coordinate, LevelSpec, ResourceAmounts, ResourceField, ResourceKind,
-        StartingVillage, Tribe, VillageId,
+        BuildingSlot, Coordinate, LevelSpec, ResearchSpec, ResourceAmounts, ResourceField,
+        ResourceKind, SmithyRules, StartingVillage, TrainingRules, Tribe, UnitId, UnitRole,
+        UnitSpec, VillageId,
     };
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -283,6 +289,9 @@ mod tests {
         ) -> Result<Option<(ResourceAmounts, Timestamp)>, RepoError> {
             Ok(Some((self.stored, Timestamp(0))))
         }
+        async fn garrison(&self, _v: VillageId) -> Result<eperica_domain::UnitCounts, RepoError> {
+            Ok(Vec::new())
+        }
     }
 
     #[derive(Default)]
@@ -324,6 +333,49 @@ mod tests {
         }
     }
 
+    fn unit_rules() -> UnitRules {
+        // A minimal-but-valid roster set (10 units per tribe, one tier-1 each); only the (empty)
+        // garrison's upkeep is read by order_build, so the contents are immaterial.
+        let roster = || -> Vec<UnitSpec> {
+            (0..10)
+                .map(|i| UnitSpec {
+                    id: UnitId(format!("u{i}")),
+                    name: format!("u{i}"),
+                    role: UnitRole::Infantry,
+                    attack: 1,
+                    defense_infantry: 1,
+                    defense_cavalry: 1,
+                    speed: 1,
+                    carry_capacity: 0,
+                    crop_upkeep: 1,
+                    cost: amounts(1),
+                    train_secs: 1,
+                    trained_in: BuildingKind::Barracks,
+                    research: (i > 0).then(|| ResearchSpec {
+                        cost: amounts(1),
+                        time_secs: 1,
+                        requirements: vec![],
+                    }),
+                })
+                .collect()
+        };
+        UnitRules::new(
+            HashMap::from([
+                (Tribe::Romans, roster()),
+                (Tribe::Teutons, roster()),
+                (Tribe::Gauls, roster()),
+            ]),
+            SmithyRules {
+                cost_permille_per_level: vec![1500],
+                time_secs_per_level: vec![3600],
+            },
+            TrainingRules {
+                building_factor_per_level: vec![1.0],
+            },
+        )
+        .expect("valid rules")
+    }
+
     async fn order(
         accounts: &FakeAccounts,
         builds: &FakeBuilds,
@@ -334,6 +386,7 @@ mod tests {
             builds,
             &economy_rules(),
             &build_rules(),
+            &unit_rules(),
             GameSpeed::new(1.0).unwrap(),
             Timestamp(0),
             PlayerId(1),

@@ -18,7 +18,7 @@ Ordered for dependency and testability (pure domain first).
 - [x] **T3 — Balance data.** `units.toml` `[training]` factor table; `construction.toml` +=
   stable/workshop (10 levels, AC1 prerequisites); `economy.toml` population entries; loader +
   tests (**AC1**).
-- [ ] **T4 — Migration + training repository.** `0008_training.sql` (`village_units`,
+- [x] **T4 — Migration + training repository.** `0008_training.sql` (`village_units`,
   `training_orders` + per-building partial unique index + due index, `starvation_checks`);
   `TrainingRepository` (optimistic-settle start, garrison, claim/apply with single-tx progress,
   orphan requeue). DB tests: partial apply exactness, crash-resume, busy building (**AC2**, **AC5**).

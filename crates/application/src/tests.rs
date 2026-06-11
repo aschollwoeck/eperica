@@ -6,7 +6,7 @@ use crate::register::{RegisterCommand, RegisterError, register};
 use async_trait::async_trait;
 use eperica_domain::{
     BuildingKind, BuildingSlot, PlayerId, ResourceAmounts, ResourceField, ResourceKind,
-    StartingVillage, Timestamp, Tribe, Village, VillageId,
+    StartingVillage, Timestamp, Tribe, UnitCounts, Village, VillageId,
 };
 use std::sync::Mutex;
 
@@ -98,6 +98,10 @@ impl AccountRepository for InMemoryAccounts {
         _village: VillageId,
     ) -> Result<Option<(ResourceAmounts, Timestamp)>, RepoError> {
         Ok(None)
+    }
+
+    async fn garrison(&self, _village: VillageId) -> Result<UnitCounts, RepoError> {
+        Ok(Vec::new())
     }
 }
 

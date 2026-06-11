@@ -5,8 +5,8 @@
 
 use async_trait::async_trait;
 use eperica_domain::{
-    BuildTarget, EventKind, PlayerId, QueueLane, ResourceAmounts, StartingVillage, Timestamp,
-    Tribe, UnitId, Village, VillageId,
+    BuildTarget, BuildingKind, EventKind, PlayerId, QueueLane, ResourceAmounts, StartingVillage,
+    Timestamp, Tribe, UnitCounts, UnitId, Village, VillageId,
 };
 
 /// Details for a new account to be created.
@@ -116,6 +116,13 @@ pub trait AccountRepository: Send + Sync {
         &self,
         village: VillageId,
     ) -> Result<Option<(ResourceAmounts, Timestamp)>, RepoError>;
+
+    /// The village's garrison — standing troops per unit type (005; empty before any training).
+    /// Part of the economy read path: the garrison's upkeep feeds net crop (AC6).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn garrison(&self, village: VillageId) -> Result<UnitCounts, RepoError>;
 }
 
 /// A claimed, due event ready to be processed.
@@ -347,4 +354,97 @@ pub trait UnitRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn apply_unit_order(&self, due: DueUnitOrder) -> Result<(), RepoError>;
+}
+
+/// A new training batch to enqueue (005).
+#[derive(Debug, Clone)]
+pub struct NewTrainingOrder {
+    /// The troop building whose queue this batch occupies.
+    pub building: BuildingKind,
+    /// The unit type being trained.
+    pub unit: UnitId,
+    /// How many units the batch trains.
+    pub count: u32,
+    /// Seconds per unit (already building- and speed-scaled).
+    pub per_unit_secs: i64,
+}
+
+/// A village's currently-running training batch (one per troop building at most).
+#[derive(Debug, Clone)]
+pub struct ActiveTraining {
+    /// The troop building training it.
+    pub building: BuildingKind,
+    /// The unit type being trained.
+    pub unit: UnitId,
+    /// Batch size.
+    pub count_total: u32,
+    /// Units already delivered to the garrison.
+    pub count_done: u32,
+    /// Seconds per unit.
+    pub per_unit_secs: i64,
+    /// When the next unit completes (Unix-ms UTC).
+    pub next_complete_at: Timestamp,
+}
+
+/// A claimed training batch with at least one unit due.
+#[derive(Debug, Clone)]
+pub struct DueTraining {
+    /// Order identity.
+    pub id: u128,
+    /// The village it belongs to.
+    pub village: VillageId,
+    /// The unit type being trained.
+    pub unit: UnitId,
+    /// Batch size.
+    pub count_total: u32,
+    /// Units already delivered.
+    pub count_done: u32,
+    /// Seconds per unit.
+    pub per_unit_secs: i64,
+    /// When the batch started (Unix-ms UTC); completions fall at `started_at + i × per_unit`.
+    pub started_at: Timestamp,
+}
+
+/// Persistence for training batches and the garrison (due-events, P1; 005).
+#[async_trait]
+pub trait TrainingRepository: Send + Sync {
+    /// Atomically settle the village's resources to `settled` (computed from the snapshot read at
+    /// `settled_from`; see [`BuildRepository::start_build`]) and enqueue the batch. The
+    /// one-batch-per-building rule is enforced by storage; a busy building returns
+    /// [`RepoError::Duplicate`] (AC2, P4).
+    ///
+    /// # Errors
+    /// [`RepoError`] on conflict or storage failure.
+    async fn start_training(
+        &self,
+        village: VillageId,
+        settled: ResourceAmounts,
+        settled_from: Timestamp,
+        now: Timestamp,
+        order: NewTrainingOrder,
+    ) -> Result<(), RepoError>;
+
+    /// The village's running batches — at most one per troop building.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn active_training(&self, village: VillageId) -> Result<Vec<ActiveTraining>, RepoError>;
+
+    /// Atomically claim batches with a completion due (`active → processing`), nearest first.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn claim_due_training(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueTraining>, RepoError>;
+
+    /// Deliver `completed` finished units to the garrison and advance the batch — in **one**
+    /// transaction, so a crash never loses or duplicates a unit (AC5). Re-marks the batch
+    /// `active` (or `done` when finished).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn apply_training(&self, due: &DueTraining, completed: u32) -> Result<(), RepoError>;
 }

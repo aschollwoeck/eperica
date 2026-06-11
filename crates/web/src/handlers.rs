@@ -1,4 +1,4 @@
-//! HTTP handlers for the register / login / village flow.
+﻿//! HTTP handlers for the register / login / village flow.
 
 use crate::auth::{AuthUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
@@ -262,6 +262,7 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
     let economy = match load_economy(
         state.accounts.as_ref(),
         state.rules.as_ref(),
+        state.unit_rules.as_ref(),
         state.world.speed,
         now(),
         player,
@@ -452,6 +453,7 @@ pub async fn build_submit(
         state.accounts.as_ref(),
         state.rules.as_ref(),
         state.build_rules.as_ref(),
+        state.unit_rules.as_ref(),
         state.world.speed,
         now(),
         player,
@@ -498,6 +500,7 @@ async fn village_view_data(
     match load_economy(
         state.accounts.as_ref(),
         state.rules.as_ref(),
+        state.unit_rules.as_ref(),
         state.world.speed,
         now(),
         player,

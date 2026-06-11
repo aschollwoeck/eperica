@@ -22,9 +22,10 @@ pub use auth::{LoginError, authenticate};
 pub use build::{BuildError, order_build, process_due_builds};
 pub use economy::{VillageEconomy, load_economy};
 pub use ports::{
-    AccountRepository, ActiveBuild, ActiveUnitOrder, BuildRepository, DueBuild, DueEvent,
-    DueUnitOrder, EventStore, NewBuildOrder, NewUnitOrder, NewUser, PasswordHasher, RepoError,
-    UnitOrderKind, UnitRepository, UserRecord,
+    AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BuildRepository, DueBuild,
+    DueEvent, DueTraining, DueUnitOrder, EventStore, NewBuildOrder, NewTrainingOrder, NewUnitOrder,
+    NewUser, PasswordHasher, RepoError, TrainingRepository, UnitOrderKind, UnitRepository,
+    UserRecord,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;

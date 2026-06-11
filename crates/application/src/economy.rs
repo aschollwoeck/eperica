@@ -2,19 +2,23 @@
 
 use crate::ports::{AccountRepository, RepoError};
 use eperica_domain::{
-    Economy, EconomyRules, GameSpeed, PlayerId, Timestamp, Village, compute_economy,
+    Economy, EconomyRules, GameSpeed, PlayerId, Timestamp, UnitCounts, UnitRules, Village,
+    compute_economy, garrison_upkeep,
 };
 
-/// A village (its fields/buildings/levels) plus its computed economy.
+/// A village (its fields/buildings/levels) plus its garrison and computed economy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VillageEconomy {
     /// The village, including field/building levels and coordinate.
     pub village: Village,
+    /// The standing garrison (005); its upkeep is already reflected in the rates.
+    pub garrison: UnitCounts,
     /// Current amounts, rates, and capacities.
     pub economy: Economy,
 }
 
 /// Load the owner's (first) village economy, accruing resources from stored state to `now` (P1/P2).
+/// The garrison's crop upkeep feeds the net rate (005 AC6).
 ///
 /// Returns `None` if the player has no village (or no stored resources).
 ///
@@ -23,6 +27,7 @@ pub struct VillageEconomy {
 pub async fn load_economy<R>(
     repo: &R,
     rules: &EconomyRules,
+    unit_rules: &UnitRules,
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
@@ -36,6 +41,10 @@ where
     let Some((stored, updated_at)) = repo.stored_resources(village.id).await? else {
         return Ok(None);
     };
+    let garrison = repo.garrison(village.id).await?;
+    let upkeep = village
+        .tribe
+        .map_or(0, |t| garrison_upkeep(&garrison, unit_rules.roster(t)));
 
     let elapsed_secs = (now.0 - updated_at.0) / 1000;
     let economy = compute_economy(
@@ -43,10 +52,13 @@ where
         elapsed_secs,
         &village.fields,
         &village.buildings,
-        // 005 T4 wires the garrison's upkeep here once it is persisted.
-        0,
+        upkeep,
         rules,
         speed,
     );
-    Ok(Some(VillageEconomy { village, economy }))
+    Ok(Some(VillageEconomy {
+        village,
+        garrison,
+        economy,
+    }))
 }
