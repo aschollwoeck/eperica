@@ -3,6 +3,7 @@
 <section class="panel">
   <h1>{{ username }}'s village</h1>
   <p class="muted">Location ({{ x }}, {{ y }}) · Tribe: {{ tribe }} · <a href="/map">Map</a>
+    · <a href="/village/rally">Rally Point</a>
     {% if has_academy %} · <a href="/village/academy">Academy</a>{% endif %}
     {% if has_smithy %} · <a href="/village/smithy">Smithy</a>{% endif %}
     {% for link in troop_links %} · <a href="{{ link.1 }}">{{ link.0 }}</a>{% endfor %}</p>
@@ -33,6 +34,52 @@
     </tbody>
   </table>
   <p class="muted">Total upkeep: {{ garrison_upkeep }} crop/h (already part of the net rate above).</p>
+</section>
+{% endif %}
+
+{% if !movements.is_empty() %}
+<section class="panel">
+  <h2>Movements in progress</h2>
+  {% for m in movements %}
+  <p>{{ m.label }} — {{ m.troops }} —
+    arrives in <span class="countdown num" data-deadline="{{ m.arrive_ms }}">…</span></p>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if !reinforcements_here.is_empty() %}
+<section class="panel">
+  <h2>Reinforcements stationed here</h2>
+  <table class="table">
+    <thead><tr><th>From</th><th>Village</th><th>Troops</th></tr></thead>
+    <tbody>
+      {% for r in reinforcements_here %}
+      <tr><td>{{ r.owner }}</td><td>{{ r.coord }}</td><td>{{ r.troops }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if !reinforcements_abroad.is_empty() %}
+<section class="panel">
+  <h2>Your troops abroad</h2>
+  <table class="table">
+    <thead><tr><th>At</th><th>Village</th><th>Troops</th><th></th></tr></thead>
+    <tbody>
+      {% for r in reinforcements_abroad %}
+      <tr>
+        <td>{{ r.owner }}</td><td>{{ r.coord }}</td><td>{{ r.troops }}</td>
+        <td>
+          <form method="post" action="/village/rally/return">
+            <input type="hidden" name="host" value="{{ r.host_id }}">
+            <button class="btn btn--secondary" type="submit">Send back</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </section>
 {% endif %}
 

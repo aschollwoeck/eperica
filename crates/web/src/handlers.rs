@@ -4,8 +4,9 @@ use crate::auth::{AuthUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
 use crate::templates::{
     AcademyRow, AcademyTemplate, ActiveView, BuildRow, GarrisonRow, IndexTemplate, LoginTemplate,
-    MapCellView, MapTemplate, QueueView, RegisterTemplate, SmithyRow, SmithyTemplate,
-    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageTemplate,
+    MapCellView, MapTemplate, MovementRow, QueueView, RallyTemplate, RallyUnitRow,
+    RegisterTemplate, ReinforcementRow, SmithyRow, SmithyTemplate, StyleGuideTemplate, TrainRow,
+    TroopsTemplate, VillageTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -14,14 +15,16 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
-    AccountRepository, BuildRepository, LoginError, RegisterCommand, RegisterError,
-    TrainingRepository, UnitOrderKind, UnitRepository, authenticate, load_economy, map_viewport,
-    order_build, order_research, order_smithy_upgrade, order_train, register, viewport_coords,
+    AccountRepository, BuildRepository, LoginError, MovementRepository, RegisterCommand,
+    RegisterError, TrainingRepository, UnitOrderKind, UnitRepository, authenticate, load_economy,
+    map_viewport, order_build, order_reinforcement, order_research, order_return,
+    order_smithy_upgrade, order_train, register, viewport_coords,
 };
 use eperica_domain::{
-    BuildTarget, BuildingKind, Coordinate, OasisBonus, QueueLane, ResearchDenied, ResourceAmounts,
-    ResourceKind, TileKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, can_afford,
-    can_research, can_upgrade, garrison_upkeep, per_unit_time_secs, queue_lane, scaled_time_secs,
+    BuildTarget, BuildingKind, Coordinate, MovementKind, OasisBonus, QueueLane, ResearchDenied,
+    ResourceAmounts, ResourceKind, TileKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied,
+    Village, VillageId, can_afford, can_research, can_upgrade, garrison_upkeep, per_unit_time_secs,
+    queue_lane, scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
@@ -431,6 +434,63 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         })
         .collect();
 
+    // Troop movements + stationed reinforcements (007 AC7).
+    let movements_view = match state.accounts.active_movements(player).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!(error = %e, "movements lookup failed");
+            return server_error();
+        }
+    };
+    let here = match state.accounts.reinforcements_at(village.id).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "reinforcements-here lookup failed");
+            return server_error();
+        }
+    };
+    let abroad = match state.accounts.reinforcements_of(player).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "reinforcements-abroad lookup failed");
+            return server_error();
+        }
+    };
+    let unit_rules: &UnitRules = state.unit_rules.as_ref();
+    let movements: Vec<MovementRow> = movements_view
+        .iter()
+        .map(|m| MovementRow {
+            label: match m.kind {
+                MovementKind::Reinforce => {
+                    format!("Reinforcement to ({}|{})", m.destination.x, m.destination.y)
+                }
+                MovementKind::Return => {
+                    format!("Returning to ({}|{})", m.destination.x, m.destination.y)
+                }
+            },
+            troops: troops_summary(unit_rules, &m.troops),
+            arrive_ms: m.arrive_at.0,
+        })
+        .collect();
+    let reinforcements_here: Vec<ReinforcementRow> = here
+        .iter()
+        .map(|g| ReinforcementRow {
+            owner: g.other_owner.clone(),
+            coord: format!("({}|{})", g.other_coord.x, g.other_coord.y),
+            troops: troops_summary(unit_rules, &g.troops),
+            host_id: String::new(),
+        })
+        .collect();
+    let reinforcements_abroad: Vec<ReinforcementRow> = abroad
+        .iter()
+        .map(|g| ReinforcementRow {
+            owner: g.other_owner.clone(),
+            coord: format!("({}|{})", g.other_coord.x, g.other_coord.y),
+            troops: troops_summary(unit_rules, &g.troops),
+            host_id: g.host_village.0.to_string(),
+        })
+        .collect();
+
     page(&VillageTemplate {
         username: user.username,
         tribe: tribe_label(village.tribe),
@@ -458,6 +518,9 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         troop_links,
         garrison: garrison_rows,
         garrison_upkeep: total_upkeep,
+        movements,
+        reinforcements_here,
+        reinforcements_abroad,
         fields,
         buildings,
     })
@@ -653,6 +716,24 @@ fn role_label(role: UnitRole) -> &'static str {
         UnitRole::Siege => "Siege",
         UnitRole::Expansion => "Expansion",
     }
+}
+
+/// Resolve a unit's display name across all tribes' rosters (a stationed reinforcement may come
+/// from a different tribe than the viewer), falling back to the slug.
+fn unit_name(unit_rules: &UnitRules, unit: &UnitId) -> String {
+    [Tribe::Romans, Tribe::Teutons, Tribe::Gauls]
+        .into_iter()
+        .find_map(|t| unit_rules.unit(t, unit))
+        .map_or_else(|| unit.as_str().to_owned(), |s| s.name.clone())
+}
+
+/// Summarise a composition as "4 Phalanx, 2 Swordsman" (007 AC7).
+fn troops_summary(unit_rules: &UnitRules, troops: &[(UnitId, u32)]) -> String {
+    troops
+        .iter()
+        .map(|(u, n)| format!("{n} {}", unit_name(unit_rules, u)))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Format a duration in seconds as `h:mm:ss` (matching the countdown display).
@@ -1099,4 +1180,111 @@ pub async fn smithy_upgrade_submit(
         tracing::warn!(error = %e, "smithy upgrade rejected");
     }
     Redirect::to("/village/smithy").into_response()
+}
+
+/// The Rally Point: the garrison troops that can be sent to reinforce (007 AC7; Player only, P4).
+pub async fn rally(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+    let (village, _amounts) = match village_view_data(&state, player).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let Some(tribe) = village.tribe else {
+        tracing::error!(?player, "village has no tribe");
+        return server_error();
+    };
+    let garrison = match state.accounts.garrison(village.id).await {
+        Ok(g) => g,
+        Err(e) => {
+            tracing::error!(error = %e, "garrison lookup failed");
+            return server_error();
+        }
+    };
+    let roster = state.unit_rules.roster(tribe);
+    let units = garrison
+        .iter()
+        .filter(|(_, n)| *n > 0)
+        .map(|(u, n)| {
+            let spec = roster.iter().find(|s| &s.id == u);
+            RallyUnitRow {
+                id: u.as_str().to_owned(),
+                name: spec.map_or_else(|| u.as_str().to_owned(), |s| s.name.clone()),
+                available: *n,
+            }
+        })
+        .collect();
+    page(&RallyTemplate { units })
+}
+
+/// Send a reinforcement from the Rally Point, then return to the village (Player only, P4).
+///
+/// The composition arrives as `count_<unit-slug>` fields alongside the target `x`/`y`; counts are
+/// parsed and re-validated server-side (P4) — the use-case rejects anything over the garrison.
+pub async fn rally_send(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    let x = form.get("x").and_then(|s| s.trim().parse::<i32>().ok());
+    let y = form.get("y").and_then(|s| s.trim().parse::<i32>().ok());
+    let (Some(x), Some(y)) = (x, y) else {
+        return Redirect::to("/village/rally").into_response();
+    };
+    let troops: Vec<(UnitId, u32)> = form
+        .iter()
+        .filter_map(|(k, v)| {
+            let id = k.strip_prefix("count_")?;
+            let n = v.trim().parse::<u32>().ok()?;
+            (n > 0).then(|| (UnitId(id.to_owned()), n))
+        })
+        .collect();
+    if let Err(e) = order_reinforcement(
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.rules.as_ref(),
+        state.unit_rules.as_ref(),
+        state.map.as_ref(),
+        state.world.speed,
+        now(),
+        player,
+        Coordinate::new(x, y),
+        troops,
+    )
+    .await
+    {
+        tracing::warn!(error = %e, "reinforcement order rejected");
+    }
+    Redirect::to("/village").into_response()
+}
+
+/// Send-back form fields (the host village whose stationed troops to recall).
+#[derive(Deserialize)]
+pub struct RallyReturnForm {
+    host: String,
+}
+
+/// Recall the player's troops stationed at a host, then return to the village (Player only, P4).
+pub async fn rally_return(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<RallyReturnForm>,
+) -> Response {
+    let Ok(host) = form.host.trim().parse::<u128>() else {
+        return Redirect::to("/village").into_response();
+    };
+    if let Err(e) = order_return(
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.unit_rules.as_ref(),
+        state.map.as_ref(),
+        state.world.speed,
+        now(),
+        player,
+        VillageId(host),
+    )
+    .await
+    {
+        tracing::warn!(error = %e, "return order rejected");
+    }
+    Redirect::to("/village").into_response()
 }

@@ -4,10 +4,11 @@
 //! `DATABASE_URL` is not set, so `cargo test` stays green without a database.
 
 use axum_extra::extract::cookie::Key;
-use eperica_domain::{GameSpeed, WorldConfig, WorldMap};
+use eperica_application::process_due_movements;
+use eperica_domain::{GameSpeed, Timestamp, WorldConfig, WorldMap};
 use eperica_infrastructure::{
     Argon2Hasher, PgAccountRepository, build_rules, create_pool, economy_rules, ensure_world,
-    map_rules, run_migrations, starting_village, unit_rules,
+    map_rules, now, run_migrations, starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -850,4 +851,186 @@ async fn account_persists_across_restart() {
     let view = c.get(format!("{base2}/village")).send().await.unwrap();
     assert_eq!(view.status().as_u16(), 200);
     assert!(view.text().await.unwrap().contains(&user));
+}
+
+/// Build a movement-capable repository over the same DB the app uses, to drive the System actor
+/// (delivering due arrivals) deterministically from the test.
+async fn movement_repo(pool: &sqlx::PgPool) -> PgAccountRepository {
+    let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+    let world = ensure_world(pool, &config).await.expect("ensure world");
+    let rules = economy_rules().expect("economy rules");
+    PgAccountRepository::new(
+        pool.clone(),
+        world.id,
+        world.seed,
+        config.radius,
+        rules.starting_amounts,
+    )
+}
+
+#[tokio::test]
+async fn rally_send_station_and_return_flow() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    let _ = dotenvy::dotenv();
+    let url = std::env::var("DATABASE_URL").unwrap();
+    let pool = create_pool(&url).await.unwrap();
+    let repo = movement_repo(&pool).await;
+
+    // A sender and a target on different tiles (the world places each registrant on a free tile).
+    let sender = unique("send");
+    let target = unique("recv");
+    let cs = client();
+    let ct = client();
+    for (c, u) in [(&cs, &sender), (&ct, &target)] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", "gauls"),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+
+    let sender_village: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&sender)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (tx, ty): (i32, i32) = sqlx::query_as(
+        "SELECT v.x, v.y FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&target)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Give the sender a garrison to dispatch.
+    sqlx::query(
+        "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 10)",
+    )
+    .bind(sender_village)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // AC7: the Rally Point lists the garrison units available to send.
+    let rally = cs
+        .get(format!("{base}/village/rally"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(rally.contains("Rally Point"));
+    assert!(rally.contains("Phalanx"));
+    assert!(rally.contains("name=\"count_phalanx\""));
+
+    // AC1/AC7: send 4 Phalanx to the target's tile; PRG back to the village.
+    let res = cs
+        .post(format!("{base}/village/rally/send"))
+        .form(&[
+            ("x", tx.to_string().as_str()),
+            ("y", ty.to_string().as_str()),
+            ("count_phalanx", "4"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+
+    // The sender sees the movement in progress (direction + countdown) and a reduced garrison.
+    let body = cs
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("Movements in progress"));
+    assert!(body.contains(&format!("Reinforcement to ({tx}|{ty})")));
+    assert!(body.contains("4 Phalanx"));
+    assert!(body.contains("data-deadline"));
+    assert!(body.contains("Total upkeep: 6 crop/h")); // 10 sent 4 ⇒ 6 remain
+
+    // The System delivers the arrival (claim → apply), stationing the troops at the target (AC4).
+    let future = Timestamp(now().0 + 10_000_000_000);
+    process_due_movements(&repo, future, 100).await.unwrap();
+
+    // AC7: the target now shows the reinforcement, attributed to the sender.
+    let host_view = ct
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(host_view.contains("Reinforcements stationed here"));
+    assert!(host_view.contains(&sender));
+    assert!(host_view.contains("4 Phalanx"));
+
+    // AC7: the sender now sees the troops abroad with a send-back action; grab the host id.
+    let abroad = cs
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(abroad.contains("Your troops abroad"));
+    assert!(abroad.contains(&target));
+    let marker = "name=\"host\" value=\"";
+    let start = abroad.find(marker).expect("send-back host field") + marker.len();
+    let end = abroad[start..].find('"').unwrap() + start;
+    let host_id = &abroad[start..end];
+
+    // AC5: recall them; PRG back to the village, then the System delivers the return.
+    let res = cs
+        .post(format!("{base}/village/rally/return"))
+        .form(&[("host", host_id)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+    let future = Timestamp(now().0 + 20_000_000_000);
+    process_due_movements(&repo, future, 100).await.unwrap();
+
+    // The garrison is whole again at home, and the target no longer hosts the reinforcement.
+    let home = cs
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(home.contains("Total upkeep: 10 crop/h"));
+    assert!(!home.contains("Your troops abroad"));
+    let host_after = ct
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!host_after.contains("Reinforcements stationed here"));
+
+    // Visitors cannot reach the Rally Point (roles table, P4).
+    let anon = client()
+        .get(format!("{base}/village/rally"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(anon.status().as_u16(), 303);
 }

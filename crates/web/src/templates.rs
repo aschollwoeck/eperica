@@ -50,6 +50,9 @@ mod tests {
             troop_links: Vec::new(),
             garrison: Vec::new(),
             garrison_upkeep: 0,
+            movements: Vec::new(),
+            reinforcements_here: Vec::new(),
+            reinforcements_abroad: Vec::new(),
             fields: Vec::new(),
             buildings: Vec::new(),
         }
@@ -251,6 +254,45 @@ pub struct MapTemplate {
     pub rows: Vec<Vec<MapCellView>>,
 }
 
+/// A trainable garrison unit offered for sending on the Rally Point page (007 AC7).
+pub struct RallyUnitRow {
+    /// Unit slug (the `count_<id>` form field).
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    /// How many are in the garrison (the input's max).
+    pub available: u32,
+}
+
+#[derive(Template)]
+#[template(path = "rally.html")]
+pub struct RallyTemplate {
+    /// The garrison units that can be sent (empty hides the form).
+    pub units: Vec<RallyUnitRow>,
+}
+
+/// An in-flight movement line on the village page (007 AC7).
+pub struct MovementRow {
+    /// "Reinforcement to (x|y)" / "Returning to (x|y)".
+    pub label: String,
+    /// Composition summary, e.g. "4 Phalanx, 2 Swordsman".
+    pub troops: String,
+    /// Arrival time (Unix-ms UTC) for the live countdown.
+    pub arrive_ms: i64,
+}
+
+/// A stationed-reinforcement line (here or abroad) on the village page (007 AC7).
+pub struct ReinforcementRow {
+    /// The counterparty owner's name.
+    pub owner: String,
+    /// The counterparty village's coordinate, e.g. "(3|4)".
+    pub coord: String,
+    /// Composition summary.
+    pub troops: String,
+    /// The host village id (for the send-back action); empty for "stationed here".
+    pub host_id: String,
+}
+
 #[derive(Template)]
 #[template(path = "village.html")]
 pub struct VillageTemplate {
@@ -287,6 +329,12 @@ pub struct VillageTemplate {
     pub garrison: Vec<GarrisonRow>,
     /// The garrison's total crop upkeep per hour.
     pub garrison_upkeep: i64,
+    /// In-flight movements the player owns (007).
+    pub movements: Vec<MovementRow>,
+    /// Reinforcements stationed at this village (others helping the player, 007).
+    pub reinforcements_here: Vec<ReinforcementRow>,
+    /// The player's troops stationed abroad, each with a send-back action (007).
+    pub reinforcements_abroad: Vec<ReinforcementRow>,
     /// Resource-field build rows.
     pub fields: Vec<BuildRow>,
     /// Building build rows.
