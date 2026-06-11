@@ -367,6 +367,138 @@ async fn academy_and_smithy_flow() {
 }
 
 #[tokio::test]
+async fn training_flow_and_garrison() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    let _ = dotenvy::dotenv();
+    let url = std::env::var("DATABASE_URL").unwrap();
+    let pool = create_pool(&url).await.unwrap();
+
+    let user = unique("troop");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // 005 AC9: without a Barracks the page explains the requirement and offers no action.
+    let body = c
+        .get(format!("{base}/village/troops/barracks"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("requires a"));
+    assert!(!body.contains("name=\"unit\""));
+
+    // Seed a Barracks + storage + resources (construction is covered in 003) and a small garrison.
+    let village_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for (slot, kind, level) in [
+        (2_i16, "warehouse", 10_i16),
+        (3, "granary", 10),
+        (4, "barracks", 1),
+    ] {
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(village_id)
+        .bind(slot)
+        .bind(kind)
+        .bind(level)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "UPDATE village_resources SET wood = 5000, clay = 5000, iron = 5000, crop = 5000, \
+         updated_at = now() WHERE village_id = $1",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The Barracks lists the researched Gaul infantry (Phalanx) with a count form.
+    let body = c
+        .get(format!("{base}/village/troops/barracks"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("Phalanx"));
+    assert!(body.contains("value=\"phalanx\""));
+    assert!(body.contains("name=\"count\""));
+
+    // 005 AC2/AC9: order a batch; PRG back to the page, which shows the queue + countdown.
+    let res = c
+        .post(format!("{base}/village/train"))
+        .form(&[("unit", "phalanx"), ("count", "3")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+    let body = c
+        .get(format!("{base}/village/troops/barracks"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("Training 3 × Phalanx — 3 remaining"));
+    assert!(body.contains("data-deadline"));
+    assert!(body.contains("training in progress"));
+
+    // 005 AC6/AC9: a garrison shows on the village page and lowers the net crop rate.
+    sqlx::query(
+        "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 10)",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let body = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("Garrison"));
+    assert!(body.contains("Phalanx"));
+    assert!(body.contains("Total upkeep: 10 crop/h"));
+    assert!(body.contains("/village/troops/barracks"));
+
+    // Visitors are redirected to login (roles table).
+    let anon = client()
+        .get(format!("{base}/village/troops/barracks"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(anon.status().as_u16(), 303);
+}
+
+#[tokio::test]
 async fn duplicate_username_is_rejected() {
     let Some(base) = spawn().await else {
         return;

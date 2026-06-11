@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>{{ building }}</h1>
+  <p class="muted"><a href="/village">← Back to the village</a></p>
+
+  {% if !has_building %}
+  <p>Training here requires a <strong>{{ building }}</strong>. Build one in the village first.</p>
+  {% else %}
+
+  {% if let Some(t) = active %}
+  <p>{{ t.label }} — next completes in
+    <span class="countdown num" data-deadline="{{ t.complete_ms }}">…</span></p>
+  {% endif %}
+
+  {% if rows.is_empty() %}
+  <p class="muted">No researched units train here yet — visit the <a href="/village/academy">Academy</a>.</p>
+  {% else %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Unit</th>
+        <th class="num">Att</th><th class="num">Def i</th><th class="num">Def c</th>
+        <th class="num">Upkeep</th>
+        <th>Cost each (W/C/I/Cr)</th><th class="num">Time each</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in rows %}
+      <tr>
+        <td>{{ u.name }}</td>
+        <td class="num">{{ u.attack }}</td>
+        <td class="num">{{ u.def_inf }}</td>
+        <td class="num">{{ u.def_cav }}</td>
+        <td class="num">{{ u.upkeep }}</td>
+        <td><span class="num">{{ u.cost_wood }}/{{ u.cost_clay }}/{{ u.cost_iron }}/{{ u.cost_crop }}</span></td>
+        <td class="num">{{ u.time }}</td>
+        <td>
+          {% if u.can_order %}
+          <form method="post" action="/village/train" class="field" style="display:flex;gap:6px">
+            <input type="hidden" name="unit" value="{{ u.id }}">
+            <input type="number" name="count" value="1" min="1" max="9999" required style="width:5.5em">
+            <button class="btn btn--primary" type="submit">Train</button>
+          </form>
+          {% else %}<span class="muted">{{ u.gate }}</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% endif %}
+</section>
+
+<script>
+  for (const el of document.querySelectorAll(".countdown")) {
+    const deadline = Number(el.dataset.deadline);
+    const tick = () => {
+      let s = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+      const h = Math.floor(s / 3600); s -= h * 3600;
+      const m = Math.floor(s / 60); s -= m * 60;
+      const pad = (n) => String(n).padStart(2, "0");
+      el.textContent = `${h}:${pad(m)}:${pad(s)}`;
+      if (deadline - Date.now() <= 0) { clearInterval(timer); setTimeout(() => location.reload(), 1500); }
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+  }
+</script>
+{% endblock %}

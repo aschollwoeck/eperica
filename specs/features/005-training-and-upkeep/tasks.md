@@ -40,10 +40,10 @@ Ordered for dependency and testability (pure domain first).
 
 ## Web
 
-- [ ] **T9 — Troop building pages.** `GET /village/troops/{building}` + `POST /village/train`
+- [x] **T9 — Troop building pages.** `GET /village/troops/{building}` + `POST /village/train`
   (PRG): researched units, cost, per-unit time, count form, active batch with remaining count +
   next-completion countdown. Integration tests (**AC9**).
-- [ ] **T10 — Village garrison panel.** Garrison (names, counts, total upkeep) + troop building
+- [x] **T10 — Village garrison panel.** Garrison (names, counts, total upkeep) + troop building
   links on `/village`; net crop already reflects upkeep (**AC6**, **AC9**). Integration test.
 
 ## Documentation & acceptance
