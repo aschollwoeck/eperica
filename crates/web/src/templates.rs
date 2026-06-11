@@ -43,7 +43,7 @@ mod tests {
             crop_rate,
             warehouse: 800,
             granary: 800,
-            active: None,
+            active: Vec::new(),
             fields: Vec::new(),
             buildings: Vec::new(),
         }
@@ -80,7 +80,7 @@ pub struct BuildRow {
     pub can_order: bool,
 }
 
-/// The active build, for display + countdown.
+/// An active build/research/upgrade order, for display + countdown.
 pub struct ActiveView {
     /// What is building.
     pub label: String,
@@ -112,8 +112,8 @@ pub struct VillageTemplate {
     /// Storage capacities.
     pub warehouse: i64,
     pub granary: i64,
-    /// The active build order, if any.
-    pub active: Option<ActiveView>,
+    /// The active build orders — at most one per lane (two for Romans, 004 AC13).
+    pub active: Vec<ActiveView>,
     /// Resource-field build rows.
     pub fields: Vec<BuildRow>,
     /// Building build rows.

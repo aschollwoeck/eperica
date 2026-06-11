@@ -6,9 +6,9 @@ use eperica_application::{
     NewBuildOrder, NewUnitOrder, NewUser, RepoError, UnitOrderKind, UnitRepository, UserRecord,
 };
 use eperica_domain::{
-    BuildTarget, BuildingKind, BuildingSlot, Coordinate, PlayerId, ResourceAmounts, ResourceField,
-    ResourceKind, StartingVillage, Timestamp, Tribe, UnitId, Village, VillageId, WorldId,
-    coordinates_within,
+    BuildTarget, BuildingKind, BuildingSlot, Coordinate, PlayerId, QueueLane, ResourceAmounts,
+    ResourceField, ResourceKind, StartingVillage, Timestamp, Tribe, UnitId, Village, VillageId,
+    WorldId, coordinates_within,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use uuid::Uuid;
@@ -388,6 +388,14 @@ impl AccountRepository for PgAccountRepository {
     }
 }
 
+fn lane_str(lane: QueueLane) -> &'static str {
+    match lane {
+        QueueLane::All => "all",
+        QueueLane::Field => "field",
+        QueueLane::Building => "building",
+    }
+}
+
 fn target_columns(target: BuildTarget) -> (&'static str, i16, Option<&'static str>) {
     match target {
         BuildTarget::Field { slot } => ("field", i16::from(slot), None),
@@ -447,8 +455,8 @@ impl BuildRepository for PgAccountRepository {
 
         let insert = sqlx::query(
             "INSERT INTO build_orders \
-             (id, village_id, target_table, slot, building_type, target_level, complete_at, status) \
-             VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7::double precision / 1000.0), 'pending')",
+             (id, village_id, target_table, slot, building_type, target_level, complete_at, status, lane) \
+             VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7::double precision / 1000.0), 'pending', $8)",
         )
         .bind(Uuid::new_v4())
         .bind(vid)
@@ -457,6 +465,7 @@ impl BuildRepository for PgAccountRepository {
         .bind(building_type)
         .bind(i16::from(order.target_level))
         .bind(order.complete_at.0 as f64)
+        .bind(lane_str(order.lane))
         .execute(&mut *tx)
         .await;
         if let Err(e) = insert {
@@ -471,28 +480,32 @@ impl BuildRepository for PgAccountRepository {
         Ok(())
     }
 
-    async fn active_build(&self, village: VillageId) -> Result<Option<ActiveBuild>, RepoError> {
-        let row = sqlx::query(
+    async fn active_builds(&self, village: VillageId) -> Result<Vec<ActiveBuild>, RepoError> {
+        let rows = sqlx::query(
             "SELECT target_table, slot, building_type, target_level, \
              (EXTRACT(EPOCH FROM complete_at) * 1000)::bigint AS complete_ms \
-             FROM build_orders WHERE village_id = $1 AND status = 'pending' LIMIT 1",
+             FROM build_orders WHERE village_id = $1 AND status = 'pending' \
+             ORDER BY complete_at, id",
         )
         .bind(Uuid::from_u128(village.0))
-        .fetch_optional(&self.pool)
+        .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
 
-        let Some(r) = row else { return Ok(None) };
-        let table: String = r.try_get("target_table").map_err(backend)?;
-        let slot: i16 = r.try_get("slot").map_err(backend)?;
-        let building_type: Option<String> = r.try_get("building_type").map_err(backend)?;
-        let target_level: i16 = r.try_get("target_level").map_err(backend)?;
-        let complete_ms: i64 = r.try_get("complete_ms").map_err(backend)?;
-        Ok(Some(ActiveBuild {
-            target: parse_target(&table, slot, building_type)?,
-            target_level: u8::try_from(target_level).unwrap_or(0),
-            complete_at: Timestamp(complete_ms),
-        }))
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let table: String = r.try_get("target_table").map_err(backend)?;
+            let slot: i16 = r.try_get("slot").map_err(backend)?;
+            let building_type: Option<String> = r.try_get("building_type").map_err(backend)?;
+            let target_level: i16 = r.try_get("target_level").map_err(backend)?;
+            let complete_ms: i64 = r.try_get("complete_ms").map_err(backend)?;
+            out.push(ActiveBuild {
+                target: parse_target(&table, slot, building_type)?,
+                target_level: u8::try_from(target_level).unwrap_or(0),
+                complete_at: Timestamp(complete_ms),
+            });
+        }
+        Ok(out)
     }
 
     async fn claim_due_builds(
@@ -1024,6 +1037,7 @@ mod tests {
             target: BuildTarget::Field { slot: 0 },
             target_level: 1,
             complete_at: Timestamp(now.0 + 1000),
+            lane: QueueLane::All,
         };
         let settled = ResourceAmounts {
             wood: 700,
@@ -1036,12 +1050,9 @@ mod tests {
         repo.start_build(village_id, settled, now, order)
             .await
             .expect("start build");
-        let active = repo
-            .active_build(village_id)
-            .await
-            .unwrap()
-            .expect("active");
-        assert_eq!(active.target, BuildTarget::Field { slot: 0 });
+        let active = repo.active_builds(village_id).await.unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].target, BuildTarget::Field { slot: 0 });
         assert_eq!(
             repo.stored_resources(village_id)
                 .await
@@ -1074,6 +1085,110 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// 004 AC13: a Roman village holds one field and one building order concurrently (separate
+    /// lanes), but never two of the same lane; a non-Roman village is limited to one in total
+    /// (single 'all' lane) — both DB-enforced under races by the partial unique index.
+    #[tokio::test]
+    async fn roman_lanes_allow_field_and_building_in_parallel() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping lane test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world_id = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world_id,
+            config.radius,
+            rules.starting_amounts,
+        );
+
+        let now = Timestamp(1_700_000_000_000);
+        let settled = ResourceAmounts {
+            wood: 500,
+            clay: 500,
+            iron: 500,
+            crop: 500,
+        };
+        let order = |target, lane| NewBuildOrder {
+            target,
+            target_level: 1,
+            complete_at: Timestamp(now.0 + 100_000),
+            lane,
+        };
+        let field = BuildTarget::Field { slot: 0 };
+        let building = BuildTarget::Building {
+            slot: 2,
+            kind: BuildingKind::Warehouse,
+        };
+
+        // Roman village: a field order and a building order coexist.
+        let uname = format!("lane_r_{}", Uuid::new_v4().simple());
+        let roman = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Romans,
+                },
+                &crate::starting_village().unwrap(),
+            )
+            .await
+            .expect("create roman");
+        let rv = repo.villages_of(roman.id).await.unwrap()[0].id;
+        repo.start_build(rv, settled, now, order(field, QueueLane::Field))
+            .await
+            .expect("field lane");
+        repo.start_build(rv, settled, now, order(building, QueueLane::Building))
+            .await
+            .expect("building lane runs in parallel");
+        assert_eq!(repo.active_builds(rv).await.unwrap().len(), 2);
+        // A second order in an occupied lane is rejected.
+        assert!(matches!(
+            repo.start_build(
+                rv,
+                settled,
+                now,
+                order(BuildTarget::Field { slot: 1 }, QueueLane::Field)
+            )
+            .await,
+            Err(RepoError::Duplicate)
+        ));
+
+        // Non-Roman village: any second order is rejected (single 'all' lane).
+        let uname = format!("lane_g_{}", Uuid::new_v4().simple());
+        let gaul = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &crate::starting_village().unwrap(),
+            )
+            .await
+            .expect("create gaul");
+        let gv = repo.villages_of(gaul.id).await.unwrap()[0].id;
+        repo.start_build(gv, settled, now, order(field, QueueLane::All))
+            .await
+            .expect("first order");
+        assert!(matches!(
+            repo.start_build(gv, settled, now, order(building, QueueLane::All))
+                .await,
+            Err(RepoError::Duplicate)
+        ));
     }
 
     /// 004 AC6/AC8/AC10/AC12: unit-order lifecycle — one active order per kind (DB-enforced),
@@ -1280,6 +1395,7 @@ mod tests {
                 target: BuildTarget::Field { slot: 1 },
                 target_level: 1,
                 complete_at: Timestamp(now.0 - 1000), // already due at `now`
+                lane: QueueLane::All,
             },
         )
         .await
@@ -1296,7 +1412,7 @@ mod tests {
     }
 
     /// AC5 (building path): constructing a new building in an empty center slot exercises the
-    /// `apply_build` Building arm â€” the `INSERT ... ON CONFLICT` upsert taking its INSERT branch.
+    /// `apply_build` Building arm — the `INSERT ... ON CONFLICT` upsert taking its INSERT branch.
     /// The starting village has only Main Building (slot 0) + Rally Point (slot 1), so building a
     /// Warehouse at slot 2 creates a brand-new row (vs. the Field path, which only ever UPDATEs).
     #[tokio::test]
@@ -1362,6 +1478,7 @@ mod tests {
                 },
                 target_level: 1,
                 complete_at: Timestamp(now.0 - 1000), // already due at `now`
+                lane: QueueLane::All,
             },
         )
         .await

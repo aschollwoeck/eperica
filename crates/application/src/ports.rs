@@ -5,8 +5,8 @@
 
 use async_trait::async_trait;
 use eperica_domain::{
-    BuildTarget, EventKind, PlayerId, ResourceAmounts, StartingVillage, Timestamp, Tribe, UnitId,
-    Village, VillageId,
+    BuildTarget, EventKind, PlayerId, QueueLane, ResourceAmounts, StartingVillage, Timestamp,
+    Tribe, UnitId, Village, VillageId,
 };
 
 /// Details for a new account to be created.
@@ -158,6 +158,8 @@ pub struct NewBuildOrder {
     pub target_level: u8,
     /// When the order completes (Unix-ms UTC).
     pub complete_at: Timestamp,
+    /// The queue lane the order occupies (the Roman trait, 004 AC13) — computed server-side.
+    pub lane: QueueLane,
 }
 
 /// A village's currently-active (pending) build order.
@@ -188,7 +190,8 @@ pub struct DueBuild {
 #[async_trait]
 pub trait BuildRepository: Send + Sync {
     /// Atomically settle the village's resources to `settled` (at `now`) and enqueue `order`. The
-    /// one-active-order rule is enforced by storage; a second active order returns
+    /// one-active-order-per-lane rule is enforced by storage (non-Romans share one lane; Romans
+    /// get a field and a building lane, 004 AC13); a conflicting active order returns
     /// [`RepoError::Duplicate`].
     ///
     /// # Errors
@@ -201,11 +204,11 @@ pub trait BuildRepository: Send + Sync {
         order: NewBuildOrder,
     ) -> Result<(), RepoError>;
 
-    /// The village's active (pending) order, if any.
+    /// The village's active (pending) orders — at most one per lane (so at most two, for Romans).
     ///
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
-    async fn active_build(&self, village: VillageId) -> Result<Option<ActiveBuild>, RepoError>;
+    async fn active_builds(&self, village: VillageId) -> Result<Vec<ActiveBuild>, RepoError>;
 
     /// Atomically claim up to `limit` due orders (`pending` → `processing`), nearest-due first.
     ///

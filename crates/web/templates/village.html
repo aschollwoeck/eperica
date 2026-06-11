@@ -18,11 +18,13 @@
   </ul>
 </section>
 
-{% if let Some(build) = active %}
+{% if !active.is_empty() %}
 <section class="panel">
   <h2>Under construction</h2>
+  {% for build in active %}
   <p>{{ build.label }} → level {{ build.target_level }} —
     completes in <span class="countdown num" data-deadline="{{ build.complete_ms }}">…</span></p>
+  {% endfor %}
 </section>
 {% endif %}
 

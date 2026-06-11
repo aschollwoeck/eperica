@@ -2,7 +2,9 @@
 
 use crate::repo::PgAccountRepository;
 use async_trait::async_trait;
-use eperica_application::{DueEvent, EventStore, RepoError, process_due, process_due_builds};
+use eperica_application::{
+    DueEvent, EventStore, RepoError, process_due, process_due_builds, process_due_unit_orders,
+};
 use eperica_domain::{EventKind, Timestamp};
 use sqlx::{PgPool, Row};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -150,6 +152,13 @@ impl Scheduler {
             Ok(_) => {}
             Err(e) => tracing::error!(error = %e, "failed to requeue orphaned builds"),
         }
+        match self.builds.requeue_orphaned_unit_orders().await {
+            Ok(n) if n > 0 => {
+                tracing::warn!(requeued = n, "requeued orphaned unit orders at startup");
+            }
+            Ok(_) => {}
+            Err(e) => tracing::error!(error = %e, "failed to requeue orphaned unit orders"),
+        }
         loop {
             if *shutdown.borrow() {
                 break;
@@ -163,6 +172,13 @@ impl Scheduler {
                 Ok(n) if n > 0 => tracing::debug!(applied = n, "scheduler applied due builds"),
                 Ok(_) => {}
                 Err(e) => tracing::error!(error = %e, "scheduler build tick failed"),
+            }
+            match process_due_unit_orders(&self.builds, now(), 100).await {
+                Ok(n) if n > 0 => {
+                    tracing::debug!(applied = n, "scheduler applied due unit orders");
+                }
+                Ok(_) => {}
+                Err(e) => tracing::error!(error = %e, "scheduler unit tick failed"),
             }
             tokio::select! {
                 () = tokio::time::sleep(self.poll_interval) => {}

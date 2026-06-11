@@ -37,7 +37,7 @@ Ordered for dependency and testability (pure domain first).
 - [x] **T7 — Use-cases.** `order_research` / `order_smithy_upgrade` (validate → settle/debit/insert)
   with error enums; `process_due_unit_orders`. Fake-based tests: success + every rejection reason
   leaves state untouched (**AC6/AC7/AC10/AC11**).
-- [ ] **T8 — Scheduler & lanes.** Scheduler ticks `process_due_unit_orders` + startup orphan
+- [x] **T8 — Scheduler & lanes.** Scheduler ticks `process_due_unit_orders` + startup orphan
   requeue; `0007_build_lanes.sql` + `order_build` derives lane from tribe (**AC13**). DB tests:
   Roman field+building coexist; same-lane and non-Roman second order → rejected.
 

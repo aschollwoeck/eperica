@@ -17,7 +17,8 @@ use eperica_application::{
     load_economy, order_build, register,
 };
 use eperica_domain::{
-    BuildTarget, BuildingKind, ResourceAmounts, ResourceKind, Village, can_afford,
+    BuildTarget, BuildingKind, QueueLane, ResourceAmounts, ResourceKind, Village, can_afford,
+    queue_lane,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
@@ -270,15 +271,23 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
     let rates = economy.economy.rates;
     let caps = economy.economy.capacities;
 
-    let active = match state.accounts.active_build(village.id).await {
+    let active = match state.accounts.active_builds(village.id).await {
         Ok(a) => a,
         Err(e) => {
             tracing::error!(error = %e, "active build lookup failed");
             return server_error();
         }
     };
-    let has_active = active.is_some();
     let build_rules = state.build_rules.as_ref();
+
+    // A target is orderable only if its queue lane is free — Romans get a field and a building
+    // lane, other tribes one shared lane (004 AC13). Server-side re-validation happens on POST.
+    let tribe = village.tribe;
+    let lane_of = |target: BuildTarget| tribe.map_or(QueueLane::All, |t| queue_lane(t, target));
+    let lane_busy = |target: BuildTarget| {
+        let lane = lane_of(target);
+        active.iter().any(|a| lane_of(a.target) == lane)
+    };
 
     let make_row = |table: &'static str,
                     slot: u8,
@@ -289,7 +298,7 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
      -> BuildRow {
         let cost = build_rules.cost(target, level);
         let at_max = cost.is_none();
-        let can_order = !has_active && cost.is_some_and(|c| can_afford(amounts, c));
+        let can_order = !lane_busy(target) && cost.is_some_and(|c| can_afford(amounts, c));
         let c = cost.unwrap_or(ResourceAmounts {
             wood: 0,
             clay: 0,
@@ -356,11 +365,14 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
     })
     .collect();
 
-    let active_view = active.map(|a| ActiveView {
-        label: target_label(&village, a.target),
-        target_level: a.target_level,
-        complete_ms: a.complete_at.0,
-    });
+    let active_view = active
+        .iter()
+        .map(|a| ActiveView {
+            label: target_label(&village, a.target),
+            target_level: a.target_level,
+            complete_ms: a.complete_at.0,
+        })
+        .collect();
 
     page(&VillageTemplate {
         username: user.username,
