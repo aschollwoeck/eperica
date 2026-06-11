@@ -380,6 +380,82 @@ pub fn per_unit_time_secs(
     ((train_secs as f64 / divisor).round() as i64).max(1)
 }
 
+fn upkeep_of(roster: &[UnitSpec], unit: &UnitId) -> i64 {
+    roster
+        .iter()
+        .find(|s| &s.id == unit)
+        .map_or(0, |s| i64::from(s.crop_upkeep))
+}
+
+/// Per-unit-type counts — a garrison or a casualty list (005).
+pub type UnitCounts = Vec<(UnitId, u32)>;
+
+/// The garrison's total crop consumption per hour (005 AC6). Unknown unit ids count 0.
+pub fn garrison_upkeep(garrison: &[(UnitId, u32)], roster: &[UnitSpec]) -> i64 {
+    garrison
+        .iter()
+        .map(|(unit, count)| upkeep_of(roster, unit).saturating_mul(i64::from(*count)))
+        .sum()
+}
+
+/// Starve a garrison down to a sustainable size (005 AC7, GDD §2.2).
+///
+/// `net_without_troops` is the village's hourly crop balance **before** troop upkeep (fields −
+/// population; pre-speed-scaling — the sign is what matters). Units die deterministically:
+/// repeatedly one unit of the garrisoned type with the **highest `cropUpkeep`** (ties: roster
+/// order) until `net_without_troops − upkeep(remaining) ≥ 0` or no upkeep-bearing unit remains.
+///
+/// Returns `(survivors, casualties)`; both omit zero counts.
+pub fn starve(
+    garrison: &[(UnitId, u32)],
+    roster: &[UnitSpec],
+    net_without_troops: i64,
+) -> (UnitCounts, UnitCounts) {
+    let mut remaining: UnitCounts = garrison.to_vec();
+    // Kill order: highest upkeep first, ties by roster order (kept stable by sorting on the
+    // roster index). Unknown ids sort last and are never culled (upkeep 0).
+    let roster_index = |unit: &UnitId| {
+        roster
+            .iter()
+            .position(|s| &s.id == unit)
+            .unwrap_or(usize::MAX)
+    };
+    remaining.sort_by_key(|(unit, _)| (-upkeep_of(roster, unit), roster_index(unit)));
+
+    let mut deficit = garrison_upkeep(garrison, roster) - net_without_troops;
+    let mut casualties = Vec::new();
+    for (unit, count) in &mut remaining {
+        if deficit <= 0 {
+            break;
+        }
+        let upkeep = upkeep_of(roster, unit);
+        if upkeep <= 0 {
+            break; // only upkeep-bearing units can starve (or help)
+        }
+        // Killing one at a time from this (currently highest-upkeep) type is equivalent to the
+        // bulk count below.
+        let needed = u32::try_from(deficit.div_euclid(upkeep) + i64::from(deficit % upkeep != 0))
+            .unwrap_or(u32::MAX);
+        let killed = needed.min(*count);
+        deficit -= upkeep.saturating_mul(i64::from(killed));
+        *count -= killed;
+        casualties.push((unit.clone(), killed));
+    }
+    remaining.retain(|(_, count)| *count > 0);
+    (remaining, casualties)
+}
+
+/// Seconds until the crop store empties at the current (negative) net rate; `None` when net ≥ 0.
+/// An already-empty store depletes "now" (0 s). Rounded up so the check never fires early.
+pub fn depletion_secs(crop_stored: i64, net_rate_per_hour: i64) -> Option<i64> {
+    if net_rate_per_hour >= 0 {
+        return None;
+    }
+    let deficit = -net_rate_per_hour;
+    let stored = crop_stored.max(0);
+    Some((stored.saturating_mul(3600) + deficit - 1) / deficit)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -636,6 +712,67 @@ mod tests {
         let s2 = GameSpeed::new(2.0).unwrap();
         assert_eq!(per_unit_time_secs(1000, 1, &r, s2), 500);
         assert_eq!(per_unit_time_secs(1, 9, &r, s2), 1); // floor at 1 s
+    }
+
+    // --- 005 AC6: garrison upkeep ---
+    #[test]
+    fn garrison_upkeep_sums_per_unit_consumption() {
+        let mut heavy = unit("knight", None);
+        heavy.crop_upkeep = 3;
+        let light = unit("militia", None); // upkeep 1
+        let roster = vec![light.clone(), heavy.clone()];
+        let garrison = vec![(UnitId("militia".into()), 10), (UnitId("knight".into()), 4)];
+        assert_eq!(garrison_upkeep(&garrison, &roster), 10 + 12);
+        // Unknown ids count 0.
+        assert_eq!(garrison_upkeep(&[(UnitId("ghost".into()), 99)], &roster), 0);
+    }
+
+    // --- 005 AC7: the starvation cull is deterministic, highest-upkeep first ---
+    #[test]
+    fn starve_culls_highest_upkeep_first_until_sustainable() {
+        let mut heavy = unit("knight", None);
+        heavy.crop_upkeep = 3;
+        let light = unit("militia", None); // upkeep 1
+        let roster = vec![light.clone(), heavy.clone()];
+        let garrison = vec![(UnitId("militia".into()), 10), (UnitId("knight".into()), 4)];
+        // Upkeep 22, net without troops 12 => deficit 10: kill 4 knights (12), done.
+        let (survivors, casualties) = starve(&garrison, &roster, 12);
+        assert_eq!(casualties, vec![(UnitId("knight".into()), 4)]);
+        assert_eq!(survivors, vec![(UnitId("militia".into()), 10)]);
+
+        // Deficit 15: 4 knights (12) + 3 militia.
+        let (survivors, casualties) = starve(&garrison, &roster, 7);
+        assert_eq!(
+            casualties,
+            vec![(UnitId("knight".into()), 4), (UnitId("militia".into()), 3)]
+        );
+        assert_eq!(survivors, vec![(UnitId("militia".into()), 7)]);
+
+        // Ties broken by roster order: two upkeep-1 types — the earlier roster entry dies first.
+        let militia2 = unit("levy", None);
+        let roster2 = vec![light.clone(), militia2];
+        let garrison2 = vec![(UnitId("levy".into()), 5), (UnitId("militia".into()), 5)];
+        let (_, casualties) = starve(&garrison2, &roster2, 7); // deficit 3
+        assert_eq!(casualties, vec![(UnitId("militia".into()), 3)]);
+
+        // Net never recoverable (buildings alone overconsume): everything dies, nothing panics.
+        let (survivors, _) = starve(&garrison, &roster, -5);
+        assert!(survivors.is_empty());
+
+        // No deficit: nothing dies.
+        let (survivors, casualties) = starve(&garrison, &roster, 22);
+        assert!(casualties.is_empty());
+        assert_eq!(survivors.len(), 2);
+    }
+
+    // --- 005 AC7: depletion scheduling ---
+    #[test]
+    fn depletion_time_rounds_up_and_handles_signs() {
+        assert_eq!(depletion_secs(100, -100), Some(3600)); // exactly one hour
+        assert_eq!(depletion_secs(100, -101), Some(3565)); // ceil(360000/101)
+        assert_eq!(depletion_secs(0, -10), Some(0)); // already empty
+        assert_eq!(depletion_secs(100, 0), None);
+        assert_eq!(depletion_secs(100, 5), None);
     }
 
     // --- AC14: world speed scales research/upgrade durations ---

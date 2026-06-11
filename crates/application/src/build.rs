@@ -110,6 +110,8 @@ where
         elapsed,
         &village.fields,
         &village.buildings,
+        // 005 T4 wires the garrison's upkeep here once it is persisted.
+        0,
         economy_rules,
         speed,
     )

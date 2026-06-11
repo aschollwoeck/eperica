@@ -463,6 +463,7 @@ mod tests {
         let rates = production_rates(
             sv.fields(),
             sv.buildings(),
+            0,
             &rules,
             GameSpeed::new(1.0).unwrap(),
         );

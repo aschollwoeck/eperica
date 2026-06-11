@@ -29,8 +29,9 @@ pub use event::{EventKind, ScheduledEvent, Timestamp};
 pub use resource::ResourceKind;
 pub use units::{
     MAX_TRAINING_BATCH, MAX_UNIT_LEVEL, ROSTER_SIZE, ResearchDenied, ResearchSpec, SmithyRules,
-    TrainDenied, TrainingRules, UnitId, UnitRole, UnitRules, UnitSpec, UpgradeDenied, batch_cost,
-    can_research, can_train, can_upgrade, per_unit_time_secs, scaled_time_secs,
+    TrainDenied, TrainingRules, UnitCounts, UnitId, UnitRole, UnitRules, UnitSpec, UpgradeDenied,
+    batch_cost, can_research, can_train, can_upgrade, depletion_secs, garrison_upkeep,
+    per_unit_time_secs, scaled_time_secs, starve,
 };
 pub use village::{
     BuildingSlot, PlayerId, RESOURCE_FIELD_COUNT, ResourceField, StartingVillage, Tribe, Village,

@@ -111,9 +111,11 @@ fn scale(base: i64, speed: GameSpeed) -> i64 {
 }
 
 /// Hourly production rates for a village's fields/buildings at the given world speed (P7).
+/// `troop_upkeep` is the garrison's total crop consumption per hour (005 AC6; 0 with no army).
 pub fn production_rates(
     fields: &[ResourceField],
     buildings: &[BuildingSlot],
+    troop_upkeep: i64,
     rules: &EconomyRules,
     speed: GameSpeed,
 ) -> ProductionRates {
@@ -124,7 +126,7 @@ pub fn production_rates(
             .map(|f| rules.field_production(kind, f.level))
             .sum()
     };
-    let crop_base = base(ResourceKind::Crop) - population(fields, buildings, rules);
+    let crop_base = base(ResourceKind::Crop) - population(fields, buildings, rules) - troop_upkeep;
     ProductionRates {
         wood: scale(base(ResourceKind::Wood), speed),
         clay: scale(base(ResourceKind::Clay), speed),
@@ -162,15 +164,17 @@ pub fn accrue(stored: i64, rate_per_hour: i64, elapsed_secs: i64, capacity: i64)
 }
 
 /// Compute the current economy from stored amounts + elapsed time (the read path, P1/P2).
+/// `troop_upkeep` is the garrison's total crop consumption per hour (005 AC6; 0 with no army).
 pub fn compute_economy(
     stored: ResourceAmounts,
     elapsed_secs: i64,
     fields: &[ResourceField],
     buildings: &[BuildingSlot],
+    troop_upkeep: i64,
     rules: &EconomyRules,
     speed: GameSpeed,
 ) -> Economy {
-    let rates = production_rates(fields, buildings, rules, speed);
+    let rates = production_rates(fields, buildings, troop_upkeep, rules, speed);
     let caps = capacities(buildings, rules);
     let amounts = ResourceAmounts {
         wood: accrue(stored.wood, rates.wood, elapsed_secs, caps.warehouse),
@@ -242,8 +246,8 @@ mod tests {
     #[test]
     fn production_scales_with_speed() {
         let fields: Vec<_> = (0..4).map(|_| field(ResourceKind::Wood, 0)).collect();
-        let r1 = production_rates(&fields, &[], &rules(), GameSpeed::new(1.0).unwrap());
-        let r2 = production_rates(&fields, &[], &rules(), GameSpeed::new(2.0).unwrap());
+        let r1 = production_rates(&fields, &[], 0, &rules(), GameSpeed::new(1.0).unwrap());
+        let r2 = production_rates(&fields, &[], 0, &rules(), GameSpeed::new(2.0).unwrap());
         assert_eq!(r1.wood, 40); // 4 fields x 10
         assert_eq!(r2.wood, 80); // doubled
     }
@@ -262,7 +266,13 @@ mod tests {
                 level: 1,
             }, // pop 1
         ];
-        let r = production_rates(&fields, &buildings, &rules(), GameSpeed::new(1.0).unwrap());
+        let r = production_rates(
+            &fields,
+            &buildings,
+            0,
+            &rules(),
+            GameSpeed::new(1.0).unwrap(),
+        );
         assert_eq!(r.crop_net, 60 - 3);
     }
 
@@ -274,10 +284,34 @@ mod tests {
             kind: BuildingKind::MainBuilding,
             level: 1,
         }]; // pop 2
-        let r1 = production_rates(&fields, &buildings, &rules(), GameSpeed::new(1.0).unwrap());
-        let r2 = production_rates(&fields, &buildings, &rules(), GameSpeed::new(2.0).unwrap());
+        let r1 = production_rates(
+            &fields,
+            &buildings,
+            0,
+            &rules(),
+            GameSpeed::new(1.0).unwrap(),
+        );
+        let r2 = production_rates(
+            &fields,
+            &buildings,
+            0,
+            &rules(),
+            GameSpeed::new(2.0).unwrap(),
+        );
         assert_eq!(r1.crop_net, 58);
         assert_eq!(r2.crop_net, 2 * r1.crop_net);
+    }
+
+    // --- 005 AC6: troop upkeep reduces net crop ---
+    #[test]
+    fn crop_net_subtracts_troop_upkeep() {
+        let fields = vec![field(ResourceKind::Crop, 0); 6]; // 60 base
+        let r0 = production_rates(&fields, &[], 0, &rules(), GameSpeed::new(1.0).unwrap());
+        let r25 = production_rates(&fields, &[], 25, &rules(), GameSpeed::new(1.0).unwrap());
+        assert_eq!(r25.crop_net, r0.crop_net - 25);
+        // Upkeep can push the net negative; it scales with speed like the rest (P7).
+        let starving = production_rates(&fields, &[], 100, &rules(), GameSpeed::new(2.0).unwrap());
+        assert_eq!(starving.crop_net, 2 * (60 - 100));
     }
 
     #[test]
@@ -291,7 +325,13 @@ mod tests {
         // add many high-pop fields to force negative:
         let mut fields = fields;
         fields.extend(std::iter::repeat_n(field(ResourceKind::Wood, 2), 10)); // 10 x pop 2 = 20
-        let r = production_rates(&fields, &buildings, &rules(), GameSpeed::new(1.0).unwrap());
+        let r = production_rates(
+            &fields,
+            &buildings,
+            0,
+            &rules(),
+            GameSpeed::new(1.0).unwrap(),
+        );
         assert!(
             r.crop_net < 0,
             "expected negative net crop, got {}",
@@ -314,6 +354,7 @@ mod tests {
             3600,
             &fields,
             &[],
+            0,
             &rules(),
             GameSpeed::new(1.0).unwrap(),
         );
@@ -322,6 +363,7 @@ mod tests {
             3600,
             &fields,
             &[],
+            0,
             &rules(),
             GameSpeed::new(1.0).unwrap(),
         );

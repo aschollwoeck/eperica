@@ -9,7 +9,7 @@ Ordered for dependency and testability (pure domain first).
 - [x] **T1 — Training domain.** `TrainingRules` + `per_unit_time_secs` (building factor + speed),
   `can_train` gates (researched, building present/trainable, count range), `batch_cost`,
   `MAX_TRAINING_BATCH`. Unit tests (**AC3** domain side, **AC4**).
-- [ ] **T2 — Upkeep & starvation domain.** `production_rates`/`compute_economy` gain
+- [x] **T2 — Upkeep & starvation domain.** `production_rates`/`compute_economy` gain
   `troop_upkeep` (call sites updated); `garrison_upkeep`, `starve` (highest-upkeep-first cull,
   exact counts + tie order), `depletion_secs`. Unit tests (**AC6**, **AC7** domain side, **AC8**).
 
