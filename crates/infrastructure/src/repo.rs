@@ -2,11 +2,11 @@
 
 use async_trait::async_trait;
 use eperica_application::{
-    AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BuildRepository, DueBuild,
-    DueMovement, DueTrade, DueTraining, DueUnitOrder, MovementRepository, MovementView,
-    NewBuildOrder, NewTrainingOrder, NewUnitOrder, NewUser, RepoError, StarvationRepository,
-    StationedGroup, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
-    UserRecord, VillageMarker,
+    AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
+    BuildRepository, CombatRepository, DueAttack, DueBuild, DueMovement, DueTrade, DueTraining,
+    DueUnitOrder, MovementRepository, MovementView, NewBuildOrder, NewTrainingOrder, NewUnitOrder,
+    NewUser, RepoError, StarvationRepository, StationedGroup, TradeRepository, TradeView,
+    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 use eperica_domain::{
     BuildTarget, BuildingKind, BuildingSlot, Coordinate, MovementKind, PlayerId, QueueLane,
@@ -1448,6 +1448,48 @@ async fn movement_troops_batch(
     Ok(grouped)
 }
 
+/// Guarded debit from a village garrison within a transaction: for each type, decrement
+/// (`count > n`) or delete the stack (`count == n`) — never UPDATE to 0 (the CHECK forbids it).
+/// Exactly one of the two must affect a row, else the garrison no longer covers the request
+/// (`Conflict`, race-proof, P4). Shared by reinforcement and attack/raid dispatch.
+async fn guarded_debit(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    village: Uuid,
+    troops: &[(UnitId, u32)],
+) -> Result<(), RepoError> {
+    for (unit, n) in troops.iter().filter(|(_, n)| *n > 0) {
+        let n = i32::try_from(*n).unwrap_or(i32::MAX);
+        let dec = sqlx::query(
+            "UPDATE village_units SET count = count - $1 \
+             WHERE village_id = $2 AND unit_id = $3 AND count > $1",
+        )
+        .bind(n)
+        .bind(village)
+        .bind(unit.as_str())
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+        let affected = if dec.rows_affected() == 1 {
+            1
+        } else {
+            sqlx::query(
+                "DELETE FROM village_units WHERE village_id = $1 AND unit_id = $2 AND count = $3",
+            )
+            .bind(village)
+            .bind(unit.as_str())
+            .bind(n)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?
+            .rows_affected()
+        };
+        if affected != 1 {
+            return Err(RepoError::Conflict);
+        }
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl MovementRepository for PgAccountRepository {
     #[allow(clippy::too_many_arguments)]
@@ -1462,48 +1504,11 @@ impl MovementRepository for PgAccountRepository {
         arrive_at: Timestamp,
         troops: &[(UnitId, u32)],
     ) -> Result<(), RepoError> {
-        let home_uuid = Uuid::from_u128(home.0);
         let mut tx = self.pool.begin().await.map_err(backend)?;
-
-        // Guarded debit from the home garrison: for each type, either decrement (count > n) or
-        // delete the stack (count == n) — never UPDATE to 0 (the CHECK forbids it). Exactly one of
-        // the two must affect a row, else the garrison no longer covers the request (race, P4).
-        for (unit, n) in troops.iter().filter(|(_, n)| *n > 0) {
-            let n = i32::try_from(*n).unwrap_or(i32::MAX);
-            let dec = sqlx::query(
-                "UPDATE village_units SET count = count - $1 \
-                 WHERE village_id = $2 AND unit_id = $3 AND count > $1",
-            )
-            .bind(n)
-            .bind(home_uuid)
-            .bind(unit.as_str())
-            .execute(&mut *tx)
-            .await
-            .map_err(backend)?;
-            let affected = if dec.rows_affected() == 1 {
-                1
-            } else {
-                sqlx::query(
-                    "DELETE FROM village_units \
-                     WHERE village_id = $1 AND unit_id = $2 AND count = $3",
-                )
-                .bind(home_uuid)
-                .bind(unit.as_str())
-                .bind(n)
-                .execute(&mut *tx)
-                .await
-                .map_err(backend)?
-                .rows_affected()
-            };
-            if affected != 1 {
-                return Err(RepoError::Conflict);
-            }
-        }
-
-        let movement_id = Uuid::new_v4();
+        guarded_debit(&mut tx, Uuid::from_u128(home.0), troops).await?;
         insert_movement(
             &mut tx,
-            movement_id,
+            Uuid::new_v4(),
             owner,
             MovementKind::Reinforce,
             home,
@@ -1515,7 +1520,6 @@ impl MovementRepository for PgAccountRepository {
             troops,
         )
         .await?;
-
         tx.commit().await.map_err(backend)?;
         Ok(())
     }
@@ -1690,7 +1694,8 @@ impl MovementRepository for PgAccountRepository {
         let rows = sqlx::query(
             "UPDATE troop_movements SET status = 'processing' WHERE id IN ( \
                  SELECT id FROM troop_movements \
-                 WHERE status = 'in_transit' AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
+                 WHERE status = 'in_transit' AND kind IN ('reinforce', 'return') \
+                   AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
                  ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
              ) RETURNING id, kind, home_village, deliver_village",
         )
@@ -2162,9 +2167,349 @@ fn row_bundle(r: &PgRow) -> Result<ResourceAmounts, RepoError> {
     })
 }
 
+/// Serialise a `unit → count` composition as a jsonb object for a battle report.
+fn counts_to_json(counts: &UnitCounts) -> serde_json::Value {
+    serde_json::Value::Object(
+        counts
+            .iter()
+            .map(|(id, c)| (id.as_str().to_owned(), serde_json::Value::from(*c)))
+            .collect(),
+    )
+}
+
+/// Read a `unit → count` composition back from a report's jsonb column.
+fn counts_from_json(value: &serde_json::Value) -> UnitCounts {
+    value
+        .as_object()
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| v.as_u64().map(|n| (UnitId(k.clone()), n as u32)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Subtract `losses` from a village's `village_units`, deleting any stack that runs out (combat
+/// casualties; a stack that grew/left concurrently just loses what remains).
+async fn subtract_units(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    village: Uuid,
+    losses: &UnitCounts,
+) -> Result<(), RepoError> {
+    for (unit, n) in losses.iter().filter(|(_, n)| *n > 0) {
+        let n = i32::try_from(*n).unwrap_or(i32::MAX);
+        let dec = sqlx::query(
+            "UPDATE village_units SET count = count - $1 \
+             WHERE village_id = $2 AND unit_id = $3 AND count > $1",
+        )
+        .bind(n)
+        .bind(village)
+        .bind(unit.as_str())
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+        if dec.rows_affected() == 0 {
+            sqlx::query(
+                "DELETE FROM village_units WHERE village_id = $1 AND unit_id = $2 AND count <= $3",
+            )
+            .bind(village)
+            .bind(unit.as_str())
+            .bind(n)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+    }
+    Ok(())
+}
+
+/// Subtract `losses` from a reinforcement group stationed at `host` from `home`.
+async fn subtract_reinforcements(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    host: Uuid,
+    home: Uuid,
+    losses: &UnitCounts,
+) -> Result<(), RepoError> {
+    for (unit, n) in losses.iter().filter(|(_, n)| *n > 0) {
+        let n = i32::try_from(*n).unwrap_or(i32::MAX);
+        let dec = sqlx::query(
+            "UPDATE reinforcements SET count = count - $1 \
+             WHERE host_village = $2 AND home_village = $3 AND unit_id = $4 AND count > $1",
+        )
+        .bind(n)
+        .bind(host)
+        .bind(home)
+        .bind(unit.as_str())
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+        if dec.rows_affected() == 0 {
+            sqlx::query(
+                "DELETE FROM reinforcements \
+                 WHERE host_village = $1 AND home_village = $2 AND unit_id = $3 AND count <= $4",
+            )
+            .bind(host)
+            .bind(home)
+            .bind(unit.as_str())
+            .bind(n)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+    }
+    Ok(())
+}
+
+/// Map a joined `battle_reports` row to a [`BattleReportView`].
+fn report_from_row(r: &PgRow) -> Result<BattleReportView, RepoError> {
+    let id: Uuid = r.try_get("id").map_err(backend)?;
+    let occurred_ms: i64 = r.try_get("occurred_ms").map_err(backend)?;
+    let kind: String = r.try_get("kind").map_err(backend)?;
+    let ap: Uuid = r.try_get("attacker_player").map_err(backend)?;
+    let dp: Uuid = r.try_get("defender_player").map_err(backend)?;
+    let af: serde_json::Value = r.try_get("attacker_forces").map_err(backend)?;
+    let al: serde_json::Value = r.try_get("attacker_losses").map_err(backend)?;
+    let df: serde_json::Value = r.try_get("defender_forces").map_err(backend)?;
+    let dl: serde_json::Value = r.try_get("defender_losses").map_err(backend)?;
+    Ok(BattleReportView {
+        id: id.as_u128(),
+        occurred_at: Timestamp(occurred_ms),
+        kind: parse_movement_kind(&kind)?,
+        attacker_name: r.try_get("attacker_name").map_err(backend)?,
+        attacker_coord: Coordinate::new(
+            r.try_get("ax").map_err(backend)?,
+            r.try_get("ay").map_err(backend)?,
+        ),
+        defender_name: r.try_get("defender_name").map_err(backend)?,
+        defender_coord: Coordinate::new(
+            r.try_get("dx").map_err(backend)?,
+            r.try_get("dy").map_err(backend)?,
+        ),
+        attacker_player: PlayerId(ap.as_u128()),
+        defender_player: PlayerId(dp.as_u128()),
+        attacker_won: r.try_get("attacker_won").map_err(backend)?,
+        luck: r.try_get("luck").map_err(backend)?,
+        morale: r.try_get("morale").map_err(backend)?,
+        wall_before: u8::try_from(r.try_get::<i32, _>("wall_before").map_err(backend)?)
+            .unwrap_or(0),
+        wall_after: u8::try_from(r.try_get::<i32, _>("wall_after").map_err(backend)?).unwrap_or(0),
+        attacker_forces: counts_from_json(&af),
+        attacker_losses: counts_from_json(&al),
+        defender_forces: counts_from_json(&df),
+        defender_losses: counts_from_json(&dl),
+    })
+}
+
+/// The `SELECT` of a battle report joined to player names + village coordinates (inbox/detail).
+const REPORT_SELECT: &str = "SELECT br.id, \
+    (EXTRACT(EPOCH FROM br.occurred_at) * 1000)::bigint AS occurred_ms, br.kind, \
+    au.username AS attacker_name, av.x AS ax, av.y AS ay, \
+    du.username AS defender_name, dv.x AS dx, dv.y AS dy, \
+    br.attacker_player, br.defender_player, br.attacker_won, br.luck, br.morale, \
+    br.wall_before, br.wall_after, br.attacker_forces, br.attacker_losses, \
+    br.defender_forces, br.defender_losses \
+    FROM battle_reports br \
+    JOIN users au ON au.id = br.attacker_player \
+    JOIN villages av ON av.id = br.attacker_village \
+    JOIN users du ON du.id = br.defender_player \
+    JOIN villages dv ON dv.id = br.defender_village";
+
+#[async_trait]
+impl CombatRepository for PgAccountRepository {
+    #[allow(clippy::too_many_arguments)]
+    async fn start_attack(
+        &self,
+        home: VillageId,
+        deliver: VillageId,
+        owner: PlayerId,
+        origin: Coordinate,
+        dest: Coordinate,
+        now: Timestamp,
+        arrive_at: Timestamp,
+        kind: MovementKind,
+        troops: &[(UnitId, u32)],
+    ) -> Result<(), RepoError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        guarded_debit(&mut tx, Uuid::from_u128(home.0), troops).await?;
+        insert_movement(
+            &mut tx,
+            Uuid::new_v4(),
+            owner,
+            kind,
+            home,
+            deliver,
+            origin,
+            dest,
+            now,
+            arrive_at,
+            troops,
+        )
+        .await?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn claim_due_attacks(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueAttack>, RepoError> {
+        let rows = sqlx::query(
+            "UPDATE troop_movements SET status = 'processing' WHERE id IN ( \
+                 SELECT id FROM troop_movements \
+                 WHERE status = 'in_transit' AND kind IN ('attack', 'raid') \
+                   AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
+                 ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
+             ) RETURNING id, kind, owner_id, home_village, deliver_village, \
+                 origin_x, origin_y, dest_x, dest_y, \
+                 (EXTRACT(EPOCH FROM arrive_at) * 1000)::bigint AS arrive_ms",
+        )
+        .bind(now.0 as f64)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let ids: Vec<Uuid> = rows
+            .iter()
+            .map(|r| r.try_get("id").map_err(backend))
+            .collect::<Result<_, RepoError>>()?;
+        let mut troops = movement_troops_batch(&self.pool, &ids).await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for (r, id) in rows.iter().zip(&ids) {
+            let kind: String = r.try_get("kind").map_err(backend)?;
+            let owner: Uuid = r.try_get("owner_id").map_err(backend)?;
+            let home: Uuid = r.try_get("home_village").map_err(backend)?;
+            let target: Uuid = r.try_get("deliver_village").map_err(backend)?;
+            let arrive_ms: i64 = r.try_get("arrive_ms").map_err(backend)?;
+            out.push(DueAttack {
+                id: id.as_u128(),
+                kind: parse_movement_kind(&kind)?,
+                owner: PlayerId(owner.as_u128()),
+                home_village: VillageId(home.as_u128()),
+                target_village: VillageId(target.as_u128()),
+                origin: Coordinate::new(
+                    r.try_get("origin_x").map_err(backend)?,
+                    r.try_get("origin_y").map_err(backend)?,
+                ),
+                dest: Coordinate::new(
+                    r.try_get("dest_x").map_err(backend)?,
+                    r.try_get("dest_y").map_err(backend)?,
+                ),
+                arrive_at: Timestamp(arrive_ms),
+                troops: troops.remove(id).unwrap_or_default(),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn apply_battle(&self, apply: BattleApply) -> Result<(), RepoError> {
+        let target = Uuid::from_u128(apply.target.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        // Defender casualties: the garrison, then each reinforcement group.
+        subtract_units(&mut tx, target, &apply.defender_losses).await?;
+        for (home, losses) in &apply.reinforcement_losses {
+            subtract_reinforcements(&mut tx, target, Uuid::from_u128(home.0), losses).await?;
+        }
+
+        // The report (visible to both parties).
+        let r = &apply.report;
+        sqlx::query(
+            "INSERT INTO battle_reports \
+             (id, kind, attacker_player, attacker_village, defender_player, defender_village, \
+              attacker_won, luck, morale, wall_before, wall_after, \
+              attacker_forces, attacker_losses, defender_forces, defender_losses) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(movement_kind_str(r.kind))
+        .bind(Uuid::from_u128(r.attacker_player.0))
+        .bind(Uuid::from_u128(r.attacker_village.0))
+        .bind(Uuid::from_u128(r.defender_player.0))
+        .bind(Uuid::from_u128(r.defender_village.0))
+        .bind(r.attacker_won)
+        .bind(r.luck)
+        .bind(r.morale)
+        .bind(i32::from(r.wall_before))
+        .bind(i32::from(r.wall_after))
+        .bind(counts_to_json(&r.attacker_forces))
+        .bind(counts_to_json(&r.attacker_losses))
+        .bind(counts_to_json(&r.defender_forces))
+        .bind(counts_to_json(&r.defender_losses))
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+
+        // The attacker's survivors travel home (a `return` movement rejoins the garrison).
+        if !apply.survivors.is_empty() {
+            insert_movement(
+                &mut tx,
+                Uuid::new_v4(),
+                apply.owner,
+                MovementKind::Return,
+                apply.attacker_home,
+                apply.attacker_home,
+                apply.target_coord,
+                apply.attacker_origin,
+                apply.battle_at,
+                apply.return_arrive,
+                &apply.survivors,
+            )
+            .await?;
+        }
+
+        sqlx::query("UPDATE troop_movements SET status = 'done' WHERE id = $1")
+            .bind(Uuid::from_u128(apply.movement_id))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn reports_for(
+        &self,
+        player: PlayerId,
+        limit: i64,
+    ) -> Result<Vec<BattleReportView>, RepoError> {
+        let sql = format!(
+            "{REPORT_SELECT} WHERE br.attacker_player = $1 OR br.defender_player = $1 \
+             ORDER BY br.occurred_at DESC LIMIT $2"
+        );
+        let rows = sqlx::query(&sql)
+            .bind(Uuid::from_u128(player.0))
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend)?;
+        rows.iter().map(report_from_row).collect()
+    }
+
+    async fn report(
+        &self,
+        id: u128,
+        player: PlayerId,
+    ) -> Result<Option<BattleReportView>, RepoError> {
+        let sql = format!(
+            "{REPORT_SELECT} WHERE br.id = $1 \
+             AND (br.attacker_player = $2 OR br.defender_player = $2)"
+        );
+        let row = sqlx::query(&sql)
+            .bind(Uuid::from_u128(id))
+            .bind(Uuid::from_u128(player.0))
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(backend)?;
+        row.as_ref().map(report_from_row).transpose()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eperica_application::NewBattleReport;
     use eperica_domain::{GameSpeed, WorldConfig};
 
     /// The resources row's last-settled time — the snapshot orders must be computed from.
@@ -2781,6 +3126,180 @@ mod tests {
         let (after, clock) = repo.stored_resources(b.id).await.unwrap().unwrap();
         assert_eq!(clock, Timestamp(T_TARGET), "resource clock regressed");
         assert_eq!(after.wood, 1000);
+    }
+
+    /// 009 AC6/AC7: a raid debits the attacker, claims as due, and `apply_battle` (one tx) reduces
+    /// the defender garrison + reinforcements, schedules the survivor return, marks the attack done,
+    /// and persists a report readable by both parties but not a third.
+    #[tokio::test]
+    async fn combat_apply_battle_and_reports() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping combat test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            rules.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (attacker, a) = account("atk").await;
+        let (defender, d) = account("def").await;
+        let (ally, al) = account("ally").await;
+
+        // Attacker garrison: 10 swordsmen. Defender garrison: 8 phalanx; ally reinforces with 4.
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'swordsman', 10)",
+        )
+        .bind(Uuid::from_u128(a.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 8)",
+        )
+        .bind(Uuid::from_u128(d.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO reinforcements (host_village, home_village, unit_id, count) \
+             VALUES ($1, $2, 'phalanx', 4)",
+        )
+        .bind(Uuid::from_u128(d.id.0))
+        .bind(Uuid::from_u128(al.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // AC1: raid 6 swordsmen — the attacker garrison drops to 4 and an attack is in flight.
+        let now = Timestamp(3_000_000_000_000);
+        let arrive = Timestamp(now.0 + 100_000);
+        let troops = vec![(UnitId("swordsman".into()), 6)];
+        repo.start_attack(
+            a.id,
+            d.id,
+            attacker,
+            a.coordinate,
+            d.coordinate,
+            now,
+            arrive,
+            MovementKind::Raid,
+            &troops,
+        )
+        .await
+        .expect("attack");
+        assert_eq!(
+            repo.garrison(a.id).await.unwrap(),
+            vec![(UnitId("swordsman".into()), 4)]
+        );
+        let due = repo.claim_due_attacks(arrive, 100).await.unwrap();
+        let mine = due
+            .iter()
+            .find(|x| x.home_village == a.id)
+            .expect("due attack");
+        assert_eq!(mine.kind, MovementKind::Raid);
+        assert_eq!(mine.troops, vec![(UnitId("swordsman".into()), 6)]);
+
+        // AC6/AC7: apply a resolved raid — defender loses 4 phalanx, the ally group loses 2, the
+        // attacker keeps 4 survivors (return scheduled), and a report is written.
+        let return_arrive = Timestamp(arrive.0 + 100_000);
+        repo.apply_battle(BattleApply {
+            movement_id: mine.id,
+            owner: attacker,
+            attacker_home: a.id,
+            attacker_origin: a.coordinate,
+            target: d.id,
+            target_coord: d.coordinate,
+            defender_losses: vec![(UnitId("phalanx".into()), 4)],
+            reinforcement_losses: vec![(al.id, vec![(UnitId("phalanx".into()), 2)])],
+            survivors: vec![(UnitId("swordsman".into()), 4)],
+            battle_at: arrive,
+            return_arrive,
+            report: NewBattleReport {
+                kind: MovementKind::Raid,
+                attacker_player: attacker,
+                attacker_village: a.id,
+                defender_player: defender,
+                defender_village: d.id,
+                attacker_won: true,
+                luck: 1.1,
+                morale: 1.0,
+                wall_before: 0,
+                wall_after: 0,
+                attacker_forces: vec![(UnitId("swordsman".into()), 6)],
+                attacker_losses: vec![(UnitId("swordsman".into()), 2)],
+                defender_forces: vec![(UnitId("phalanx".into()), 12)],
+                defender_losses: vec![(UnitId("phalanx".into()), 6)],
+            },
+        })
+        .await
+        .expect("apply battle");
+
+        assert_eq!(
+            repo.garrison(d.id).await.unwrap(),
+            vec![(UnitId("phalanx".into()), 4)] // 8 - 4
+        );
+        let here = repo.reinforcements_at(d.id).await.unwrap();
+        assert_eq!(here[0].troops, vec![(UnitId("phalanx".into()), 2)]); // 4 - 2
+        // The survivor return is in flight to the attacker; the attack movement is done.
+        let returning = repo.active_movements(attacker).await.unwrap();
+        assert!(
+            returning.iter().any(|m| m.kind == MovementKind::Return
+                && m.troops == vec![(UnitId("swordsman".into()), 4)])
+        );
+        assert!(
+            repo.claim_due_attacks(arrive, 100)
+                .await
+                .unwrap()
+                .iter()
+                .all(|x| x.home_village != a.id) // the attack no longer claims
+        );
+
+        // AC7: the report is readable by both parties, not by the ally (a third party).
+        let atk_reports = repo.reports_for(attacker, 50).await.unwrap();
+        assert_eq!(atk_reports.len(), 1);
+        let report_id = atk_reports[0].id;
+        assert!(atk_reports[0].attacker_won);
+        assert_eq!(
+            atk_reports[0].defender_name,
+            repo.find_user_by_id(defender)
+                .await
+                .unwrap()
+                .unwrap()
+                .username
+        );
+        assert_eq!(repo.reports_for(defender, 50).await.unwrap().len(), 1);
+        assert!(repo.reports_for(ally, 50).await.unwrap().is_empty());
+        assert!(repo.report(report_id, attacker).await.unwrap().is_some());
+        assert!(repo.report(report_id, ally).await.unwrap().is_none()); // not a party
     }
 
     #[tokio::test]

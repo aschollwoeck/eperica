@@ -13,7 +13,7 @@ Ordered for dependency and testability (pure domain first).
 
 ## Balance & persistence
 
-- [ ] **T2 — Balance.** `combat.toml` (loss/luck/morale/base + per-tribe wall bonus/durability) +
+- [x] **T2 — Balance.** `combat.toml` (loss/luck/morale/base + per-tribe wall bonus/durability) +
   `combat_rules()`; `[buildings.wall]` + wall population + `BuildingKind::Wall` mappings; `siege` tag
   on siege units → `siege_kind`.
 - [ ] **T3 — Migration + combat repository.** `0012_combat.sql` (widen `kind` CHECK; `battle_reports`
