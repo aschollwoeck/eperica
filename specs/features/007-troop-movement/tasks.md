@@ -20,7 +20,7 @@ Ordered for dependency and testability (pure domain first).
 
 ## Application
 
-- [ ] **T3 — Movement use-cases.** `order_reinforcement`, `order_return` (validate → travel →
+- [x] **T3 — Movement use-cases.** `order_reinforcement`, `order_return` (validate → travel →
   start, re-sync home starvation), `process_due_movements` (claim → apply → re-sync return homes).
   Fake-based tests: send success + every rejection; away-troops lower the garrison (**AC1**, **AC2**,
   **AC6**).
