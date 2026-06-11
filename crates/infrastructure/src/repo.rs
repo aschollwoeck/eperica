@@ -1380,21 +1380,35 @@ fn parse_movement_kind(s: &str) -> Result<MovementKind, RepoError> {
 }
 
 /// Load a movement's troop composition.
-async fn movement_troops(pool: &PgPool, movement: Uuid) -> Result<UnitCounts, RepoError> {
+/// Load the troop composition of several movements in a single query, grouped by movement id
+/// (avoids an N+1 on the `/village` read path and the due-event processor — P11). Returns an empty
+/// composition for any id with no rows.
+async fn movement_troops_batch(
+    pool: &PgPool,
+    movements: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, UnitCounts>, RepoError> {
+    let mut grouped: std::collections::HashMap<Uuid, UnitCounts> = std::collections::HashMap::new();
+    if movements.is_empty() {
+        return Ok(grouped);
+    }
     let rows = sqlx::query(
-        "SELECT unit_id, count FROM movement_troops WHERE movement_id = $1 ORDER BY unit_id",
+        "SELECT movement_id, unit_id, count FROM movement_troops \
+         WHERE movement_id = ANY($1) ORDER BY movement_id, unit_id",
     )
-    .bind(movement)
+    .bind(movements)
     .fetch_all(pool)
     .await
     .map_err(backend)?;
-    rows.iter()
-        .map(|r| {
-            let unit: String = r.try_get("unit_id").map_err(backend)?;
-            let count: i32 = r.try_get("count").map_err(backend)?;
-            Ok((UnitId(unit), u32::try_from(count).unwrap_or(0)))
-        })
-        .collect()
+    for r in &rows {
+        let movement: Uuid = r.try_get("movement_id").map_err(backend)?;
+        let unit: String = r.try_get("unit_id").map_err(backend)?;
+        let count: i32 = r.try_get("count").map_err(backend)?;
+        grouped
+            .entry(movement)
+            .or_default()
+            .push((UnitId(unit), u32::try_from(count).unwrap_or(0)));
+    }
+    Ok(grouped)
 }
 
 #[async_trait]
@@ -1545,9 +1559,14 @@ impl MovementRepository for PgAccountRepository {
         .await
         .map_err(backend)?;
 
+        let ids: Vec<Uuid> = rows
+            .iter()
+            .map(|r| r.try_get("id").map_err(backend))
+            .collect::<Result<_, RepoError>>()?;
+        let mut troops = movement_troops_batch(&self.pool, &ids).await?;
+
         let mut out = Vec::with_capacity(rows.len());
-        for r in &rows {
-            let id: Uuid = r.try_get("id").map_err(backend)?;
+        for (r, id) in rows.iter().zip(&ids) {
             let kind: String = r.try_get("kind").map_err(backend)?;
             let dest_x: i32 = r.try_get("dest_x").map_err(backend)?;
             let dest_y: i32 = r.try_get("dest_y").map_err(backend)?;
@@ -1556,7 +1575,7 @@ impl MovementRepository for PgAccountRepository {
                 kind: parse_movement_kind(&kind)?,
                 destination: Coordinate::new(dest_x, dest_y),
                 arrive_at: Timestamp(arrive_ms),
-                troops: movement_troops(&self.pool, id).await?,
+                troops: troops.remove(id).unwrap_or_default(),
             });
         }
         Ok(out)
@@ -1644,9 +1663,14 @@ impl MovementRepository for PgAccountRepository {
         .await
         .map_err(backend)?;
 
+        let ids: Vec<Uuid> = rows
+            .iter()
+            .map(|r| r.try_get("id").map_err(backend))
+            .collect::<Result<_, RepoError>>()?;
+        let mut troops = movement_troops_batch(&self.pool, &ids).await?;
+
         let mut out = Vec::with_capacity(rows.len());
-        for r in &rows {
-            let id: Uuid = r.try_get("id").map_err(backend)?;
+        for (r, id) in rows.iter().zip(&ids) {
             let kind: String = r.try_get("kind").map_err(backend)?;
             let home: Uuid = r.try_get("home_village").map_err(backend)?;
             let deliver: Uuid = r.try_get("deliver_village").map_err(backend)?;
@@ -1655,7 +1679,7 @@ impl MovementRepository for PgAccountRepository {
                 kind: parse_movement_kind(&kind)?,
                 home_village: VillageId(home.as_u128()),
                 deliver_village: VillageId(deliver.as_u128()),
-                troops: movement_troops(&self.pool, id).await?,
+                troops: troops.remove(id).unwrap_or_default(),
             });
         }
         Ok(out)
@@ -1958,6 +1982,98 @@ mod tests {
             repo.garrison(a.id).await.unwrap(),
             vec![(UnitId("phalanx".into()), 10)]
         );
+    }
+
+    /// 007 AC2/P4: when the garrison no longer covers the request (the guarded debit can't take
+    /// exactly the asked count), the send is rejected with `Conflict` and **nothing** is removed —
+    /// the troops are not partially debited and no movement is created.
+    #[tokio::test]
+    async fn start_reinforcement_over_garrison_removes_nothing() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping guarded-debit test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            rules.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            repo.villages_of(user.id).await.unwrap()[0].clone()
+        };
+        let a = account("grd_snd").await;
+        let b = account("grd_rcv").await;
+
+        // Seed two stacks; request 2 sword (held, debited first) then 4 phalanx (only 3 held). The
+        // first debit succeeds inside the transaction; the second fails, so the whole send must
+        // roll back atomically — the swordsman debit is undone too.
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) \
+             VALUES ($1, 'phalanx', 3), ($1, 'swordsman', 2)",
+        )
+        .bind(Uuid::from_u128(a.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let now = Timestamp(3_000_000_000_000);
+        let arrive = Timestamp(now.0 + 100_000);
+        let over = vec![
+            (UnitId("swordsman".into()), 2),
+            (UnitId("phalanx".into()), 4),
+        ];
+        assert!(matches!(
+            repo.start_reinforcement(
+                a.id,
+                b.id,
+                a.owner,
+                a.coordinate,
+                b.coordinate,
+                now,
+                arrive,
+                &over
+            )
+            .await,
+            Err(RepoError::Conflict)
+        ));
+
+        // Nothing debited (the already-taken swordsman stack was rolled back) and no movement
+        // scheduled.
+        let mut garrison = repo.garrison(a.id).await.unwrap();
+        garrison.sort_by(|x, y| x.0.as_str().cmp(y.0.as_str()));
+        assert_eq!(
+            garrison,
+            vec![
+                (UnitId("phalanx".into()), 3),
+                (UnitId("swordsman".into()), 2),
+            ]
+        );
+        assert!(repo.active_movements(a.owner).await.unwrap().is_empty());
     }
 
     #[tokio::test]

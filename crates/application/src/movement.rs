@@ -157,13 +157,7 @@ where
     A: AccountRepository,
     M: MovementRepository,
 {
-    let Some(home) = accounts.villages_of(owner).await?.into_iter().next() else {
-        return Err(MovementError::NotFound);
-    };
-    let Some(tribe) = home.tribe else {
-        return Err(MovementError::NotFound);
-    };
-    let roster = unit_rules.roster(tribe);
+    let villages = accounts.villages_of(owner).await?;
 
     // The group the owner has stationed at `host`.
     let Some(group) = movements
@@ -174,6 +168,16 @@ where
     else {
         return Err(MovementError::NothingStationed);
     };
+
+    // The troops belong to *this* home village — resolve it exactly (correct once a player can hold
+    // more than one village, 013), not just the owner's first.
+    let Some(home) = villages.iter().find(|v| v.id == group.home_village) else {
+        return Err(MovementError::NotFound);
+    };
+    let Some(tribe) = home.tribe else {
+        return Err(MovementError::NotFound);
+    };
+    let roster = unit_rules.roster(tribe);
 
     let Some(slowest) = slowest_speed(&group.troops, roster) else {
         return Err(MovementError::NothingStationed);
