@@ -210,7 +210,10 @@ where
                 )
                 .await
                 {
-                    Ok(()) => credited.push(leg.target_village),
+                    // Credited — the target's crop rose, so the caller re-syncs its starvation check.
+                    Ok(true) => credited.push(leg.target_village),
+                    // Released after retry exhaustion (nothing credited) — retried next tick.
+                    Ok(false) => {}
                     // Log-and-continue: a failed apply leaves the leg `processing`, recovered by the
                     // startup orphan requeue and re-applied (delivery is exactly-once under the guard).
                     Err(e) => tracing::error!(error = %e, "failed to deliver due trade"),
@@ -227,7 +230,8 @@ where
 }
 
 /// Deliver one due shipment: credit the target capped to its storage and schedule the empty return.
-/// Retries the optimistic credit a few times if the target's stores move underneath it.
+/// Retries the optimistic credit a few times if the target's stores move underneath it. Returns
+/// `true` if the target was credited, `false` if the leg was released back for a later retry.
 #[allow(clippy::too_many_arguments)]
 async fn deliver<A, T>(
     accounts: &A,
@@ -238,14 +242,15 @@ async fn deliver<A, T>(
     map: &WorldMap,
     speed: GameSpeed,
     leg: &DueTrade,
-) -> Result<(), RepoError>
+) -> Result<bool, RepoError>
 where
     A: AccountRepository,
     T: TradeRepository,
 {
     let Some(target) = accounts.village_by_id(leg.target_village).await? else {
         // The target was deleted (its trade rows cascade with it); nothing to credit.
-        return trades.complete_trade(leg.id).await;
+        trades.complete_trade(leg.id).await?;
+        return Ok(false);
     };
     // The return is paced by the sender's merchant speed; it departs at the delivery instant (P2).
     let Some(home) = accounts.village_by_id(leg.home_village).await? else {
@@ -283,7 +288,7 @@ where
             .deliver_and_schedule_return(leg, credited, snapshot, credit_clock, return_arrive)
             .await
         {
-            Ok(()) => return Ok(()),
+            Ok(()) => return Ok(true),
             Err(RepoError::Conflict) => continue, // the target settled concurrently — re-read & retry
             Err(e) => return Err(e),
         }
@@ -291,7 +296,7 @@ where
     // Persistent contention: hand the leg back to `in_transit` so the next tick retries it (its
     // merchants stay committed meanwhile), rather than stranding it in `processing` until restart.
     trades.release_trade(leg.id).await?;
-    Ok(())
+    Ok(false)
 }
 
 /// A village garrison's crop upkeep (for settling its net crop), 0 for a tribe-less village.
@@ -514,6 +519,12 @@ mod tests {
     struct FakeTrades {
         committed: u32,
         sent: Mutex<Option<Sent>>,
+        /// Legs returned (once) by `claim_due_trades`.
+        claim: Mutex<Vec<DueTrade>>,
+        /// When set, every `deliver_and_schedule_return` fails with `Conflict` (drives the retry path).
+        conflict: bool,
+        /// Leg ids handed back via `release_trade`.
+        released: Mutex<Vec<u128>>,
     }
 
     #[async_trait]
@@ -553,22 +564,27 @@ mod tests {
             _now: Timestamp,
             _limit: i64,
         ) -> Result<Vec<DueTrade>, RepoError> {
-            Ok(Vec::new())
+            Ok(std::mem::take(&mut self.claim.lock().unwrap()))
         }
         async fn deliver_and_schedule_return(
             &self,
             _due: &DueTrade,
             _target_settled: ResourceAmounts,
             _target_from: Timestamp,
-            _deliver_arrive: Timestamp,
+            _credit_clock: Timestamp,
             _return_arrive: Timestamp,
         ) -> Result<(), RepoError> {
-            Ok(())
+            if self.conflict {
+                Err(RepoError::Conflict)
+            } else {
+                Ok(())
+            }
         }
         async fn complete_trade(&self, _id: u128) -> Result<(), RepoError> {
             Ok(())
         }
-        async fn release_trade(&self, _id: u128) -> Result<(), RepoError> {
+        async fn release_trade(&self, id: u128) -> Result<(), RepoError> {
+            self.released.lock().unwrap().push(id);
             Ok(())
         }
     }
@@ -700,5 +716,44 @@ mod tests {
             Err(TradeError::SameTile)
         );
         assert!(tr.sent.lock().unwrap().is_none());
+    }
+
+    // AC4 liveness: a deliver that loses the optimistic credit every retry releases the leg back to
+    // in_transit (for the next tick) instead of stranding it, and does not count as credited.
+    #[tokio::test]
+    async fn deliver_releases_the_leg_when_credit_keeps_conflicting() {
+        let acc = accounts(amounts(1000), 5, None);
+        let leg = DueTrade {
+            id: 42,
+            kind: TradeKind::Deliver,
+            owner: PlayerId(1),
+            home_village: VillageId(1),
+            target_village: VillageId(2),
+            origin: Coordinate::new(0, 0),
+            dest: Coordinate::new(3, 4),
+            arrive_at: Timestamp(1000),
+            bundle: bundle(300, 0, 0, 0),
+            merchants: 1,
+        };
+        let tr = FakeTrades {
+            claim: Mutex::new(vec![leg]),
+            conflict: true,
+            ..FakeTrades::default()
+        };
+        let credited = process_due_trades(
+            &acc,
+            &tr,
+            &economy_rules(),
+            &unit_rules(),
+            &merchant_rules(),
+            &map(),
+            GameSpeed::new(1.0).unwrap(),
+            Timestamp(2000),
+            100,
+        )
+        .await
+        .unwrap();
+        assert!(credited.is_empty()); // nothing credited
+        assert_eq!(*tr.released.lock().unwrap(), vec![42]); // handed back for a retry
     }
 }
