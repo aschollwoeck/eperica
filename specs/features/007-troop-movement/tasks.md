@@ -39,7 +39,7 @@ Ordered for dependency and testability (pure domain first).
 - [x] **T7 — Technical docs.** rustdoc; `docs/architecture/0009-troop-movement.md`; `CLAUDE.md`
   active slice.
 - [x] **T8 — End-user docs.** `docs/manual/` movement guide; link from index.
-- [ ] **T9 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
+- [x] **T9 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
   **APPROVE**; PR.
 
 ## Done when

@@ -1,6 +1,6 @@
 # Feature 007 — Troop movement & travel — Technical Plan
 
-**Status:** Reviewed
+**Status:** Verified
 **Spec:** ./spec.md
 
 The movement engine: a new due-event queue (movements) over the 005 garrison and the 006 distance.

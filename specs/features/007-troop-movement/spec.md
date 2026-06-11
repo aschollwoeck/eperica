@@ -1,6 +1,6 @@
 # Feature 007 — Troop movement & travel
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 005 (garrison, units, upkeep), 006 (map, toroidal distance)
 **Roadmap:** M3 · slice 007 · GDD §8 — the movement engine, before combat rides on it (009).
 
