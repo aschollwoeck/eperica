@@ -29,7 +29,7 @@ Ordered for dependency and testability (pure domain first).
 
 ## Application
 
-- [ ] **T6 — Viewport use-case.** `map_viewport(map, center, half, markers) -> Viewport` (wrapping
+- [x] **T6 — Viewport use-case.** `map_viewport(map, center, half, markers) -> Viewport` (wrapping
   cells, overlaying markers). Fake-based tests: grid extent, wrap at edges, marker overlay (**AC7**
   assembly side).
 

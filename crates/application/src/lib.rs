@@ -7,6 +7,7 @@
 pub mod auth;
 pub mod build;
 pub mod economy;
+pub mod map;
 pub mod ports;
 pub mod register;
 pub mod scheduler;
@@ -22,6 +23,7 @@ pub use eperica_domain as domain;
 pub use auth::{LoginError, authenticate};
 pub use build::{BuildError, order_build, process_due_builds};
 pub use economy::{VillageEconomy, load_economy};
+pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
 pub use ports::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BuildRepository, DueBuild,
     DueEvent, DueTraining, DueUnitOrder, EventStore, NewBuildOrder, NewTrainingOrder, NewUnitOrder,
