@@ -11,6 +11,7 @@ pub mod economy;
 pub mod error;
 pub mod event;
 pub mod map;
+pub mod movement;
 pub mod resource;
 pub mod units;
 pub mod village;
@@ -28,6 +29,7 @@ pub use economy::{
 pub use error::DomainError;
 pub use event::{EventKind, ScheduledEvent, Timestamp};
 pub use map::{FieldDistribution, MapRules, OasisBonus, TileKind, Weighted, WorldMap};
+pub use movement::{MovementKind, slowest_speed, travel_time_secs, travel_time_secs_floored};
 pub use resource::ResourceKind;
 pub use units::{
     MAX_TRAINING_BATCH, MAX_UNIT_LEVEL, ROSTER_SIZE, ResearchDenied, ResearchSpec, SmithyRules,

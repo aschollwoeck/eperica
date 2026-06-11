@@ -6,7 +6,7 @@ Ordered for dependency and testability (pure domain first).
 
 ## Domain (pure, test-first)
 
-- [ ] **T1 — Travel domain.** `movement.rs`: `MovementKind`, `slowest_speed`, `travel_time_secs`
+- [x] **T1 — Travel domain.** `movement.rs`: `MovementKind`, `slowest_speed`, `travel_time_secs`
   (distance ÷ (slowest × world speed), 1 s floor). Unit tests: scaling with distance / world speed
   / slowest unit; min-speed pick (**AC3**).
 
