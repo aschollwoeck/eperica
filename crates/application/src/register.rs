@@ -1,7 +1,7 @@
 //! The register use-case: create an account and its starting village.
 
 use crate::ports::{AccountRepository, NewUser, PasswordHasher, RepoError, UserRecord};
-use eperica_domain::StartingVillage;
+use eperica_domain::{StartingVillage, Tribe};
 
 /// Input to [`register`].
 #[derive(Debug, Clone)]
@@ -12,6 +12,8 @@ pub struct RegisterCommand {
     pub email: String,
     /// Plaintext password (hashed before storage).
     pub password: String,
+    /// The chosen tribe, as its slug (validated server-side, 004 AC1).
+    pub tribe: String,
 }
 
 /// Why a registration attempt failed.
@@ -37,7 +39,8 @@ impl From<RepoError> for RegisterError {
         match e {
             RepoError::Duplicate => RegisterError::Taken,
             RepoError::WorldFull => RegisterError::WorldFull,
-            RepoError::Backend(s) => RegisterError::Backend(s),
+            // Registration performs no optimistic settle; treat a conflict as a backend anomaly.
+            RepoError::Conflict | RepoError::Backend(_) => RegisterError::Backend(e.to_string()),
         }
     }
 }
@@ -60,13 +63,14 @@ where
     R: AccountRepository,
     H: PasswordHasher,
 {
-    validate(&cmd)?;
+    let tribe = validate(&cmd)?;
     let password_hash = hasher.hash(&cmd.password)?;
     let new_user = NewUser {
         username: cmd.username.trim().to_owned(),
         email: cmd.email.trim().to_owned(),
         password_hash,
         email_confirmed: !require_email_confirmation,
+        tribe,
     };
     Ok(accounts.create_account(new_user, template).await?)
 }
@@ -76,8 +80,8 @@ const MAX_USERNAME_LEN: usize = 32;
 /// Minimum allowed password length.
 const MIN_PASSWORD_LEN: usize = 8;
 
-/// Validate registration input server-side (P4).
-fn validate(cmd: &RegisterCommand) -> Result<(), RegisterError> {
+/// Validate registration input server-side (P4); returns the parsed tribe (004 AC1).
+fn validate(cmd: &RegisterCommand) -> Result<Tribe, RegisterError> {
     let username = cmd.username.trim();
     if username.is_empty() || username.chars().count() > MAX_USERNAME_LEN {
         return Err(RegisterError::Invalid(format!(
@@ -94,7 +98,8 @@ fn validate(cmd: &RegisterCommand) -> Result<(), RegisterError> {
             "password must be at least {MIN_PASSWORD_LEN} characters"
         )));
     }
-    Ok(())
+    Tribe::from_slug(cmd.tribe.trim())
+        .ok_or_else(|| RegisterError::Invalid("choose a tribe to play".to_owned()))
 }
 
 /// Minimal email shape check: exactly one `@`, non-empty local part, a dotted domain, no whitespace.

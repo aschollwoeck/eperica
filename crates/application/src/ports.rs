@@ -5,8 +5,8 @@
 
 use async_trait::async_trait;
 use eperica_domain::{
-    BuildTarget, EventKind, PlayerId, ResourceAmounts, StartingVillage, Timestamp, Village,
-    VillageId,
+    BuildTarget, EventKind, PlayerId, QueueLane, ResourceAmounts, StartingVillage, Timestamp,
+    Tribe, UnitId, Village, VillageId,
 };
 
 /// Details for a new account to be created.
@@ -20,6 +20,8 @@ pub struct NewUser {
     pub password_hash: String,
     /// Whether the account is considered email-confirmed at creation.
     pub email_confirmed: bool,
+    /// The tribe chosen at registration (immutable thereafter, 004 AC1/AC2).
+    pub tribe: Tribe,
 }
 
 /// A persisted account.
@@ -35,6 +37,8 @@ pub struct UserRecord {
     pub password_hash: String,
     /// Whether the email has been confirmed.
     pub email_confirmed: bool,
+    /// The account's tribe (chosen at registration; pre-004 accounts were backfilled).
+    pub tribe: Tribe,
 }
 
 /// Errors a repository/port can return to the application.
@@ -43,6 +47,10 @@ pub enum RepoError {
     /// A uniqueness constraint was violated (e.g. duplicate username or email).
     #[error("a unique constraint was violated")]
     Duplicate,
+    /// The state the caller computed from changed concurrently (optimistic check failed); the
+    /// operation was not applied and can be retried from a fresh read.
+    #[error("the state changed concurrently; retry")]
+    Conflict,
     /// No free tile remained to place a starting village.
     #[error("the world is full")]
     WorldFull,
@@ -154,6 +162,8 @@ pub struct NewBuildOrder {
     pub target_level: u8,
     /// When the order completes (Unix-ms UTC).
     pub complete_at: Timestamp,
+    /// The queue lane the order occupies (the Roman trait, 004 AC13) — computed server-side.
+    pub lane: QueueLane,
 }
 
 /// A village's currently-active (pending) build order.
@@ -184,8 +194,14 @@ pub struct DueBuild {
 #[async_trait]
 pub trait BuildRepository: Send + Sync {
     /// Atomically settle the village's resources to `settled` (at `now`) and enqueue `order`. The
-    /// one-active-order rule is enforced by storage; a second active order returns
+    /// one-active-order-per-lane rule is enforced by storage (non-Romans share one lane; Romans
+    /// get a field and a building lane, 004 AC13); a conflicting active order returns
     /// [`RepoError::Duplicate`].
+    ///
+    /// `settled` was computed from the snapshot read at `settled_from` (the resources row's
+    /// last-settled time); the settle applies **only if the row is still at that snapshot**,
+    /// otherwise [`RepoError::Conflict`] — so concurrent orders on different queues can never
+    /// overwrite each other's debit (P2/P4).
     ///
     /// # Errors
     /// [`RepoError`] on conflict or storage failure.
@@ -193,15 +209,16 @@ pub trait BuildRepository: Send + Sync {
         &self,
         village: VillageId,
         settled: ResourceAmounts,
+        settled_from: Timestamp,
         now: Timestamp,
         order: NewBuildOrder,
     ) -> Result<(), RepoError>;
 
-    /// The village's active (pending) order, if any.
+    /// The village's active (pending) orders — at most one per lane (so at most two, for Romans).
     ///
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
-    async fn active_build(&self, village: VillageId) -> Result<Option<ActiveBuild>, RepoError>;
+    async fn active_builds(&self, village: VillageId) -> Result<Vec<ActiveBuild>, RepoError>;
 
     /// Atomically claim up to `limit` due orders (`pending` → `processing`), nearest-due first.
     ///
@@ -218,4 +235,116 @@ pub trait BuildRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn apply_build(&self, due: DueBuild) -> Result<(), RepoError>;
+}
+
+/// Which per-village unit queue an order occupies (004): each kind allows **one** active order per
+/// village, independently of the other and of the construction queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnitOrderKind {
+    /// Academy research of a unit type (AC6).
+    Research,
+    /// Smithy upgrade of a researched unit type by one level (AC10).
+    SmithyUpgrade,
+}
+
+/// A new research/upgrade order to enqueue.
+#[derive(Debug, Clone)]
+pub struct NewUnitOrder {
+    /// Which queue this order occupies.
+    pub kind: UnitOrderKind,
+    /// The unit type being researched/upgraded.
+    pub unit: UnitId,
+    /// The level reached on completion (Smithy upgrades); `None` for research.
+    pub target_level: Option<u8>,
+    /// When the order completes (Unix-ms UTC).
+    pub complete_at: Timestamp,
+}
+
+/// A village's currently-active (pending) research/upgrade order.
+#[derive(Debug, Clone)]
+pub struct ActiveUnitOrder {
+    /// Which queue the order occupies.
+    pub kind: UnitOrderKind,
+    /// The unit type being researched/upgraded.
+    pub unit: UnitId,
+    /// The level reached on completion (Smithy upgrades); `None` for research.
+    pub target_level: Option<u8>,
+    /// Completion time (Unix-ms UTC).
+    pub complete_at: Timestamp,
+}
+
+/// A claimed, due research/upgrade order ready to apply.
+#[derive(Debug, Clone)]
+pub struct DueUnitOrder {
+    /// Order identity.
+    pub id: u128,
+    /// The village it belongs to.
+    pub village: VillageId,
+    /// Which queue it occupied.
+    pub kind: UnitOrderKind,
+    /// The unit type to mark researched / level up.
+    pub unit: UnitId,
+    /// The level to set (Smithy upgrades); `None` for research.
+    pub target_level: Option<u8>,
+}
+
+/// Persistence for the per-village unit queues (research + Smithy upgrades; due-events, P1).
+#[async_trait]
+pub trait UnitRepository: Send + Sync {
+    /// Atomically settle the village's resources to `settled` (at `now`) and enqueue `order`. The
+    /// one-active-order-per-kind rule is enforced by storage; a second active order of the same
+    /// kind returns [`RepoError::Duplicate`] (AC6/AC10, P4).
+    ///
+    /// `settled` was computed from the snapshot read at `settled_from`; the settle applies **only
+    /// if the row is still at that snapshot**, otherwise [`RepoError::Conflict`] (see
+    /// [`BuildRepository::start_build`]).
+    ///
+    /// # Errors
+    /// [`RepoError`] on conflict or storage failure.
+    async fn start_unit_order(
+        &self,
+        village: VillageId,
+        settled: ResourceAmounts,
+        settled_from: Timestamp,
+        now: Timestamp,
+        order: NewUnitOrder,
+    ) -> Result<(), RepoError>;
+
+    /// The village's active (pending) unit orders — at most one per [`UnitOrderKind`].
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn active_unit_orders(
+        &self,
+        village: VillageId,
+    ) -> Result<Vec<ActiveUnitOrder>, RepoError>;
+
+    /// Unit types researched in this village (beyond the tier-1 implicit one).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn researched_units(&self, village: VillageId) -> Result<Vec<UnitId>, RepoError>;
+
+    /// Current Smithy upgrade level per unit type (absent = level 0).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn unit_levels(&self, village: VillageId) -> Result<Vec<(UnitId, u8)>, RepoError>;
+
+    /// Atomically claim up to `limit` due unit orders (`pending` → `processing`), nearest-due first.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn claim_due_unit_orders(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueUnitOrder>, RepoError>;
+
+    /// Apply a claimed order (mark researched / set the unit level) and mark it done (idempotent;
+    /// AC8/AC12).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn apply_unit_order(&self, due: DueUnitOrder) -> Result<(), RepoError>;
 }

@@ -2,13 +2,13 @@
 
 use async_trait::async_trait;
 use eperica_application::{
-    AccountRepository, ActiveBuild, BuildRepository, DueBuild, NewBuildOrder, NewUser, RepoError,
-    UserRecord,
+    AccountRepository, ActiveBuild, ActiveUnitOrder, BuildRepository, DueBuild, DueUnitOrder,
+    NewBuildOrder, NewUnitOrder, NewUser, RepoError, UnitOrderKind, UnitRepository, UserRecord,
 };
 use eperica_domain::{
-    BuildTarget, BuildingKind, BuildingSlot, Coordinate, PlayerId, ResourceAmounts, ResourceField,
-    ResourceKind, StartingVillage, Timestamp, Tribe, Village, VillageId, WorldId,
-    coordinates_within,
+    BuildTarget, BuildingKind, BuildingSlot, Coordinate, PlayerId, QueueLane, ResourceAmounts,
+    ResourceField, ResourceKind, StartingVillage, Timestamp, Tribe, UnitId, Village, VillageId,
+    WorldId, coordinates_within,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use uuid::Uuid;
@@ -49,6 +49,17 @@ impl PgAccountRepository {
                 .map_err(backend)?;
         Ok(result.rows_affected())
     }
+
+    /// Reset unit orders stuck in `processing` back to `pending` (crash recovery).
+    /// `apply_unit_order` is idempotent, so reprocessing is safe.
+    pub async fn requeue_orphaned_unit_orders(&self) -> Result<u64, RepoError> {
+        let result =
+            sqlx::query("UPDATE unit_orders SET status = 'pending' WHERE status = 'processing'")
+                .execute(&self.pool)
+                .await
+                .map_err(backend)?;
+        Ok(result.rows_affected())
+    }
 }
 
 fn backend(e: sqlx::Error) -> RepoError {
@@ -74,6 +85,12 @@ fn building_str(kind: BuildingKind) -> &'static str {
         BuildingKind::RallyPoint => "rally_point",
         BuildingKind::Warehouse => "warehouse",
         BuildingKind::Granary => "granary",
+        BuildingKind::Barracks => "barracks",
+        BuildingKind::Academy => "academy",
+        BuildingKind::Smithy => "smithy",
+        BuildingKind::Stable => "stable",
+        BuildingKind::Workshop => "workshop",
+        BuildingKind::Residence => "residence",
     }
 }
 
@@ -95,6 +112,12 @@ fn parse_building(s: &str) -> Result<BuildingKind, RepoError> {
         "rally_point" => Ok(BuildingKind::RallyPoint),
         "warehouse" => Ok(BuildingKind::Warehouse),
         "granary" => Ok(BuildingKind::Granary),
+        "barracks" => Ok(BuildingKind::Barracks),
+        "academy" => Ok(BuildingKind::Academy),
+        "smithy" => Ok(BuildingKind::Smithy),
+        "stable" => Ok(BuildingKind::Stable),
+        "workshop" => Ok(BuildingKind::Workshop),
+        "residence" => Ok(BuildingKind::Residence),
         other => Err(RepoError::Backend(format!(
             "unknown building_type: {other}"
         ))),
@@ -113,12 +136,16 @@ fn parse_tribe(s: Option<String>) -> Result<Option<Tribe>, RepoError> {
 
 fn row_to_user(r: &PgRow) -> Result<UserRecord, RepoError> {
     let id: Uuid = r.try_get("id").map_err(backend)?;
+    let tribe_str: String = r.try_get("tribe").map_err(backend)?;
+    let tribe = Tribe::from_slug(&tribe_str)
+        .ok_or_else(|| RepoError::Backend(format!("unknown tribe: {tribe_str}")))?;
     Ok(UserRecord {
         id: PlayerId(id.as_u128()),
         username: r.try_get("username").map_err(backend)?,
         email: r.try_get("email").map_err(backend)?,
         password_hash: r.try_get("password_hash").map_err(backend)?,
         email_confirmed: r.try_get("email_confirmed").map_err(backend)?,
+        tribe,
     })
 }
 
@@ -133,14 +160,15 @@ impl AccountRepository for PgAccountRepository {
 
         let user_id = Uuid::new_v4();
         let insert_user = sqlx::query(
-            "INSERT INTO users (id, username, email, password_hash, email_confirmed) \
-             VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO users (id, username, email, password_hash, email_confirmed, tribe) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(user_id)
         .bind(&user.username)
         .bind(&user.email)
         .bind(&user.password_hash)
         .bind(user.email_confirmed)
+        .bind(user.tribe.slug())
         .execute(&mut *tx)
         .await;
         if let Err(e) = insert_user {
@@ -159,7 +187,13 @@ impl AccountRepository for PgAccountRepository {
         let mut placed = false;
         for coord in coordinates_within(self.radius) {
             let village_uuid = Uuid::new_v4();
-            let village = Village::found(VillageId(village_uuid.as_u128()), owner, coord, template);
+            let village = Village::found(
+                VillageId(village_uuid.as_u128()),
+                owner,
+                coord,
+                user.tribe,
+                template,
+            );
 
             let mut sp = tx.begin().await.map_err(backend)?;
             let insert_village = sqlx::query(
@@ -171,7 +205,7 @@ impl AccountRepository for PgAccountRepository {
             .bind(user_id)
             .bind(coord.x)
             .bind(coord.y)
-            .bind(Option::<String>::None)
+            .bind(user.tribe.slug())
             .execute(&mut *sp)
             .await;
 
@@ -238,12 +272,13 @@ impl AccountRepository for PgAccountRepository {
             email: user.email,
             password_hash: user.password_hash,
             email_confirmed: user.email_confirmed,
+            tribe: user.tribe,
         })
     }
 
     async fn find_user_by_username(&self, username: &str) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
-            "SELECT id, username, email, password_hash, email_confirmed FROM users WHERE username = $1",
+            "SELECT id, username, email, password_hash, email_confirmed, tribe FROM users WHERE username = $1",
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -254,7 +289,7 @@ impl AccountRepository for PgAccountRepository {
 
     async fn find_user_by_id(&self, id: PlayerId) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
-            "SELECT id, username, email, password_hash, email_confirmed FROM users WHERE id = $1",
+            "SELECT id, username, email, password_hash, email_confirmed, tribe FROM users WHERE id = $1",
         )
         .bind(Uuid::from_u128(id.0))
         .fetch_optional(&self.pool)
@@ -353,6 +388,14 @@ impl AccountRepository for PgAccountRepository {
     }
 }
 
+fn lane_str(lane: QueueLane) -> &'static str {
+    match lane {
+        QueueLane::All => "all",
+        QueueLane::Field => "field",
+        QueueLane::Building => "building",
+    }
+}
+
 fn target_columns(target: BuildTarget) -> (&'static str, i16, Option<&'static str>) {
     match target {
         BuildTarget::Field { slot } => ("field", i16::from(slot), None),
@@ -389,6 +432,7 @@ impl BuildRepository for PgAccountRepository {
         &self,
         village: VillageId,
         settled: ResourceAmounts,
+        settled_from: Timestamp,
         now: Timestamp,
         order: NewBuildOrder,
     ) -> Result<(), RepoError> {
@@ -396,9 +440,14 @@ impl BuildRepository for PgAccountRepository {
         let vid = Uuid::from_u128(village.0);
         let mut tx = self.pool.begin().await.map_err(backend)?;
 
-        sqlx::query(
+        // Optimistic settle: only applies if the row is still at the snapshot the caller computed
+        // `settled` from — a concurrent order on another queue cannot have its debit overwritten
+        // (P2/P4). The comparison uses the same ms expression `stored_resources` reads.
+        let updated = sqlx::query(
             "UPDATE village_resources SET wood=$1, clay=$2, iron=$3, crop=$4, \
-             updated_at = to_timestamp($5::double precision / 1000.0) WHERE village_id=$6",
+             updated_at = to_timestamp($5::double precision / 1000.0) \
+             WHERE village_id=$6 \
+               AND (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint = $7",
         )
         .bind(settled.wood)
         .bind(settled.clay)
@@ -406,14 +455,19 @@ impl BuildRepository for PgAccountRepository {
         .bind(settled.crop)
         .bind(now.0 as f64)
         .bind(vid)
+        .bind(settled_from.0)
         .execute(&mut *tx)
         .await
         .map_err(backend)?;
+        if updated.rows_affected() == 0 {
+            // Also covers a missing resources row — callers just read it, so that is unreachable.
+            return Err(RepoError::Conflict);
+        }
 
         let insert = sqlx::query(
             "INSERT INTO build_orders \
-             (id, village_id, target_table, slot, building_type, target_level, complete_at, status) \
-             VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7::double precision / 1000.0), 'pending')",
+             (id, village_id, target_table, slot, building_type, target_level, complete_at, status, lane) \
+             VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7::double precision / 1000.0), 'pending', $8)",
         )
         .bind(Uuid::new_v4())
         .bind(vid)
@@ -422,6 +476,7 @@ impl BuildRepository for PgAccountRepository {
         .bind(building_type)
         .bind(i16::from(order.target_level))
         .bind(order.complete_at.0 as f64)
+        .bind(lane_str(order.lane))
         .execute(&mut *tx)
         .await;
         if let Err(e) = insert {
@@ -436,28 +491,32 @@ impl BuildRepository for PgAccountRepository {
         Ok(())
     }
 
-    async fn active_build(&self, village: VillageId) -> Result<Option<ActiveBuild>, RepoError> {
-        let row = sqlx::query(
+    async fn active_builds(&self, village: VillageId) -> Result<Vec<ActiveBuild>, RepoError> {
+        let rows = sqlx::query(
             "SELECT target_table, slot, building_type, target_level, \
              (EXTRACT(EPOCH FROM complete_at) * 1000)::bigint AS complete_ms \
-             FROM build_orders WHERE village_id = $1 AND status = 'pending' LIMIT 1",
+             FROM build_orders WHERE village_id = $1 AND status = 'pending' \
+             ORDER BY complete_at, id",
         )
         .bind(Uuid::from_u128(village.0))
-        .fetch_optional(&self.pool)
+        .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
 
-        let Some(r) = row else { return Ok(None) };
-        let table: String = r.try_get("target_table").map_err(backend)?;
-        let slot: i16 = r.try_get("slot").map_err(backend)?;
-        let building_type: Option<String> = r.try_get("building_type").map_err(backend)?;
-        let target_level: i16 = r.try_get("target_level").map_err(backend)?;
-        let complete_ms: i64 = r.try_get("complete_ms").map_err(backend)?;
-        Ok(Some(ActiveBuild {
-            target: parse_target(&table, slot, building_type)?,
-            target_level: u8::try_from(target_level).unwrap_or(0),
-            complete_at: Timestamp(complete_ms),
-        }))
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let table: String = r.try_get("target_table").map_err(backend)?;
+            let slot: i16 = r.try_get("slot").map_err(backend)?;
+            let building_type: Option<String> = r.try_get("building_type").map_err(backend)?;
+            let target_level: i16 = r.try_get("target_level").map_err(backend)?;
+            let complete_ms: i64 = r.try_get("complete_ms").map_err(backend)?;
+            out.push(ActiveBuild {
+                target: parse_target(&table, slot, building_type)?,
+                target_level: u8::try_from(target_level).unwrap_or(0),
+                complete_at: Timestamp(complete_ms),
+            });
+        }
+        Ok(out)
     }
 
     async fn claim_due_builds(
@@ -541,10 +600,230 @@ impl BuildRepository for PgAccountRepository {
     }
 }
 
+fn unit_order_kind_str(kind: UnitOrderKind) -> &'static str {
+    match kind {
+        UnitOrderKind::Research => "research",
+        UnitOrderKind::SmithyUpgrade => "smithy",
+    }
+}
+
+fn parse_unit_order_kind(s: &str) -> Result<UnitOrderKind, RepoError> {
+    match s {
+        "research" => Ok(UnitOrderKind::Research),
+        "smithy" => Ok(UnitOrderKind::SmithyUpgrade),
+        other => Err(RepoError::Backend(format!(
+            "unknown unit order kind: {other}"
+        ))),
+    }
+}
+
+#[async_trait]
+impl UnitRepository for PgAccountRepository {
+    async fn start_unit_order(
+        &self,
+        village: VillageId,
+        settled: ResourceAmounts,
+        settled_from: Timestamp,
+        now: Timestamp,
+        order: NewUnitOrder,
+    ) -> Result<(), RepoError> {
+        let vid = Uuid::from_u128(village.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        // Optimistic settle — see `start_build`: a stale snapshot must not overwrite a concurrent
+        // debit from another queue (P2/P4).
+        let updated = sqlx::query(
+            "UPDATE village_resources SET wood=$1, clay=$2, iron=$3, crop=$4, \
+             updated_at = to_timestamp($5::double precision / 1000.0) \
+             WHERE village_id=$6 \
+               AND (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint = $7",
+        )
+        .bind(settled.wood)
+        .bind(settled.clay)
+        .bind(settled.iron)
+        .bind(settled.crop)
+        .bind(now.0 as f64)
+        .bind(vid)
+        .bind(settled_from.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if updated.rows_affected() == 0 {
+            // Also covers a missing resources row — callers just read it, so that is unreachable.
+            return Err(RepoError::Conflict);
+        }
+
+        let insert = sqlx::query(
+            "INSERT INTO unit_orders (id, village_id, kind, unit_id, target_level, complete_at, status) \
+             VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0), 'pending')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(vid)
+        .bind(unit_order_kind_str(order.kind))
+        .bind(order.unit.as_str())
+        .bind(order.target_level.map(i16::from))
+        .bind(order.complete_at.0 as f64)
+        .execute(&mut *tx)
+        .await;
+        if let Err(e) = insert {
+            return Err(if is_unique_violation(&e) {
+                RepoError::Duplicate
+            } else {
+                backend(e)
+            });
+        }
+
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn active_unit_orders(
+        &self,
+        village: VillageId,
+    ) -> Result<Vec<ActiveUnitOrder>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT kind, unit_id, target_level, \
+             (EXTRACT(EPOCH FROM complete_at) * 1000)::bigint AS complete_ms \
+             FROM unit_orders WHERE village_id = $1 AND status = 'pending'",
+        )
+        .bind(Uuid::from_u128(village.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let kind: String = r.try_get("kind").map_err(backend)?;
+            let unit: String = r.try_get("unit_id").map_err(backend)?;
+            let target_level: Option<i16> = r.try_get("target_level").map_err(backend)?;
+            let complete_ms: i64 = r.try_get("complete_ms").map_err(backend)?;
+            out.push(ActiveUnitOrder {
+                kind: parse_unit_order_kind(&kind)?,
+                unit: UnitId(unit),
+                target_level: target_level.map(|l| u8::try_from(l).unwrap_or(0)),
+                complete_at: Timestamp(complete_ms),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn researched_units(&self, village: VillageId) -> Result<Vec<UnitId>, RepoError> {
+        let rows = sqlx::query("SELECT unit_id FROM village_research WHERE village_id = $1")
+            .bind(Uuid::from_u128(village.0))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend)?;
+        rows.iter()
+            .map(|r| Ok(UnitId(r.try_get("unit_id").map_err(backend)?)))
+            .collect()
+    }
+
+    async fn unit_levels(&self, village: VillageId) -> Result<Vec<(UnitId, u8)>, RepoError> {
+        let rows =
+            sqlx::query("SELECT unit_id, level FROM village_unit_levels WHERE village_id = $1")
+                .bind(Uuid::from_u128(village.0))
+                .fetch_all(&self.pool)
+                .await
+                .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let unit: String = r.try_get("unit_id").map_err(backend)?;
+                let level: i16 = r.try_get("level").map_err(backend)?;
+                Ok((UnitId(unit), u8::try_from(level).unwrap_or(0)))
+            })
+            .collect()
+    }
+
+    async fn claim_due_unit_orders(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueUnitOrder>, RepoError> {
+        let rows = sqlx::query(
+            "UPDATE unit_orders SET status = 'processing' WHERE id IN ( \
+                 SELECT id FROM unit_orders \
+                 WHERE status = 'pending' AND complete_at <= to_timestamp($1::double precision / 1000.0) \
+                 ORDER BY complete_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
+             ) RETURNING id, village_id, kind, unit_id, target_level",
+        )
+        .bind(now.0 as f64)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let id: Uuid = r.try_get("id").map_err(backend)?;
+            let village: Uuid = r.try_get("village_id").map_err(backend)?;
+            let kind: String = r.try_get("kind").map_err(backend)?;
+            let unit: String = r.try_get("unit_id").map_err(backend)?;
+            let target_level: Option<i16> = r.try_get("target_level").map_err(backend)?;
+            out.push(DueUnitOrder {
+                id: id.as_u128(),
+                village: VillageId(village.as_u128()),
+                kind: parse_unit_order_kind(&kind)?,
+                unit: UnitId(unit),
+                target_level: target_level.map(|l| u8::try_from(l).unwrap_or(0)),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn apply_unit_order(&self, due: DueUnitOrder) -> Result<(), RepoError> {
+        let vid = Uuid::from_u128(due.village.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        match due.kind {
+            UnitOrderKind::Research => {
+                // Idempotent: re-applying an already-researched unit is a no-op (AC8).
+                sqlx::query(
+                    "INSERT INTO village_research (village_id, unit_id) VALUES ($1, $2) \
+                     ON CONFLICT (village_id, unit_id) DO NOTHING",
+                )
+                .bind(vid)
+                .bind(due.unit.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+            }
+            UnitOrderKind::SmithyUpgrade => {
+                // Idempotent: sets the absolute target level (AC12).
+                let level = i16::from(due.target_level.unwrap_or(0));
+                sqlx::query(
+                    "INSERT INTO village_unit_levels (village_id, unit_id, level) \
+                     VALUES ($1, $2, $3) \
+                     ON CONFLICT (village_id, unit_id) DO UPDATE SET level = EXCLUDED.level",
+                )
+                .bind(vid)
+                .bind(due.unit.as_str())
+                .bind(level)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+            }
+        }
+
+        sqlx::query("UPDATE unit_orders SET status = 'done' WHERE id = $1")
+            .bind(Uuid::from_u128(due.id))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use eperica_domain::{GameSpeed, WorldConfig};
+
+    /// The resources row's last-settled time — the snapshot orders must be computed from.
+    async fn snapshot(repo: &PgAccountRepository, village: VillageId) -> Timestamp {
+        repo.stored_resources(village).await.unwrap().unwrap().1
+    }
 
     #[tokio::test]
     async fn create_account_persists_user_and_one_village() {
@@ -575,6 +854,7 @@ mod tests {
             email: format!("{uname}@example.com"),
             password_hash: "hash".to_owned(),
             email_confirmed: true,
+            tribe: Tribe::Gauls,
         };
 
         let user = repo
@@ -589,6 +869,10 @@ mod tests {
         assert!(villages[0].buildings.len() >= 2);
         assert_eq!(villages[0].owner, user.id);
 
+        // 004 AC1: the chosen tribe is stored on the account and stamped on the village.
+        assert_eq!(user.tribe, Tribe::Gauls);
+        assert_eq!(villages[0].tribe, Some(Tribe::Gauls));
+
         // T4: starting resources were seeded and are readable.
         let stored = repo
             .stored_resources(villages[0].id)
@@ -602,6 +886,7 @@ mod tests {
             email: format!("{uname}-2@example.com"),
             password_hash: "hash".to_owned(),
             email_confirmed: true,
+            tribe: Tribe::Gauls,
         };
         assert!(matches!(
             repo.create_account(dup, &template).await,
@@ -645,6 +930,7 @@ mod tests {
                     email: format!("{uname}@example.com"),
                     password_hash: "hash".to_owned(),
                     email_confirmed: true,
+                    tribe: Tribe::Gauls,
                 },
                 &crate::starting_village().unwrap(),
             )
@@ -670,6 +956,73 @@ mod tests {
         .await
         .unwrap();
         assert!(repo.stored_resources(village_id).await.unwrap().is_some());
+    }
+
+    /// 004 AC3 migration-boundary guard: a village row that predates the tribe column being
+    /// populated (tribe NULL — the pre-004 state; the column stays nullable) must be repaired by
+    /// the 0005 backfill, which copies the owner's tribe.
+    ///
+    /// The *users* half of the backfill cannot be reproduced post-hoc (the column is NOT NULL
+    /// after 0005); it is guaranteed by the migration itself — its `SET NOT NULL` aborts if any
+    /// row were left without a tribe — so only the villages half needs a data-level test.
+    #[tokio::test]
+    async fn tribe_backfill_repairs_pre_004_village() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping tribe backfill test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world_id = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world_id,
+            config.radius,
+            rules.starting_amounts,
+        );
+
+        let uname = format!("pretribe_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "hash".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &crate::starting_village().unwrap(),
+            )
+            .await
+            .expect("create account");
+        let village_id = repo.villages_of(user.id).await.unwrap()[0].id;
+
+        // Reproduce the pre-004 state: the village has no tribe yet.
+        sqlx::query("UPDATE villages SET tribe = NULL WHERE id = $1")
+            .bind(Uuid::from_u128(village_id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(repo.villages_of(user.id).await.unwrap()[0].tribe, None);
+
+        // Apply the backfill (same statement as migration 0005): tribe copied from the owner.
+        sqlx::query(
+            "UPDATE villages v SET tribe = u.tribe FROM users u \
+             WHERE v.owner_id = u.id AND v.tribe IS NULL",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            repo.villages_of(user.id).await.unwrap()[0].tribe,
+            Some(Tribe::Gauls)
+        );
     }
 
     #[tokio::test]
@@ -701,6 +1054,7 @@ mod tests {
                     email: format!("{uname}@example.com"),
                     password_hash: "h".to_owned(),
                     email_confirmed: true,
+                    tribe: Tribe::Gauls,
                 },
                 &crate::starting_village().unwrap(),
             )
@@ -713,6 +1067,7 @@ mod tests {
             target: BuildTarget::Field { slot: 0 },
             target_level: 1,
             complete_at: Timestamp(now.0 + 1000),
+            lane: QueueLane::All,
         };
         let settled = ResourceAmounts {
             wood: 700,
@@ -722,15 +1077,13 @@ mod tests {
         };
 
         // AC1: starting a build settles resources + creates the order.
-        repo.start_build(village_id, settled, now, order)
+        let snap = snapshot(&repo, village_id).await;
+        repo.start_build(village_id, settled, snap, now, order)
             .await
             .expect("start build");
-        let active = repo
-            .active_build(village_id)
-            .await
-            .unwrap()
-            .expect("active");
-        assert_eq!(active.target, BuildTarget::Field { slot: 0 });
+        let active = repo.active_builds(village_id).await.unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].target, BuildTarget::Field { slot: 0 });
         assert_eq!(
             repo.stored_resources(village_id)
                 .await
@@ -741,9 +1094,10 @@ mod tests {
             700
         );
 
-        // AC3: a second order is rejected (one active order, DB-enforced).
+        // AC3: a second order is rejected (one active order, DB-enforced). The first settle moved
+        // the snapshot to `now`, so a fresh caller computes from there.
         assert!(matches!(
-            repo.start_build(village_id, settled, now, order).await,
+            repo.start_build(village_id, settled, now, now, order).await,
             Err(RepoError::Duplicate)
         ));
 
@@ -763,6 +1117,300 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// 004 AC13: a Roman village holds one field and one building order concurrently (separate
+    /// lanes), but never two of the same lane; a non-Roman village is limited to one in total
+    /// (single 'all' lane) — both DB-enforced under races by the partial unique index.
+    #[tokio::test]
+    async fn roman_lanes_allow_field_and_building_in_parallel() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping lane test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world_id = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world_id,
+            config.radius,
+            rules.starting_amounts,
+        );
+
+        let now = Timestamp(1_700_000_000_000);
+        let settled = ResourceAmounts {
+            wood: 500,
+            clay: 500,
+            iron: 500,
+            crop: 500,
+        };
+        // Due far beyond any other test's global claim window (the largest synthetic "now" used
+        // by parallel tests is 2.1e12), so they can never claim these pending orders away.
+        let order = |target, lane| NewBuildOrder {
+            target,
+            target_level: 1,
+            complete_at: Timestamp(now.0 + 1_000_000_000_000),
+            lane,
+        };
+        let field = BuildTarget::Field { slot: 0 };
+        let building = BuildTarget::Building {
+            slot: 2,
+            kind: BuildingKind::Warehouse,
+        };
+
+        // Roman village: a field order and a building order coexist.
+        let uname = format!("lane_r_{}", Uuid::new_v4().simple());
+        let roman = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Romans,
+                },
+                &crate::starting_village().unwrap(),
+            )
+            .await
+            .expect("create roman");
+        let rv = repo.villages_of(roman.id).await.unwrap()[0].id;
+        let snap = snapshot(&repo, rv).await;
+        repo.start_build(rv, settled, snap, now, order(field, QueueLane::Field))
+            .await
+            .expect("field lane");
+        repo.start_build(rv, settled, now, now, order(building, QueueLane::Building))
+            .await
+            .expect("building lane runs in parallel");
+        assert_eq!(repo.active_builds(rv).await.unwrap().len(), 2);
+        // A second order in an occupied lane is rejected.
+        assert!(matches!(
+            repo.start_build(
+                rv,
+                settled,
+                now,
+                now,
+                order(BuildTarget::Field { slot: 1 }, QueueLane::Field)
+            )
+            .await,
+            Err(RepoError::Duplicate)
+        ));
+
+        // Non-Roman village: any second order is rejected (single 'all' lane).
+        let uname = format!("lane_g_{}", Uuid::new_v4().simple());
+        let gaul = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &crate::starting_village().unwrap(),
+            )
+            .await
+            .expect("create gaul");
+        let gv = repo.villages_of(gaul.id).await.unwrap()[0].id;
+        let snap = snapshot(&repo, gv).await;
+        repo.start_build(gv, settled, snap, now, order(field, QueueLane::All))
+            .await
+            .expect("first order");
+        assert!(matches!(
+            repo.start_build(gv, settled, now, now, order(building, QueueLane::All))
+                .await,
+            Err(RepoError::Duplicate)
+        ));
+    }
+
+    /// 004 AC6/AC8/AC10/AC12: unit-order lifecycle — one active order per kind (DB-enforced),
+    /// settle+debit on start, apply-exactly-once (idempotent), pending orders survive a restart
+    /// (orphan requeue reproduces crash recovery).
+    #[tokio::test]
+    async fn unit_order_lifecycle() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping unit order test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world_id = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world_id,
+            config.radius,
+            rules.starting_amounts,
+        );
+
+        let uname = format!("unit_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &crate::starting_village().unwrap(),
+            )
+            .await
+            .expect("create account");
+        let village_id = repo.villages_of(user.id).await.unwrap()[0].id;
+
+        let now = Timestamp(1_700_000_000_000);
+        let settled = ResourceAmounts {
+            wood: 600,
+            clay: 600,
+            iron: 600,
+            crop: 600,
+        };
+        let research = NewUnitOrder {
+            kind: UnitOrderKind::Research,
+            unit: UnitId("swordsman".into()),
+            target_level: None,
+            complete_at: Timestamp(now.0 + 1000),
+        };
+
+        // AC6: starting a research settles resources and creates the order.
+        let snap = snapshot(&repo, village_id).await;
+        repo.start_unit_order(village_id, settled, snap, now, research.clone())
+            .await
+            .expect("start research");
+
+        // The race the optimistic settle exists for: a caller that computed from the now-stale
+        // snapshot must conflict instead of overwriting the research debit (P2/P4).
+        let stale = NewUnitOrder {
+            kind: UnitOrderKind::SmithyUpgrade,
+            unit: UnitId("phalanx".into()),
+            target_level: Some(1),
+            complete_at: Timestamp(now.0 + 1500),
+        };
+        assert!(matches!(
+            repo.start_unit_order(
+                village_id,
+                ResourceAmounts {
+                    wood: 450,
+                    clay: 450,
+                    iron: 450,
+                    crop: 450,
+                },
+                snap,
+                now,
+                stale,
+            )
+            .await,
+            Err(RepoError::Conflict)
+        ));
+        // The research debit survived the conflicting attempt.
+        assert_eq!(
+            repo.stored_resources(village_id).await.unwrap().unwrap().0,
+            settled
+        );
+        assert_eq!(
+            repo.stored_resources(village_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .0
+                .wood,
+            600
+        );
+
+        // A second research is rejected (one per kind, DB-enforced under races)...
+        assert!(matches!(
+            repo.start_unit_order(village_id, settled, now, now, research.clone())
+                .await,
+            Err(RepoError::Duplicate)
+        ));
+        // ...but a Smithy upgrade (computed from the fresh snapshot) runs concurrently...
+        let upgrade = NewUnitOrder {
+            kind: UnitOrderKind::SmithyUpgrade,
+            unit: UnitId("phalanx".into()),
+            target_level: Some(1),
+            complete_at: Timestamp(now.0 + 1500),
+        };
+        repo.start_unit_order(village_id, settled, now, now, upgrade.clone())
+            .await
+            .expect("start upgrade");
+        // ...and a second upgrade is rejected too.
+        assert!(matches!(
+            repo.start_unit_order(village_id, settled, now, now, upgrade)
+                .await,
+            Err(RepoError::Duplicate)
+        ));
+        assert_eq!(repo.active_unit_orders(village_id).await.unwrap().len(), 2);
+
+        // AC8/AC12: claim both due orders and apply them — exactly once, idempotently.
+        let due = repo
+            .claim_due_unit_orders(Timestamp(now.0 + 2000), 10)
+            .await
+            .unwrap();
+        let mine: Vec<_> = due
+            .into_iter()
+            .filter(|d| d.village == village_id)
+            .collect();
+        assert_eq!(mine.len(), 2);
+        for d in &mine {
+            repo.apply_unit_order(d.clone()).await.expect("apply");
+            repo.apply_unit_order(d.clone())
+                .await
+                .expect("re-apply is a no-op");
+        }
+        let researched = repo.researched_units(village_id).await.unwrap();
+        assert_eq!(researched, vec![UnitId("swordsman".into())]);
+        let levels = repo.unit_levels(village_id).await.unwrap();
+        assert_eq!(levels, vec![(UnitId("phalanx".into()), 1)]);
+        assert!(
+            repo.claim_due_unit_orders(Timestamp(now.0 + 2000), 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Crash recovery: a claimed-but-unapplied order is requeued and claimable again (AC8).
+        repo.start_unit_order(
+            village_id,
+            settled,
+            now,
+            now,
+            NewUnitOrder {
+                kind: UnitOrderKind::Research,
+                unit: UnitId("druidrider".into()),
+                target_level: None,
+                complete_at: Timestamp(now.0 + 1000),
+            },
+        )
+        .await
+        .expect("second research after first completed");
+        let claimed = repo
+            .claim_due_unit_orders(Timestamp(now.0 + 2000), 10)
+            .await
+            .unwrap();
+        assert!(claimed.iter().any(|d| d.village == village_id));
+        // "Crash" before applying: requeue orphans, then a fresh claim sees it again.
+        assert!(repo.requeue_orphaned_unit_orders().await.unwrap() >= 1);
+        let reclaimed = repo
+            .claim_due_unit_orders(Timestamp(now.0 + 2000), 10)
+            .await
+            .unwrap();
+        let mine: Vec<_> = reclaimed
+            .into_iter()
+            .filter(|d| d.village == village_id)
+            .collect();
+        assert_eq!(mine.len(), 1);
+        repo.apply_unit_order(mine[0].clone()).await.expect("apply");
+        assert_eq!(repo.researched_units(village_id).await.unwrap().len(), 2);
     }
 
     #[tokio::test]
@@ -794,6 +1442,7 @@ mod tests {
                     email: format!("{uname}@example.com"),
                     password_hash: "h".to_owned(),
                     email_confirmed: true,
+                    tribe: Tribe::Gauls,
                 },
                 &crate::starting_village().unwrap(),
             )
@@ -802,6 +1451,7 @@ mod tests {
         let village_id = repo.villages_of(user.id).await.unwrap()[0].id;
 
         let now = Timestamp(2_000_000_000_000);
+        let snap = snapshot(&repo, village_id).await;
         repo.start_build(
             village_id,
             ResourceAmounts {
@@ -810,11 +1460,13 @@ mod tests {
                 iron: 700,
                 crop: 700,
             },
+            snap,
             Timestamp(now.0 - 10_000),
             NewBuildOrder {
                 target: BuildTarget::Field { slot: 1 },
                 target_level: 1,
                 complete_at: Timestamp(now.0 - 1000), // already due at `now`
+                lane: QueueLane::All,
             },
         )
         .await
@@ -863,6 +1515,7 @@ mod tests {
                     email: format!("{uname}@example.com"),
                     password_hash: "h".to_owned(),
                     email_confirmed: true,
+                    tribe: Tribe::Gauls,
                 },
                 &crate::starting_village().unwrap(),
             )
@@ -880,6 +1533,7 @@ mod tests {
         );
 
         let now = Timestamp(2_100_000_000_000);
+        let snap = snapshot(&repo, village_id).await;
         repo.start_build(
             village_id,
             ResourceAmounts {
@@ -888,6 +1542,7 @@ mod tests {
                 iron: 700,
                 crop: 700,
             },
+            snap,
             Timestamp(now.0 - 10_000),
             NewBuildOrder {
                 target: BuildTarget::Building {
@@ -896,6 +1551,7 @@ mod tests {
                 },
                 target_level: 1,
                 complete_at: Timestamp(now.0 - 1000), // already due at `now`
+                lane: QueueLane::All,
             },
         )
         .await

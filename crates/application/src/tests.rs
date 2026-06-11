@@ -6,7 +6,7 @@ use crate::register::{RegisterCommand, RegisterError, register};
 use async_trait::async_trait;
 use eperica_domain::{
     BuildingKind, BuildingSlot, PlayerId, ResourceAmounts, ResourceField, ResourceKind,
-    StartingVillage, Timestamp, Village, VillageId,
+    StartingVillage, Timestamp, Tribe, Village, VillageId,
 };
 use std::sync::Mutex;
 
@@ -63,6 +63,7 @@ impl AccountRepository for InMemoryAccounts {
             email: user.email,
             password_hash: user.password_hash,
             email_confirmed: user.email_confirmed,
+            tribe: user.tribe,
         };
         users.push(rec.clone());
         Ok(rec)
@@ -115,6 +116,7 @@ fn cmd(name: &str) -> RegisterCommand {
         username: name.to_owned(),
         email: format!("{name}@example.com"),
         password: "secret123".to_owned(),
+        tribe: "gauls".to_owned(),
     }
 }
 
@@ -127,6 +129,40 @@ async fn register_creates_account() {
     assert_eq!(user.username, "alice");
     assert!(user.email_confirmed); // confirmation not required
     assert_eq!(user.password_hash, "hashed:secret123");
+    assert_eq!(user.tribe, Tribe::Gauls); // 004 AC1: the chosen tribe is stored
+}
+
+#[tokio::test]
+async fn register_stores_each_chosen_tribe() {
+    // 004 AC1: every valid tribe choice is persisted as chosen.
+    let accounts = InMemoryAccounts::default();
+    for (name, slug, tribe) in [
+        ("rome", "romans", Tribe::Romans),
+        ("teut", "teutons", Tribe::Teutons),
+        ("gaul", "gauls", Tribe::Gauls),
+    ] {
+        let mut c = cmd(name);
+        c.tribe = slug.to_owned();
+        let user = register(&accounts, &FakeHasher, &template(), false, c)
+            .await
+            .unwrap();
+        assert_eq!(user.tribe, tribe);
+    }
+}
+
+#[tokio::test]
+async fn register_rejects_missing_or_unknown_tribe() {
+    // 004 AC1: a registration without a valid tribe is rejected server-side.
+    let accounts = InMemoryAccounts::default();
+    for bad in ["", "  ", "egyptians"] {
+        let mut c = cmd("tribetest");
+        c.tribe = bad.to_owned();
+        assert!(matches!(
+            register(&accounts, &FakeHasher, &template(), false, c).await,
+            Err(RegisterError::Invalid(_))
+        ));
+    }
+    assert!(accounts.users.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

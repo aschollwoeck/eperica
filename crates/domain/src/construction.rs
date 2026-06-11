@@ -2,7 +2,7 @@
 
 use crate::building::BuildingKind;
 use crate::economy::ResourceAmounts;
-use crate::village::BuildingSlot;
+use crate::village::{BuildingSlot, Tribe};
 use crate::world::GameSpeed;
 use std::collections::HashMap;
 
@@ -112,20 +112,47 @@ pub fn debit(amounts: ResourceAmounts, cost: ResourceAmounts) -> ResourceAmounts
     }
 }
 
+/// The build-queue lane an order occupies. At most one active order may hold a lane (enforced by
+/// the persistence layer even under races, P4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueLane {
+    /// The single lane shared by all targets (non-Roman tribes).
+    All,
+    /// The Roman resource-field lane.
+    Field,
+    /// The Roman center-building lane.
+    Building,
+}
+
+/// The lane a build order of `tribe` for `target` occupies — the Roman trait (004 AC13): Romans
+/// run one field order and one center-building order in parallel; other tribes have one lane.
+pub fn queue_lane(tribe: Tribe, target: BuildTarget) -> QueueLane {
+    match (tribe, target) {
+        (Tribe::Romans, BuildTarget::Field { .. }) => QueueLane::Field,
+        (Tribe::Romans, BuildTarget::Building { .. }) => QueueLane::Building,
+        _ => QueueLane::All,
+    }
+}
+
+/// Whether every `(kind, level)` requirement is satisfied by the village's `buildings`.
+pub fn building_levels_met(
+    requirements: &[(BuildingKind, u8)],
+    buildings: &[BuildingSlot],
+) -> bool {
+    requirements.iter().all(|(req_kind, req_level)| {
+        buildings
+            .iter()
+            .any(|b| b.kind == *req_kind && b.level >= *req_level)
+    })
+}
+
 /// Whether all prerequisites for `kind` are satisfied by the village's `buildings`.
 pub fn prerequisites_met(
     kind: BuildingKind,
     buildings: &[BuildingSlot],
     rules: &BuildRules,
 ) -> bool {
-    rules
-        .prerequisites(kind)
-        .iter()
-        .all(|(req_kind, req_level)| {
-            buildings
-                .iter()
-                .any(|b| b.kind == *req_kind && b.level >= *req_level)
-        })
+    building_levels_met(rules.prerequisites(kind), buildings)
 }
 
 #[cfg(test)]
@@ -218,5 +245,21 @@ mod tests {
         assert!(prerequisites_met(BuildingKind::Warehouse, &with_mb, &r));
         // A field has no prerequisites.
         assert!(prerequisites_met(BuildingKind::RallyPoint, &none, &r));
+    }
+
+    #[test]
+    fn romans_get_a_lane_per_target_category() {
+        // 004 AC13: Romans build a field and a center building in parallel; others do not.
+        let field = BuildTarget::Field { slot: 3 };
+        let building = BuildTarget::Building {
+            slot: 0,
+            kind: BuildingKind::MainBuilding,
+        };
+        assert_eq!(queue_lane(Tribe::Romans, field), QueueLane::Field);
+        assert_eq!(queue_lane(Tribe::Romans, building), QueueLane::Building);
+        for tribe in [Tribe::Teutons, Tribe::Gauls] {
+            assert_eq!(queue_lane(tribe, field), QueueLane::All);
+            assert_eq!(queue_lane(tribe, building), QueueLane::All);
+        }
     }
 }

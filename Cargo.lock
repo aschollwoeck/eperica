@@ -533,10 +533,12 @@ dependencies = [
  "eperica-infrastructure",
  "reqwest",
  "serde",
+ "sqlx",
  "tokio",
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

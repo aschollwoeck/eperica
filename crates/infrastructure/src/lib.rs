@@ -16,7 +16,7 @@ pub mod world;
 /// Re-export of the application crate, whose ports this layer implements.
 pub use eperica_application as application;
 
-pub use balance::{BalanceError, build_rules, economy_rules, starting_village};
+pub use balance::{BalanceError, build_rules, economy_rules, starting_village, unit_rules};
 pub use config::{AppConfig, ConfigError};
 pub use db::{MIGRATOR, create_pool, run_migrations};
 pub use event_store::{PgEventStore, Scheduler, now};

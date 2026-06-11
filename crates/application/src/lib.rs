@@ -10,6 +10,7 @@ pub mod economy;
 pub mod ports;
 pub mod register;
 pub mod scheduler;
+pub mod units;
 
 #[cfg(test)]
 mod tests;
@@ -21,8 +22,12 @@ pub use auth::{LoginError, authenticate};
 pub use build::{BuildError, order_build, process_due_builds};
 pub use economy::{VillageEconomy, load_economy};
 pub use ports::{
-    AccountRepository, ActiveBuild, BuildRepository, DueBuild, DueEvent, EventStore, NewBuildOrder,
-    NewUser, PasswordHasher, RepoError, UserRecord,
+    AccountRepository, ActiveBuild, ActiveUnitOrder, BuildRepository, DueBuild, DueEvent,
+    DueUnitOrder, EventStore, NewBuildOrder, NewUnitOrder, NewUser, PasswordHasher, RepoError,
+    UnitOrderKind, UnitRepository, UserRecord,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;
+pub use units::{
+    ResearchError, UpgradeError, order_research, order_smithy_upgrade, process_due_unit_orders,
+};

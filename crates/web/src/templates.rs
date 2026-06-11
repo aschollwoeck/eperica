@@ -31,6 +31,7 @@ mod tests {
     fn village(crop_rate: i64) -> VillageTemplate {
         VillageTemplate {
             username: "player".to_owned(),
+            tribe: "Gauls",
             x: 0,
             y: 0,
             wood: 1,
@@ -43,7 +44,9 @@ mod tests {
             crop_rate,
             warehouse: 800,
             granary: 800,
-            active: None,
+            active: Vec::new(),
+            has_academy: false,
+            has_smithy: false,
             fields: Vec::new(),
             buildings: Vec::new(),
         }
@@ -80,7 +83,7 @@ pub struct BuildRow {
     pub can_order: bool,
 }
 
-/// The active build, for display + countdown.
+/// An active build/research/upgrade order, for display + countdown.
 pub struct ActiveView {
     /// What is building.
     pub label: String,
@@ -90,11 +93,95 @@ pub struct ActiveView {
     pub complete_ms: i64,
 }
 
+/// An in-progress order on a unit page (research or upgrade), for display + countdown.
+pub struct QueueView {
+    /// What is in progress (e.g. "Researching Swordsman").
+    pub label: String,
+    /// Completion time (Unix-ms UTC), for the client-side countdown.
+    pub complete_ms: i64,
+}
+
+/// One unit type in the Academy view (004 AC15).
+pub struct AcademyRow {
+    /// Unit slug for the POST `unit` value.
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    /// Role label (Infantry/Cavalry/…).
+    pub role: &'static str,
+    pub attack: u32,
+    pub def_inf: u32,
+    pub def_cav: u32,
+    pub speed: u32,
+    pub carry: u32,
+    pub upkeep: u32,
+    /// Already researched (incl. tier-1).
+    pub researched: bool,
+    /// The Research action is offered now (requirements met, affordable, queue free).
+    pub can_order: bool,
+    /// Why the action is unavailable (requirements text or "insufficient resources"); empty if
+    /// researched or orderable.
+    pub gate: String,
+    pub cost_wood: i64,
+    pub cost_clay: i64,
+    pub cost_iron: i64,
+    pub cost_crop: i64,
+    /// Research duration at the current world speed, formatted `h:mm:ss`.
+    pub time: String,
+}
+
+#[derive(Template)]
+#[template(path = "academy.html")]
+pub struct AcademyTemplate {
+    /// Whether the village has an Academy (otherwise the page only explains the requirement).
+    pub has_academy: bool,
+    /// The tribe's roster.
+    pub rows: Vec<AcademyRow>,
+    /// The research in progress, if any.
+    pub active: Option<QueueView>,
+}
+
+/// One researched unit type in the Smithy view (004 AC15).
+pub struct SmithyRow {
+    /// Unit slug for the POST `unit` value.
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    /// Current upgrade level.
+    pub level: u8,
+    /// The Upgrade action is offered now.
+    pub can_order: bool,
+    /// Why the action is unavailable (cap reached, smithy level, insufficient resources); empty
+    /// when orderable.
+    pub gate: String,
+    pub cost_wood: i64,
+    pub cost_clay: i64,
+    pub cost_iron: i64,
+    pub cost_crop: i64,
+    /// Upgrade duration at the current world speed, formatted `h:mm:ss`.
+    pub time: String,
+}
+
+#[derive(Template)]
+#[template(path = "smithy.html")]
+pub struct SmithyTemplate {
+    /// Whether the village has a Smithy (otherwise the page only explains the requirement).
+    pub has_smithy: bool,
+    /// The Smithy's building level (caps unit levels).
+    pub smithy_level: u8,
+    /// Researched units with their upgrade state.
+    pub rows: Vec<SmithyRow>,
+    /// The upgrade in progress, if any.
+    pub active: Option<QueueView>,
+}
+
 #[derive(Template)]
 #[template(path = "village.html")]
 pub struct VillageTemplate {
     /// Owner's username.
     pub username: String,
+    /// The village's tribe display name (004).
+    pub tribe: &'static str,
     /// Village x coordinate.
     pub x: i32,
     /// Village y coordinate.
@@ -112,8 +199,12 @@ pub struct VillageTemplate {
     /// Storage capacities.
     pub warehouse: i64,
     pub granary: i64,
-    /// The active build order, if any.
-    pub active: Option<ActiveView>,
+    /// The active build orders — at most one per lane (two for Romans, 004 AC13).
+    pub active: Vec<ActiveView>,
+    /// Whether the village has an Academy (shows the link).
+    pub has_academy: bool,
+    /// Whether the village has a Smithy (shows the link).
+    pub has_smithy: bool,
     /// Resource-field build rows.
     pub fields: Vec<BuildRow>,
     /// Building build rows.

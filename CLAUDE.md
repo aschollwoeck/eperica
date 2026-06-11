@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Eperica is a from-scratch, **faithful Travian-style competitive strategy MMO** (medieval setting),
 built **spec-driven** and **performance-first** (sub-second timing is gameplay). The design is
-complete; implementation begins at slice 001. There is **no application code yet** — the next step is
-scaffolding the Rust workspace.
+complete and implementation proceeds slice by slice from the roadmap; the foundation, economy,
+construction, and tribes/units slices (001–004) are built.
 
 ## Read the specs first — they are the source of truth
 
@@ -20,7 +20,8 @@ scaffolding the Rust workspace.
 - **`specs/roles.md`** — user roles & permissions; every spec must address each applicable role.
 - **`specs/roadmap.md`** — dependency-ordered build order (slices 001 → end-game).
 - **`specs/social-and-meta-features.md`** — app-layer features (chat, profiles, UX) — not sim rules.
-- **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the active slice. Currently: `001-foundation`.
+- **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the active slice. Currently:
+  `004-tribes-and-units`.
 
 If behavior must change, **update the spec first**, then the code.
 

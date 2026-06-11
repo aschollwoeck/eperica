@@ -2,8 +2,8 @@
 
 use crate::ports::{AccountRepository, BuildRepository, NewBuildOrder, RepoError};
 use eperica_domain::{
-    BuildRules, BuildTarget, BuildingKind, EconomyRules, GameSpeed, PlayerId, Timestamp, Village,
-    build_time_secs, can_afford, compute_economy, debit, prerequisites_met,
+    BuildRules, BuildTarget, BuildingKind, EconomyRules, GameSpeed, PlayerId, QueueLane, Timestamp,
+    Village, build_time_secs, can_afford, compute_economy, debit, prerequisites_met, queue_lane,
 };
 
 /// Why ordering a build failed.
@@ -24,6 +24,9 @@ pub enum BuildError {
     /// The village or target does not exist.
     #[error("not found")]
     NotFound,
+    /// The village's resources changed while ordering (another order settled first); retry.
+    #[error("resources changed; try again")]
+    Conflict,
     /// A storage/backend failure.
     #[error("storage error: {0}")]
     Backend(String),
@@ -33,6 +36,7 @@ impl From<RepoError> for BuildError {
     fn from(e: RepoError) -> Self {
         match e {
             RepoError::Duplicate => BuildError::AlreadyBuilding,
+            RepoError::Conflict => BuildError::Conflict,
             other => BuildError::Backend(other.to_string()),
         }
     }
@@ -121,12 +125,20 @@ where
         build_rules,
         speed,
     );
+    // The Roman trait (004 AC13): Romans get a lane per target category; others share one lane.
+    // A tribe-less village (pre-004 data not yet backfilled) gets the strictest, single lane.
+    let lane = village
+        .tribe
+        .map_or(QueueLane::All, |tribe| queue_lane(tribe, target));
     let order = NewBuildOrder {
         target,
         target_level: current + 1,
         complete_at: Timestamp(now.0 + duration * 1000),
+        lane,
     };
-    builds.start_build(village.id, settled, now, order).await?;
+    builds
+        .start_build(village.id, settled, updated_at, now, order)
+        .await?;
     Ok(())
 }
 
@@ -162,7 +174,7 @@ mod tests {
     use async_trait::async_trait;
     use eperica_domain::{
         BuildingSlot, Coordinate, LevelSpec, ResourceAmounts, ResourceField, ResourceKind,
-        StartingVillage, VillageId,
+        StartingVillage, Tribe, VillageId,
     };
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -208,10 +220,7 @@ mod tests {
             iron_per_level: vec![0],
             crop_per_level: vec![0],
             field_population_per_level: vec![0],
-            main_building_population_per_level: vec![0],
-            rally_point_population_per_level: vec![0],
-            warehouse_population_per_level: vec![0],
-            granary_population_per_level: vec![0],
+            building_population_per_level: HashMap::new(),
             warehouse_capacity_per_level: vec![1_000_000],
             granary_capacity_per_level: vec![1_000_000],
             starting_amounts: amounts(0),
@@ -287,6 +296,7 @@ mod tests {
             &self,
             _v: VillageId,
             settled: ResourceAmounts,
+            _settled_from: Timestamp,
             _now: Timestamp,
             order: NewBuildOrder,
         ) -> Result<(), RepoError> {
@@ -297,8 +307,8 @@ mod tests {
             *self.last.lock().unwrap() = Some(order);
             Ok(())
         }
-        async fn active_build(&self, _v: VillageId) -> Result<Option<ActiveBuild>, RepoError> {
-            Ok(None)
+        async fn active_builds(&self, _v: VillageId) -> Result<Vec<ActiveBuild>, RepoError> {
+            Ok(Vec::new())
         }
         async fn claim_due_builds(
             &self,
@@ -401,6 +411,49 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err, BuildError::PrereqUnmet);
+    }
+
+    #[tokio::test]
+    async fn roman_orders_take_per_category_lanes() {
+        // 004 AC13: Romans get a lane per target category; others (and tribe-less) share one.
+        let mut village = make_village(0, true);
+        village.tribe = Some(Tribe::Romans);
+        let accounts = FakeAccounts {
+            village,
+            stored: amounts(1000),
+        };
+        let builds = FakeBuilds::default();
+        order(&accounts, &builds, BuildTarget::Field { slot: 0 })
+            .await
+            .unwrap();
+        assert_eq!(builds.last.lock().unwrap().unwrap().lane, QueueLane::Field);
+        order(
+            &accounts,
+            &builds,
+            BuildTarget::Building {
+                slot: 5,
+                kind: BuildingKind::Warehouse,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            builds.last.lock().unwrap().unwrap().lane,
+            QueueLane::Building
+        );
+
+        let gauls = FakeAccounts {
+            village: {
+                let mut v = make_village(0, true);
+                v.tribe = Some(Tribe::Gauls);
+                v
+            },
+            stored: amounts(1000),
+        };
+        order(&gauls, &builds, BuildTarget::Field { slot: 0 })
+            .await
+            .unwrap();
+        assert_eq!(builds.last.lock().unwrap().unwrap().lane, QueueLane::All);
     }
 
     #[tokio::test]

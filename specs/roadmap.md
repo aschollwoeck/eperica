@@ -60,7 +60,7 @@ timed construction. Proves the entire architecture end-to-end on the smallest po
 
 | #   | Slice | Depends on | Delivers / proves | GDD |
 |-----|-------|-----------|-------------------|-----|
-| 004 | **Tribes & units** — tribe choice at registration; per-tribe unit definitions; Academy **research**; Smithy **upgrades**. | 003 | Tribe identity (§5) and the unit attribute model (§6.2). | §5, §6 |
+| 004 ✅ | **Tribes & units** — tribe choice at registration; per-tribe unit definitions; Academy **research**; Smithy **upgrades**. | 003 | Tribe identity (§5) and the unit attribute model (§6.2). | §5, §6 |
 | 005 | **Training & upkeep** — Barracks/Stable/Workshop training queues (due-events), troops join garrison, **crop upkeep + starvation** when net crop ≤ 0. | 004 | Army economy and the natural army cap (§2.2). | §6.4, §2.2 |
 
 ---

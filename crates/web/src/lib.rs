@@ -28,6 +28,13 @@ pub fn router(state: AppState) -> Router {
         .route("/logout", post(handlers::logout))
         .route("/village", get(handlers::village))
         .route("/village/build", post(handlers::build_submit))
+        .route("/village/academy", get(handlers::academy))
+        .route("/village/academy/research", post(handlers::research_submit))
+        .route("/village/smithy", get(handlers::smithy))
+        .route(
+            "/village/smithy/upgrade",
+            post(handlers::smithy_upgrade_submit),
+        )
         .route("/styleguide", get(handlers::styleguide))
         .nest_service("/static", ServeDir::new("crates/web/static"))
         .layer(TraceLayer::new_for_http())
