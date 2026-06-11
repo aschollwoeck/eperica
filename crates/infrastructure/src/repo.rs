@@ -2054,14 +2054,15 @@ impl TradeRepository for PgAccountRepository {
         due: &DueTrade,
         target_settled: ResourceAmounts,
         target_from: Timestamp,
-        deliver_arrive: Timestamp,
+        credit_clock: Timestamp,
         return_arrive: Timestamp,
     ) -> Result<(), RepoError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
 
         // Guarded credit of the target: write the capped settled amounts only if its resources row
-        // is still at the snapshot the caller settled from (P2/P4); the settle clock is the arrival
-        // instant, so later reads accrue production correctly from there.
+        // is still at the snapshot the caller settled from (P2/P4). `credit_clock` is the new settle
+        // clock (never earlier than the snapshot), so later reads accrue production correctly and the
+        // clock never regresses.
         let updated = sqlx::query(
             "UPDATE village_resources SET wood=$1, clay=$2, iron=$3, crop=$4, \
              updated_at = to_timestamp($5::double precision / 1000.0) \
@@ -2072,7 +2073,7 @@ impl TradeRepository for PgAccountRepository {
         .bind(target_settled.clay)
         .bind(target_settled.iron)
         .bind(target_settled.crop)
-        .bind(deliver_arrive.0 as f64)
+        .bind(credit_clock.0 as f64)
         .bind(Uuid::from_u128(due.target_village.0))
         .bind(target_from.0)
         .execute(&mut *tx)
@@ -2088,7 +2089,8 @@ impl TradeRepository for PgAccountRepository {
             .await
             .map_err(backend)?;
 
-        // The empty merchants travel home (origin/dest swapped) and free up when they arrive.
+        // The empty merchants travel home (origin/dest swapped), departing at the true arrival and
+        // freeing up when they get back.
         insert_trade_leg(
             &mut tx,
             Uuid::new_v4(),
@@ -2098,7 +2100,7 @@ impl TradeRepository for PgAccountRepository {
             due.target_village,
             due.dest,
             due.origin,
-            deliver_arrive,
+            due.arrive_at,
             return_arrive,
             ResourceAmounts {
                 wood: 0,
@@ -2116,6 +2118,18 @@ impl TradeRepository for PgAccountRepository {
     async fn complete_trade(&self, id: u128) -> Result<(), RepoError> {
         sqlx::query(
             "UPDATE trade_movements SET status = 'done' WHERE id = $1 AND status <> 'done'",
+        )
+        .bind(Uuid::from_u128(id))
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn release_trade(&self, id: u128) -> Result<(), RepoError> {
+        sqlx::query(
+            "UPDATE trade_movements SET status = 'in_transit' \
+             WHERE id = $1 AND status = 'processing'",
         )
         .bind(Uuid::from_u128(id))
         .execute(&self.pool)
@@ -2627,6 +2641,133 @@ mod tests {
         .await
         .expect("return tick");
         assert_eq!(repo.committed_merchants(a.id).await.unwrap(), 0);
+    }
+
+    /// 008 AC4 (P2 reproducibility): a delivery that fires after the target was already settled past
+    /// the arrival instant must **not** move the target's resource clock backwards — otherwise the
+    /// next read would re-accrue production already in `stored` (a free-resource double-count).
+    #[tokio::test]
+    async fn late_delivery_does_not_regress_the_resource_clock() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping late-delivery test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let units = crate::unit_rules().expect("unit rules");
+        let merchants = crate::merchant_rules().expect("merchant rules");
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (sender, a) = account("late_snd").await;
+        let (_recv, b) = account("late_rcv").await;
+
+        // Give the target a big Warehouse so the credit is not clamped (we assert the exact amount).
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+             VALUES ($1, 2, 'warehouse', 10)",
+        )
+        .bind(Uuid::from_u128(b.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Pin the target's resource clock to a known instant T_target with a known amount.
+        const T_TARGET: i64 = 4_000_000_000_000;
+        sqlx::query(
+            "UPDATE village_resources SET wood = 700, clay = 0, iron = 0, crop = 0, \
+             updated_at = to_timestamp($1::double precision / 1000.0) WHERE village_id = $2",
+        )
+        .bind(T_TARGET as f64)
+        .bind(Uuid::from_u128(b.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Send a shipment whose arrival is BEFORE T_target (a backlogged/late delivery).
+        let (stored, snap) = repo.stored_resources(a.id).await.unwrap().unwrap();
+        let bundle = ResourceAmounts {
+            wood: 300,
+            clay: 0,
+            iron: 0,
+            crop: 0,
+        };
+        let debited = ResourceAmounts {
+            wood: stored.wood - 300,
+            ..stored
+        };
+        let send_now = Timestamp(2_999_000_000_000);
+        let arrive = Timestamp(3_000_000_000_000); // < T_target
+        repo.start_trade(
+            a.id,
+            b.id,
+            sender,
+            a.coordinate,
+            b.coordinate,
+            debited,
+            snap,
+            send_now,
+            arrive,
+            bundle,
+            2,
+        )
+        .await
+        .expect("send");
+
+        // Deliver well after T_target.
+        let speed = GameSpeed::new(1.0).unwrap();
+        eperica_application::process_due_trades(
+            &repo,
+            &repo,
+            &econ,
+            &units,
+            &merchants,
+            &map,
+            speed,
+            Timestamp(5_000_000_000_000),
+            100,
+        )
+        .await
+        .expect("deliver tick");
+
+        // The clock did not regress to `arrive`, and the credit is exactly the snapshot + bundle
+        // (no re-accrued production): 700 + 300 = 1000.
+        let (after, clock) = repo.stored_resources(b.id).await.unwrap().unwrap();
+        assert_eq!(clock, Timestamp(T_TARGET), "resource clock regressed");
+        assert_eq!(after.wood, 1000);
     }
 
     #[tokio::test]

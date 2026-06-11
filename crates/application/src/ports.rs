@@ -374,8 +374,9 @@ pub trait TradeRepository: Send + Sync {
 
     /// Apply a due **deliver** in **one** transaction — credit the target with `target_settled`
     /// (the capped delivery, computed from the `target_from` snapshot and written with the
-    /// `deliver_arrive` clock), mark the deliver leg done, and insert the empty `return` leg
-    /// arriving at `return_arrive`. Exactly-once with the orphan requeue (AC4).
+    /// `credit_clock` as the new settle clock — never earlier than `target_from`), mark the deliver
+    /// leg done, and insert the empty `return` leg departing at the true arrival (`due.arrive_at`)
+    /// and arriving at `return_arrive`. Exactly-once with the orphan requeue (AC4).
     ///
     /// # Errors
     /// [`RepoError::Conflict`] if the target's resources moved since the snapshot (nothing applied;
@@ -386,7 +387,7 @@ pub trait TradeRepository: Send + Sync {
         due: &DueTrade,
         target_settled: ResourceAmounts,
         target_from: Timestamp,
-        deliver_arrive: Timestamp,
+        credit_clock: Timestamp,
         return_arrive: Timestamp,
     ) -> Result<(), RepoError>;
 
@@ -395,6 +396,14 @@ pub trait TradeRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn complete_trade(&self, id: u128) -> Result<(), RepoError>;
+
+    /// Hand a claimed leg back to `in_transit` (`processing → in_transit`) so the next tick retries
+    /// it — used when a deliver loses the optimistic credit repeatedly, to avoid stranding the leg
+    /// (and its committed merchants) until a restart.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn release_trade(&self, id: u128) -> Result<(), RepoError>;
 }
 
 /// A claimed, due event ready to be processed.

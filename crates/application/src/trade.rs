@@ -263,9 +263,15 @@ where
         let Some((stored, snapshot)) = accounts.stored_resources(target.id).await? else {
             return Err(RepoError::Backend("target resources missing".into()));
         };
+        // The credit's settle clock never runs backwards: if the target was already settled past the
+        // arrival (the normal poll window), settle to that later instant — otherwise the next read
+        // would re-accrue production over [arrive, snapshot] already folded into `stored` (double
+        // credit). Mirrors the training-delivery clamp (units.rs). The return still departs at the
+        // true arrival.
+        let credit_clock = Timestamp(leg.arrive_at.0.max(snapshot.0));
         let economy = eperica_domain::compute_economy(
             stored,
-            (leg.arrive_at.0 - snapshot.0) / 1000,
+            (credit_clock.0 - snapshot.0) / 1000,
             &target.fields,
             &target.buildings,
             village_upkeep(&target, &garrison, unit_rules),
@@ -274,7 +280,7 @@ where
         );
         let credited = deposit_capped(economy.amounts, leg.bundle, economy.capacities);
         match trades
-            .deliver_and_schedule_return(leg, credited, snapshot, leg.arrive_at, return_arrive)
+            .deliver_and_schedule_return(leg, credited, snapshot, credit_clock, return_arrive)
             .await
         {
             Ok(()) => return Ok(()),
@@ -282,7 +288,10 @@ where
             Err(e) => return Err(e),
         }
     }
-    Err(RepoError::Conflict)
+    // Persistent contention: hand the leg back to `in_transit` so the next tick retries it (its
+    // merchants stay committed meanwhile), rather than stranding it in `processing` until restart.
+    trades.release_trade(leg.id).await?;
+    Ok(())
 }
 
 /// A village garrison's crop upkeep (for settling its net crop), 0 for a tribe-less village.
@@ -557,6 +566,9 @@ mod tests {
             Ok(())
         }
         async fn complete_trade(&self, _id: u128) -> Result<(), RepoError> {
+            Ok(())
+        }
+        async fn release_trade(&self, _id: u128) -> Result<(), RepoError> {
             Ok(())
         }
     }
