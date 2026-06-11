@@ -107,6 +107,13 @@ pub trait AccountRepository: Send + Sync {
     /// [`RepoError::Backend`] on storage failure.
     async fn villages_of(&self, owner: PlayerId) -> Result<Vec<Village>, RepoError>;
 
+    /// One village by id (with its fields and buildings) — used by system processors that only
+    /// hold a village id (005 starvation checks).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn village_by_id(&self, village: VillageId) -> Result<Option<Village>, RepoError>;
+
     /// A village's stored resource amounts and the time they were last settled (Unix-ms UTC).
     /// Resources accrue from this snapshot on read (P1); there is no background job.
     ///

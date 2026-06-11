@@ -20,7 +20,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_pool(&config.database_url).await?;
     run_migrations(&pool).await?;
     let world_id = ensure_world(&pool, &config.world).await?;
-    let rules = economy_rules()?;
+    let rules = Arc::new(economy_rules()?);
+    let units = Arc::new(unit_rules()?);
     let accounts = PgAccountRepository::new(
         pool.clone(),
         world_id,
@@ -28,18 +29,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rules.starting_amounts,
     );
 
-    // Background scheduler (P1) — processes due events and due builds.
+    // Background scheduler (P1) — processes due events, builds, unit orders, training, starvation.
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let scheduler = Scheduler::new(PgEventStore::new(pool.clone()), accounts.clone());
+    let scheduler = Scheduler::new(
+        PgEventStore::new(pool.clone()),
+        accounts.clone(),
+        Arc::clone(&rules),
+        Arc::clone(&units),
+        config.world.speed,
+    );
     let scheduler_handle = tokio::spawn(scheduler.run(shutdown_rx));
 
     let state = AppState {
         accounts: Arc::new(accounts),
         hasher: Arc::new(Argon2Hasher),
         template: Arc::new(starting_village()?),
-        rules: Arc::new(rules),
+        rules,
         build_rules: Arc::new(build_rules()?),
-        unit_rules: Arc::new(unit_rules()?),
+        unit_rules: units,
         world: config.world,
         require_email_confirmation: env_flag("REQUIRE_EMAIL_CONFIRMATION"),
         cookie_key: load_cookie_key(),

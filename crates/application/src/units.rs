@@ -1,4 +1,4 @@
-//! Unit use-cases: order Academy research and Smithy upgrades, and process their due orders.
+﻿//! Unit use-cases: order Academy research and Smithy upgrades, and process their due orders.
 
 use crate::ports::{
     AccountRepository, NewTrainingOrder, NewUnitOrder, RepoError, TrainingRepository,
@@ -135,9 +135,10 @@ async fn village_and_amounts<A: AccountRepository>(
 /// # Errors
 /// See [`ResearchError`].
 #[allow(clippy::too_many_arguments)]
-pub async fn order_research<A, U>(
+pub async fn order_research<A, U, S>(
     accounts: &A,
     units: &U,
+    starvation: &S,
     economy_rules: &EconomyRules,
     unit_rules: &UnitRules,
     speed: GameSpeed,
@@ -148,6 +149,7 @@ pub async fn order_research<A, U>(
 where
     A: AccountRepository,
     U: UnitRepository,
+    S: crate::ports::StarvationRepository,
 {
     let Some((village, tribe, amounts, settled_from)) =
         village_and_amounts(accounts, economy_rules, unit_rules, speed, now, owner).await?
@@ -182,6 +184,17 @@ where
     units
         .start_unit_order(village.id, settled, settled_from, now, order)
         .await?;
+    // The settle changed the store; keep the depletion check exact (005 AC7).
+    crate::starvation::sync_starvation_check(
+        accounts,
+        starvation,
+        economy_rules,
+        unit_rules,
+        speed,
+        now,
+        village.id,
+    )
+    .await?;
     Ok(())
 }
 
@@ -194,9 +207,10 @@ where
 /// # Errors
 /// See [`UpgradeError`].
 #[allow(clippy::too_many_arguments)]
-pub async fn order_smithy_upgrade<A, U>(
+pub async fn order_smithy_upgrade<A, U, S>(
     accounts: &A,
     units: &U,
+    starvation: &S,
     economy_rules: &EconomyRules,
     unit_rules: &UnitRules,
     speed: GameSpeed,
@@ -207,6 +221,7 @@ pub async fn order_smithy_upgrade<A, U>(
 where
     A: AccountRepository,
     U: UnitRepository,
+    S: crate::ports::StarvationRepository,
 {
     let Some((village, tribe, amounts, settled_from)) =
         village_and_amounts(accounts, economy_rules, unit_rules, speed, now, owner).await?
@@ -260,6 +275,17 @@ where
     units
         .start_unit_order(village.id, settled, settled_from, now, order)
         .await?;
+    // The settle changed the store; keep the depletion check exact (005 AC7).
+    crate::starvation::sync_starvation_check(
+        accounts,
+        starvation,
+        economy_rules,
+        unit_rules,
+        speed,
+        now,
+        village.id,
+    )
+    .await?;
     Ok(())
 }
 
@@ -315,10 +341,11 @@ impl From<RepoError> for TrainError {
 /// # Errors
 /// See [`TrainError`].
 #[allow(clippy::too_many_arguments)]
-pub async fn order_train<A, U, T>(
+pub async fn order_train<A, U, T, S>(
     accounts: &A,
     units: &U,
     training: &T,
+    starvation: &S,
     economy_rules: &EconomyRules,
     unit_rules: &UnitRules,
     speed: GameSpeed,
@@ -331,6 +358,7 @@ where
     A: AccountRepository,
     U: UnitRepository,
     T: TrainingRepository,
+    S: crate::ports::StarvationRepository,
 {
     let Some((village, tribe, amounts, settled_from)) =
         village_and_amounts(accounts, economy_rules, unit_rules, speed, now, owner).await?
@@ -373,6 +401,17 @@ where
     training
         .start_training(village.id, settled, settled_from, now, order)
         .await?;
+    // The settle changed the store; keep the depletion check exact (005 AC7).
+    crate::starvation::sync_starvation_check(
+        accounts,
+        starvation,
+        economy_rules,
+        unit_rules,
+        speed,
+        now,
+        village.id,
+    )
+    .await?;
     Ok(())
 }
 
@@ -569,6 +608,9 @@ mod tests {
         async fn villages_of(&self, _owner: PlayerId) -> Result<Vec<Village>, RepoError> {
             Ok(vec![self.village.clone()])
         }
+        async fn village_by_id(&self, _v: VillageId) -> Result<Option<Village>, RepoError> {
+            Ok(Some(self.village.clone()))
+        }
         async fn stored_resources(
             &self,
             _v: VillageId,
@@ -676,6 +718,46 @@ mod tests {
         }
     }
 
+    struct NoopStarvation;
+
+    #[async_trait]
+    impl crate::ports::StarvationRepository for NoopStarvation {
+        async fn schedule_starvation_check(
+            &self,
+            _v: VillageId,
+            _due: Timestamp,
+        ) -> Result<(), RepoError> {
+            Ok(())
+        }
+        async fn cancel_starvation_check(&self, _v: VillageId) -> Result<(), RepoError> {
+            Ok(())
+        }
+        async fn claim_due_starvation(
+            &self,
+            _now: Timestamp,
+            _limit: i64,
+        ) -> Result<Vec<VillageId>, RepoError> {
+            Ok(Vec::new())
+        }
+        async fn apply_starvation(
+            &self,
+            _v: VillageId,
+            _settled: ResourceAmounts,
+            _from: Timestamp,
+            _now: Timestamp,
+            _survivors: &eperica_domain::UnitCounts,
+        ) -> Result<(), RepoError> {
+            Ok(())
+        }
+        async fn resolve_starvation_check(
+            &self,
+            _v: VillageId,
+            _reschedule: Option<Timestamp>,
+        ) -> Result<(), RepoError> {
+            Ok(())
+        }
+    }
+
     async fn train(
         accounts: &FakeAccounts,
         units: &FakeUnits,
@@ -687,6 +769,7 @@ mod tests {
             accounts,
             units,
             training,
+            &NoopStarvation,
             &economy_rules(),
             &unit_rules(),
             GameSpeed::new(1.0).unwrap(),
@@ -798,6 +881,7 @@ mod tests {
         order_research(
             accounts,
             units,
+            &NoopStarvation,
             &economy_rules(),
             &unit_rules(),
             GameSpeed::new(speed).unwrap(),
@@ -816,6 +900,7 @@ mod tests {
         order_smithy_upgrade(
             accounts,
             units,
+            &NoopStarvation,
             &economy_rules(),
             &unit_rules(),
             GameSpeed::new(1.0).unwrap(),

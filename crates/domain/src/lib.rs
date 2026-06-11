@@ -22,7 +22,7 @@ pub use construction::{
 };
 pub use economy::{
     Capacities, Economy, EconomyRules, ProductionRates, ResourceAmounts, accrue, capacities,
-    compute_economy, population, production_rates,
+    compute_economy, net_crop_base, population, production_rates,
 };
 pub use error::DomainError;
 pub use event::{EventKind, ScheduledEvent, Timestamp};

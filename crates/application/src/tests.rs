@@ -93,6 +93,10 @@ impl AccountRepository for InMemoryAccounts {
         Ok(Vec::new())
     }
 
+    async fn village_by_id(&self, _village: VillageId) -> Result<Option<Village>, RepoError> {
+        Ok(None)
+    }
+
     async fn stored_resources(
         &self,
         _village: VillageId,

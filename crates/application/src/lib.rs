@@ -10,6 +10,7 @@ pub mod economy;
 pub mod ports;
 pub mod register;
 pub mod scheduler;
+pub mod starvation;
 pub mod units;
 
 #[cfg(test)]
@@ -29,6 +30,7 @@ pub use ports::{
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;
+pub use starvation::{process_due_starvation, sync_starvation_check, sync_starvation_checks};
 pub use units::{
     ResearchError, TrainError, UpgradeError, order_research, order_smithy_upgrade, order_train,
     process_due_training, process_due_unit_orders,

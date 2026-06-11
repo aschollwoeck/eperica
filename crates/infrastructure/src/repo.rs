@@ -388,6 +388,65 @@ impl AccountRepository for PgAccountRepository {
         Ok(villages)
     }
 
+    async fn village_by_id(&self, village: VillageId) -> Result<Option<Village>, RepoError> {
+        let vid = Uuid::from_u128(village.0);
+        let Some(r) = sqlx::query("SELECT owner_id, x, y, tribe FROM villages WHERE id = $1")
+            .bind(vid)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(backend)?
+        else {
+            return Ok(None);
+        };
+        let owner: Uuid = r.try_get("owner_id").map_err(backend)?;
+        let x: i32 = r.try_get("x").map_err(backend)?;
+        let y: i32 = r.try_get("y").map_err(backend)?;
+        let tribe_raw: Option<String> = r.try_get("tribe").map_err(backend)?;
+
+        let field_rows = sqlx::query(
+            "SELECT resource_type, level FROM village_fields WHERE village_id = $1 ORDER BY slot",
+        )
+        .bind(vid)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut fields = Vec::with_capacity(field_rows.len());
+        for fr in &field_rows {
+            let kind = parse_resource(&fr.try_get::<String, _>("resource_type").map_err(backend)?)?;
+            let level: i16 = fr.try_get("level").map_err(backend)?;
+            fields.push(ResourceField {
+                kind,
+                level: u8::try_from(level).unwrap_or(0),
+            });
+        }
+
+        let building_rows = sqlx::query(
+            "SELECT building_type, level FROM village_buildings WHERE village_id = $1 ORDER BY slot",
+        )
+        .bind(vid)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut buildings = Vec::with_capacity(building_rows.len());
+        for br in &building_rows {
+            let kind = parse_building(&br.try_get::<String, _>("building_type").map_err(backend)?)?;
+            let level: i16 = br.try_get("level").map_err(backend)?;
+            buildings.push(BuildingSlot {
+                kind,
+                level: u8::try_from(level).unwrap_or(0),
+            });
+        }
+
+        Ok(Some(Village {
+            id: village,
+            owner: PlayerId(owner.as_u128()),
+            coordinate: Coordinate::new(x, y),
+            tribe: parse_tribe(tribe_raw)?,
+            fields,
+            buildings,
+        }))
+    }
+
     async fn stored_resources(
         &self,
         village: VillageId,

@@ -135,6 +135,21 @@ pub fn production_rates(
     }
 }
 
+/// The hourly crop balance **before troop upkeep and speed scaling**: crop-field output minus
+/// population. The starvation cull (005 AC7) compares this against the garrison's upkeep.
+pub fn net_crop_base(
+    fields: &[ResourceField],
+    buildings: &[BuildingSlot],
+    rules: &EconomyRules,
+) -> i64 {
+    let crop: i64 = fields
+        .iter()
+        .filter(|f| f.kind == ResourceKind::Crop)
+        .map(|f| rules.field_production(ResourceKind::Crop, f.level))
+        .sum();
+    crop - population(fields, buildings, rules)
+}
+
 /// Storage capacities, derived from the highest Warehouse/Granary levels present (level 0 = base).
 pub fn capacities(buildings: &[BuildingSlot], rules: &EconomyRules) -> Capacities {
     let level_of = |kind: BuildingKind| -> u8 {

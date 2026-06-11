@@ -31,11 +31,11 @@ Ordered for dependency and testability (pure domain first).
 - [x] **T6 — Training use-cases.** `order_train` (gates → settle/debit → batch) with `TrainError`;
   `process_due_training` (claim → apply k → resync). Fake-based tests: success + every rejection
   (**AC2**, **AC3**).
-- [ ] **T7 — Starvation use-cases.** `sync_starvation_check` (cancel / upsert at depletion) wired
+- [x] **T7 — Starvation use-cases.** `sync_starvation_check` (cancel / upsert at depletion) wired
   into order_build / order_research / order_smithy_upgrade / order_train / build & training
   completions; `process_due_starvation` (re-validate → cull / reschedule / done). Tests (**AC7**,
   **AC8**).
-- [ ] **T8 — Scheduler.** Ticks `process_due_training` + `process_due_starvation`; startup orphan
+- [x] **T8 — Scheduler.** Ticks `process_due_training` + `process_due_starvation`; startup orphan
   requeue for training. DB test via processor (**AC5** restart path).
 
 ## Web
