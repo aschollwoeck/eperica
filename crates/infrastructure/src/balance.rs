@@ -322,14 +322,19 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
 #[derive(Deserialize)]
 struct TradeDto {
     merchants: MerchantsDto,
-    romans: MerchantProfileDto,
-    teutons: MerchantProfileDto,
-    gauls: MerchantProfileDto,
+    tribes: TradeTribesDto,
 }
 
 #[derive(Deserialize)]
 struct MerchantsDto {
     per_level: Vec<u32>,
+}
+
+#[derive(Deserialize)]
+struct TradeTribesDto {
+    romans: MerchantProfileDto,
+    teutons: MerchantProfileDto,
+    gauls: MerchantProfileDto,
 }
 
 #[derive(Deserialize)]
@@ -355,9 +360,9 @@ impl From<&MerchantProfileDto> for MerchantProfile {
 pub fn merchant_rules() -> Result<MerchantRules, BalanceError> {
     let dto: TradeDto = toml::from_str(TRADE_TOML)?;
     let profiles = HashMap::from([
-        (Tribe::Romans, MerchantProfile::from(&dto.romans)),
-        (Tribe::Teutons, MerchantProfile::from(&dto.teutons)),
-        (Tribe::Gauls, MerchantProfile::from(&dto.gauls)),
+        (Tribe::Romans, MerchantProfile::from(&dto.tribes.romans)),
+        (Tribe::Teutons, MerchantProfile::from(&dto.tribes.teutons)),
+        (Tribe::Gauls, MerchantProfile::from(&dto.tribes.gauls)),
     ]);
     MerchantRules::new(profiles, dto.merchants.per_level).map_err(BalanceError::Domain)
 }
@@ -745,6 +750,17 @@ mod tests {
         let full = UNITS_TOML;
         let truncated = &full[..full.rfind("[[gauls.units]]").expect("marker")];
         assert!(parse_unit_rules(truncated).is_err());
+    }
+
+    #[test]
+    fn loads_merchant_rules() {
+        // 008: every tribe has a positive merchant profile and the per-level table is non-empty.
+        let r = merchant_rules().expect("merchant rules");
+        assert_eq!(r.merchants_total(0), 0);
+        assert!(r.merchants_total(1) >= 1);
+        assert_eq!(r.profile(Tribe::Teutons).capacity, 1000);
+        assert_eq!(r.profile(Tribe::Gauls).speed, 24);
+        assert!(r.profile(Tribe::Romans).capacity > 0);
     }
 
     #[test]

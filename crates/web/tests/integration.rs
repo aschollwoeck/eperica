@@ -8,7 +8,7 @@ use eperica_application::process_due_movements;
 use eperica_domain::{GameSpeed, Timestamp, WorldConfig, WorldMap};
 use eperica_infrastructure::{
     Argon2Hasher, PgAccountRepository, build_rules, create_pool, economy_rules, ensure_world,
-    map_rules, now, run_migrations, starting_village, unit_rules,
+    map_rules, merchant_rules, now, run_migrations, starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -44,6 +44,7 @@ async fn spawn() -> Option<String> {
         rules: Arc::new(rules),
         build_rules: Arc::new(build_rules().expect("build rules")),
         unit_rules: Arc::new(unit_rules().expect("unit rules")),
+        merchant_rules: Arc::new(merchant_rules().expect("merchant rules")),
         map,
         world: config,
         require_email_confirmation: false,

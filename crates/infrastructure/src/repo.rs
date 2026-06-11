@@ -2522,6 +2522,113 @@ mod tests {
         assert!(repo.active_trades(sender).await.unwrap().is_empty());
     }
 
+    /// 008 AC4/AC5 (processor path): the application `process_due_trades` — as the scheduler ticks it
+    /// — delivers a due shipment (credits the target through the real economy settle, capped) and a
+    /// later tick completes the empty return, freeing the merchants.
+    #[tokio::test]
+    async fn process_due_trades_delivers_and_frees_merchants() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping trade processor test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let units = crate::unit_rules().expect("unit rules");
+        let merchants = crate::merchant_rules().expect("merchant rules");
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (sender, a) = account("prc_snd").await;
+        let (_recv, b) = account("prc_rcv").await;
+
+        // Send 300 wood, 2 merchants, due at `arrive`.
+        let (stored, snap) = repo.stored_resources(a.id).await.unwrap().unwrap();
+        let bundle = ResourceAmounts {
+            wood: 300,
+            clay: 0,
+            iron: 0,
+            crop: 0,
+        };
+        let debited = ResourceAmounts {
+            wood: stored.wood - 300,
+            ..stored
+        };
+        let now = Timestamp(3_000_000_000_000);
+        let arrive = Timestamp(now.0 + 100_000);
+        repo.start_trade(
+            a.id,
+            b.id,
+            sender,
+            a.coordinate,
+            b.coordinate,
+            debited,
+            snap,
+            now,
+            arrive,
+            bundle,
+            2,
+        )
+        .await
+        .expect("send");
+
+        // Tick the processor at the arrival: the deliver credits the target (to its 800 base cap)
+        // and schedules the empty return; the merchants stay committed.
+        let speed = GameSpeed::new(1.0).unwrap();
+        let credited = eperica_application::process_due_trades(
+            &repo, &repo, &econ, &units, &merchants, &map, speed, arrive, 100,
+        )
+        .await
+        .expect("deliver tick");
+        assert!(credited.contains(&b.id));
+        assert_eq!(
+            repo.stored_resources(b.id).await.unwrap().unwrap().0.wood,
+            800
+        );
+        assert_eq!(repo.committed_merchants(a.id).await.unwrap(), 2);
+
+        // A later tick (well past the return arrival) completes the return and frees the merchants.
+        let far = Timestamp(arrive.0 + 1_000_000_000);
+        eperica_application::process_due_trades(
+            &repo, &repo, &econ, &units, &merchants, &map, speed, far, 100,
+        )
+        .await
+        .expect("return tick");
+        assert_eq!(repo.committed_merchants(a.id).await.unwrap(), 0);
+    }
+
     #[tokio::test]
     async fn create_account_persists_user_and_one_village() {
         let _ = dotenvy::dotenv();

@@ -4,9 +4,12 @@ use crate::repo::PgAccountRepository;
 use async_trait::async_trait;
 use eperica_application::{
     DueEvent, EventStore, RepoError, process_due, process_due_builds, process_due_movements,
-    process_due_starvation, process_due_training, process_due_unit_orders, sync_starvation_checks,
+    process_due_starvation, process_due_trades, process_due_training, process_due_unit_orders,
+    sync_starvation_checks,
 };
-use eperica_domain::{EconomyRules, EventKind, GameSpeed, Timestamp, UnitRules};
+use eperica_domain::{
+    EconomyRules, EventKind, GameSpeed, MerchantRules, Timestamp, UnitRules, WorldMap,
+};
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -135,18 +138,23 @@ pub struct Scheduler {
     builds: PgAccountRepository,
     economy_rules: Arc<EconomyRules>,
     unit_rules: Arc<UnitRules>,
+    merchant_rules: Arc<MerchantRules>,
+    map: Arc<WorldMap>,
     speed: GameSpeed,
     poll_interval: Duration,
 }
 
 impl Scheduler {
     /// Create a scheduler over the event store and repositories with a default poll interval.
-    /// The rules + speed drive starvation re-validation (005 AC7).
+    /// The rules + speed drive starvation re-validation (005 AC7) and trade delivery (008).
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         store: PgEventStore,
         builds: PgAccountRepository,
         economy_rules: Arc<EconomyRules>,
         unit_rules: Arc<UnitRules>,
+        merchant_rules: Arc<MerchantRules>,
+        map: Arc<WorldMap>,
         speed: GameSpeed,
     ) -> Self {
         Self {
@@ -154,6 +162,8 @@ impl Scheduler {
             builds,
             economy_rules,
             unit_rules,
+            merchant_rules,
+            map,
             speed,
             poll_interval: Duration::from_millis(200),
         }
@@ -203,6 +213,13 @@ impl Scheduler {
             }
             Ok(_) => {}
             Err(e) => tracing::error!(error = %e, "failed to requeue orphaned movements"),
+        }
+        match self.builds.requeue_orphaned_trades().await {
+            Ok(n) if n > 0 => {
+                tracing::warn!(requeued = n, "requeued orphaned trades at startup");
+            }
+            Ok(_) => {}
+            Err(e) => tracing::error!(error = %e, "failed to requeue orphaned trades"),
         }
         loop {
             if *shutdown.borrow() {
@@ -259,6 +276,27 @@ impl Scheduler {
                 }
                 Ok(_) => {}
                 Err(e) => tracing::error!(error = %e, "scheduler movement tick failed"),
+            }
+            match process_due_trades(
+                &self.builds,
+                &self.builds,
+                &self.economy_rules,
+                &self.unit_rules,
+                &self.merchant_rules,
+                &self.map,
+                self.speed,
+                now(),
+                100,
+            )
+            .await
+            {
+                Ok(targets) if !targets.is_empty() => {
+                    tracing::debug!(delivered = targets.len(), "scheduler delivered trades");
+                    // Credited targets gained crop — re-sync those depletion checks (005 AC7).
+                    self.resync(&targets).await;
+                }
+                Ok(_) => {}
+                Err(e) => tracing::error!(error = %e, "scheduler trade tick failed"),
             }
             match process_due_starvation(
                 &self.builds,

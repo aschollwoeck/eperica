@@ -171,7 +171,8 @@ where
 
 /// Claim and apply trade legs whose arrival is due (the System actor, AC4/AC5): deliver shipments
 /// (credit the target capped to capacity, then schedule the empty return) and free merchants when a
-/// return arrives.
+/// return arrives. Returns the **credited target** villages (their crop rose — callers re-sync the
+/// starvation check).
 ///
 /// # Errors
 /// Propagates [`RepoError`] from the repository (per-leg failures are logged and skipped — recovered
@@ -187,16 +188,17 @@ pub async fn process_due_trades<A, T>(
     speed: GameSpeed,
     now: Timestamp,
     limit: i64,
-) -> Result<(), RepoError>
+) -> Result<Vec<eperica_domain::VillageId>, RepoError>
 where
     A: AccountRepository,
     T: TradeRepository,
 {
     let due = trades.claim_due_trades(now, limit).await?;
+    let mut credited = Vec::new();
     for leg in due {
-        let result = match leg.kind {
+        match leg.kind {
             TradeKind::Deliver => {
-                deliver(
+                match deliver(
                     accounts,
                     trades,
                     economy_rules,
@@ -207,16 +209,21 @@ where
                     &leg,
                 )
                 .await
+                {
+                    Ok(()) => credited.push(leg.target_village),
+                    // Log-and-continue: a failed apply leaves the leg `processing`, recovered by the
+                    // startup orphan requeue and re-applied (delivery is exactly-once under the guard).
+                    Err(e) => tracing::error!(error = %e, "failed to deliver due trade"),
+                }
             }
-            TradeKind::Return => trades.complete_trade(leg.id).await,
-        };
-        if let Err(e) = result {
-            // Log-and-continue: a failed apply leaves the leg `processing`, recovered by the startup
-            // orphan requeue and re-applied (delivery is exactly-once under the snapshot guard).
-            tracing::error!(error = %e, "failed to apply due trade leg");
+            TradeKind::Return => {
+                if let Err(e) = trades.complete_trade(leg.id).await {
+                    tracing::error!(error = %e, "failed to complete due return");
+                }
+            }
         }
     }
-    Ok(())
+    Ok(credited)
 }
 
 /// Deliver one due shipment: credit the target capped to its storage and schedule the empty return.
