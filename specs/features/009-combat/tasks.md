@@ -24,7 +24,7 @@ Ordered for dependency and testability (pure domain first).
 
 ## Application
 
-- [ ] **T4 — Combat use-cases.** `order_attack` (validate → travel → debit/schedule),
+- [x] **T4 — Combat use-cases.** `order_attack` (validate → travel → debit/schedule),
   `process_due_combat` (gather → resolve → apply → report → return; re-sync starvation). Fake tests:
   send success + every rejection; resolution wires the domain outcome to the repo apply (**AC1**,
   **AC2**, **AC6**).

@@ -3302,6 +3302,119 @@ mod tests {
         assert!(repo.report(report_id, ally).await.unwrap().is_none()); // not a party
     }
 
+    /// 009 AC3/AC6 (processor path): `process_due_combat` resolves a due raid end-to-end — the
+    /// overwhelming attacker wins, the defender garrison is wiped, a report is written, and the
+    /// survivors are sent home.
+    #[tokio::test]
+    async fn process_due_combat_resolves_a_raid() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping combat processor test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let units = crate::unit_rules().expect("unit rules");
+        let combat = crate::combat_rules().expect("combat rules");
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (attacker, a) = account("pcatk").await;
+        let (_defender, d) = account("pcdef").await;
+
+        // Overwhelming attacker: 100 swordsmen vs a token 2-phalanx defence.
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'swordsman', 100)",
+        )
+        .bind(Uuid::from_u128(a.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 2)",
+        )
+        .bind(Uuid::from_u128(d.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let now = Timestamp(3_000_000_000_000);
+        let arrive = Timestamp(now.0 + 100_000);
+        repo.start_attack(
+            a.id,
+            d.id,
+            attacker,
+            a.coordinate,
+            d.coordinate,
+            now,
+            arrive,
+            MovementKind::Raid,
+            &[(UnitId("swordsman".into()), 100)],
+        )
+        .await
+        .expect("attack");
+
+        let targets = eperica_application::process_due_combat(
+            &repo,
+            &repo,
+            &repo,
+            &repo,
+            &econ,
+            &units,
+            &combat,
+            &map,
+            GameSpeed::new(1.0).unwrap(),
+            world.seed as u64,
+            arrive,
+            100,
+        )
+        .await
+        .expect("resolve");
+        assert!(targets.contains(&d.id));
+
+        // The defender's 2 phalanx are wiped; a report shows the attacker won.
+        assert!(repo.garrison(d.id).await.unwrap().is_empty());
+        let reports = repo.reports_for(attacker, 10).await.unwrap();
+        assert_eq!(reports.len(), 1);
+        assert!(reports[0].attacker_won);
+        assert_eq!(reports[0].kind, MovementKind::Raid);
+        // Survivors are heading home.
+        let returning = repo.active_movements(attacker).await.unwrap();
+        assert!(returning.iter().any(|m| m.kind == MovementKind::Return));
+    }
+
     #[tokio::test]
     async fn create_account_persists_user_and_one_village() {
         let _ = dotenvy::dotenv();
