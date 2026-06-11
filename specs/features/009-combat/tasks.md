@@ -28,7 +28,7 @@ Ordered for dependency and testability (pure domain first).
   `process_due_combat` (gather → resolve → apply → report → return; re-sync starvation). Fake tests:
   send success + every rejection; resolution wires the domain outcome to the repo apply (**AC1**,
   **AC2**, **AC6**).
-- [ ] **T5 — Scheduler.** Tick `process_due_combat`; startup orphan requeue (shared). DB test via the
+- [x] **T5 — Scheduler.** Tick `process_due_combat`; startup orphan requeue (shared). DB test via the
   processor (**AC6** restart path).
 
 ## Web

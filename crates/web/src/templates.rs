@@ -294,6 +294,53 @@ pub struct ReinforcementRow {
     pub host_id: String,
 }
 
+/// One line in the battle-reports inbox (009 AC8).
+pub struct ReportRow {
+    /// Report id (for the detail link).
+    pub id: String,
+    /// When it happened (Unix-ms UTC) for the relative display.
+    pub when_ms: i64,
+    /// A one-line summary, e.g. "Raid on bob (3|4)".
+    pub headline: String,
+    /// The outcome from this player's perspective ("Victory" / "Defeat" / …).
+    pub outcome: String,
+}
+
+#[derive(Template)]
+#[template(path = "reports.html")]
+pub struct ReportsTemplate {
+    /// The player's reports, newest first (empty shows a notice).
+    pub reports: Vec<ReportRow>,
+}
+
+/// One unit line in a battle report's force table (009 AC8): sent/defending and lost.
+pub struct ForceRow {
+    pub name: String,
+    pub count: u32,
+    pub lost: u32,
+}
+
+#[derive(Template)]
+#[template(path = "report.html")]
+pub struct ReportTemplate {
+    /// "Attack" or "Raid".
+    pub kind: &'static str,
+    /// The framed summary, e.g. "You raided bob (3|4)".
+    pub headline: String,
+    /// The outcome from this player's perspective.
+    pub outcome: String,
+    /// Luck as a signed percentage (e.g. +12).
+    pub luck_pct: i64,
+    /// Morale as a percentage (≤ 100).
+    pub morale_pct: i64,
+    pub wall_before: u8,
+    pub wall_after: u8,
+    pub attacker_name: String,
+    pub attacker_rows: Vec<ForceRow>,
+    pub defender_name: String,
+    pub defender_rows: Vec<ForceRow>,
+}
+
 /// A garrison-independent Marketplace view (008 AC6): merchant pool + per-tribe capacity.
 #[derive(Template)]
 #[template(path = "market.html")]

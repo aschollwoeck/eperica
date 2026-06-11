@@ -5,6 +5,7 @@
   <p class="muted">Location ({{ x }}, {{ y }}) · Tribe: {{ tribe }} · <a href="/map">Map</a>
     · <a href="/village/rally">Rally Point</a>
     · <a href="/village/market">Marketplace</a>
+    · <a href="/reports">Reports</a>
     {% if has_academy %} · <a href="/village/academy">Academy</a>{% endif %}
     {% if has_smithy %} · <a href="/village/smithy">Smithy</a>{% endif %}
     {% for link in troop_links %} · <a href="{{ link.1 }}">{{ link.0 }}</a>{% endfor %}</p>

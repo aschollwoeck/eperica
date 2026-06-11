@@ -3,10 +3,11 @@
 use crate::auth::{AuthUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
 use crate::templates::{
-    AcademyRow, AcademyTemplate, ActiveView, BuildRow, GarrisonRow, IndexTemplate, LoginTemplate,
-    MapCellView, MapTemplate, MarketTemplate, MovementRow, QueueView, RallyTemplate, RallyUnitRow,
-    RegisterTemplate, ReinforcementRow, ShipmentRow, SmithyRow, SmithyTemplate, StyleGuideTemplate,
-    TrainRow, TroopsTemplate, VillageTemplate,
+    AcademyRow, AcademyTemplate, ActiveView, BuildRow, ForceRow, GarrisonRow, IndexTemplate,
+    LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MovementRow, QueueView, RallyTemplate,
+    RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate,
+    ShipmentRow, SmithyRow, SmithyTemplate, StyleGuideTemplate, TrainRow, TroopsTemplate,
+    VillageTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -15,16 +16,17 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
-    AccountRepository, BuildRepository, LoginError, MovementRepository, RegisterCommand,
-    RegisterError, TradeRepository, TrainingRepository, UnitOrderKind, UnitRepository,
-    authenticate, load_economy, map_viewport, order_build, order_reinforcement, order_research,
-    order_return, order_smithy_upgrade, order_trade, order_train, register, viewport_coords,
+    AccountRepository, BattleReportView, BuildRepository, CombatRepository, LoginError,
+    MovementRepository, RegisterCommand, RegisterError, TradeRepository, TrainingRepository,
+    UnitOrderKind, UnitRepository, authenticate, load_economy, map_viewport, order_attack,
+    order_build, order_reinforcement, order_research, order_return, order_smithy_upgrade,
+    order_trade, order_train, register, viewport_coords,
 };
 use eperica_domain::{
-    BuildTarget, BuildingKind, Coordinate, MovementKind, OasisBonus, QueueLane, ResearchDenied,
-    ResourceAmounts, ResourceKind, TileKind, TradeKind, Tribe, UnitId, UnitRole, UnitRules,
-    UpgradeDenied, Village, VillageId, can_afford, can_research, can_upgrade, garrison_upkeep,
-    per_unit_time_secs, queue_lane, scaled_time_secs,
+    AttackMode, BuildTarget, BuildingKind, Coordinate, MovementKind, OasisBonus, QueueLane,
+    ResearchDenied, ResourceAmounts, ResourceKind, TileKind, TradeKind, Tribe, UnitId, UnitRole,
+    UnitRules, UpgradeDenied, Village, VillageId, can_afford, can_research, can_upgrade,
+    garrison_upkeep, per_unit_time_secs, queue_lane, scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
@@ -1298,22 +1300,53 @@ pub async fn rally_send(
             (n > 0).then(|| (UnitId(id.to_owned()), n))
         })
         .collect();
-    if let Err(e) = order_reinforcement(
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
-        state.rules.as_ref(),
-        state.unit_rules.as_ref(),
-        state.map.as_ref(),
-        state.world.speed,
-        now(),
-        player,
-        Coordinate::new(x, y),
-        troops,
-    )
-    .await
-    {
-        tracing::warn!(error = %e, "reinforcement order rejected");
+    let target = Coordinate::new(x, y);
+    // The mode selects the use-case: reinforce (007) defends; attack/raid (009) fight.
+    let mode = match form.get("mode").map(String::as_str) {
+        Some("attack") => Some(AttackMode::Attack),
+        Some("raid") => Some(AttackMode::Raid),
+        _ => None,
+    };
+    match mode {
+        Some(mode) => {
+            if let Err(e) = order_attack(
+                state.accounts.as_ref(),
+                state.accounts.as_ref(),
+                state.accounts.as_ref(),
+                state.rules.as_ref(),
+                state.unit_rules.as_ref(),
+                state.map.as_ref(),
+                state.world.speed,
+                now(),
+                player,
+                target,
+                troops,
+                mode,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, "attack order rejected");
+            }
+        }
+        None => {
+            if let Err(e) = order_reinforcement(
+                state.accounts.as_ref(),
+                state.accounts.as_ref(),
+                state.accounts.as_ref(),
+                state.rules.as_ref(),
+                state.unit_rules.as_ref(),
+                state.map.as_ref(),
+                state.world.speed,
+                now(),
+                player,
+                target,
+                troops,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, "reinforcement order rejected");
+            }
+        }
     }
     Redirect::to("/village").into_response()
 }
@@ -1430,4 +1463,112 @@ pub async fn market_send(
         tracing::warn!(error = %e, "trade order rejected");
     }
     Redirect::to("/village").into_response()
+}
+
+/// A one-line headline for a report from this player's perspective.
+fn report_headline(r: &BattleReportView, i_attacked: bool) -> String {
+    let kind = if r.kind == MovementKind::Raid {
+        "Raid"
+    } else {
+        "Attack"
+    };
+    if i_attacked {
+        format!(
+            "{kind} on {} ({}|{})",
+            r.defender_name, r.defender_coord.x, r.defender_coord.y
+        )
+    } else {
+        format!(
+            "{kind} from {} ({}|{})",
+            r.attacker_name, r.attacker_coord.x, r.attacker_coord.y
+        )
+    }
+}
+
+/// The outcome from this player's perspective.
+fn report_outcome(r: &BattleReportView, i_attacked: bool) -> String {
+    let i_won = if i_attacked {
+        r.attacker_won
+    } else {
+        !r.attacker_won
+    };
+    if i_won { "Victory" } else { "Defeat" }.to_owned()
+}
+
+/// Build a side's force table (sent/defending + lost) with unit display names.
+fn force_rows(
+    unit_rules: &UnitRules,
+    forces: &[(UnitId, u32)],
+    losses: &[(UnitId, u32)],
+) -> Vec<ForceRow> {
+    forces
+        .iter()
+        .map(|(id, count)| ForceRow {
+            name: unit_name(unit_rules, id),
+            count: *count,
+            lost: losses.iter().find(|(u, _)| u == id).map_or(0, |(_, l)| *l),
+        })
+        .collect()
+}
+
+/// The player's battle-reports inbox (009 AC8; Player only, P4).
+pub async fn reports(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+    let reports = match state.accounts.reports_for(player, 50).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "reports lookup failed");
+            return server_error();
+        }
+    };
+    let rows = reports
+        .iter()
+        .map(|r| {
+            let i_attacked = r.attacker_player == player;
+            ReportRow {
+                id: r.id.to_string(),
+                when_ms: r.occurred_at.0,
+                headline: report_headline(r, i_attacked),
+                outcome: report_outcome(r, i_attacked),
+            }
+        })
+        .collect();
+    page(&ReportsTemplate { reports: rows })
+}
+
+/// One battle report's detail — only a party to it may view it (009 AC8, P4).
+pub async fn report_detail(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let Ok(id) = id.parse::<u128>() else {
+        return Redirect::to("/reports").into_response();
+    };
+    let report = match state.accounts.report(id, player).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return Redirect::to("/reports").into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "report lookup failed");
+            return server_error();
+        }
+    };
+    let unit_rules = state.unit_rules.as_ref();
+    let i_attacked = report.attacker_player == player;
+    page(&ReportTemplate {
+        kind: if report.kind == MovementKind::Raid {
+            "Raid"
+        } else {
+            "Attack"
+        },
+        headline: report_headline(&report, i_attacked),
+        outcome: report_outcome(&report, i_attacked),
+        luck_pct: ((report.luck - 1.0) * 100.0).round() as i64,
+        morale_pct: (report.morale * 100.0).round() as i64,
+        wall_before: report.wall_before,
+        wall_after: report.wall_after,
+        attacker_name: report.attacker_name.clone(),
+        attacker_rows: force_rows(unit_rules, &report.attacker_forces, &report.attacker_losses),
+        defender_name: report.defender_name.clone(),
+        defender_rows: force_rows(unit_rules, &report.defender_forces, &report.defender_losses),
+    })
 }
