@@ -12,7 +12,7 @@ Ordered for dependency and testability (pure domain first).
 
 ## Persistence
 
-- [ ] **T2 — Migration + movement repository.** `0010_movements.sql` (`troop_movements` + due
+- [x] **T2 — Migration + movement repository.** `0010_movements.sql` (`troop_movements` + due
   index, `movement_troops`, `reinforcements`); `village_at` on the account repo; `MovementRepository`
   (guarded-debit `start_reinforcement`, `start_return`, claim/apply single-tx, the view queries,
   orphan requeue). DB tests: send debits garrison + writes movement; arrival stations once; crash-

@@ -5,8 +5,8 @@
 
 use async_trait::async_trait;
 use eperica_domain::{
-    BuildTarget, BuildingKind, Coordinate, EventKind, PlayerId, QueueLane, ResourceAmounts,
-    StartingVillage, Timestamp, Tribe, UnitCounts, UnitId, Village, VillageId,
+    BuildTarget, BuildingKind, Coordinate, EventKind, MovementKind, PlayerId, QueueLane,
+    ResourceAmounts, StartingVillage, Timestamp, Tribe, UnitCounts, UnitId, Village, VillageId,
 };
 
 /// A village's public presence on the map: its tile and its owner's name (GDD §7.3 — layout and
@@ -147,6 +147,136 @@ pub trait AccountRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn villages_at(&self, coords: &[Coordinate]) -> Result<Vec<VillageMarker>, RepoError>;
+
+    /// The village occupying `coord` in this world, if any (007 — resolving a movement target).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn village_at(&self, coord: Coordinate) -> Result<Option<Village>, RepoError>;
+}
+
+/// An in-flight movement, for the owner's view (007 AC7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MovementView {
+    /// What it does on arrival.
+    pub kind: MovementKind,
+    /// Where the troops are heading.
+    pub destination: Coordinate,
+    /// When they arrive (Unix-ms UTC).
+    pub arrive_at: Timestamp,
+    /// The composition.
+    pub troops: UnitCounts,
+}
+
+/// A stationed reinforcement group — the same shape serves "stationed here" (counterparty = the
+/// helper) and "my troops abroad" (counterparty = the host), 007 AC7.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StationedGroup {
+    /// Where the troops are stationed.
+    pub host_village: VillageId,
+    /// The owner's home village (the troops belong here).
+    pub home_village: VillageId,
+    /// The counterparty village's tile (the home tile when viewed by the host; the host tile when
+    /// viewed by the owner).
+    pub other_coord: Coordinate,
+    /// The counterparty owner's login name.
+    pub other_owner: String,
+    /// The stationed composition.
+    pub troops: UnitCounts,
+}
+
+/// A claimed, due movement ready to apply (007).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DueMovement {
+    /// Movement identity.
+    pub id: u128,
+    /// What to do on arrival.
+    pub kind: MovementKind,
+    /// The owner's home village.
+    pub home_village: VillageId,
+    /// The village the troops are delivered to (the target for reinforce, home for return).
+    pub deliver_village: VillageId,
+    /// The composition.
+    pub troops: UnitCounts,
+}
+
+/// Persistence for troop movements and stationed reinforcements (due-events, P1; 007).
+#[async_trait]
+pub trait MovementRepository: Send + Sync {
+    /// Atomically debit `troops` from the `home` garrison (guarded: each count must be available)
+    /// and create a reinforcement movement to `deliver` arriving at `arrive_at`. The destination
+    /// village id is fixed here, so a later ownership change of the tile cannot redirect troops in
+    /// flight (P4).
+    ///
+    /// # Errors
+    /// [`RepoError::Conflict`] if the garrison no longer covers a requested count; [`RepoError`]
+    /// otherwise.
+    #[allow(clippy::too_many_arguments)]
+    async fn start_reinforcement(
+        &self,
+        home: VillageId,
+        deliver: VillageId,
+        owner: PlayerId,
+        origin: Coordinate,
+        dest: Coordinate,
+        now: Timestamp,
+        arrive_at: Timestamp,
+        troops: &[(UnitId, u32)],
+    ) -> Result<(), RepoError>;
+
+    /// Atomically remove the reinforcement group stationed at `host` for the `home` village and
+    /// create a **return** movement home arriving at `arrive_at`; returns the moved composition.
+    ///
+    /// # Errors
+    /// [`RepoError::Conflict`] if no group is stationed there (a race); [`RepoError`] otherwise.
+    #[allow(clippy::too_many_arguments)]
+    async fn start_return(
+        &self,
+        host: VillageId,
+        home: VillageId,
+        owner: PlayerId,
+        origin: Coordinate,
+        dest: Coordinate,
+        now: Timestamp,
+        arrive_at: Timestamp,
+    ) -> Result<UnitCounts, RepoError>;
+
+    /// The owner's in-flight movements (home village = the owner's).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn active_movements(&self, owner: PlayerId) -> Result<Vec<MovementView>, RepoError>;
+
+    /// Reinforcement groups stationed **at** `village` (counterparty = each helper's home).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn reinforcements_at(&self, village: VillageId)
+    -> Result<Vec<StationedGroup>, RepoError>;
+
+    /// The owner's reinforcement groups stationed abroad (counterparty = each host).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn reinforcements_of(&self, owner: PlayerId) -> Result<Vec<StationedGroup>, RepoError>;
+
+    /// Atomically claim movements whose arrival is due (`in_transit → processing`), nearest first.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn claim_due_movements(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueMovement>, RepoError>;
+
+    /// Apply a claimed arrival in **one** transaction — station the troops (reinforce) or rejoin
+    /// the garrison (return) and mark the movement done; exactly-once with the orphan requeue
+    /// (AC4/AC5).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn apply_movement(&self, due: &DueMovement) -> Result<(), RepoError>;
 }
 
 /// A claimed, due event ready to be processed.

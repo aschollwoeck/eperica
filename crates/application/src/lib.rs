@@ -26,9 +26,10 @@ pub use economy::{VillageEconomy, load_economy};
 pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
 pub use ports::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BuildRepository, DueBuild,
-    DueEvent, DueTraining, DueUnitOrder, EventStore, NewBuildOrder, NewTrainingOrder, NewUnitOrder,
-    NewUser, PasswordHasher, RepoError, StarvationRepository, TrainingRepository, UnitOrderKind,
-    UnitRepository, UserRecord, VillageMarker,
+    DueEvent, DueMovement, DueTraining, DueUnitOrder, EventStore, MovementRepository, MovementView,
+    NewBuildOrder, NewTrainingOrder, NewUnitOrder, NewUser, PasswordHasher, RepoError,
+    StarvationRepository, StationedGroup, TrainingRepository, UnitOrderKind, UnitRepository,
+    UserRecord, VillageMarker,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;
