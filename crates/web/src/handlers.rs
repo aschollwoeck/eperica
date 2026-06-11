@@ -98,6 +98,8 @@ fn parse_building_kind(s: Option<&str>) -> Option<BuildingKind> {
         Some("barracks") => Some(BuildingKind::Barracks),
         Some("academy") => Some(BuildingKind::Academy),
         Some("smithy") => Some(BuildingKind::Smithy),
+        Some("stable") => Some(BuildingKind::Stable),
+        Some("workshop") => Some(BuildingKind::Workshop),
         _ => None,
     }
 }
@@ -356,6 +358,8 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         BuildingKind::Barracks,
         BuildingKind::Academy,
         BuildingKind::Smithy,
+        BuildingKind::Stable,
+        BuildingKind::Workshop,
     ]
     .into_iter()
     .map(|kind| {

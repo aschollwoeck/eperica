@@ -15,7 +15,7 @@ Ordered for dependency and testability (pure domain first).
 
 ## Balance + persistence
 
-- [ ] **T3 — Balance data.** `units.toml` `[training]` factor table; `construction.toml` +=
+- [x] **T3 — Balance data.** `units.toml` `[training]` factor table; `construction.toml` +=
   stable/workshop (10 levels, AC1 prerequisites); `economy.toml` population entries; loader +
   tests (**AC1**).
 - [ ] **T4 — Migration + training repository.** `0008_training.sql` (`village_units`,
