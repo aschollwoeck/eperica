@@ -448,3 +448,61 @@ pub trait TrainingRepository: Send + Sync {
     /// [`RepoError::Backend`] on storage failure.
     async fn apply_training(&self, due: &DueTraining, completed: u32) -> Result<(), RepoError>;
 }
+
+/// Persistence for per-village crop-depletion checks (005 AC7; at most one pending per village).
+#[async_trait]
+pub trait StarvationRepository: Send + Sync {
+    /// Schedule (or move) the village's depletion check to `due_at` and mark it pending — an
+    /// upsert, so re-syncing at every mutation point keeps exactly one check per village.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn schedule_starvation_check(
+        &self,
+        village: VillageId,
+        due_at: Timestamp,
+    ) -> Result<(), RepoError>;
+
+    /// Remove the village's check (net crop is non-negative or there is no garrison, AC8).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn cancel_starvation_check(&self, village: VillageId) -> Result<(), RepoError>;
+
+    /// Atomically claim due checks (`pending → processing`); returns the affected villages.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn claim_due_starvation(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<VillageId>, RepoError>;
+
+    /// Apply a cull in **one** transaction: snapshot-guarded resource settle (see
+    /// [`BuildRepository::start_build`]), replace the garrison with `survivors`, and mark the
+    /// claimed check done — so starvation happens exactly once (AC7).
+    ///
+    /// # Errors
+    /// [`RepoError::Conflict`] when the snapshot moved (the check stays claimed and is retried
+    /// after an orphan requeue); [`RepoError::Backend`] on storage failure.
+    async fn apply_starvation(
+        &self,
+        village: VillageId,
+        settled: ResourceAmounts,
+        settled_from: Timestamp,
+        now: Timestamp,
+        survivors: &UnitCounts,
+    ) -> Result<(), RepoError>;
+
+    /// Re-validate outcome: the claimed check is not needed now — reschedule it at the new
+    /// depletion time (`Some`) or mark it done (`None`).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn resolve_starvation_check(
+        &self,
+        village: VillageId,
+        reschedule_at: Option<Timestamp>,
+    ) -> Result<(), RepoError>;
+}

@@ -24,8 +24,8 @@ pub use economy::{VillageEconomy, load_economy};
 pub use ports::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BuildRepository, DueBuild,
     DueEvent, DueTraining, DueUnitOrder, EventStore, NewBuildOrder, NewTrainingOrder, NewUnitOrder,
-    NewUser, PasswordHasher, RepoError, TrainingRepository, UnitOrderKind, UnitRepository,
-    UserRecord,
+    NewUser, PasswordHasher, RepoError, StarvationRepository, TrainingRepository, UnitOrderKind,
+    UnitRepository, UserRecord,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;

@@ -22,7 +22,7 @@ Ordered for dependency and testability (pure domain first).
   `training_orders` + per-building partial unique index + due index, `starvation_checks`);
   `TrainingRepository` (optimistic-settle start, garrison, claim/apply with single-tx progress,
   orphan requeue). DB tests: partial apply exactness, crash-resume, busy building (**AC2**, **AC5**).
-- [ ] **T5 — Starvation repository.** `StarvationRepository` (upsert/cancel/claim checks,
+- [x] **T5 — Starvation repository.** `StarvationRepository` (upsert/cancel/claim checks,
   snapshot-guarded `apply_starvation`). DB tests: cull applied exactly once; conflict leaves the
   check pending (**AC7** persistence side).
 
