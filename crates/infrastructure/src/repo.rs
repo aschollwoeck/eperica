@@ -3,14 +3,15 @@
 use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BuildRepository, DueBuild,
-    DueMovement, DueTraining, DueUnitOrder, MovementRepository, MovementView, NewBuildOrder,
-    NewTrainingOrder, NewUnitOrder, NewUser, RepoError, StarvationRepository, StationedGroup,
-    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    DueMovement, DueTrade, DueTraining, DueUnitOrder, MovementRepository, MovementView,
+    NewBuildOrder, NewTrainingOrder, NewUnitOrder, NewUser, RepoError, StarvationRepository,
+    StationedGroup, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
+    UserRecord, VillageMarker,
 };
 use eperica_domain::{
     BuildTarget, BuildingKind, BuildingSlot, Coordinate, MovementKind, PlayerId, QueueLane,
-    ResourceAmounts, ResourceField, ResourceKind, StartingVillage, TileKind, Timestamp, Tribe,
-    UnitCounts, UnitId, Village, VillageId, WorldId, WorldMap, coordinates_within,
+    ResourceAmounts, ResourceField, ResourceKind, StartingVillage, TileKind, Timestamp, TradeKind,
+    Tribe, UnitCounts, UnitId, Village, VillageId, WorldId, WorldMap, coordinates_within,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use uuid::Uuid;
@@ -96,6 +97,19 @@ impl PgAccountRepository {
     pub async fn requeue_orphaned_movements(&self) -> Result<u64, RepoError> {
         let result = sqlx::query(
             "UPDATE troop_movements SET status = 'in_transit' WHERE status = 'processing'",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(result.rows_affected())
+    }
+
+    /// Reset trade legs stuck in `processing` back to `in_transit` (crash recovery). Safe:
+    /// `deliver_and_schedule_return` credits + schedules + marks done in one transaction, so a
+    /// re-claim re-applies a never-committed delivery cleanly (008 AC4).
+    pub async fn requeue_orphaned_trades(&self) -> Result<u64, RepoError> {
+        let result = sqlx::query(
+            "UPDATE trade_movements SET status = 'in_transit' WHERE status = 'processing'",
         )
         .execute(&self.pool)
         .await
@@ -1364,6 +1378,21 @@ impl StarvationRepository for PgAccountRepository {
     }
 }
 
+fn trade_kind_str(kind: TradeKind) -> &'static str {
+    match kind {
+        TradeKind::Deliver => "deliver",
+        TradeKind::Return => "return",
+    }
+}
+
+fn parse_trade_kind(s: &str) -> Result<TradeKind, RepoError> {
+    match s {
+        "deliver" => Ok(TradeKind::Deliver),
+        "return" => Ok(TradeKind::Return),
+        other => Err(RepoError::Backend(format!("unknown trade kind: {other}"))),
+    }
+}
+
 fn movement_kind_str(kind: MovementKind) -> &'static str {
     match kind {
         MovementKind::Reinforce => "reinforce",
@@ -1821,6 +1850,291 @@ fn group_reinforcements(
     Ok(out)
 }
 
+/// Insert one trade leg (deliver or return) into `trade_movements` within a transaction.
+#[allow(clippy::too_many_arguments)]
+async fn insert_trade_leg(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: Uuid,
+    owner: PlayerId,
+    kind: TradeKind,
+    home: VillageId,
+    target: VillageId,
+    origin: Coordinate,
+    dest: Coordinate,
+    depart_at: Timestamp,
+    arrive_at: Timestamp,
+    bundle: ResourceAmounts,
+    merchants: u32,
+) -> Result<(), RepoError> {
+    sqlx::query(
+        "INSERT INTO trade_movements \
+         (id, owner_id, kind, home_village, target_village, origin_x, origin_y, dest_x, dest_y, \
+          wood, clay, iron, crop, merchants, depart_at, arrive_at, status) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, \
+                 to_timestamp($15::double precision / 1000.0), \
+                 to_timestamp($16::double precision / 1000.0), 'in_transit')",
+    )
+    .bind(id)
+    .bind(Uuid::from_u128(owner.0))
+    .bind(trade_kind_str(kind))
+    .bind(Uuid::from_u128(home.0))
+    .bind(Uuid::from_u128(target.0))
+    .bind(origin.x)
+    .bind(origin.y)
+    .bind(dest.x)
+    .bind(dest.y)
+    .bind(bundle.wood)
+    .bind(bundle.clay)
+    .bind(bundle.iron)
+    .bind(bundle.crop)
+    .bind(i32::try_from(merchants).unwrap_or(i32::MAX))
+    .bind(depart_at.0 as f64)
+    .bind(arrive_at.0 as f64)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    Ok(())
+}
+
+#[async_trait]
+impl TradeRepository for PgAccountRepository {
+    async fn committed_merchants(&self, home: VillageId) -> Result<u32, RepoError> {
+        let total: Option<i64> = sqlx::query_scalar(
+            "SELECT SUM(merchants)::bigint FROM trade_movements \
+             WHERE home_village = $1 AND status IN ('in_transit', 'processing')",
+        )
+        .bind(Uuid::from_u128(home.0))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(u32::try_from(total.unwrap_or(0)).unwrap_or(u32::MAX))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn start_trade(
+        &self,
+        home: VillageId,
+        target: VillageId,
+        owner: PlayerId,
+        origin: Coordinate,
+        dest: Coordinate,
+        settled: ResourceAmounts,
+        settled_from: Timestamp,
+        now: Timestamp,
+        arrive_at: Timestamp,
+        bundle: ResourceAmounts,
+        merchants: u32,
+    ) -> Result<(), RepoError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        // Optimistic settle — see `start_build`: debit the sender only if its resources row is still
+        // at the snapshot the caller computed `settled` from, so a concurrent order/credit cannot
+        // have its write overwritten (P2/P4).
+        let updated = sqlx::query(
+            "UPDATE village_resources SET wood=$1, clay=$2, iron=$3, crop=$4, \
+             updated_at = to_timestamp($5::double precision / 1000.0) \
+             WHERE village_id=$6 \
+               AND (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint = $7",
+        )
+        .bind(settled.wood)
+        .bind(settled.clay)
+        .bind(settled.iron)
+        .bind(settled.crop)
+        .bind(now.0 as f64)
+        .bind(Uuid::from_u128(home.0))
+        .bind(settled_from.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if updated.rows_affected() == 0 {
+            return Err(RepoError::Conflict);
+        }
+
+        insert_trade_leg(
+            &mut tx,
+            Uuid::new_v4(),
+            owner,
+            TradeKind::Deliver,
+            home,
+            target,
+            origin,
+            dest,
+            now,
+            arrive_at,
+            bundle,
+            merchants,
+        )
+        .await?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn active_trades(&self, owner: PlayerId) -> Result<Vec<TradeView>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT kind, dest_x, dest_y, wood, clay, iron, crop, merchants, \
+             (EXTRACT(EPOCH FROM arrive_at) * 1000)::bigint AS arrive_ms \
+             FROM trade_movements \
+             WHERE owner_id = $1 AND status IN ('in_transit', 'processing') \
+             ORDER BY arrive_at, id",
+        )
+        .bind(Uuid::from_u128(owner.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let kind: String = r.try_get("kind").map_err(backend)?;
+            let dest_x: i32 = r.try_get("dest_x").map_err(backend)?;
+            let dest_y: i32 = r.try_get("dest_y").map_err(backend)?;
+            let arrive_ms: i64 = r.try_get("arrive_ms").map_err(backend)?;
+            let merchants: i32 = r.try_get("merchants").map_err(backend)?;
+            out.push(TradeView {
+                kind: parse_trade_kind(&kind)?,
+                destination: Coordinate::new(dest_x, dest_y),
+                arrive_at: Timestamp(arrive_ms),
+                bundle: row_bundle(r)?,
+                merchants: u32::try_from(merchants).unwrap_or(0),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn claim_due_trades(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueTrade>, RepoError> {
+        let rows = sqlx::query(
+            "UPDATE trade_movements SET status = 'processing' WHERE id IN ( \
+                 SELECT id FROM trade_movements \
+                 WHERE status = 'in_transit' AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
+                 ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
+             ) RETURNING id, kind, owner_id, home_village, target_village, \
+                 origin_x, origin_y, dest_x, dest_y, wood, clay, iron, crop, merchants, \
+                 (EXTRACT(EPOCH FROM arrive_at) * 1000)::bigint AS arrive_ms",
+        )
+        .bind(now.0 as f64)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let id: Uuid = r.try_get("id").map_err(backend)?;
+            let kind: String = r.try_get("kind").map_err(backend)?;
+            let owner: Uuid = r.try_get("owner_id").map_err(backend)?;
+            let home: Uuid = r.try_get("home_village").map_err(backend)?;
+            let target: Uuid = r.try_get("target_village").map_err(backend)?;
+            let origin_x: i32 = r.try_get("origin_x").map_err(backend)?;
+            let origin_y: i32 = r.try_get("origin_y").map_err(backend)?;
+            let dest_x: i32 = r.try_get("dest_x").map_err(backend)?;
+            let dest_y: i32 = r.try_get("dest_y").map_err(backend)?;
+            let arrive_ms: i64 = r.try_get("arrive_ms").map_err(backend)?;
+            let merchants: i32 = r.try_get("merchants").map_err(backend)?;
+            out.push(DueTrade {
+                id: id.as_u128(),
+                kind: parse_trade_kind(&kind)?,
+                owner: PlayerId(owner.as_u128()),
+                home_village: VillageId(home.as_u128()),
+                target_village: VillageId(target.as_u128()),
+                origin: Coordinate::new(origin_x, origin_y),
+                dest: Coordinate::new(dest_x, dest_y),
+                arrive_at: Timestamp(arrive_ms),
+                bundle: row_bundle(r)?,
+                merchants: u32::try_from(merchants).unwrap_or(0),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn deliver_and_schedule_return(
+        &self,
+        due: &DueTrade,
+        target_settled: ResourceAmounts,
+        target_from: Timestamp,
+        deliver_arrive: Timestamp,
+        return_arrive: Timestamp,
+    ) -> Result<(), RepoError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        // Guarded credit of the target: write the capped settled amounts only if its resources row
+        // is still at the snapshot the caller settled from (P2/P4); the settle clock is the arrival
+        // instant, so later reads accrue production correctly from there.
+        let updated = sqlx::query(
+            "UPDATE village_resources SET wood=$1, clay=$2, iron=$3, crop=$4, \
+             updated_at = to_timestamp($5::double precision / 1000.0) \
+             WHERE village_id=$6 \
+               AND (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint = $7",
+        )
+        .bind(target_settled.wood)
+        .bind(target_settled.clay)
+        .bind(target_settled.iron)
+        .bind(target_settled.crop)
+        .bind(deliver_arrive.0 as f64)
+        .bind(Uuid::from_u128(due.target_village.0))
+        .bind(target_from.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if updated.rows_affected() == 0 {
+            return Err(RepoError::Conflict);
+        }
+
+        sqlx::query("UPDATE trade_movements SET status = 'done' WHERE id = $1")
+            .bind(Uuid::from_u128(due.id))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+
+        // The empty merchants travel home (origin/dest swapped) and free up when they arrive.
+        insert_trade_leg(
+            &mut tx,
+            Uuid::new_v4(),
+            due.owner,
+            TradeKind::Return,
+            due.home_village,
+            due.target_village,
+            due.dest,
+            due.origin,
+            deliver_arrive,
+            return_arrive,
+            ResourceAmounts {
+                wood: 0,
+                clay: 0,
+                iron: 0,
+                crop: 0,
+            },
+            due.merchants,
+        )
+        .await?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn complete_trade(&self, id: u128) -> Result<(), RepoError> {
+        sqlx::query(
+            "UPDATE trade_movements SET status = 'done' WHERE id = $1 AND status <> 'done'",
+        )
+        .bind(Uuid::from_u128(id))
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+}
+
+/// Read the carried `(wood, clay, iron, crop)` bundle from a `trade_movements` row.
+fn row_bundle(r: &PgRow) -> Result<ResourceAmounts, RepoError> {
+    Ok(ResourceAmounts {
+        wood: r.try_get("wood").map_err(backend)?,
+        clay: r.try_get("clay").map_err(backend)?,
+        iron: r.try_get("iron").map_err(backend)?,
+        crop: r.try_get("crop").map_err(backend)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2076,6 +2390,136 @@ mod tests {
             ]
         );
         assert!(repo.active_movements(a.owner).await.unwrap().is_empty());
+    }
+
+    /// 008 AC1/AC4/AC5: a shipment debits the sender + commits merchants, delivers capped to the
+    /// target (crash-resume safe) + schedules a return, and the return frees the merchants.
+    #[tokio::test]
+    async fn trade_send_deliver_and_return_lifecycle() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping trade test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            rules.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (sender, a) = account("trd_snd").await;
+        let (_recv, b) = account("trd_rcv").await;
+        assert_ne!(a.coordinate, b.coordinate);
+
+        // AC1: send 300 wood with 2 merchants. The sender starts at 750 each (starting-village.toml).
+        let (stored, snap) = repo.stored_resources(a.id).await.unwrap().unwrap();
+        let bundle = ResourceAmounts {
+            wood: 300,
+            clay: 0,
+            iron: 0,
+            crop: 0,
+        };
+        let debited = ResourceAmounts {
+            wood: stored.wood - 300,
+            ..stored
+        };
+        let now = Timestamp(3_000_000_000_000);
+        let arrive = Timestamp(now.0 + 100_000);
+        repo.start_trade(
+            a.id,
+            b.id,
+            sender,
+            a.coordinate,
+            b.coordinate,
+            debited,
+            snap,
+            now,
+            arrive,
+            bundle,
+            2,
+        )
+        .await
+        .expect("send");
+        assert_eq!(
+            repo.stored_resources(a.id).await.unwrap().unwrap().0.wood,
+            stored.wood - 300
+        );
+        assert_eq!(repo.committed_merchants(a.id).await.unwrap(), 2);
+        let active = repo.active_trades(sender).await.unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].kind, TradeKind::Deliver);
+        assert_eq!(active[0].bundle.wood, 300);
+        assert_eq!(active[0].merchants, 2);
+
+        // AC4: claim, "crash" before applying, requeue, re-claim, then deliver once — the target is
+        // credited capped to its base Warehouse (800: 750 + 300 overflows, the excess lost).
+        let claimed = repo.claim_due_trades(arrive, 100).await.unwrap();
+        assert!(claimed.iter().any(|d| d.home_village == a.id));
+        assert!(repo.requeue_orphaned_trades().await.unwrap() >= 1);
+        let due = repo.claim_due_trades(arrive, 100).await.unwrap();
+        let mine = due
+            .iter()
+            .find(|d| d.home_village == a.id && d.kind == TradeKind::Deliver)
+            .expect("due deliver");
+        let (t_stored, t_snap) = repo.stored_resources(b.id).await.unwrap().unwrap();
+        let caps = eperica_domain::Capacities {
+            warehouse: 800,
+            granary: 800,
+        };
+        let credited = eperica_domain::deposit_capped(t_stored, mine.bundle, caps);
+        let return_arrive = Timestamp(arrive.0 + 100_000);
+        repo.deliver_and_schedule_return(mine, credited, t_snap, arrive, return_arrive)
+            .await
+            .expect("deliver");
+        assert_eq!(
+            repo.stored_resources(b.id).await.unwrap().unwrap().0.wood,
+            800
+        ); // capped
+        assert_eq!(repo.committed_merchants(a.id).await.unwrap(), 2); // now on the return leg
+        // The deliver no longer claims; the return is in flight.
+        assert!(
+            repo.claim_due_trades(arrive, 100)
+                .await
+                .unwrap()
+                .iter()
+                .all(|d| !(d.home_village == a.id && d.kind == TradeKind::Deliver))
+        );
+
+        // AC5: the return arrives and frees the merchants.
+        let due_ret = repo.claim_due_trades(return_arrive, 100).await.unwrap();
+        let ret = due_ret
+            .iter()
+            .find(|d| d.home_village == a.id && d.kind == TradeKind::Return)
+            .expect("due return");
+        repo.complete_trade(ret.id).await.expect("complete");
+        assert_eq!(repo.committed_merchants(a.id).await.unwrap(), 0);
+        assert!(repo.active_trades(sender).await.unwrap().is_empty());
     }
 
     #[tokio::test]

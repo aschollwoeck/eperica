@@ -6,14 +6,14 @@ Ordered for dependency and testability (pure domain first).
 
 ## Domain (pure, test-first)
 
-- [ ] **T1 — Trade domain.** `BuildingKind::Marketplace`; `trade.rs`: `TradeKind`,
+- [x] **T1 — Trade domain.** `BuildingKind::Marketplace`; `trade.rs`: `TradeKind`,
   `MerchantProfile`/`MerchantRules` (`profile`, `merchants_total`), `merchants_required` (ceil over
   capacity), bundle `total`/empty helpers. Unit tests: round-up + capacity scaling; per-level total
   (**AC3**).
 
 ## Balance & persistence
 
-- [ ] **T2 — Balance.** `[buildings.marketplace]` in `construction.toml` (prereq Main Building 1);
+- [x] **T2 — Balance.** `[buildings.marketplace]` in `construction.toml` (prereq Main Building 1);
   `marketplace` population row in `economy.toml`; new `trade.toml` (`merchants.per_level`, per-tribe
   `capacity`/`speed`) + `merchant_rules()` loader; `parse_building` + every `BuildingKind` mapping
   (balance/repo/web) gains the `marketplace` arm.

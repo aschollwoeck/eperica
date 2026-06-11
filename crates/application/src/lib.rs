@@ -28,10 +28,10 @@ pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
 pub use movement::{MovementError, order_reinforcement, order_return, process_due_movements};
 pub use ports::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BuildRepository, DueBuild,
-    DueEvent, DueMovement, DueTraining, DueUnitOrder, EventStore, MovementRepository, MovementView,
-    NewBuildOrder, NewTrainingOrder, NewUnitOrder, NewUser, PasswordHasher, RepoError,
-    StarvationRepository, StationedGroup, TrainingRepository, UnitOrderKind, UnitRepository,
-    UserRecord, VillageMarker,
+    DueEvent, DueMovement, DueTrade, DueTraining, DueUnitOrder, EventStore, MovementRepository,
+    MovementView, NewBuildOrder, NewTrainingOrder, NewUnitOrder, NewUser, PasswordHasher,
+    RepoError, StarvationRepository, StationedGroup, TradeRepository, TradeView,
+    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;
