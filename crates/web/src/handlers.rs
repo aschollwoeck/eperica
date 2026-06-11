@@ -4,9 +4,9 @@ use crate::auth::{AuthUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
 use crate::templates::{
     AcademyRow, AcademyTemplate, ActiveView, BuildRow, GarrisonRow, IndexTemplate, LoginTemplate,
-    MapCellView, MapTemplate, MovementRow, QueueView, RallyTemplate, RallyUnitRow,
-    RegisterTemplate, ReinforcementRow, SmithyRow, SmithyTemplate, StyleGuideTemplate, TrainRow,
-    TroopsTemplate, VillageTemplate,
+    MapCellView, MapTemplate, MarketTemplate, MovementRow, QueueView, RallyTemplate, RallyUnitRow,
+    RegisterTemplate, ReinforcementRow, ShipmentRow, SmithyRow, SmithyTemplate, StyleGuideTemplate,
+    TrainRow, TroopsTemplate, VillageTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -16,15 +16,15 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
     AccountRepository, BuildRepository, LoginError, MovementRepository, RegisterCommand,
-    RegisterError, TrainingRepository, UnitOrderKind, UnitRepository, authenticate, load_economy,
-    map_viewport, order_build, order_reinforcement, order_research, order_return,
-    order_smithy_upgrade, order_train, register, viewport_coords,
+    RegisterError, TradeRepository, TrainingRepository, UnitOrderKind, UnitRepository,
+    authenticate, load_economy, map_viewport, order_build, order_reinforcement, order_research,
+    order_return, order_smithy_upgrade, order_trade, order_train, register, viewport_coords,
 };
 use eperica_domain::{
     BuildTarget, BuildingKind, Coordinate, MovementKind, OasisBonus, QueueLane, ResearchDenied,
-    ResourceAmounts, ResourceKind, TileKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied,
-    Village, VillageId, can_afford, can_research, can_upgrade, garrison_upkeep, per_unit_time_secs,
-    queue_lane, scaled_time_secs,
+    ResourceAmounts, ResourceKind, TileKind, TradeKind, Tribe, UnitId, UnitRole, UnitRules,
+    UpgradeDenied, Village, VillageId, can_afford, can_research, can_upgrade, garrison_upkeep,
+    per_unit_time_secs, queue_lane, scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
@@ -53,6 +53,7 @@ fn building_label(kind: BuildingKind) -> &'static str {
         BuildingKind::RallyPoint => "Rally Point",
         BuildingKind::Warehouse => "Warehouse",
         BuildingKind::Granary => "Granary",
+        BuildingKind::Marketplace => "Marketplace",
         BuildingKind::Barracks => "Barracks",
         BuildingKind::Academy => "Academy",
         BuildingKind::Smithy => "Smithy",
@@ -68,6 +69,7 @@ fn building_kind_id(kind: BuildingKind) -> &'static str {
         BuildingKind::RallyPoint => "rally_point",
         BuildingKind::Warehouse => "warehouse",
         BuildingKind::Granary => "granary",
+        BuildingKind::Marketplace => "marketplace",
         BuildingKind::Barracks => "barracks",
         BuildingKind::Academy => "academy",
         BuildingKind::Smithy => "smithy",
@@ -90,6 +92,7 @@ fn building_slot(kind: BuildingKind) -> u8 {
         BuildingKind::Stable => 7,
         BuildingKind::Workshop => 8,
         BuildingKind::Residence => 9,
+        BuildingKind::Marketplace => 10,
     }
 }
 
@@ -99,6 +102,7 @@ fn parse_building_kind(s: Option<&str>) -> Option<BuildingKind> {
         Some("rally_point") => Some(BuildingKind::RallyPoint),
         Some("warehouse") => Some(BuildingKind::Warehouse),
         Some("granary") => Some(BuildingKind::Granary),
+        Some("marketplace") => Some(BuildingKind::Marketplace),
         Some("barracks") => Some(BuildingKind::Barracks),
         Some("academy") => Some(BuildingKind::Academy),
         Some("smithy") => Some(BuildingKind::Smithy),
@@ -400,6 +404,7 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         BuildingKind::RallyPoint,
         BuildingKind::Warehouse,
         BuildingKind::Granary,
+        BuildingKind::Marketplace,
         BuildingKind::Barracks,
         BuildingKind::Academy,
         BuildingKind::Smithy,
@@ -491,6 +496,31 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         })
         .collect();
 
+    let trades = match state.accounts.active_trades(player).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = %e, "trades lookup failed");
+            return server_error();
+        }
+    };
+    let shipments: Vec<ShipmentRow> = trades
+        .iter()
+        .map(|t| ShipmentRow {
+            label: match t.kind {
+                TradeKind::Deliver => {
+                    format!("Shipment to ({}|{})", t.destination.x, t.destination.y)
+                }
+                TradeKind::Return => format!(
+                    "Merchants returning from ({}|{})",
+                    t.destination.x, t.destination.y
+                ),
+            },
+            contents: bundle_summary(t.bundle),
+            merchants: t.merchants,
+            arrive_ms: t.arrive_at.0,
+        })
+        .collect();
+
     page(&VillageTemplate {
         username: user.username,
         tribe: tribe_label(village.tribe),
@@ -521,6 +551,7 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         movements,
         reinforcements_here,
         reinforcements_abroad,
+        shipments,
         fields,
         buildings,
     })
@@ -725,6 +756,25 @@ fn unit_name(unit_rules: &UnitRules, unit: &UnitId) -> String {
         .into_iter()
         .find_map(|t| unit_rules.unit(t, unit))
         .map_or_else(|| unit.as_str().to_owned(), |s| s.name.clone())
+}
+
+/// Summarise a resource bundle as "300 wood, 50 clay" ("—" when empty), 008 AC6.
+fn bundle_summary(bundle: ResourceAmounts) -> String {
+    let parts: Vec<String> = [
+        ("wood", bundle.wood),
+        ("clay", bundle.clay),
+        ("iron", bundle.iron),
+        ("crop", bundle.crop),
+    ]
+    .into_iter()
+    .filter(|(_, n)| *n > 0)
+    .map(|(name, n)| format!("{n} {name}"))
+    .collect();
+    if parts.is_empty() {
+        "—".to_owned()
+    } else {
+        parts.join(", ")
+    }
 }
 
 /// Summarise a composition as "4 Phalanx, 2 Swordsman" (007 AC7).
@@ -1285,6 +1335,88 @@ pub async fn rally_return(
     .await
     {
         tracing::warn!(error = %e, "return order rejected");
+    }
+    Redirect::to("/village").into_response()
+}
+
+/// The Marketplace: the merchant pool (free/total + capacity) and a send-resources form (008 AC6;
+/// Player only, P4).
+pub async fn market(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+    let (village, _amounts) = match village_view_data(&state, player).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let Some(tribe) = village.tribe else {
+        tracing::error!(?player, "village has no tribe");
+        return server_error();
+    };
+    let level = building_level(&village, BuildingKind::Marketplace);
+    if level == 0 {
+        return page(&MarketTemplate {
+            has_marketplace: false,
+            capacity: 0,
+            free: 0,
+            total: 0,
+        });
+    }
+    let committed = match state.accounts.committed_merchants(village.id).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "committed merchants lookup failed");
+            return server_error();
+        }
+    };
+    let total = state.merchant_rules.merchants_total(level);
+    page(&MarketTemplate {
+        has_marketplace: true,
+        capacity: state.merchant_rules.profile(tribe).capacity,
+        free: total.saturating_sub(committed),
+        total,
+    })
+}
+
+/// Send a resource shipment from the Marketplace, then return to the village (Player only, P4).
+///
+/// The amounts arrive as `amount_<resource>` fields alongside the target `x`/`y`; they are parsed
+/// and re-validated server-side (P4) — the use-case rejects an over-stored or over-merchant load.
+pub async fn market_send(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    let x = form.get("x").and_then(|s| s.trim().parse::<i32>().ok());
+    let y = form.get("y").and_then(|s| s.trim().parse::<i32>().ok());
+    let (Some(x), Some(y)) = (x, y) else {
+        return Redirect::to("/village/market").into_response();
+    };
+    let amount = |k: &str| {
+        form.get(k)
+            .and_then(|s| s.trim().parse::<i64>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(0)
+    };
+    let bundle = ResourceAmounts {
+        wood: amount("amount_wood"),
+        clay: amount("amount_clay"),
+        iron: amount("amount_iron"),
+        crop: amount("amount_crop"),
+    };
+    if let Err(e) = order_trade(
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.rules.as_ref(),
+        state.unit_rules.as_ref(),
+        state.merchant_rules.as_ref(),
+        state.map.as_ref(),
+        state.world.speed,
+        now(),
+        player,
+        Coordinate::new(x, y),
+        bundle,
+    )
+    .await
+    {
+        tracing::warn!(error = %e, "trade order rejected");
     }
     Redirect::to("/village").into_response()
 }

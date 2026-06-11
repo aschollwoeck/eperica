@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Marketplace</h1>
+  <p class="muted"><a href="/village">← Back to the village</a> · send resources to another village.
+    Travel time depends on distance and your merchants' speed.</p>
+
+  {% if !has_marketplace %}
+  <p class="muted">Your village has no Marketplace yet — build one from the village page to trade.</p>
+  {% else %}
+  <p>Merchants: <strong class="num">{{ free }}</strong> free of {{ total }}
+    · each carries <strong class="num">{{ capacity }}</strong> resources.</p>
+  {% if free == 0 %}
+  <p class="muted">All your merchants are on the road. They free up as shipments return.</p>
+  {% else %}
+  <form method="post" action="/village/market/send" class="form">
+    <div class="field">
+      <label>Target tile</label>
+      <span class="map-controls">
+        x <input type="number" name="x" required style="width:5em">
+        y <input type="number" name="y" required style="width:5em">
+      </span>
+    </div>
+    <table class="table">
+      <thead><tr><th>Resource</th><th>Send</th></tr></thead>
+      <tbody>
+        <tr><td>Wood</td><td><input type="number" name="amount_wood" value="0" min="0" style="width:7em"></td></tr>
+        <tr><td>Clay</td><td><input type="number" name="amount_clay" value="0" min="0" style="width:7em"></td></tr>
+        <tr><td>Iron</td><td><input type="number" name="amount_iron" value="0" min="0" style="width:7em"></td></tr>
+        <tr><td>Crop</td><td><input type="number" name="amount_crop" value="0" min="0" style="width:7em"></td></tr>
+      </tbody>
+    </table>
+    <button class="btn btn--primary" type="submit">Send resources</button>
+  </form>
+  {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

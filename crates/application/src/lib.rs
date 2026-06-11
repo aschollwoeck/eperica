@@ -13,6 +13,7 @@ pub mod ports;
 pub mod register;
 pub mod scheduler;
 pub mod starvation;
+pub mod trade;
 pub mod units;
 
 #[cfg(test)]
@@ -23,19 +24,20 @@ pub use eperica_domain as domain;
 
 pub use auth::{LoginError, authenticate};
 pub use build::{BuildError, order_build, process_due_builds};
-pub use economy::{VillageEconomy, load_economy};
+pub use economy::{VillageEconomy, load_economy, settle_amounts};
 pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
 pub use movement::{MovementError, order_reinforcement, order_return, process_due_movements};
 pub use ports::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BuildRepository, DueBuild,
-    DueEvent, DueMovement, DueTraining, DueUnitOrder, EventStore, MovementRepository, MovementView,
-    NewBuildOrder, NewTrainingOrder, NewUnitOrder, NewUser, PasswordHasher, RepoError,
-    StarvationRepository, StationedGroup, TrainingRepository, UnitOrderKind, UnitRepository,
-    UserRecord, VillageMarker,
+    DueEvent, DueMovement, DueTrade, DueTraining, DueUnitOrder, EventStore, MovementRepository,
+    MovementView, NewBuildOrder, NewTrainingOrder, NewUnitOrder, NewUser, PasswordHasher,
+    RepoError, StarvationRepository, StationedGroup, TradeRepository, TradeView,
+    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;
 pub use starvation::{process_due_starvation, sync_starvation_check, sync_starvation_checks};
+pub use trade::{TradeError, order_trade, process_due_trades};
 pub use units::{
     ResearchError, TrainError, UpgradeError, order_research, order_smithy_upgrade, order_train,
     process_due_training, process_due_unit_orders,

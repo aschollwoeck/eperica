@@ -2,9 +2,37 @@
 
 use crate::ports::{AccountRepository, RepoError};
 use eperica_domain::{
-    Economy, EconomyRules, GameSpeed, PlayerId, Timestamp, UnitCounts, UnitRules, Village,
-    compute_economy, garrison_upkeep,
+    Economy, EconomyRules, GameSpeed, PlayerId, ResourceAmounts, Timestamp, UnitCounts, UnitRules,
+    Village, compute_economy, garrison_upkeep,
 };
+
+/// Settle a village's stored resources forward to `now` (compute-on-read, P1), net of the garrison's
+/// crop upkeep — the amounts a caller debits against. Pure given the stored snapshot.
+#[allow(clippy::too_many_arguments)]
+pub fn settle_amounts(
+    stored: ResourceAmounts,
+    updated_at: Timestamp,
+    now: Timestamp,
+    village: &Village,
+    garrison: &UnitCounts,
+    rules: &EconomyRules,
+    unit_rules: &UnitRules,
+    speed: GameSpeed,
+) -> ResourceAmounts {
+    let upkeep = village
+        .tribe
+        .map_or(0, |t| garrison_upkeep(garrison, unit_rules.roster(t)));
+    compute_economy(
+        stored,
+        (now.0 - updated_at.0) / 1000,
+        &village.fields,
+        &village.buildings,
+        upkeep,
+        rules,
+        speed,
+    )
+    .amounts
+}
 
 /// A village (its fields/buildings/levels) plus its garrison and computed economy.
 #[derive(Debug, Clone, PartialEq, Eq)]

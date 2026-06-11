@@ -13,6 +13,7 @@ pub mod event;
 pub mod map;
 pub mod movement;
 pub mod resource;
+pub mod trade;
 pub mod units;
 pub mod village;
 pub mod world;
@@ -31,6 +32,10 @@ pub use event::{EventKind, ScheduledEvent, Timestamp};
 pub use map::{FieldDistribution, MapRules, OasisBonus, TileKind, Weighted, WorldMap};
 pub use movement::{MovementKind, slowest_speed, travel_time_secs, travel_time_secs_floored};
 pub use resource::ResourceKind;
+pub use trade::{
+    MerchantProfile, MerchantRules, TradeKind, bundle_is_empty, bundle_total, deposit_capped,
+    merchants_required,
+};
 pub use units::{
     MAX_TRAINING_BATCH, MAX_UNIT_LEVEL, ROSTER_SIZE, ResearchDenied, ResearchSpec, SmithyRules,
     TrainDenied, TrainingRules, UnitCounts, UnitId, UnitRole, UnitRules, UnitSpec, UpgradeDenied,

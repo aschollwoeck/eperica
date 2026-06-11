@@ -16,6 +16,8 @@ pub enum DomainError {
     InvalidUnitRules(&'static str),
     /// Map-generation balance data that is not valid (see the message for the violated rule).
     InvalidMapRules(&'static str),
+    /// Merchant/trade balance data that is not valid (see the message for the violated rule).
+    InvalidMerchantRules(&'static str),
 }
 
 impl fmt::Display for DomainError {
@@ -32,6 +34,9 @@ impl fmt::Display for DomainError {
             }
             DomainError::InvalidMapRules(rule) => {
                 write!(f, "invalid map balance data: {rule}")
+            }
+            DomainError::InvalidMerchantRules(rule) => {
+                write!(f, "invalid merchant balance data: {rule}")
             }
         }
     }

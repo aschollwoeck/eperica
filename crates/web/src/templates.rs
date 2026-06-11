@@ -53,6 +53,7 @@ mod tests {
             movements: Vec::new(),
             reinforcements_here: Vec::new(),
             reinforcements_abroad: Vec::new(),
+            shipments: Vec::new(),
             fields: Vec::new(),
             buildings: Vec::new(),
         }
@@ -293,6 +294,32 @@ pub struct ReinforcementRow {
     pub host_id: String,
 }
 
+/// A garrison-independent Marketplace view (008 AC6): merchant pool + per-tribe capacity.
+#[derive(Template)]
+#[template(path = "market.html")]
+pub struct MarketTemplate {
+    /// Whether the village has a Marketplace (otherwise the page only explains the requirement).
+    pub has_marketplace: bool,
+    /// Total resources one of this tribe's merchants carries.
+    pub capacity: u32,
+    /// Merchants available to dispatch now.
+    pub free: u32,
+    /// Merchants the Marketplace provides at its current level.
+    pub total: u32,
+}
+
+/// An in-flight shipment line on the village page (008 AC6).
+pub struct ShipmentRow {
+    /// "Shipment to (x|y)" / "Merchants returning from (x|y)".
+    pub label: String,
+    /// Contents summary, e.g. "300 wood, 50 clay" ("—" for an empty return).
+    pub contents: String,
+    /// Merchants committed to this leg.
+    pub merchants: u32,
+    /// Arrival time (Unix-ms UTC) for the live countdown.
+    pub arrive_ms: i64,
+}
+
 #[derive(Template)]
 #[template(path = "village.html")]
 pub struct VillageTemplate {
@@ -335,6 +362,8 @@ pub struct VillageTemplate {
     pub reinforcements_here: Vec<ReinforcementRow>,
     /// The player's troops stationed abroad, each with a send-back action (007).
     pub reinforcements_abroad: Vec<ReinforcementRow>,
+    /// The player's in-flight shipments (008); empty hides the panel.
+    pub shipments: Vec<ShipmentRow>,
     /// Resource-field build rows.
     pub fields: Vec<BuildRow>,
     /// Building build rows.

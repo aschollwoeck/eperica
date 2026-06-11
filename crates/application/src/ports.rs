@@ -6,7 +6,8 @@
 use async_trait::async_trait;
 use eperica_domain::{
     BuildTarget, BuildingKind, Coordinate, EventKind, MovementKind, PlayerId, QueueLane,
-    ResourceAmounts, StartingVillage, Timestamp, Tribe, UnitCounts, UnitId, Village, VillageId,
+    ResourceAmounts, StartingVillage, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, Village,
+    VillageId,
 };
 
 /// A village's public presence on the map: its tile and its owner's name (GDD §7.3 — layout and
@@ -277,6 +278,132 @@ pub trait MovementRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn apply_movement(&self, due: &DueMovement) -> Result<(), RepoError>;
+}
+
+/// An in-flight shipment, for the owner's view (008 AC6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TradeView {
+    /// What this leg does on arrival.
+    pub kind: TradeKind,
+    /// Where the merchants are heading.
+    pub destination: Coordinate,
+    /// When they arrive (Unix-ms UTC).
+    pub arrive_at: Timestamp,
+    /// The carried bundle (all zero on a return leg).
+    pub bundle: ResourceAmounts,
+    /// Merchants committed to this leg.
+    pub merchants: u32,
+}
+
+/// A claimed, due trade leg ready to apply (008).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DueTrade {
+    /// Trade-leg identity.
+    pub id: u128,
+    /// What to do on arrival.
+    pub kind: TradeKind,
+    /// The sender; the merchants belong to this player's home village.
+    pub owner: PlayerId,
+    /// The sender's village (merchants belong here; the return leg is delivered here).
+    pub home_village: VillageId,
+    /// The village credited on a deliver leg.
+    pub target_village: VillageId,
+    /// This leg's origin tile.
+    pub origin: Coordinate,
+    /// This leg's destination tile.
+    pub dest: Coordinate,
+    /// When this leg arrives (Unix-ms UTC) — the return leg departs at this instant (P2).
+    pub arrive_at: Timestamp,
+    /// The carried bundle (zero on a return leg).
+    pub bundle: ResourceAmounts,
+    /// Merchants committed to the trade.
+    pub merchants: u32,
+}
+
+/// Persistence for marketplace trade (due-events, P1; 008). Merchants are not entities: a sender's
+/// free count is `merchantsFor(level) − committed_merchants` computed on read.
+#[async_trait]
+pub trait TradeRepository: Send + Sync {
+    /// Merchants the sender currently has committed to in-flight shipments (in_transit + processing
+    /// legs — counting `processing` avoids a free-count dip between a deliver's claim and its return).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn committed_merchants(&self, home: VillageId) -> Result<u32, RepoError>;
+
+    /// Atomically debit the shipment from the sender (optimistic settle: `settled` are the sender's
+    /// post-debit amounts computed from the `settled_from` snapshot; applies only if the row is
+    /// still at that snapshot) and create the `deliver` leg arriving at `arrive_at`. The target
+    /// village id is fixed here, so a later ownership change of the tile cannot redirect resources
+    /// in flight (P4).
+    ///
+    /// # Errors
+    /// [`RepoError::Conflict`] if the sender's resources moved since the snapshot; [`RepoError`]
+    /// otherwise.
+    #[allow(clippy::too_many_arguments)]
+    async fn start_trade(
+        &self,
+        home: VillageId,
+        target: VillageId,
+        owner: PlayerId,
+        origin: Coordinate,
+        dest: Coordinate,
+        settled: ResourceAmounts,
+        settled_from: Timestamp,
+        now: Timestamp,
+        arrive_at: Timestamp,
+        bundle: ResourceAmounts,
+        merchants: u32,
+    ) -> Result<(), RepoError>;
+
+    /// The owner's in-flight shipments (home village = the owner's), for the village panel.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn active_trades(&self, owner: PlayerId) -> Result<Vec<TradeView>, RepoError>;
+
+    /// Atomically claim trade legs whose arrival is due (`in_transit → processing`), nearest first.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn claim_due_trades(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueTrade>, RepoError>;
+
+    /// Apply a due **deliver** in **one** transaction — credit the target with `target_settled`
+    /// (the capped delivery, computed from the `target_from` snapshot and written with the
+    /// `credit_clock` as the new settle clock — never earlier than `target_from`), mark the deliver
+    /// leg done, and insert the empty `return` leg departing at the true arrival (`due.arrive_at`)
+    /// and arriving at `return_arrive`. Exactly-once with the orphan requeue (AC4).
+    ///
+    /// # Errors
+    /// [`RepoError::Conflict`] if the target's resources moved since the snapshot (nothing applied;
+    /// caller re-settles and retries); [`RepoError`] otherwise.
+    #[allow(clippy::too_many_arguments)]
+    async fn deliver_and_schedule_return(
+        &self,
+        due: &DueTrade,
+        target_settled: ResourceAmounts,
+        target_from: Timestamp,
+        credit_clock: Timestamp,
+        return_arrive: Timestamp,
+    ) -> Result<(), RepoError>;
+
+    /// Mark a due **return** leg done (frees its merchants). Exactly-once via the status flip (AC5).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn complete_trade(&self, id: u128) -> Result<(), RepoError>;
+
+    /// Hand a claimed leg back to `in_transit` (`processing → in_transit`) so the next tick retries
+    /// it — used when a deliver loses the optimistic credit repeatedly, to avoid stranding the leg
+    /// (and its committed merchants) until a restart.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn release_trade(&self, id: u128) -> Result<(), RepoError>;
 }
 
 /// A claimed, due event ready to be processed.
