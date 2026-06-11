@@ -48,9 +48,9 @@ Ordered for dependency and testability (pure domain first).
 
 ## Documentation & acceptance
 
-- [ ] **T11 — Technical docs.** rustdoc; `docs/architecture/0007-training-and-starvation.md`;
+- [x] **T11 — Technical docs.** rustdoc; `docs/architecture/0007-training-and-starvation.md`;
   `CLAUDE.md` current (active slice).
-- [ ] **T12 — End-user docs.** `docs/manual/` training & feeding-your-army guide; link from index.
+- [x] **T12 — End-user docs.** `docs/manual/` training & feeding-your-army guide; link from index.
 - [ ] **T13 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
   **APPROVE**; PR.
 
