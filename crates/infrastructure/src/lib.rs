@@ -17,7 +17,8 @@ pub mod world;
 pub use eperica_application as application;
 
 pub use balance::{
-    BalanceError, build_rules, economy_rules, map_rules, starting_village, unit_rules,
+    BalanceError, build_rules, economy_rules, map_rules, merchant_rules, starting_village,
+    unit_rules,
 };
 pub use config::{AppConfig, ConfigError};
 pub use db::{MIGRATOR, create_pool, run_migrations};

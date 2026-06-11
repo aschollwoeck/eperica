@@ -53,6 +53,7 @@ fn building_label(kind: BuildingKind) -> &'static str {
         BuildingKind::RallyPoint => "Rally Point",
         BuildingKind::Warehouse => "Warehouse",
         BuildingKind::Granary => "Granary",
+        BuildingKind::Marketplace => "Marketplace",
         BuildingKind::Barracks => "Barracks",
         BuildingKind::Academy => "Academy",
         BuildingKind::Smithy => "Smithy",
@@ -68,6 +69,7 @@ fn building_kind_id(kind: BuildingKind) -> &'static str {
         BuildingKind::RallyPoint => "rally_point",
         BuildingKind::Warehouse => "warehouse",
         BuildingKind::Granary => "granary",
+        BuildingKind::Marketplace => "marketplace",
         BuildingKind::Barracks => "barracks",
         BuildingKind::Academy => "academy",
         BuildingKind::Smithy => "smithy",
@@ -90,6 +92,7 @@ fn building_slot(kind: BuildingKind) -> u8 {
         BuildingKind::Stable => 7,
         BuildingKind::Workshop => 8,
         BuildingKind::Residence => 9,
+        BuildingKind::Marketplace => 10,
     }
 }
 
@@ -99,6 +102,7 @@ fn parse_building_kind(s: Option<&str>) -> Option<BuildingKind> {
         Some("rally_point") => Some(BuildingKind::RallyPoint),
         Some("warehouse") => Some(BuildingKind::Warehouse),
         Some("granary") => Some(BuildingKind::Granary),
+        Some("marketplace") => Some(BuildingKind::Marketplace),
         Some("barracks") => Some(BuildingKind::Barracks),
         Some("academy") => Some(BuildingKind::Academy),
         Some("smithy") => Some(BuildingKind::Smithy),
@@ -400,6 +404,7 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         BuildingKind::RallyPoint,
         BuildingKind::Warehouse,
         BuildingKind::Granary,
+        BuildingKind::Marketplace,
         BuildingKind::Barracks,
         BuildingKind::Academy,
         BuildingKind::Smithy,

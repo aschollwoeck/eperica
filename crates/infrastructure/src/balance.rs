@@ -6,9 +6,9 @@
 
 use eperica_domain::{
     BuildRules, BuildingKind, BuildingSlot, DomainError, EconomyRules, FieldDistribution,
-    LevelSpec, MapRules, OasisBonus, ResearchSpec, ResourceAmounts, ResourceField, ResourceKind,
-    SmithyRules, StartingVillage, TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec,
-    Weighted,
+    LevelSpec, MapRules, MerchantProfile, MerchantRules, OasisBonus, ResearchSpec, ResourceAmounts,
+    ResourceField, ResourceKind, SmithyRules, StartingVillage, TrainingRules, Tribe, UnitId,
+    UnitRole, UnitRules, UnitSpec, Weighted,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -41,6 +41,12 @@ const UNITS_TOML: &str = include_str!(concat!(
 const MAP_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../specs/balance/map.toml"
+));
+
+/// Embedded trade/merchant balance data.
+const TRADE_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/trade.toml"
 ));
 
 /// Errors that can occur while loading balance data.
@@ -132,6 +138,7 @@ fn parse_building(name: &str) -> Result<BuildingKind, BalanceError> {
         "rally_point" => Ok(BuildingKind::RallyPoint),
         "warehouse" => Ok(BuildingKind::Warehouse),
         "granary" => Ok(BuildingKind::Granary),
+        "marketplace" => Ok(BuildingKind::Marketplace),
         "barracks" => Ok(BuildingKind::Barracks),
         "academy" => Ok(BuildingKind::Academy),
         "smithy" => Ok(BuildingKind::Smithy),
@@ -248,6 +255,7 @@ struct BuildingsDto {
     rally_point: LevelSpecDto,
     warehouse: LevelSpecDto,
     granary: LevelSpecDto,
+    marketplace: LevelSpecDto,
     barracks: LevelSpecDto,
     academy: LevelSpecDto,
     smithy: LevelSpecDto,
@@ -290,6 +298,7 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
         (BuildingKind::RallyPoint, &dto.buildings.rally_point),
         (BuildingKind::Warehouse, &dto.buildings.warehouse),
         (BuildingKind::Granary, &dto.buildings.granary),
+        (BuildingKind::Marketplace, &dto.buildings.marketplace),
         (BuildingKind::Barracks, &dto.buildings.barracks),
         (BuildingKind::Academy, &dto.buildings.academy),
         (BuildingKind::Smithy, &dto.buildings.smithy),
@@ -308,6 +317,49 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
         prerequisites,
         main_building_factor_per_level: dto.speed.main_building_factor,
     })
+}
+
+#[derive(Deserialize)]
+struct TradeDto {
+    merchants: MerchantsDto,
+    romans: MerchantProfileDto,
+    teutons: MerchantProfileDto,
+    gauls: MerchantProfileDto,
+}
+
+#[derive(Deserialize)]
+struct MerchantsDto {
+    per_level: Vec<u32>,
+}
+
+#[derive(Deserialize)]
+struct MerchantProfileDto {
+    capacity: u32,
+    speed: u32,
+}
+
+impl From<&MerchantProfileDto> for MerchantProfile {
+    fn from(dto: &MerchantProfileDto) -> Self {
+        MerchantProfile {
+            capacity: dto.capacity,
+            speed: dto.speed,
+        }
+    }
+}
+
+/// Load the merchant/trade rules (per-tribe capacity + speed, merchants per Marketplace level) from
+/// the embedded balance data.
+///
+/// # Errors
+/// Returns [`BalanceError`] if the data cannot be parsed or does not form valid merchant rules.
+pub fn merchant_rules() -> Result<MerchantRules, BalanceError> {
+    let dto: TradeDto = toml::from_str(TRADE_TOML)?;
+    let profiles = HashMap::from([
+        (Tribe::Romans, MerchantProfile::from(&dto.romans)),
+        (Tribe::Teutons, MerchantProfile::from(&dto.teutons)),
+        (Tribe::Gauls, MerchantProfile::from(&dto.gauls)),
+    ]);
+    MerchantRules::new(profiles, dto.merchants.per_level).map_err(BalanceError::Domain)
 }
 
 #[derive(Deserialize)]
