@@ -52,9 +52,9 @@ Ordered for dependency and testability (pure domain first).
 
 ## Documentation & acceptance
 
-- [ ] **T11 — Technical docs.** rustdoc on new public items; `docs/architecture/` note (tribes,
+- [x] **T11 — Technical docs.** rustdoc on new public items; `docs/architecture/` note (tribes,
   unit queues, build lanes); `CLAUDE.md` current.
-- [ ] **T12 — End-user docs.** `docs/manual/` — tribes (choosing, traits) + Academy/Smithy guide;
+- [x] **T12 — End-user docs.** `docs/manual/` — tribes (choosing, traits) + Academy/Smithy guide;
   link from index.
 - [ ] **T13 — Review & accept.** Full gates + P11 check; run `eperica-reviewer` on the slice diff;
   fix until **APPROVE**; open PR.
