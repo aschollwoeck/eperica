@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Rally Point</h1>
+  <p class="muted"><a href="/village">← Back to the village</a> · send troops to reinforce another
+    village. Travel time depends on distance and your slowest unit.</p>
+
+  {% if units.is_empty() %}
+  <p class="muted">No troops to send — train some at the Barracks, Stable, or Workshop first.</p>
+  {% else %}
+  <form method="post" action="/village/rally/send" class="form">
+    <div class="field">
+      <label>Target tile</label>
+      <span class="map-controls">
+        x <input type="number" name="x" required style="width:5em">
+        y <input type="number" name="y" required style="width:5em">
+      </span>
+    </div>
+    <table class="table">
+      <thead><tr><th>Unit</th><th class="num">In garrison</th><th>Send</th></tr></thead>
+      <tbody>
+        {% for u in units %}
+        <tr>
+          <td>{{ u.name }}</td>
+          <td class="num">{{ u.available }}</td>
+          <td><input type="number" name="count_{{ u.id }}" value="0" min="0" max="{{ u.available }}" style="width:5em"></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <button class="btn btn--primary" type="submit">Send reinforcement</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

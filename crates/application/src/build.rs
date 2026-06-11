@@ -315,6 +315,12 @@ mod tests {
         ) -> Result<Vec<crate::ports::VillageMarker>, RepoError> {
             Ok(Vec::new())
         }
+        async fn village_at(
+            &self,
+            _coord: eperica_domain::Coordinate,
+        ) -> Result<Option<Village>, RepoError> {
+            Ok(None)
+        }
     }
 
     #[derive(Default)]

@@ -3,8 +3,8 @@
 use crate::repo::PgAccountRepository;
 use async_trait::async_trait;
 use eperica_application::{
-    DueEvent, EventStore, RepoError, process_due, process_due_builds, process_due_starvation,
-    process_due_training, process_due_unit_orders, sync_starvation_checks,
+    DueEvent, EventStore, RepoError, process_due, process_due_builds, process_due_movements,
+    process_due_starvation, process_due_training, process_due_unit_orders, sync_starvation_checks,
 };
 use eperica_domain::{EconomyRules, EventKind, GameSpeed, Timestamp, UnitRules};
 use sqlx::{PgPool, Row};
@@ -197,6 +197,13 @@ impl Scheduler {
             Ok(_) => {}
             Err(e) => tracing::error!(error = %e, "failed to requeue orphaned starvation checks"),
         }
+        match self.builds.requeue_orphaned_movements().await {
+            Ok(n) if n > 0 => {
+                tracing::warn!(requeued = n, "requeued orphaned movements at startup");
+            }
+            Ok(_) => {}
+            Err(e) => tracing::error!(error = %e, "failed to requeue orphaned movements"),
+        }
         loop {
             if *shutdown.borrow() {
                 break;
@@ -243,6 +250,15 @@ impl Scheduler {
                 }
                 Ok(_) => {}
                 Err(e) => tracing::error!(error = %e, "scheduler training tick failed"),
+            }
+            match process_due_movements(&self.builds, now(), 100).await {
+                Ok(homes) if !homes.is_empty() => {
+                    tracing::debug!(returned = homes.len(), "scheduler delivered movements");
+                    // Returning troops rejoined a garrison — re-sync those depletion checks (AC5).
+                    self.resync(&homes).await;
+                }
+                Ok(_) => {}
+                Err(e) => tracing::error!(error = %e, "scheduler movement tick failed"),
             }
             match process_due_starvation(
                 &self.builds,

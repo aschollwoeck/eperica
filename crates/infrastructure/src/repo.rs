@@ -3,14 +3,14 @@
 use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BuildRepository, DueBuild,
-    DueTraining, DueUnitOrder, NewBuildOrder, NewTrainingOrder, NewUnitOrder, NewUser, RepoError,
-    StarvationRepository, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
-    VillageMarker,
+    DueMovement, DueTraining, DueUnitOrder, MovementRepository, MovementView, NewBuildOrder,
+    NewTrainingOrder, NewUnitOrder, NewUser, RepoError, StarvationRepository, StationedGroup,
+    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 use eperica_domain::{
-    BuildTarget, BuildingKind, BuildingSlot, Coordinate, PlayerId, QueueLane, ResourceAmounts,
-    ResourceField, ResourceKind, StartingVillage, TileKind, Timestamp, Tribe, UnitCounts, UnitId,
-    Village, VillageId, WorldId, WorldMap, coordinates_within,
+    BuildTarget, BuildingKind, BuildingSlot, Coordinate, MovementKind, PlayerId, QueueLane,
+    ResourceAmounts, ResourceField, ResourceKind, StartingVillage, TileKind, Timestamp, Tribe,
+    UnitCounts, UnitId, Village, VillageId, WorldId, WorldMap, coordinates_within,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use uuid::Uuid;
@@ -83,6 +83,19 @@ impl PgAccountRepository {
     pub async fn requeue_orphaned_starvation(&self) -> Result<u64, RepoError> {
         let result = sqlx::query(
             "UPDATE starvation_checks SET status = 'pending' WHERE status = 'processing'",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(result.rows_affected())
+    }
+
+    /// Reset movements stuck in `processing` back to `in_transit` (crash recovery). Safe:
+    /// `apply_movement` delivers and marks done in one transaction, so a re-claim re-applies a
+    /// never-committed arrival cleanly (007 AC4).
+    pub async fn requeue_orphaned_movements(&self) -> Result<u64, RepoError> {
+        let result = sqlx::query(
+            "UPDATE troop_movements SET status = 'in_transit' WHERE status = 'processing'",
         )
         .execute(&self.pool)
         .await
@@ -525,6 +538,21 @@ impl AccountRepository for PgAccountRepository {
                 })
             })
             .collect()
+    }
+
+    async fn village_at(&self, coord: Coordinate) -> Result<Option<Village>, RepoError> {
+        let id: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM villages WHERE world_id = $1 AND x = $2 AND y = $3")
+                .bind(Uuid::from_u128(self.world_id.0))
+                .bind(coord.x)
+                .bind(coord.y)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(backend)?;
+        match id {
+            Some(id) => self.village_by_id(VillageId(id.as_u128())).await,
+            None => Ok(None),
+        }
     }
 }
 
@@ -1334,6 +1362,463 @@ impl StarvationRepository for PgAccountRepository {
     }
 }
 
+fn movement_kind_str(kind: MovementKind) -> &'static str {
+    match kind {
+        MovementKind::Reinforce => "reinforce",
+        MovementKind::Return => "return",
+    }
+}
+
+fn parse_movement_kind(s: &str) -> Result<MovementKind, RepoError> {
+    match s {
+        "reinforce" => Ok(MovementKind::Reinforce),
+        "return" => Ok(MovementKind::Return),
+        other => Err(RepoError::Backend(format!(
+            "unknown movement kind: {other}"
+        ))),
+    }
+}
+
+/// Load a movement's troop composition.
+/// Load the troop composition of several movements in a single query, grouped by movement id
+/// (avoids an N+1 on the `/village` read path and the due-event processor — P11). Returns an empty
+/// composition for any id with no rows.
+async fn movement_troops_batch(
+    pool: &PgPool,
+    movements: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, UnitCounts>, RepoError> {
+    let mut grouped: std::collections::HashMap<Uuid, UnitCounts> = std::collections::HashMap::new();
+    if movements.is_empty() {
+        return Ok(grouped);
+    }
+    let rows = sqlx::query(
+        "SELECT movement_id, unit_id, count FROM movement_troops \
+         WHERE movement_id = ANY($1) ORDER BY movement_id, unit_id",
+    )
+    .bind(movements)
+    .fetch_all(pool)
+    .await
+    .map_err(backend)?;
+    for r in &rows {
+        let movement: Uuid = r.try_get("movement_id").map_err(backend)?;
+        let unit: String = r.try_get("unit_id").map_err(backend)?;
+        let count: i32 = r.try_get("count").map_err(backend)?;
+        grouped
+            .entry(movement)
+            .or_default()
+            .push((UnitId(unit), u32::try_from(count).unwrap_or(0)));
+    }
+    Ok(grouped)
+}
+
+#[async_trait]
+impl MovementRepository for PgAccountRepository {
+    #[allow(clippy::too_many_arguments)]
+    async fn start_reinforcement(
+        &self,
+        home: VillageId,
+        deliver: VillageId,
+        owner: PlayerId,
+        origin: Coordinate,
+        dest: Coordinate,
+        now: Timestamp,
+        arrive_at: Timestamp,
+        troops: &[(UnitId, u32)],
+    ) -> Result<(), RepoError> {
+        let home_uuid = Uuid::from_u128(home.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        // Guarded debit from the home garrison: for each type, either decrement (count > n) or
+        // delete the stack (count == n) — never UPDATE to 0 (the CHECK forbids it). Exactly one of
+        // the two must affect a row, else the garrison no longer covers the request (race, P4).
+        for (unit, n) in troops.iter().filter(|(_, n)| *n > 0) {
+            let n = i32::try_from(*n).unwrap_or(i32::MAX);
+            let dec = sqlx::query(
+                "UPDATE village_units SET count = count - $1 \
+                 WHERE village_id = $2 AND unit_id = $3 AND count > $1",
+            )
+            .bind(n)
+            .bind(home_uuid)
+            .bind(unit.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+            let affected = if dec.rows_affected() == 1 {
+                1
+            } else {
+                sqlx::query(
+                    "DELETE FROM village_units \
+                     WHERE village_id = $1 AND unit_id = $2 AND count = $3",
+                )
+                .bind(home_uuid)
+                .bind(unit.as_str())
+                .bind(n)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?
+                .rows_affected()
+            };
+            if affected != 1 {
+                return Err(RepoError::Conflict);
+            }
+        }
+
+        let movement_id = Uuid::new_v4();
+        insert_movement(
+            &mut tx,
+            movement_id,
+            owner,
+            MovementKind::Reinforce,
+            home,
+            deliver,
+            origin,
+            dest,
+            now,
+            arrive_at,
+            troops,
+        )
+        .await?;
+
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn start_return(
+        &self,
+        host: VillageId,
+        home: VillageId,
+        owner: PlayerId,
+        origin: Coordinate,
+        dest: Coordinate,
+        now: Timestamp,
+        arrive_at: Timestamp,
+    ) -> Result<UnitCounts, RepoError> {
+        let host_uuid = Uuid::from_u128(host.0);
+        let home_uuid = Uuid::from_u128(home.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        // Atomically read+delete the stationed group (lock it against a concurrent return).
+        let rows = sqlx::query(
+            "SELECT unit_id, count FROM reinforcements \
+             WHERE host_village = $1 AND home_village = $2 ORDER BY unit_id FOR UPDATE",
+        )
+        .bind(host_uuid)
+        .bind(home_uuid)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if rows.is_empty() {
+            return Err(RepoError::Conflict);
+        }
+        let troops: UnitCounts = rows
+            .iter()
+            .map(|r| {
+                let unit: String = r.try_get("unit_id").map_err(backend)?;
+                let count: i32 = r.try_get("count").map_err(backend)?;
+                Ok((UnitId(unit), u32::try_from(count).unwrap_or(0)))
+            })
+            .collect::<Result<_, RepoError>>()?;
+
+        sqlx::query("DELETE FROM reinforcements WHERE host_village = $1 AND home_village = $2")
+            .bind(host_uuid)
+            .bind(home_uuid)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+
+        let movement_id = Uuid::new_v4();
+        insert_movement(
+            &mut tx,
+            movement_id,
+            owner,
+            MovementKind::Return,
+            home,
+            home, // delivered back to the home garrison
+            origin,
+            dest,
+            now,
+            arrive_at,
+            &troops,
+        )
+        .await?;
+
+        tx.commit().await.map_err(backend)?;
+        Ok(troops)
+    }
+
+    async fn active_movements(&self, owner: PlayerId) -> Result<Vec<MovementView>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, kind, dest_x, dest_y, \
+             (EXTRACT(EPOCH FROM arrive_at) * 1000)::bigint AS arrive_ms \
+             FROM troop_movements WHERE owner_id = $1 AND status = 'in_transit' \
+             ORDER BY arrive_at, id",
+        )
+        .bind(Uuid::from_u128(owner.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let ids: Vec<Uuid> = rows
+            .iter()
+            .map(|r| r.try_get("id").map_err(backend))
+            .collect::<Result<_, RepoError>>()?;
+        let mut troops = movement_troops_batch(&self.pool, &ids).await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for (r, id) in rows.iter().zip(&ids) {
+            let kind: String = r.try_get("kind").map_err(backend)?;
+            let dest_x: i32 = r.try_get("dest_x").map_err(backend)?;
+            let dest_y: i32 = r.try_get("dest_y").map_err(backend)?;
+            let arrive_ms: i64 = r.try_get("arrive_ms").map_err(backend)?;
+            out.push(MovementView {
+                kind: parse_movement_kind(&kind)?,
+                destination: Coordinate::new(dest_x, dest_y),
+                arrive_at: Timestamp(arrive_ms),
+                troops: troops.remove(id).unwrap_or_default(),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn reinforcements_at(
+        &self,
+        village: VillageId,
+    ) -> Result<Vec<StationedGroup>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT r.home_village, r.unit_id, r.count, hv.x, hv.y, u.username \
+             FROM reinforcements r \
+             JOIN villages hv ON hv.id = r.home_village \
+             JOIN users u ON u.id = hv.owner_id \
+             WHERE r.host_village = $1 ORDER BY r.home_village, r.unit_id",
+        )
+        .bind(Uuid::from_u128(village.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        group_reinforcements(&rows, |home| StationedGroup {
+            host_village: village,
+            home_village: home,
+            other_coord: Coordinate::new(0, 0),
+            other_owner: String::new(),
+            troops: Vec::new(),
+        })
+    }
+
+    async fn reinforcements_of(&self, owner: PlayerId) -> Result<Vec<StationedGroup>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT r.host_village, r.home_village, r.unit_id, r.count, hostv.x, hostv.y, u.username \
+             FROM reinforcements r \
+             JOIN villages homev ON homev.id = r.home_village \
+             JOIN villages hostv ON hostv.id = r.host_village \
+             JOIN users u ON u.id = hostv.owner_id \
+             WHERE homev.owner_id = $1 ORDER BY r.host_village, r.unit_id",
+        )
+        .bind(Uuid::from_u128(owner.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        // Group by host village.
+        let mut out: Vec<StationedGroup> = Vec::new();
+        for r in &rows {
+            let host: Uuid = r.try_get("host_village").map_err(backend)?;
+            let home: Uuid = r.try_get("home_village").map_err(backend)?;
+            let unit: String = r.try_get("unit_id").map_err(backend)?;
+            let count: i32 = r.try_get("count").map_err(backend)?;
+            let x: i32 = r.try_get("x").map_err(backend)?;
+            let y: i32 = r.try_get("y").map_err(backend)?;
+            let username: String = r.try_get("username").map_err(backend)?;
+            let host_id = VillageId(host.as_u128());
+            let count = u32::try_from(count).unwrap_or(0);
+            match out.last_mut() {
+                Some(g) if g.host_village == host_id => g.troops.push((UnitId(unit), count)),
+                _ => out.push(StationedGroup {
+                    host_village: host_id,
+                    home_village: VillageId(home.as_u128()),
+                    other_coord: Coordinate::new(x, y),
+                    other_owner: username,
+                    troops: vec![(UnitId(unit), count)],
+                }),
+            }
+        }
+        Ok(out)
+    }
+
+    async fn claim_due_movements(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueMovement>, RepoError> {
+        let rows = sqlx::query(
+            "UPDATE troop_movements SET status = 'processing' WHERE id IN ( \
+                 SELECT id FROM troop_movements \
+                 WHERE status = 'in_transit' AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
+                 ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
+             ) RETURNING id, kind, home_village, deliver_village",
+        )
+        .bind(now.0 as f64)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let ids: Vec<Uuid> = rows
+            .iter()
+            .map(|r| r.try_get("id").map_err(backend))
+            .collect::<Result<_, RepoError>>()?;
+        let mut troops = movement_troops_batch(&self.pool, &ids).await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for (r, id) in rows.iter().zip(&ids) {
+            let kind: String = r.try_get("kind").map_err(backend)?;
+            let home: Uuid = r.try_get("home_village").map_err(backend)?;
+            let deliver: Uuid = r.try_get("deliver_village").map_err(backend)?;
+            out.push(DueMovement {
+                id: id.as_u128(),
+                kind: parse_movement_kind(&kind)?,
+                home_village: VillageId(home.as_u128()),
+                deliver_village: VillageId(deliver.as_u128()),
+                troops: troops.remove(id).unwrap_or_default(),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn apply_movement(&self, due: &DueMovement) -> Result<(), RepoError> {
+        let deliver = Uuid::from_u128(due.deliver_village.0);
+        let home = Uuid::from_u128(due.home_village.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        for (unit, count) in due.troops.iter().filter(|(_, c)| *c > 0) {
+            let count = i32::try_from(*count).unwrap_or(i32::MAX);
+            match due.kind {
+                MovementKind::Reinforce => {
+                    // Station at the destination, owned by the home village.
+                    sqlx::query(
+                        "INSERT INTO reinforcements (host_village, home_village, unit_id, count) \
+                         VALUES ($1, $2, $3, $4) \
+                         ON CONFLICT (host_village, home_village, unit_id) \
+                         DO UPDATE SET count = reinforcements.count + EXCLUDED.count",
+                    )
+                    .bind(deliver)
+                    .bind(home)
+                    .bind(unit.as_str())
+                    .bind(count)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                }
+                MovementKind::Return => {
+                    // Rejoin the home garrison.
+                    sqlx::query(
+                        "INSERT INTO village_units (village_id, unit_id, count) \
+                         VALUES ($1, $2, $3) \
+                         ON CONFLICT (village_id, unit_id) \
+                         DO UPDATE SET count = village_units.count + EXCLUDED.count",
+                    )
+                    .bind(deliver)
+                    .bind(unit.as_str())
+                    .bind(count)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                }
+            }
+        }
+
+        sqlx::query("UPDATE troop_movements SET status = 'done' WHERE id = $1")
+            .bind(Uuid::from_u128(due.id))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+}
+
+/// Insert a movement row + its troop child rows within an open transaction.
+#[allow(clippy::too_many_arguments)]
+async fn insert_movement(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    movement_id: Uuid,
+    owner: PlayerId,
+    kind: MovementKind,
+    home: VillageId,
+    deliver: VillageId,
+    origin: Coordinate,
+    dest: Coordinate,
+    now: Timestamp,
+    arrive_at: Timestamp,
+    troops: &[(UnitId, u32)],
+) -> Result<(), RepoError> {
+    sqlx::query(
+        "INSERT INTO troop_movements \
+         (id, owner_id, kind, home_village, deliver_village, origin_x, origin_y, dest_x, dest_y, \
+          depart_at, arrive_at, status) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, \
+                 to_timestamp($10::double precision / 1000.0), \
+                 to_timestamp($11::double precision / 1000.0), 'in_transit')",
+    )
+    .bind(movement_id)
+    .bind(Uuid::from_u128(owner.0))
+    .bind(movement_kind_str(kind))
+    .bind(Uuid::from_u128(home.0))
+    .bind(Uuid::from_u128(deliver.0))
+    .bind(origin.x)
+    .bind(origin.y)
+    .bind(dest.x)
+    .bind(dest.y)
+    .bind(now.0 as f64)
+    .bind(arrive_at.0 as f64)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    for (unit, n) in troops.iter().filter(|(_, n)| *n > 0) {
+        sqlx::query(
+            "INSERT INTO movement_troops (movement_id, unit_id, count) VALUES ($1, $2, $3)",
+        )
+        .bind(movement_id)
+        .bind(unit.as_str())
+        .bind(i32::try_from(*n).unwrap_or(i32::MAX))
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    }
+    Ok(())
+}
+
+/// Group reinforcement rows (sorted by home_village) for `reinforcements_at`: the counterparty is
+/// each helper's home village. `seed` builds an empty group for a new home id; rows fill it.
+fn group_reinforcements(
+    rows: &[PgRow],
+    seed: impl Fn(VillageId) -> StationedGroup,
+) -> Result<Vec<StationedGroup>, RepoError> {
+    let mut out: Vec<StationedGroup> = Vec::new();
+    for r in rows {
+        let home: Uuid = r.try_get("home_village").map_err(backend)?;
+        let unit: String = r.try_get("unit_id").map_err(backend)?;
+        let count: i32 = r.try_get("count").map_err(backend)?;
+        let x: i32 = r.try_get("x").map_err(backend)?;
+        let y: i32 = r.try_get("y").map_err(backend)?;
+        let username: String = r.try_get("username").map_err(backend)?;
+        let home_id = VillageId(home.as_u128());
+        let count = u32::try_from(count).unwrap_or(0);
+        match out.last_mut() {
+            Some(g) if g.home_village == home_id => g.troops.push((UnitId(unit), count)),
+            _ => {
+                let mut g = seed(home_id);
+                g.other_coord = Coordinate::new(x, y);
+                g.other_owner = username;
+                g.troops.push((UnitId(unit), count));
+                out.push(g);
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1342,6 +1827,253 @@ mod tests {
     /// The resources row's last-settled time — the snapshot orders must be computed from.
     async fn snapshot(repo: &PgAccountRepository, village: VillageId) -> Timestamp {
         repo.stored_resources(village).await.unwrap().unwrap().1
+    }
+
+    /// 007 AC1/AC4/AC5: a reinforcement debits the source garrison, arrives once (crash-resume
+    /// safe), stations at the target, and the return rejoins the source garrison.
+    #[tokio::test]
+    async fn movement_reinforce_and_return_lifecycle() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping movement test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            rules.starting_amounts,
+        );
+
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            let v = repo.villages_of(user.id).await.unwrap()[0].clone();
+            (user, uname, v)
+        };
+        let (alice, alice_name, a) = account("snd").await;
+        let (_bob, bob_name, b) = account("rcv").await;
+        assert_ne!(a.coordinate, b.coordinate);
+
+        // Seed Alice's garrison with 10 phalanx.
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 10)",
+        )
+        .bind(Uuid::from_u128(a.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let now = Timestamp(3_000_000_000_000);
+        let arrive = Timestamp(now.0 + 100_000);
+        let troops = vec![(UnitId("phalanx".into()), 4)];
+
+        // AC1: send 4 phalanx to Bob — Alice's garrison drops to 6, a movement is in flight.
+        repo.start_reinforcement(
+            a.id,
+            b.id,
+            alice.id,
+            a.coordinate,
+            b.coordinate,
+            now,
+            arrive,
+            &troops,
+        )
+        .await
+        .expect("send");
+        assert_eq!(
+            repo.garrison(a.id).await.unwrap(),
+            vec![(UnitId("phalanx".into()), 6)]
+        );
+        let outgoing = repo.active_movements(alice.id).await.unwrap();
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0].kind, MovementKind::Reinforce);
+        assert_eq!(outgoing[0].destination, b.coordinate);
+        assert!(repo.reinforcements_at(b.id).await.unwrap().is_empty()); // not arrived yet
+
+        // Crash-resume: claim the due arrival, "crash" before applying, requeue, re-claim, apply
+        // once — the troops are stationed exactly once (AC4).
+        let claimed = repo.claim_due_movements(arrive, 100).await.unwrap();
+        assert!(claimed.iter().any(|d| d.home_village == a.id));
+        assert!(repo.requeue_orphaned_movements().await.unwrap() >= 1);
+        let due = repo.claim_due_movements(arrive, 100).await.unwrap();
+        let mine = due.iter().find(|d| d.home_village == a.id).expect("due");
+        repo.apply_movement(mine).await.expect("apply reinforce");
+
+        // AC4: stationed at Bob, owned by Alice; visible to both sides.
+        let here = repo.reinforcements_at(b.id).await.unwrap();
+        assert_eq!(here.len(), 1);
+        assert_eq!(here[0].home_village, a.id);
+        assert_eq!(here[0].other_owner, alice_name); // who is helping Bob
+        assert_eq!(here[0].troops, vec![(UnitId("phalanx".into()), 4)]);
+        let abroad = repo.reinforcements_of(alice.id).await.unwrap();
+        assert_eq!(abroad.len(), 1);
+        assert_eq!(abroad[0].host_village, b.id);
+        assert_eq!(abroad[0].other_owner, bob_name); // where Alice's troops are
+        // The applied movement no longer claims.
+        assert!(
+            repo.claim_due_movements(arrive, 100)
+                .await
+                .unwrap()
+                .iter()
+                .all(|d| d.home_village != a.id)
+        );
+
+        // AC5: Alice recalls them — the stationed group is removed and a return is created.
+        let now2 = Timestamp(now.0 + 1_000_000);
+        let arrive2 = Timestamp(now2.0 + 100_000);
+        let returned = repo
+            .start_return(
+                b.id,
+                a.id,
+                alice.id,
+                b.coordinate,
+                a.coordinate,
+                now2,
+                arrive2,
+            )
+            .await
+            .expect("return");
+        assert_eq!(returned, vec![(UnitId("phalanx".into()), 4)]);
+        assert!(repo.reinforcements_at(b.id).await.unwrap().is_empty());
+        // A second recall finds nothing.
+        assert!(matches!(
+            repo.start_return(
+                b.id,
+                a.id,
+                alice.id,
+                b.coordinate,
+                a.coordinate,
+                now2,
+                arrive2
+            )
+            .await,
+            Err(RepoError::Conflict)
+        ));
+
+        // The return arrives via the processor — the troops rejoin Alice's garrison (back to 10),
+        // and the processor reports her home for a starvation re-sync (AC5).
+        let homes = eperica_application::process_due_movements(&repo, arrive2, 100)
+            .await
+            .expect("process movements");
+        assert!(homes.contains(&a.id));
+        assert_eq!(
+            repo.garrison(a.id).await.unwrap(),
+            vec![(UnitId("phalanx".into()), 10)]
+        );
+    }
+
+    /// 007 AC2/P4: when the garrison no longer covers the request (the guarded debit can't take
+    /// exactly the asked count), the send is rejected with `Conflict` and **nothing** is removed —
+    /// the troops are not partially debited and no movement is created.
+    #[tokio::test]
+    async fn start_reinforcement_over_garrison_removes_nothing() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping guarded-debit test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            rules.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            repo.villages_of(user.id).await.unwrap()[0].clone()
+        };
+        let a = account("grd_snd").await;
+        let b = account("grd_rcv").await;
+
+        // Seed two stacks; request 2 sword (held, debited first) then 4 phalanx (only 3 held). The
+        // first debit succeeds inside the transaction; the second fails, so the whole send must
+        // roll back atomically — the swordsman debit is undone too.
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) \
+             VALUES ($1, 'phalanx', 3), ($1, 'swordsman', 2)",
+        )
+        .bind(Uuid::from_u128(a.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let now = Timestamp(3_000_000_000_000);
+        let arrive = Timestamp(now.0 + 100_000);
+        let over = vec![
+            (UnitId("swordsman".into()), 2),
+            (UnitId("phalanx".into()), 4),
+        ];
+        assert!(matches!(
+            repo.start_reinforcement(
+                a.id,
+                b.id,
+                a.owner,
+                a.coordinate,
+                b.coordinate,
+                now,
+                arrive,
+                &over
+            )
+            .await,
+            Err(RepoError::Conflict)
+        ));
+
+        // Nothing debited (the already-taken swordsman stack was rolled back) and no movement
+        // scheduled.
+        let mut garrison = repo.garrison(a.id).await.unwrap();
+        garrison.sort_by(|x, y| x.0.as_str().cmp(y.0.as_str()));
+        assert_eq!(
+            garrison,
+            vec![
+                (UnitId("phalanx".into()), 3),
+                (UnitId("swordsman".into()), 2),
+            ]
+        );
+        assert!(repo.active_movements(a.owner).await.unwrap().is_empty());
     }
 
     #[tokio::test]
