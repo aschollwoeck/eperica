@@ -526,6 +526,73 @@ async fn training_flow_and_garrison() {
 }
 
 #[tokio::test]
+async fn map_view_shows_terrain_and_own_village() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    let user = unique("mapper");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // 006 AC7: the village page links to the map.
+    let village = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(village.contains("/map"));
+
+    // The map (default-centered on the player's village) renders the grid, the player's own
+    // village marker, and terrain labels.
+    let body = c
+        .get(format!("{base}/map"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("map-grid"));
+    assert!(body.contains("centered on"));
+    assert!(body.contains("map-grid__cell--village"));
+    assert!(body.contains("map-grid__cell--self")); // the viewer's own village is highlighted
+    assert!(body.contains(&user)); // owner name on the marker (public, GDD §7.3)
+    assert!(body.contains("Valley")); // a terrain label
+
+    // Recenter to an explicit coordinate.
+    let body = c
+        .get(format!("{base}/map?x=10&y=-7"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("centered on (10|-7)"));
+
+    // Visitors are redirected to login (roles table).
+    let anon = client().get(format!("{base}/map")).send().await.unwrap();
+    assert_eq!(anon.status().as_u16(), 303);
+    assert_eq!(
+        anon.headers().get(LOCATION).unwrap().to_str().unwrap(),
+        "/login"
+    );
+}
+
+#[tokio::test]
 async fn duplicate_username_is_rejected() {
     let Some(base) = spawn().await else {
         return;

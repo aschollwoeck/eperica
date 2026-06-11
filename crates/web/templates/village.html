@@ -2,7 +2,7 @@
 {% block content %}
 <section class="panel">
   <h1>{{ username }}'s village</h1>
-  <p class="muted">Location ({{ x }}, {{ y }}) · Tribe: {{ tribe }}
+  <p class="muted">Location ({{ x }}, {{ y }}) · Tribe: {{ tribe }} · <a href="/map">Map</a>
     {% if has_academy %} · <a href="/village/academy">Academy</a>{% endif %}
     {% if has_smithy %} · <a href="/village/smithy">Smithy</a>{% endif %}
     {% for link in troop_links %} · <a href="{{ link.1 }}">{{ link.0 }}</a>{% endfor %}</p>

@@ -224,6 +224,33 @@ pub struct GarrisonRow {
     pub upkeep: i64,
 }
 
+/// One rendered cell of the map view (006 AC7).
+pub struct MapCellView {
+    /// The full BEM class list (terrain + optional village/self modifiers).
+    pub cell_class: String,
+    /// The cell's glyph (terrain mark, or `★` for a village).
+    pub glyph: &'static str,
+    /// The hover label: full tile description, coordinate, and owner if occupied.
+    pub label: String,
+}
+
+#[derive(Template)]
+#[template(path = "map.html")]
+pub struct MapTemplate {
+    /// The center coordinate the view is built around.
+    pub center_x: i32,
+    pub center_y: i32,
+    /// Map radius, for display.
+    pub radius: i32,
+    /// Recenter targets (one axis shifted by a full screen).
+    pub north_y: i32,
+    pub south_y: i32,
+    pub east_x: i32,
+    pub west_x: i32,
+    /// The grid: rows north→south, each west→east.
+    pub rows: Vec<Vec<MapCellView>>,
+}
+
 #[derive(Template)]
 #[template(path = "village.html")]
 pub struct VillageTemplate {

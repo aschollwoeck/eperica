@@ -35,7 +35,7 @@ Ordered for dependency and testability (pure domain first).
 
 ## Web
 
-- [ ] **T7 — Map view.** `.map-grid` added to the style guide first; `GET /map?x=&y=` viewport
+- [x] **T7 — Map view.** `.map-grid` added to the style guide first; `GET /map?x=&y=` viewport
   centered on the player's village, tile labels + village markers, recenter links/form; **Map**
   link from `/village`. Integration tests: grid renders, marker + owner, oasis/valley labels,
   recenter, visitor → login (**AC7**).
