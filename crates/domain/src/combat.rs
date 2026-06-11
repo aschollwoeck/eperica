@@ -551,10 +551,11 @@ mod tests {
 
     #[test]
     fn apply_losses_rounds_half_to_even_and_conserves() {
-        // Round half to even (banker's): 5×0.5 = 2.5 → 2, 7×0.5 = 3.5 → 4, 3×0.5 = 1.5 → 2.
+        // Round half to even (banker's). The discriminating ties: 5×0.5 = 2.5 → 2 (down to even;
+        // away-from-zero would give 3) and 9×0.5 = 4.5 → 4 (down to even; away-from-zero gives 5).
         let counts = vec![
             (UnitId("a".into()), 5),
-            (UnitId("b".into()), 7),
+            (UnitId("b".into()), 9),
             (UnitId("c".into()), 3),
         ];
         let (surv, lost) = apply_losses(&counts, 0.5);

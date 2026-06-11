@@ -1671,7 +1671,8 @@ impl MovementRepository for PgAccountRepository {
             let count: i32 = r.try_get("count").map_err(backend)?;
             let x: i32 = r.try_get("x").map_err(backend)?;
             let y: i32 = r.try_get("y").map_err(backend)?;
-            let tribe = parse_tribe(Some(r.try_get("tribe").map_err(backend)?))?;
+            let tribe_raw: Option<String> = r.try_get("tribe").map_err(backend)?;
+            let tribe = parse_tribe(tribe_raw)?;
             let username: String = r.try_get("username").map_err(backend)?;
             let host_id = VillageId(host.as_u128());
             let count = u32::try_from(count).unwrap_or(0);
@@ -1855,7 +1856,8 @@ fn group_reinforcements(
         let count: i32 = r.try_get("count").map_err(backend)?;
         let x: i32 = r.try_get("x").map_err(backend)?;
         let y: i32 = r.try_get("y").map_err(backend)?;
-        let tribe = parse_tribe(Some(r.try_get("tribe").map_err(backend)?))?;
+        let tribe_raw: Option<String> = r.try_get("tribe").map_err(backend)?;
+        let tribe = parse_tribe(tribe_raw)?;
         let username: String = r.try_get("username").map_err(backend)?;
         let home_id = VillageId(home.as_u128());
         let count = u32::try_from(count).unwrap_or(0);
