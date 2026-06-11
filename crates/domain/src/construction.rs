@@ -112,20 +112,25 @@ pub fn debit(amounts: ResourceAmounts, cost: ResourceAmounts) -> ResourceAmounts
     }
 }
 
+/// Whether every `(kind, level)` requirement is satisfied by the village's `buildings`.
+pub fn building_levels_met(
+    requirements: &[(BuildingKind, u8)],
+    buildings: &[BuildingSlot],
+) -> bool {
+    requirements.iter().all(|(req_kind, req_level)| {
+        buildings
+            .iter()
+            .any(|b| b.kind == *req_kind && b.level >= *req_level)
+    })
+}
+
 /// Whether all prerequisites for `kind` are satisfied by the village's `buildings`.
 pub fn prerequisites_met(
     kind: BuildingKind,
     buildings: &[BuildingSlot],
     rules: &BuildRules,
 ) -> bool {
-    rules
-        .prerequisites(kind)
-        .iter()
-        .all(|(req_kind, req_level)| {
-            buildings
-                .iter()
-                .any(|b| b.kind == *req_kind && b.level >= *req_level)
-        })
+    building_levels_met(rules.prerequisites(kind), buildings)
 }
 
 #[cfg(test)]

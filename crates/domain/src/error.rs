@@ -12,6 +12,8 @@ pub enum DomainError {
     InvalidGameSpeed,
     /// A starting-village template that does not have exactly the required number of resource fields.
     InvalidStartingVillage,
+    /// Unit balance data that does not form valid rosters (see the message for the violated rule).
+    InvalidUnitRules(&'static str),
 }
 
 impl fmt::Display for DomainError {
@@ -22,6 +24,9 @@ impl fmt::Display for DomainError {
             }
             DomainError::InvalidStartingVillage => {
                 write!(f, "a starting village must have exactly 18 resource fields")
+            }
+            DomainError::InvalidUnitRules(rule) => {
+                write!(f, "invalid unit balance data: {rule}")
             }
         }
     }

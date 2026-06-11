@@ -11,12 +11,14 @@ pub mod economy;
 pub mod error;
 pub mod event;
 pub mod resource;
+pub mod units;
 pub mod village;
 pub mod world;
 
 pub use building::BuildingKind;
 pub use construction::{
-    BuildRules, BuildTarget, LevelSpec, build_time_secs, can_afford, debit, prerequisites_met,
+    BuildRules, BuildTarget, LevelSpec, build_time_secs, building_levels_met, can_afford, debit,
+    prerequisites_met,
 };
 pub use economy::{
     Capacities, Economy, EconomyRules, ProductionRates, ResourceAmounts, accrue, capacities,
@@ -25,6 +27,10 @@ pub use economy::{
 pub use error::DomainError;
 pub use event::{EventKind, ScheduledEvent, Timestamp};
 pub use resource::ResourceKind;
+pub use units::{
+    MAX_UNIT_LEVEL, ROSTER_SIZE, ResearchDenied, ResearchSpec, SmithyRules, UnitId, UnitRole,
+    UnitRules, UnitSpec, UpgradeDenied, can_research, can_upgrade, scaled_time_secs,
+};
 pub use village::{
     BuildingSlot, PlayerId, RESOURCE_FIELD_COUNT, ResourceField, StartingVillage, Tribe, Village,
     VillageId,

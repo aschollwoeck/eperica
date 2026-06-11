@@ -10,7 +10,7 @@ Ordered for dependency and testability (pure domain first).
   `Stable`, `Workshop` (fix every exhaustive match: mappers, labels, slots);
   `specs/balance/construction.toml` += barracks/academy/smithy (10 levels) + prerequisites per AC5.
   Unit tests: prerequisite gates (**AC5**).
-- [ ] **T2 — Unit domain.** `domain/units.rs`: `UnitId`, `UnitRole`, `UnitSpec`, `ResearchSpec`,
+- [x] **T2 — Unit domain.** `domain/units.rs`: `UnitId`, `UnitRole`, `UnitSpec`, `ResearchSpec`,
   `UnitRules` (+ validation rules), `SmithyRules` (cost-permille/time per level), pure gates
   `can_research` / `can_upgrade`, `research_time` / `upgrade_time` (÷ speed), tier-1 =
   `research: None`. Unit tests: gates (**AC6/AC7/AC10/AC11** domain side), tier-1 (**AC9**),
