@@ -2,7 +2,7 @@
 
 use axum::extract::FromRef;
 use axum_extra::extract::cookie::Key;
-use eperica_domain::{BuildRules, EconomyRules, StartingVillage, WorldConfig};
+use eperica_domain::{BuildRules, EconomyRules, StartingVillage, UnitRules, WorldConfig};
 use eperica_infrastructure::{Argon2Hasher, PgAccountRepository};
 use std::sync::Arc;
 
@@ -19,6 +19,8 @@ pub struct AppState {
     pub rules: Arc<EconomyRules>,
     /// Construction balance rules (costs, times, prerequisites).
     pub build_rules: Arc<BuildRules>,
+    /// Unit balance rules (per-tribe rosters, research, Smithy upgrades — 004).
+    pub unit_rules: Arc<UnitRules>,
     /// World configuration (speed, radius — P7).
     pub world: WorldConfig,
     /// Whether new accounts must confirm their email before login (AC1 / Decisions).

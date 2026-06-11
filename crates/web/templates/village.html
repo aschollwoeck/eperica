@@ -2,7 +2,9 @@
 {% block content %}
 <section class="panel">
   <h1>{{ username }}'s village</h1>
-  <p class="muted">Location ({{ x }}, {{ y }}) · Tribe: {{ tribe }}</p>
+  <p class="muted">Location ({{ x }}, {{ y }}) · Tribe: {{ tribe }}
+    {% if has_academy %} · <a href="/village/academy">Academy</a>{% endif %}
+    {% if has_smithy %} · <a href="/village/smithy">Smithy</a>{% endif %}</p>
 
   <h2>Resources</h2>
   <ul class="resource-list">

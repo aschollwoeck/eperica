@@ -1118,10 +1118,12 @@ mod tests {
             iron: 500,
             crop: 500,
         };
+        // Due far beyond any other test's global claim window (the largest synthetic "now" used
+        // by parallel tests is 2.1e12), so they can never claim these pending orders away.
         let order = |target, lane| NewBuildOrder {
             target,
             target_level: 1,
-            complete_at: Timestamp(now.0 + 100_000),
+            complete_at: Timestamp(now.0 + 1_000_000_000_000),
             lane,
         };
         let field = BuildTarget::Field { slot: 0 };

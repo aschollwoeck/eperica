@@ -46,7 +46,7 @@ Ordered for dependency and testability (pure domain first).
 - [x] **T9 — Registration & village UI.** Tribe radio group on `/register` (descriptions; required;
   server-rejects unknown — **AC1**); `/village` shows tribe + Academy/Smithy links when built.
   Check ui-style-guide first; add new components to the guide if missing. Integration tests.
-- [ ] **T10 — Academy & Smithy UI.** `GET /village/academy` + `POST /village/academy/research`,
+- [x] **T10 — Academy & Smithy UI.** `GET /village/academy` + `POST /village/academy/research`,
   `GET /village/smithy` + `POST /village/smithy/upgrade` (PRG pattern, live countdown, gate
   reasons, building-required states). Integration tests (**AC15**).
 
