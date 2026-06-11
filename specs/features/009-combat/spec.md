@@ -1,6 +1,6 @@
 # Feature 009 — Combat resolution
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 004 (units + Smithy levels), 005 (garrison + reinforcements), 006 (distance), 007 (movement engine)
 **Roadmap:** M4 · slice 009 · GDD §9 — the PvP core; combat rides on the movement engine.
 

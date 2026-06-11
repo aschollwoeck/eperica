@@ -81,7 +81,7 @@ timed construction. Proves the entire architecture end-to-end on the smallest po
 
 | #   | Slice | Depends on | Delivers / proves | GDD |
 |-----|-------|-----------|-------------------|-----|
-| 009 | **Combat resolution** — attack/raid modes, infantry/cavalry attack vs. matching defense, power-law losses, **morale + seeded luck**, wall + rams, resolution order, **battle reports**. | 007 | The heart of the game; server authority (P4) + seeded determinism (P6). | §9 |
+| 009 ✅ | **Combat resolution** — attack/raid modes, infantry/cavalry attack vs. matching defense, power-law losses, **morale + seeded luck**, wall + rams, resolution order, **battle reports**. | 007 | The heart of the game; server authority (P4) + seeded determinism (P6). | §9 |
 | 010 | **Scouting** — espionage movements + separate scout combat + intel reports. | 009 | Information warfare (§6.1, §9.4). | §6.1, §9 |
 | 011 | **Siege & loot** — catapults damaging targeted buildings; carry-capacity loot; Cranny protection. | 009 | Destruction + plunder loop. | §9.3–9.4, §8.4 |
 | 012 | **Oases — clear & occupy** — defeat wild animals, the **Outpost** building, occupy/hold/lose oases for production bonus. | 009, 006 | The PvE/contest layer (§7.4) without a hero. | §7.4, §4.4 |

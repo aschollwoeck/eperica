@@ -41,7 +41,7 @@ Ordered for dependency and testability (pure domain first).
 
 - [x] **T7 — Technical docs.** rustdoc; `docs/architecture/0011-combat.md`; `CLAUDE.md` active slice.
 - [x] **T8 — End-user docs.** `docs/manual/` combat guide; link from index.
-- [ ] **T9 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
+- [x] **T9 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
   **APPROVE**; PR.
 
 ## Done when

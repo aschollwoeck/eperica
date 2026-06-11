@@ -1,6 +1,6 @@
 # Feature 009 — Combat resolution — Technical Plan
 
-**Status:** Draft
+**Status:** Verified
 **Spec:** ./spec.md
 
 Battle resolution layered on the 007 movement engine: two new movement kinds (`attack`/`raid`), a
