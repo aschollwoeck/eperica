@@ -16,7 +16,7 @@ Ordered for dependency and testability (pure domain first).
 - [x] **T2 — Balance.** `combat.toml` (loss/luck/morale/base + per-tribe wall bonus/durability) +
   `combat_rules()`; `[buildings.wall]` + wall population + `BuildingKind::Wall` mappings; `siege` tag
   on siege units → `siege_kind`.
-- [ ] **T3 — Migration + combat repository.** `0012_combat.sql` (widen `kind` CHECK; `battle_reports`
+- [x] **T3 — Migration + combat repository.** `0012_combat.sql` (widen `kind` CHECK; `battle_reports`
   + indexes); `CombatRepository` (`start_attack`, `claim_due_attacks`, single-tx `apply_battle`,
   `reports_for`/`report`); narrow `claim_due_movements` to reinforce/return. DB tests: resolve reduces
   both sides once + schedules a survivor return; crash-resume; report readable by both parties

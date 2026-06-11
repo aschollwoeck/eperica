@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod build;
+pub mod combat;
 pub mod economy;
 pub mod map;
 pub mod movement;
@@ -24,6 +25,7 @@ pub use eperica_domain as domain;
 
 pub use auth::{LoginError, authenticate};
 pub use build::{BuildError, order_build, process_due_builds};
+pub use combat::{CombatError, order_attack, process_due_combat};
 pub use economy::{VillageEconomy, load_economy, settle_amounts};
 pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
 pub use movement::{MovementError, order_reinforcement, order_return, process_due_movements};
