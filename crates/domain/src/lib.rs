@@ -37,4 +37,6 @@ pub use village::{
     BuildingSlot, PlayerId, RESOURCE_FIELD_COUNT, ResourceField, StartingVillage, Tribe, Village,
     VillageId,
 };
-pub use world::{Coordinate, GameSpeed, WorldConfig, WorldId, coordinates_within};
+pub use world::{
+    Coordinate, GameSpeed, WorldConfig, WorldId, coordinates_within, toroidal_distance,
+};

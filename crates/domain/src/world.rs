@@ -64,6 +64,42 @@ impl Coordinate {
         let r = i64::from(radius);
         i64::from(self.x).abs() <= r && i64::from(self.y).abs() <= r
     }
+
+    /// The canonical in-bounds coordinate for a **toroidal** world of `radius`: each axis is
+    /// wrapped into `-radius..=radius` (the map's far east is adjacent to the far west, GDD §7.2).
+    /// Used to render a viewport seamlessly across the edge.
+    pub fn wrapped(self, radius: u32) -> Coordinate {
+        Coordinate::new(wrap_axis(self.x, radius), wrap_axis(self.y, radius))
+    }
+}
+
+/// Grid width of a radius-`R` torus: coordinates span `-R..=R`, i.e. `2R + 1` cells per axis.
+fn axis_width(radius: u32) -> i64 {
+    2 * i64::from(radius) + 1
+}
+
+/// Wrap a single axis value into `-radius..=radius`.
+fn wrap_axis(value: i32, radius: u32) -> i32 {
+    let w = axis_width(radius);
+    let r = i64::from(radius);
+    // rem_euclid lands in 0..w; shift the upper half down to the negative side.
+    let m = i64::from(value).rem_euclid(w);
+    let wrapped = if m > r { m - w } else { m };
+    i32::try_from(wrapped).unwrap_or(0)
+}
+
+/// The shortest **toroidal Euclidean** distance (in tiles) between two coordinates on a radius-`R`
+/// world that wraps at its edges (GDD §7.2). Each axis takes the shorter of the direct or
+/// wrapped gap; the result combines them as `√(dx² + dy²)`.
+pub fn toroidal_distance(a: Coordinate, b: Coordinate, radius: u32) -> f64 {
+    let w = axis_width(radius);
+    let axis_gap = |p: i32, q: i32| -> i64 {
+        let d = (i64::from(p) - i64::from(q)).abs();
+        d.min(w - d)
+    };
+    let dx = axis_gap(a.x, b.x) as f64;
+    let dy = axis_gap(a.y, b.y) as f64;
+    (dx * dx + dy * dy).sqrt()
 }
 
 /// Unique identifier of a world instance (mapped to a UUID column by the infrastructure).
@@ -172,6 +208,65 @@ mod tests {
     }
 
     // --- placement enumeration ---
+
+    // --- toroidal distance & wrap (AC4) ---
+
+    #[test]
+    fn distance_is_plain_euclidean_when_not_wrapping() {
+        let r = 200;
+        assert_eq!(
+            toroidal_distance(Coordinate::new(0, 0), Coordinate::new(3, 4), r),
+            5.0
+        );
+        assert_eq!(
+            toroidal_distance(Coordinate::new(0, 0), Coordinate::new(0, 0), r),
+            0.0
+        );
+    }
+
+    #[test]
+    fn distance_is_symmetric_and_zero_iff_equal() {
+        let r = 50;
+        let a = Coordinate::new(-12, 7);
+        let b = Coordinate::new(40, -45);
+        assert_eq!(
+            toroidal_distance(a, b, r),
+            toroidal_distance(b, a, r),
+            "symmetry"
+        );
+        assert_eq!(toroidal_distance(a, a, r), 0.0);
+        assert!(toroidal_distance(a, b, r) > 0.0);
+    }
+
+    #[test]
+    fn distance_uses_the_short_way_around_the_torus() {
+        // radius 10 ⇒ width 21. The east edge (10) and west edge (-10) are adjacent (gap 1),
+        // not 20 apart.
+        let r = 10;
+        let east = Coordinate::new(10, 0);
+        let west = Coordinate::new(-10, 0);
+        assert_eq!(toroidal_distance(east, west, r), 1.0);
+        // Both axes wrap.
+        let ne = Coordinate::new(10, 10);
+        let sw = Coordinate::new(-10, -10);
+        assert!((toroidal_distance(ne, sw, r) - 2f64.sqrt()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn wrapped_brings_coordinates_into_bounds() {
+        let r = 10; // width 21, range -10..=10
+        assert_eq!(Coordinate::new(11, 0).wrapped(r), Coordinate::new(-10, 0));
+        assert_eq!(Coordinate::new(-11, 0).wrapped(r), Coordinate::new(10, 0));
+        assert_eq!(
+            Coordinate::new(10, -10).wrapped(r),
+            Coordinate::new(10, -10)
+        );
+        assert_eq!(Coordinate::new(32, 0).wrapped(r), Coordinate::new(-10, 0)); // 32 - 21 - 21
+        // Wrapping is idempotent and always lands in bounds.
+        for x in [-100, -11, 0, 11, 100] {
+            assert!(Coordinate::new(x, x).wrapped(r).in_bounds(r));
+        }
+    }
 
     #[test]
     fn coordinates_within_are_ordered_complete_and_unique() {

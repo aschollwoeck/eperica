@@ -6,7 +6,7 @@ Ordered for dependency and testability (pure domain first).
 
 ## Domain (pure, test-first)
 
-- [ ] **T1 — Toroidal distance.** `toroidal_distance(a, b, radius)` + `Coordinate::wrapped(radius)`
+- [x] **T1 — Toroidal distance.** `toroidal_distance(a, b, radius)` + `Coordinate::wrapped(radius)`
   in `world.rs`. Unit tests: symmetry, zero-iff-equal, `(0,0)→(3,4)=5`, near-edge wrap shorter than
   direct (**AC4**).
 - [ ] **T2 — Map domain.** `map.rs`: `FieldDistribution` (checked, sum 18), `OasisBonus`,
