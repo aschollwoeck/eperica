@@ -70,7 +70,9 @@ CREATE INDEX starvation_checks_due ON starvation_checks (status, due_at);
 - Port `TrainingRepository`:
   - `start_training(village, settled, settled_from, now, NewTrainingOrder)` — optimistic settle
     (004) + insert; unique index ⇒ `Duplicate` for a busy building.
-  - `garrison(village) -> Vec<(UnitId, u32)>`; `active_training(village) -> Vec<ActiveTraining>`.
+  - `active_training(village) -> Vec<ActiveTraining>`. (`garrison(village)` lives on
+    **`AccountRepository`** instead — it is village state on the economy read path, used by
+    `load_economy` and every settle; `village_by_id` joins it there for the system processors.)
   - `claim_due_training(now, limit)` (`active → processing`, `next_complete_at ≤ now`).
   - `apply_training(due, now)` — compute `k = min(elapsed ÷ per_unit − done, remaining)` **in the
     use-case**, then one tx: garrison upsert (`+k`), `count_done += k`, advance
