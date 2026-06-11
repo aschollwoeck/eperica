@@ -17,7 +17,7 @@ Ordered for dependency and testability (pure domain first).
   `marketplace` population row in `economy.toml`; new `trade.toml` (`merchants.per_level`, per-tribe
   `capacity`/`speed`) + `merchant_rules()` loader; `parse_building` + every `BuildingKind` mapping
   (balance/repo/web) gains the `marketplace` arm.
-- [ ] **T3 — Migration + trade repository.** `0011_trade.sql` (`trade_movements` + due/home indexes);
+- [x] **T3 — Migration + trade repository.** `0011_trade.sql` (`trade_movements` + due/home indexes);
   `TradeRepository` (optimistic-spend `start_trade`, `committed_merchants`, `claim_due_trades`,
   `deliver_and_schedule_return` (guarded credit + return leg, single tx), `complete_trade`,
   `active_trades`, orphan requeue). DB tests: send debits + commits merchants; deliver credits capped
@@ -25,10 +25,10 @@ Ordered for dependency and testability (pure domain first).
 
 ## Application
 
-- [ ] **T4 — Trade use-cases.** `order_trade` (validate Marketplace/bundle/merchants/target → travel
+- [x] **T4 — Trade use-cases.** `order_trade` (validate Marketplace/bundle/merchants/target → travel
   → spend), `process_due_trades` (claim → capped credit + return, free merchants on return). Fake
   tests: send success + every rejection; merchant commit math (**AC1**, **AC2**, **AC3**).
-- [ ] **T5 — Scheduler.** Tick `process_due_trades`; startup orphan requeue for trades. DB test via
+- [x] **T5 — Scheduler.** Tick `process_due_trades`; startup orphan requeue for trades. DB test via
   the processor (**AC4**/**AC5** restart path).
 
 ## Web

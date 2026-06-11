@@ -4,7 +4,7 @@
 //! `DATABASE_URL` is not set, so `cargo test` stays green without a database.
 
 use axum_extra::extract::cookie::Key;
-use eperica_application::process_due_movements;
+use eperica_application::{process_due_movements, process_due_trades};
 use eperica_domain::{GameSpeed, Timestamp, WorldConfig, WorldMap};
 use eperica_infrastructure::{
     Argon2Hasher, PgAccountRepository, build_rules, create_pool, economy_rules, ensure_world,
@@ -1030,6 +1030,175 @@ async fn rally_send_station_and_return_flow() {
     // Visitors cannot reach the Rally Point (roles table, P4).
     let anon = client()
         .get(format!("{base}/village/rally"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(anon.status().as_u16(), 303);
+}
+
+/// 008 AC6: build a Marketplace, send a resource shipment to another village, and see it in transit;
+/// the System delivers it (crediting the target). Also: no-Marketplace explains; visitor → login.
+#[tokio::test]
+async fn marketplace_send_and_deliver_flow() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    let _ = dotenvy::dotenv();
+    let url = std::env::var("DATABASE_URL").unwrap();
+    let pool = create_pool(&url).await.unwrap();
+    let repo = movement_repo(&pool).await;
+
+    let sender = unique("msend");
+    let target = unique("mrecv");
+    let cs = client();
+    let ct = client();
+    for (c, u) in [(&cs, &sender), (&ct, &target)] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", "gauls"),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+
+    let sender_village: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&sender)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (target_village, tx, ty): (uuid::Uuid, i32, i32) = sqlx::query_as(
+        "SELECT v.id, v.x, v.y FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&target)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Seed the sender a Marketplace (level 5 ⇒ 5 merchants) + storage + resources; the target a big
+    // Warehouse so the delivery is not clamped away.
+    for (vid, slot, kind, level) in [
+        (sender_village, 2_i16, "warehouse", 10_i16),
+        (sender_village, 10, "marketplace", 5),
+        (target_village, 2, "warehouse", 10),
+    ] {
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(vid)
+        .bind(slot)
+        .bind(kind)
+        .bind(level)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "UPDATE village_resources SET wood = 5000, clay = 5000, iron = 5000, crop = 5000, \
+         updated_at = now() WHERE village_id = $1",
+    )
+    .bind(sender_village)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // AC6: the Marketplace lists the merchant pool and per-tribe capacity.
+    let market = cs
+        .get(format!("{base}/village/market"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(market.contains("Marketplace"));
+    assert!(market.contains("750")); // Gaul merchant capacity
+    assert!(market.contains("free of 5"));
+    assert!(market.contains("name=\"amount_wood\""));
+
+    // AC1/AC6: send 300 wood to the target's tile; PRG back to the village.
+    let res = cs
+        .post(format!("{base}/village/market/send"))
+        .form(&[
+            ("x", tx.to_string().as_str()),
+            ("y", ty.to_string().as_str()),
+            ("amount_wood", "300"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+
+    // The sender sees the shipment in transit (direction + contents + countdown).
+    let body = cs
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("Shipments in transit"));
+    assert!(body.contains(&format!("Shipment to ({tx}|{ty})")));
+    assert!(body.contains("300 wood"));
+    assert!(body.contains("data-deadline"));
+
+    // The System delivers the shipment; the target's stored wood rises (750 + 300, uncapped here).
+    let before: i64 =
+        sqlx::query_scalar("SELECT wood FROM village_resources WHERE village_id = $1")
+            .bind(target_village)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let econ = economy_rules().unwrap();
+    let units = unit_rules().unwrap();
+    let merchants = merchant_rules().unwrap();
+    let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+    let world = ensure_world(&pool, &config).await.unwrap();
+    let map = WorldMap::new(world.seed as u64, config.radius, map_rules().unwrap());
+    let future = Timestamp(now().0 + 10_000_000_000);
+    let credited = process_due_trades(
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        &merchants,
+        &map,
+        GameSpeed::new(1.0).unwrap(),
+        future,
+        100,
+    )
+    .await
+    .unwrap();
+    assert!(credited.contains(&eperica_domain::VillageId(target_village.as_u128())));
+    let after: i64 = sqlx::query_scalar("SELECT wood FROM village_resources WHERE village_id = $1")
+        .bind(target_village)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(after >= before + 300, "target wood {before} -> {after}");
+
+    // A village with no Marketplace gets the explanation, not the form.
+    let plain = ct
+        .get(format!("{base}/village/market"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(plain.contains("no Marketplace"));
+    assert!(!plain.contains("name=\"amount_wood\""));
+
+    // Visitors cannot reach the Marketplace (roles table, P4).
+    let anon = client()
+        .get(format!("{base}/village/market"))
         .send()
         .await
         .unwrap();

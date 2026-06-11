@@ -4,6 +4,7 @@
   <h1>{{ username }}'s village</h1>
   <p class="muted">Location ({{ x }}, {{ y }}) · Tribe: {{ tribe }} · <a href="/map">Map</a>
     · <a href="/village/rally">Rally Point</a>
+    · <a href="/village/market">Marketplace</a>
     {% if has_academy %} · <a href="/village/academy">Academy</a>{% endif %}
     {% if has_smithy %} · <a href="/village/smithy">Smithy</a>{% endif %}
     {% for link in troop_links %} · <a href="{{ link.1 }}">{{ link.0 }}</a>{% endfor %}</p>
@@ -43,6 +44,16 @@
   {% for m in movements %}
   <p>{{ m.label }} — {{ m.troops }} —
     arrives in <span class="countdown num" data-deadline="{{ m.arrive_ms }}">…</span></p>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if !shipments.is_empty() %}
+<section class="panel">
+  <h2>Shipments in transit</h2>
+  {% for s in shipments %}
+  <p>{{ s.label }} — {{ s.contents }} ({{ s.merchants }} merchants) —
+    arrives in <span class="countdown num" data-deadline="{{ s.arrive_ms }}">…</span></p>
   {% endfor %}
 </section>
 {% endif %}
