@@ -1,6 +1,6 @@
 # Feature 004 — Tribes & units — Technical Plan
 
-**Status:** Reviewed
+**Status:** Verified
 **Spec:** ./spec.md
 
 Builds on 003: research and Smithy upgrades reuse the settle-debit-order pattern and the due-event

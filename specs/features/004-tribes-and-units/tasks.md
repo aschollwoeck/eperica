@@ -56,7 +56,7 @@ Ordered for dependency and testability (pure domain first).
   unit queues, build lanes); `CLAUDE.md` current.
 - [x] **T12 — End-user docs.** `docs/manual/` — tribes (choosing, traits) + Academy/Smithy guide;
   link from index.
-- [ ] **T13 — Review & accept.** Full gates + P11 check; run `eperica-reviewer` on the slice diff;
+- [x] **T13 — Review & accept.** Full gates + P11 check; run `eperica-reviewer` on the slice diff;
   fix until **APPROVE**; open PR.
 
 ## Done when

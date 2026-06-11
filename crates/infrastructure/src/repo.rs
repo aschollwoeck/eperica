@@ -460,6 +460,7 @@ impl BuildRepository for PgAccountRepository {
         .await
         .map_err(backend)?;
         if updated.rows_affected() == 0 {
+            // Also covers a missing resources row — callers just read it, so that is unreachable.
             return Err(RepoError::Conflict);
         }
 
@@ -648,6 +649,7 @@ impl UnitRepository for PgAccountRepository {
         .await
         .map_err(backend)?;
         if updated.rows_affected() == 0 {
+            // Also covers a missing resources row — callers just read it, so that is unreachable.
             return Err(RepoError::Conflict);
         }
 

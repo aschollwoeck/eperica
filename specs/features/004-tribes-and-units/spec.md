@@ -1,6 +1,6 @@
 # Feature 004 — Tribes & units
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 003 (construction & build queue — new buildings, spending, due-events)
 **Roadmap:** M2 · slice 004 · GDD §5, §6 — tribe identity and the unit attribute model.
 
