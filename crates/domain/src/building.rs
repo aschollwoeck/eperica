@@ -22,4 +22,7 @@ pub enum BuildingKind {
     Stable,
     /// Builds siege engines (005). Known so research requirements can reference it; constructable in 005.
     Workshop,
+    /// Trains settlers/administrators and gates expansion (013). Known so unit definitions can
+    /// reference it; constructable in 013.
+    Residence,
 }

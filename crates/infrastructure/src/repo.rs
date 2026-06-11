@@ -79,6 +79,7 @@ fn building_str(kind: BuildingKind) -> &'static str {
         BuildingKind::Smithy => "smithy",
         BuildingKind::Stable => "stable",
         BuildingKind::Workshop => "workshop",
+        BuildingKind::Residence => "residence",
     }
 }
 
@@ -105,6 +106,7 @@ fn parse_building(s: &str) -> Result<BuildingKind, RepoError> {
         "smithy" => Ok(BuildingKind::Smithy),
         "stable" => Ok(BuildingKind::Stable),
         "workshop" => Ok(BuildingKind::Workshop),
+        "residence" => Ok(BuildingKind::Residence),
         other => Err(RepoError::Backend(format!(
             "unknown building_type: {other}"
         ))),

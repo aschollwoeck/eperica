@@ -42,6 +42,7 @@ fn building_label(kind: BuildingKind) -> &'static str {
         BuildingKind::Smithy => "Smithy",
         BuildingKind::Stable => "Stable",
         BuildingKind::Workshop => "Workshop",
+        BuildingKind::Residence => "Residence",
     }
 }
 
@@ -56,6 +57,7 @@ fn building_kind_id(kind: BuildingKind) -> &'static str {
         BuildingKind::Smithy => "smithy",
         BuildingKind::Stable => "stable",
         BuildingKind::Workshop => "workshop",
+        BuildingKind::Residence => "residence",
     }
 }
 
@@ -71,6 +73,7 @@ fn building_slot(kind: BuildingKind) -> u8 {
         BuildingKind::Smithy => 6,
         BuildingKind::Stable => 7,
         BuildingKind::Workshop => 8,
+        BuildingKind::Residence => 9,
     }
 }
 

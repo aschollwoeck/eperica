@@ -20,7 +20,7 @@ Ordered for dependency and testability (pure domain first).
 
 ## Balance + persistence
 
-- [ ] **T4 — Units balance data + loader.** `specs/balance/units.toml`: 3 tribes × 10 faithful
+- [x] **T4 — Units balance data + loader.** `specs/balance/units.toml`: 3 tribes × 10 faithful
   units (all §6.2 attributes, roles, trained_in, research cost/time/requirements) + `[smithy]`
   tables; `balance.rs` loader → `UnitRules`, **fail fast** on incomplete data. Tests (**AC4**).
 - [ ] **T5 — Tribe migration + registration.** `0005_tribes.sql` (users.tribe + CHECK, backfill

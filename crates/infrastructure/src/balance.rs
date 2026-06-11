@@ -5,8 +5,9 @@
 //! types, keeping the domain itself free of serialization concerns.
 
 use eperica_domain::{
-    BuildRules, BuildingKind, BuildingSlot, DomainError, EconomyRules, LevelSpec, ResourceAmounts,
-    ResourceField, ResourceKind, StartingVillage,
+    BuildRules, BuildingKind, BuildingSlot, DomainError, EconomyRules, LevelSpec, ResearchSpec,
+    ResourceAmounts, ResourceField, ResourceKind, SmithyRules, StartingVillage, Tribe, UnitId,
+    UnitRole, UnitRules, UnitSpec,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -29,6 +30,12 @@ const CONSTRUCTION_TOML: &str = include_str!(concat!(
     "/../../specs/balance/construction.toml"
 ));
 
+/// Embedded unit balance data.
+const UNITS_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/units.toml"
+));
+
 /// Errors that can occur while loading balance data.
 #[derive(Debug, thiserror::Error)]
 pub enum BalanceError {
@@ -41,6 +48,9 @@ pub enum BalanceError {
     /// An unknown building name appeared in the data.
     #[error("unknown building: {0}")]
     UnknownBuilding(String),
+    /// An unknown unit role appeared in the data.
+    #[error("unknown unit role: {0}")]
+    UnknownUnitRole(String),
     /// The parsed data did not form a valid domain template.
     #[error(transparent)]
     Domain(DomainError),
@@ -120,6 +130,7 @@ fn parse_building(name: &str) -> Result<BuildingKind, BalanceError> {
         "smithy" => Ok(BuildingKind::Smithy),
         "stable" => Ok(BuildingKind::Stable),
         "workshop" => Ok(BuildingKind::Workshop),
+        "residence" => Ok(BuildingKind::Residence),
         other => Err(BalanceError::UnknownBuilding(other.to_owned())),
     }
 }
@@ -288,10 +299,136 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
     })
 }
 
+#[derive(Deserialize)]
+struct UnitsDto {
+    smithy: SmithyDto,
+    romans: TribeUnitsDto,
+    teutons: TribeUnitsDto,
+    gauls: TribeUnitsDto,
+}
+
+#[derive(Deserialize)]
+struct SmithyDto {
+    cost_permille_per_level: Vec<u32>,
+    time_secs_per_level: Vec<i64>,
+}
+
+#[derive(Deserialize)]
+struct TribeUnitsDto {
+    units: Vec<UnitDto>,
+}
+
+#[derive(Deserialize)]
+struct UnitDto {
+    id: String,
+    name: String,
+    role: String,
+    attack: u32,
+    defense_infantry: u32,
+    defense_cavalry: u32,
+    speed: u32,
+    carry_capacity: u32,
+    crop_upkeep: u32,
+    train_secs: i64,
+    trained_in: String,
+    cost: AmountsDto,
+    research: Option<ResearchDto>,
+}
+
+#[derive(Deserialize)]
+struct ResearchDto {
+    time_secs: i64,
+    cost: AmountsDto,
+    requirements: Vec<PrereqDto>,
+}
+
+fn parse_role(name: &str) -> Result<UnitRole, BalanceError> {
+    match name {
+        "infantry" => Ok(UnitRole::Infantry),
+        "cavalry" => Ok(UnitRole::Cavalry),
+        "scout" => Ok(UnitRole::Scout),
+        "siege" => Ok(UnitRole::Siege),
+        "expansion" => Ok(UnitRole::Expansion),
+        other => Err(BalanceError::UnknownUnitRole(other.to_owned())),
+    }
+}
+
+fn amounts(dto: &AmountsDto) -> ResourceAmounts {
+    ResourceAmounts {
+        wood: dto.wood,
+        clay: dto.clay,
+        iron: dto.iron,
+        crop: dto.crop,
+    }
+}
+
+fn unit_spec(dto: &UnitDto) -> Result<UnitSpec, BalanceError> {
+    let research = match &dto.research {
+        None => None,
+        Some(r) => Some(ResearchSpec {
+            cost: amounts(&r.cost),
+            time_secs: r.time_secs,
+            requirements: r
+                .requirements
+                .iter()
+                .map(|p| Ok((parse_building(&p.building)?, p.level)))
+                .collect::<Result<_, BalanceError>>()?,
+        }),
+    };
+    Ok(UnitSpec {
+        id: UnitId(dto.id.clone()),
+        name: dto.name.clone(),
+        role: parse_role(&dto.role)?,
+        attack: dto.attack,
+        defense_infantry: dto.defense_infantry,
+        defense_cavalry: dto.defense_cavalry,
+        speed: dto.speed,
+        carry_capacity: dto.carry_capacity,
+        crop_upkeep: dto.crop_upkeep,
+        cost: amounts(&dto.cost),
+        train_secs: dto.train_secs,
+        trained_in: parse_building(&dto.trained_in)?,
+        research,
+    })
+}
+
+/// Load the per-tribe unit rosters and Smithy upgrade tables from balance data.
+///
+/// Fails fast (004 AC4): parsing or [`UnitRules`] roster validation errors surface immediately.
+///
+/// # Errors
+/// Returns [`BalanceError`] if the data cannot be parsed, names an unknown building/role, or does
+/// not form complete rosters.
+pub fn unit_rules() -> Result<UnitRules, BalanceError> {
+    parse_unit_rules(UNITS_TOML)
+}
+
+fn parse_unit_rules(toml_src: &str) -> Result<UnitRules, BalanceError> {
+    let dto: UnitsDto = toml::from_str(toml_src)?;
+    let mut rosters = HashMap::new();
+    for (tribe, tribe_dto) in [
+        (Tribe::Romans, &dto.romans),
+        (Tribe::Teutons, &dto.teutons),
+        (Tribe::Gauls, &dto.gauls),
+    ] {
+        let roster: Vec<UnitSpec> = tribe_dto
+            .units
+            .iter()
+            .map(unit_spec)
+            .collect::<Result<_, _>>()?;
+        rosters.insert(tribe, roster);
+    }
+    let smithy = SmithyRules {
+        cost_permille_per_level: dto.smithy.cost_permille_per_level,
+        time_secs_per_level: dto.smithy.time_secs_per_level,
+    };
+    UnitRules::new(rosters, smithy).map_err(BalanceError::Domain)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eperica_domain::{BuildTarget, GameSpeed, production_rates};
+    use eperica_domain::{BuildTarget, GameSpeed, ROSTER_SIZE, production_rates};
 
     #[test]
     fn loads_balanced_starting_village() {
@@ -368,6 +505,52 @@ mod tests {
             let target = BuildTarget::Building { slot: 0, kind };
             assert_eq!(r.max_level(target), 10, "{kind:?} levels");
         }
+    }
+
+    #[test]
+    fn loads_complete_unit_rosters() {
+        // 004 AC4: every tribe has a complete 10-unit roster with all attributes.
+        let r = unit_rules().expect("unit rules load");
+        for tribe in [Tribe::Romans, Tribe::Teutons, Tribe::Gauls] {
+            let roster = r.roster(tribe);
+            assert_eq!(roster.len(), ROSTER_SIZE, "{tribe:?}");
+            // Exactly one tier-1 unit per tribe (researched by default, AC9).
+            assert_eq!(
+                roster.iter().filter(|u| u.researched_by_default()).count(),
+                1,
+                "{tribe:?}"
+            );
+            // Every researchable unit has a positive research cost and duration.
+            for u in roster.iter().filter_map(|u| u.research.as_ref()) {
+                assert!(u.time_secs > 0);
+                assert!(u.cost.wood > 0);
+            }
+        }
+        // The tier-1 units are the faithful ones.
+        assert!(
+            r.unit(Tribe::Romans, &UnitId("legionnaire".into()))
+                .is_some()
+        );
+        assert!(
+            r.unit(Tribe::Teutons, &UnitId("clubswinger".into()))
+                .is_some()
+        );
+        assert!(r.unit(Tribe::Gauls, &UnitId("phalanx".into())).is_some());
+        // Smithy tables cover 20 levels.
+        assert_eq!(r.smithy.max_level(), 20);
+    }
+
+    #[test]
+    fn incomplete_unit_data_fails_fast() {
+        // 004 AC4: loading must fail when a roster is incomplete or a field is missing.
+        let missing_tribe =
+            "[smithy]\ncost_permille_per_level = [1500]\ntime_secs_per_level = [3600]\n";
+        assert!(parse_unit_rules(missing_tribe).is_err());
+
+        // A structurally-valid file whose Gauls roster is short must be rejected by validation.
+        let full = UNITS_TOML;
+        let truncated = &full[..full.rfind("[[gauls.units]]").expect("marker")];
+        assert!(parse_unit_rules(truncated).is_err());
     }
 
     #[test]
