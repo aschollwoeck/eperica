@@ -358,15 +358,32 @@ mod tests {
         );
     }
 
-    // --- AC3: densities roughly track the configured permille ---
+    // --- AC3: densities roughly track the configured permille, bonuses are from the table ---
     #[test]
     fn oasis_and_natar_densities_track_the_config() {
         let m = map(2024);
+        let allowed_bonus = [
+            OasisBonus {
+                wood: 25,
+                clay: 0,
+                iron: 0,
+                crop: 0,
+            },
+            OasisBonus {
+                wood: 0,
+                clay: 0,
+                iron: 0,
+                crop: 50,
+            },
+        ];
         let (mut oasis, mut natar, mut valley) = (0u32, 0u32, 0u32);
         for x in -50..=50 {
             for y in -50..=50 {
                 match m.tile_at(Coordinate::new(x, y)) {
-                    Some(TileKind::Oasis(_)) => oasis += 1,
+                    Some(TileKind::Oasis(b)) => {
+                        assert!(allowed_bonus.contains(&b), "{b:?} not in the table");
+                        oasis += 1;
+                    }
                     Some(TileKind::Natar) => natar += 1,
                     Some(TileKind::Valley(_)) => valley += 1,
                     None => {}

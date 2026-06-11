@@ -1,6 +1,6 @@
 # Feature 006 — World map generation — Technical Plan
 
-**Status:** Reviewed
+**Status:** Verified
 **Spec:** ./spec.md
 
 The first M3 slice. No new external dependencies. The terrain is a **pure domain function** of the
@@ -52,10 +52,13 @@ UPDATE worlds SET seed = hashtextextended(id::text, 0) WHERE seed IS NULL;  -- d
 ALTER TABLE worlds ALTER COLUMN seed SET NOT NULL;
 ```
 
-- `world.rs` (infra): `ensure_world` generates a seed for a **new** world (random i64) and returns
-  the world's `{ id, seed }` (small struct) — existing worlds return their stored seed. A
-  migration-boundary test reproduces the pre-006 state (seed NULL) and asserts the backfill sets it
-  non-null.
+- `world.rs` (infra): `ensure_world` generates a seed for a **new** world **deterministically from
+  its id** (`hashtextextended(id::text, 0)` — the same rule as the 0009 backfill, so no RNG
+  dependency and a distinct seed per world; the id is itself random) and returns the world's
+  `{ id, seed }`. Existing worlds return their stored seed. A migration-boundary test asserts the
+  stored seed equals the backfill formula and that a pre-existing village is unmoved (a genuine
+  NULL-seed row can't be reproduced post-`SET NOT NULL`). An explicit operator-chosen seed override
+  is a later config option.
 - Balance loader: embed `specs/balance/map.toml`, parse → `MapRules` (fail fast, AC2).
 - `PgAccountRepository` gains a `WorldMap` (built from seed + radius + `MapRules`):
   - **Placement** (`create_account`): iterate `coordinates_within(radius)`, skip coordinates where

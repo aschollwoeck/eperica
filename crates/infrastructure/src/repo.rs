@@ -1470,11 +1470,8 @@ mod tests {
         let before = repo.villages_of(user.id).await.unwrap();
         let (coord, fields) = (before[0].coordinate, before[0].fields.clone());
 
-        // Re-running the 0009 backfill is a no-op (seed already set), and the village is unmoved.
-        sqlx::query("UPDATE worlds SET seed = hashtextextended(id::text, 0) WHERE seed IS NULL")
-            .execute(&pool)
-            .await
-            .unwrap();
+        // The other half of AC6: adding the seed does not move a pre-existing village or change
+        // its stored fields — reads never re-derive them from the (now generated) terrain.
         let after = repo.villages_of(user.id).await.unwrap();
         assert_eq!(after[0].coordinate, coord);
         assert_eq!(after[0].fields, fields);

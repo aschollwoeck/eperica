@@ -46,7 +46,7 @@ Ordered for dependency and testability (pure domain first).
   terrain, toroidal distance); `CLAUDE.md` active slice.
 - [x] **T9 — End-user docs.** `docs/manual/` map guide (reading the map, valleys/oases); link from
   index.
-- [ ] **T10 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
+- [x] **T10 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
   **APPROVE**; PR.
 
 ## Done when

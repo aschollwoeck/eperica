@@ -90,12 +90,14 @@ fn wrap_axis(value: i32, radius: u32) -> i32 {
 
 /// The shortest **toroidal Euclidean** distance (in tiles) between two coordinates on a radius-`R`
 /// world that wraps at its edges (GDD §7.2). Each axis takes the shorter of the direct or
-/// wrapped gap; the result combines them as `√(dx² + dy²)`.
+/// wrapped gap; the result combines them as `√(dx² + dy²)`. Robust to out-of-bounds inputs (the
+/// difference is reduced modulo the width first), so callers need not pre-wrap.
 pub fn toroidal_distance(a: Coordinate, b: Coordinate, radius: u32) -> f64 {
     let w = axis_width(radius);
     let axis_gap = |p: i32, q: i32| -> i64 {
-        let d = (i64::from(p) - i64::from(q)).abs();
-        d.min(w - d)
+        // rem_euclid lands in 0..w even for OOB coordinates; the torus gap is then min(m, w − m).
+        let m = (i64::from(p) - i64::from(q)).rem_euclid(w);
+        m.min(w - m)
     };
     let dx = axis_gap(a.x, b.x) as f64;
     let dy = axis_gap(a.y, b.y) as f64;
@@ -142,8 +144,8 @@ fn ring_coordinates(ring: i32) -> Vec<Coordinate> {
 /// Deterministic, finite enumeration of all coordinates within `radius` of the origin, ordered ring
 /// by ring (nearest first).
 ///
-/// Used to place a new village on the first free tile in a stable order (P6: deterministic). This is
-/// the placeholder placement strategy for slice 001; map-aware placement arrives in slice 006.
+/// Used to place a new village on the first free **valley** in a stable order (P6: deterministic) —
+/// since slice 006 the founding scan skips non-valley tiles (see the infrastructure repository).
 pub fn coordinates_within(radius: u32) -> impl Iterator<Item = Coordinate> {
     let r = i32::try_from(radius).unwrap_or(i32::MAX);
     (0..=r).flat_map(ring_coordinates)
@@ -250,6 +252,18 @@ mod tests {
         let ne = Coordinate::new(10, 10);
         let sw = Coordinate::new(-10, -10);
         assert!((toroidal_distance(ne, sw, r) - 2f64.sqrt()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn distance_is_robust_to_out_of_bounds_inputs() {
+        // An un-wrapped coordinate gives the same gap as its wrapped form (movement, 007, may pass
+        // raw coordinates). radius 10 ⇒ width 21; (11,0) ≡ (-10,0).
+        let r = 10;
+        let raw = toroidal_distance(Coordinate::new(11, 0), Coordinate::new(0, 0), r);
+        let wrapped =
+            toroidal_distance(Coordinate::new(11, 0).wrapped(r), Coordinate::new(0, 0), r);
+        assert_eq!(raw, wrapped);
+        assert!(raw >= 0.0);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Feature 006 — World map generation
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 001 (world, coordinates, village founding, the `coordinates_within` placement order)
 **Roadmap:** M3 · slice 006 · GDD §7 — the map, seeded reproducibility (P6).
 
@@ -76,7 +76,8 @@ their village. The map is a pure function of the world's seed (P6) — reproduci
   later).
 
 - **AC8 — Seed is server config (P6/P7-style).** The seed is part of the world's persisted
-  configuration (operator-set or generated at world creation); no terrain is hardcoded. Densities,
+  configuration, generated at world creation (deterministically from the world id; an explicit
+  operator seed override is deferred — see Decisions); no terrain is hardcoded. Densities,
   distributions, and oasis bonuses are balance data.
 
 ## Roles & permissions
@@ -88,7 +89,7 @@ Per [roles.md](../../roles.md).
 | **Visitor** | N/A (considered). | View the map (redirected to login). |
 | **Player** | View the map; recenter it. Placement of their starting village happens server-side at registration. | Choose their village's tile or field distribution; place onto an occupied or non-valley tile (placement is server-chosen; the client supplies no coordinate). |
 | **Moderator** | N/A (considered). | — |
-| **Administrator** | Sets the world's seed and radius as configuration (AC8). | — (superset). |
+| **Administrator** | Owns world configuration: sets the radius; the map seed is derived deterministically at world creation (an explicit seed override is a later config option — see Decisions). | — (superset). |
 | **System** | *(system-initiated)* Generate the terrain deterministically from the seed (AC1); place the starting village on a valley at founding (AC5). | — |
 
 ## Out of scope
@@ -120,3 +121,6 @@ Per [roles.md](../../roles.md).
   rest of the app.
 - **Seeded selection is integer-only** (a deterministic hash of `(seed, x, y)` bucketed by permille
   weights) — no floating-point RNG — so the map is exactly reproducible across platforms (P6).
+- **The seed is generated deterministically from the world id** at creation (no RNG dependency;
+  distinct per world since the id is random). An explicit operator-chosen seed (e.g. a `WORLD_SEED`
+  config) is a later option; nothing about the model precludes it.

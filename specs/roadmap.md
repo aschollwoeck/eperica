@@ -70,7 +70,7 @@ timed construction. Proves the entire architecture end-to-end on the smallest po
 
 | #   | Slice | Depends on | Delivers / proves | GDD |
 |-----|-------|-----------|-------------------|-----|
-| 006 | **World map generation** — toroidal tile grid (config radius), per-tile field distributions, oasis + Natar tiles, seeded generation; distance function. | 001 | The map (§7); seeded reproducibility (P6). |
+| 006 ✅ | **World map generation** — toroidal tile grid (config radius), per-tile field distributions, oasis + Natar tiles, seeded generation; distance function. | 001 | The map (§7); seeded reproducibility (P6). |
 | 007 | **Troop movement & travel** — Rally Point; send/return **non-combat** movements (reinforcement); travel time = distance ÷ (slowest-unit speed × speed); arrival as due-event. | 005, 006 | The movement engine (§8) before combat rides on it. | §8 |
 | 008 | **Marketplace & trade** — merchants carry resources between villages/players; tribe merchant capacity; trade movements + returns. | 007 | Resource logistics (§2.4); reuses the movement engine. | §2.4, §4.2 |
 
