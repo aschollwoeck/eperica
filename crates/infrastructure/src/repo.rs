@@ -1948,14 +1948,12 @@ mod tests {
             Err(RepoError::Conflict)
         ));
 
-        // The return arrives — the troops rejoin Alice's garrison (back to 10).
-        let due = repo.claim_due_movements(arrive2, 100).await.unwrap();
-        let mine = due
-            .iter()
-            .find(|d| d.home_village == a.id)
-            .expect("return due");
-        assert_eq!(mine.kind, MovementKind::Return);
-        repo.apply_movement(mine).await.expect("apply return");
+        // The return arrives via the processor — the troops rejoin Alice's garrison (back to 10),
+        // and the processor reports her home for a starvation re-sync (AC5).
+        let homes = eperica_application::process_due_movements(&repo, arrive2, 100)
+            .await
+            .expect("process movements");
+        assert!(homes.contains(&a.id));
         assert_eq!(
             repo.garrison(a.id).await.unwrap(),
             vec![(UnitId("phalanx".into()), 10)]

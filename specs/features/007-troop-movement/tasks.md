@@ -24,7 +24,7 @@ Ordered for dependency and testability (pure domain first).
   start, re-sync home starvation), `process_due_movements` (claim → apply → re-sync return homes).
   Fake-based tests: send success + every rejection; away-troops lower the garrison (**AC1**, **AC2**,
   **AC6**).
-- [ ] **T4 — Scheduler.** Tick `process_due_movements`; startup orphan requeue for movements. DB
+- [x] **T4 — Scheduler.** Tick `process_due_movements`; startup orphan requeue for movements. DB
   test via the processor (**AC4** restart path).
 
 ## Web
