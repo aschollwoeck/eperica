@@ -13,5 +13,7 @@ manual grows as the game does.
 - [Training troops & feeding your army](training-and-upkeep.md) — train batches at the Barracks,
   Stable, and Workshop, and keep your army fed.
 - [The world map](the-map.md) — read the map, find valleys and oases, and get around.
+- [Moving troops](troop-movement.md) — send reinforcements from the Rally Point, watch movements
+  arrive, and recall your troops home.
 
-*(More chapters — troops, the map, combat — arrive as those features ship.)*
+*(More chapters — combat, scouting, trade — arrive as those features ship.)*
