@@ -14,6 +14,8 @@ pub enum DomainError {
     InvalidStartingVillage,
     /// Unit balance data that does not form valid rosters (see the message for the violated rule).
     InvalidUnitRules(&'static str),
+    /// Map-generation balance data that is not valid (see the message for the violated rule).
+    InvalidMapRules(&'static str),
 }
 
 impl fmt::Display for DomainError {
@@ -27,6 +29,9 @@ impl fmt::Display for DomainError {
             }
             DomainError::InvalidUnitRules(rule) => {
                 write!(f, "invalid unit balance data: {rule}")
+            }
+            DomainError::InvalidMapRules(rule) => {
+                write!(f, "invalid map balance data: {rule}")
             }
         }
     }

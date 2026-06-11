@@ -12,5 +12,6 @@ manual grows as the game does.
   upgrade their strength.
 - [Training troops & feeding your army](training-and-upkeep.md) — train batches at the Barracks,
   Stable, and Workshop, and keep your army fed.
+- [The world map](the-map.md) — read the map, find valleys and oases, and get around.
 
 *(More chapters — troops, the map, combat — arrive as those features ship.)*

@@ -4,24 +4,24 @@ use crate::auth::{AuthUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
 use crate::templates::{
     AcademyRow, AcademyTemplate, ActiveView, BuildRow, GarrisonRow, IndexTemplate, LoginTemplate,
-    QueueView, RegisterTemplate, SmithyRow, SmithyTemplate, StyleGuideTemplate, TrainRow,
-    TroopsTemplate, VillageTemplate,
+    MapCellView, MapTemplate, QueueView, RegisterTemplate, SmithyRow, SmithyTemplate,
+    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageTemplate,
 };
 use askama::Template;
 use axum::Form;
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
     AccountRepository, BuildRepository, LoginError, RegisterCommand, RegisterError,
-    TrainingRepository, UnitOrderKind, UnitRepository, authenticate, load_economy, order_build,
-    order_research, order_smithy_upgrade, order_train, register,
+    TrainingRepository, UnitOrderKind, UnitRepository, authenticate, load_economy, map_viewport,
+    order_build, order_research, order_smithy_upgrade, order_train, register, viewport_coords,
 };
 use eperica_domain::{
-    BuildTarget, BuildingKind, QueueLane, ResearchDenied, ResourceAmounts, ResourceKind, Tribe,
-    UnitId, UnitRole, UnitRules, UpgradeDenied, Village, can_afford, can_research, can_upgrade,
-    garrison_upkeep, per_unit_time_secs, queue_lane, scaled_time_secs,
+    BuildTarget, BuildingKind, Coordinate, OasisBonus, QueueLane, ResearchDenied, ResourceAmounts,
+    ResourceKind, TileKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, can_afford,
+    can_research, can_upgrade, garrison_upkeep, per_unit_time_secs, queue_lane, scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
@@ -460,6 +460,140 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         garrison_upkeep: total_upkeep,
         fields,
         buildings,
+    })
+}
+
+/// The viewport half-extent: the map view shows a `(2·HALF + 1)`-square grid.
+const MAP_HALF: i32 = 4;
+
+/// Optional map-view center (defaults to the player's village).
+#[derive(Deserialize)]
+pub struct MapQuery {
+    x: Option<i32>,
+    y: Option<i32>,
+}
+
+fn oasis_label(b: OasisBonus) -> String {
+    let parts: Vec<String> = [
+        ("wood", b.wood),
+        ("clay", b.clay),
+        ("iron", b.iron),
+        ("crop", b.crop),
+    ]
+    .into_iter()
+    .filter(|(_, pct)| *pct > 0)
+    .map(|(name, pct)| format!("+{pct}% {name}"))
+    .collect();
+    if parts.is_empty() {
+        "Oasis".to_owned()
+    } else {
+        format!("Oasis {}", parts.join(", "))
+    }
+}
+
+/// The terrain `(modifier-class, glyph, label)` for a tile.
+fn tile_view(tile: TileKind) -> (&'static str, &'static str, String) {
+    match tile {
+        TileKind::Valley(d) => (
+            "map-grid__cell--valley",
+            "·",
+            format!("Valley {}·{}·{}·{}", d.wood, d.clay, d.iron, d.crop),
+        ),
+        TileKind::Oasis(b) => ("map-grid__cell--oasis", "❀", oasis_label(b)),
+        TileKind::Natar => ("map-grid__cell--natar", "N", "Natar".to_owned()),
+    }
+}
+
+/// The seeded world map around a center (006 AC7; Player only — Visitor redirected to login, P4).
+pub async fn map(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Query(q): Query<MapQuery>,
+) -> Response {
+    let user = match state.accounts.find_user_by_id(player).await {
+        Ok(Some(u)) => u,
+        Ok(None) => return Redirect::to("/login").into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "lookup user failed");
+            return server_error();
+        }
+    };
+    let villages = match state.accounts.villages_of(player).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "villages lookup failed");
+            return server_error();
+        }
+    };
+    let radius = state.map.radius();
+    // Center on the query (if given) or the player's first village, wrapped into bounds.
+    let center = match (q.x, q.y) {
+        (Some(x), Some(y)) => Coordinate::new(x, y).wrapped(radius),
+        _ => villages
+            .first()
+            .map_or(Coordinate::new(0, 0), |v| v.coordinate),
+    };
+
+    let coords = viewport_coords(center, MAP_HALF, radius);
+    let markers = match state.accounts.villages_at(&coords).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!(error = %e, "map markers lookup failed");
+            return server_error();
+        }
+    };
+    let viewport = map_viewport(state.map.as_ref(), center, MAP_HALF, &markers);
+
+    let rows: Vec<Vec<MapCellView>> = viewport
+        .rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|cell| {
+                    let (kind_class, glyph, base_label) = tile_view(cell.tile);
+                    let coord = cell.coordinate;
+                    let mut class = format!("map-grid__cell {kind_class}");
+                    let mut glyph = glyph;
+                    let mut label = format!("{base_label} ({}|{})", coord.x, coord.y);
+                    if let Some(marker) = &cell.marker {
+                        class.push_str(" map-grid__cell--village");
+                        if marker.owner_name == user.username {
+                            class.push_str(" map-grid__cell--self");
+                        }
+                        glyph = "★";
+                        label = format!(
+                            "{} — {} ({}|{})",
+                            base_label, marker.owner_name, coord.x, coord.y
+                        );
+                    }
+                    MapCellView {
+                        cell_class: class,
+                        glyph,
+                        label,
+                    }
+                })
+                .collect()
+        })
+        .collect();
+
+    let span = 2 * MAP_HALF + 1;
+    page(&MapTemplate {
+        center_x: center.x,
+        center_y: center.y,
+        radius: i32::try_from(radius).unwrap_or(i32::MAX),
+        north_y: Coordinate::new(center.x, center.y.saturating_add(span))
+            .wrapped(radius)
+            .y,
+        south_y: Coordinate::new(center.x, center.y.saturating_sub(span))
+            .wrapped(radius)
+            .y,
+        east_x: Coordinate::new(center.x.saturating_add(span), center.y)
+            .wrapped(radius)
+            .x,
+        west_x: Coordinate::new(center.x.saturating_sub(span), center.y)
+            .wrapped(radius)
+            .x,
+        rows,
     })
 }
 

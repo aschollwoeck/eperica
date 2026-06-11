@@ -28,6 +28,7 @@ pub fn router(state: AppState) -> Router {
         .route("/logout", post(handlers::logout))
         .route("/village", get(handlers::village))
         .route("/village/build", post(handlers::build_submit))
+        .route("/map", get(handlers::map))
         .route("/village/academy", get(handlers::academy))
         .route("/village/academy/research", post(handlers::research_submit))
         .route("/village/smithy", get(handlers::smithy))

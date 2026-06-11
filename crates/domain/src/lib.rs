@@ -10,6 +10,7 @@ pub mod construction;
 pub mod economy;
 pub mod error;
 pub mod event;
+pub mod map;
 pub mod resource;
 pub mod units;
 pub mod village;
@@ -26,6 +27,7 @@ pub use economy::{
 };
 pub use error::DomainError;
 pub use event::{EventKind, ScheduledEvent, Timestamp};
+pub use map::{FieldDistribution, MapRules, OasisBonus, TileKind, Weighted, WorldMap};
 pub use resource::ResourceKind;
 pub use units::{
     MAX_TRAINING_BATCH, MAX_UNIT_LEVEL, ROSTER_SIZE, ResearchDenied, ResearchSpec, SmithyRules,
@@ -37,4 +39,6 @@ pub use village::{
     BuildingSlot, PlayerId, RESOURCE_FIELD_COUNT, ResourceField, StartingVillage, Tribe, Village,
     VillageId,
 };
-pub use world::{Coordinate, GameSpeed, WorldConfig, WorldId, coordinates_within};
+pub use world::{
+    Coordinate, GameSpeed, WorldConfig, WorldId, coordinates_within, toroidal_distance,
+};

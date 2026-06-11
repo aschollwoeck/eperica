@@ -5,9 +5,10 @@
 //! types, keeping the domain itself free of serialization concerns.
 
 use eperica_domain::{
-    BuildRules, BuildingKind, BuildingSlot, DomainError, EconomyRules, LevelSpec, ResearchSpec,
-    ResourceAmounts, ResourceField, ResourceKind, SmithyRules, StartingVillage, TrainingRules,
-    Tribe, UnitId, UnitRole, UnitRules, UnitSpec,
+    BuildRules, BuildingKind, BuildingSlot, DomainError, EconomyRules, FieldDistribution,
+    LevelSpec, MapRules, OasisBonus, ResearchSpec, ResourceAmounts, ResourceField, ResourceKind,
+    SmithyRules, StartingVillage, TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec,
+    Weighted,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -34,6 +35,12 @@ const CONSTRUCTION_TOML: &str = include_str!(concat!(
 const UNITS_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../specs/balance/units.toml"
+));
+
+/// Embedded world-map balance data.
+const MAP_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/map.toml"
 ));
 
 /// Errors that can occur while loading balance data.
@@ -438,6 +445,75 @@ fn parse_unit_rules(toml_src: &str) -> Result<UnitRules, BalanceError> {
     UnitRules::new(rosters, smithy, training).map_err(BalanceError::Domain)
 }
 
+#[derive(Deserialize)]
+struct MapDto {
+    oasis_permille: u32,
+    natar_permille: u32,
+    distributions: Vec<DistributionDto>,
+    oasis_bonuses: Vec<OasisBonusDto>,
+}
+
+#[derive(Deserialize)]
+struct DistributionDto {
+    wood: u8,
+    clay: u8,
+    iron: u8,
+    crop: u8,
+    weight: u32,
+}
+
+#[derive(Deserialize)]
+struct OasisBonusDto {
+    wood: u8,
+    clay: u8,
+    iron: u8,
+    crop: u8,
+    weight: u32,
+}
+
+/// Load the world-map generation rules (densities + weighted distribution/bonus tables).
+///
+/// Fails fast (006 AC2): parsing or [`MapRules`] validation (e.g. a distribution not summing to 18)
+/// surfaces immediately.
+///
+/// # Errors
+/// Returns [`BalanceError`] if the data cannot be parsed or does not form valid map rules.
+pub fn map_rules() -> Result<MapRules, BalanceError> {
+    parse_map_rules(MAP_TOML)
+}
+
+fn parse_map_rules(toml_src: &str) -> Result<MapRules, BalanceError> {
+    let dto: MapDto = toml::from_str(toml_src)?;
+    let mut distributions = Vec::with_capacity(dto.distributions.len());
+    for d in &dto.distributions {
+        distributions.push(Weighted {
+            value: FieldDistribution::new(d.wood, d.clay, d.iron, d.crop)
+                .map_err(BalanceError::Domain)?,
+            weight: d.weight,
+        });
+    }
+    let oasis_bonuses = dto
+        .oasis_bonuses
+        .iter()
+        .map(|b| Weighted {
+            value: OasisBonus {
+                wood: b.wood,
+                clay: b.clay,
+                iron: b.iron,
+                crop: b.crop,
+            },
+            weight: b.weight,
+        })
+        .collect();
+    MapRules::new(
+        dto.oasis_permille,
+        dto.natar_permille,
+        distributions,
+        oasis_bonuses,
+    )
+    .map_err(BalanceError::Domain)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -540,6 +616,37 @@ mod tests {
         // The training factor table loaded and is usable (T1/T3).
         let units = unit_rules().expect("unit rules");
         assert!(units.training.building_factor(10) > units.training.building_factor(1));
+    }
+
+    #[test]
+    fn loads_valid_map_rules() {
+        // 006 AC2: the shipped map balance loads, every valley distribution sums to 18, and the
+        // origin region has valleys to place on.
+        use eperica_domain::{Coordinate, TileKind, WorldMap, coordinates_within};
+        let rules = map_rules().expect("map rules load");
+        let map = WorldMap::new(0xDEAD_BEEF, 50, rules);
+        for c in coordinates_within(50) {
+            if let Some(TileKind::Valley(d)) = map.tile_at(c) {
+                assert_eq!(d.sum(), 18, "{d:?} at {c:?}");
+            }
+        }
+        let valleys = coordinates_within(5).filter(|c| map.is_valley(*c)).count();
+        assert!(valleys > 5, "only {valleys} valleys near the origin");
+        // A different seed yields a different map.
+        let other = WorldMap::new(1, 50, map_rules().unwrap());
+        assert!(
+            (-10..=10).any(|x| map.tile_at(Coordinate::new(x, 0))
+                != other.tile_at(Coordinate::new(x, 0)))
+        );
+    }
+
+    #[test]
+    fn bad_map_distribution_fails_fast() {
+        // A distribution not summing to 18 is rejected at load (006 AC2).
+        let bad = "oasis_permille = 100\nnatar_permille = 10\n\
+            [[distributions]]\nwood=4\nclay=4\niron=4\ncrop=4\nweight=1\n\
+            [[oasis_bonuses]]\nwood=25\nclay=0\niron=0\ncrop=0\nweight=1\n";
+        assert!(parse_map_rules(bad).is_err());
     }
 
     #[test]

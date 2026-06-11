@@ -131,6 +131,12 @@ Each is a BEM block (§5). Specs are behavioral; exact CSS lives in the web crat
   each an outlined card (`--c-border`, `--radius-md`) holding the radio, a `.choice__title`, and a
   one-line `.choice__desc` in `--c-ink-muted`; the checked card gets a `--c-gold` border. Used for
   mutually-exclusive picks with consequences (e.g. tribe selection at registration).
+- **Map grid** — `.map-grid` (a `<table>`) of fixed-size square `.map-grid__cell` tiles, colour-keyed
+  by terrain via `--valley` (`--c-crop` green), `--oasis` (`--c-accent`), `--natar` (`--c-danger`)
+  modifiers, each carrying a `title` with the full tile label + coordinate (never colour alone,
+  per the accessibility rule). A `.map-grid__cell--village` marker (`★`, `--c-gold`) overlays an
+  occupied tile, `--self` for the viewer's own. The seamless toroidal map view (006); recenter
+  controls are plain buttons/links around it.
 - **Resource bar** — `.resource-bar` / `.resource-bar__item` (see §3).
 - **Countdown** — see §6; the live-timer primitive.
 - **Progress bar** — `.progress` for build/training completion; pairs with a countdown.

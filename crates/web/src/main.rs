@@ -3,9 +3,11 @@
 #![forbid(unsafe_code)]
 
 use axum_extra::extract::cookie::Key;
+use eperica_domain::WorldMap;
 use eperica_infrastructure::{
     AppConfig, Argon2Hasher, PgAccountRepository, PgEventStore, Scheduler, build_rules,
-    create_pool, economy_rules, ensure_world, run_migrations, starting_village, unit_rules,
+    create_pool, economy_rules, ensure_world, map_rules, run_migrations, starting_village,
+    unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -19,12 +21,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::from_env()?;
     let pool = create_pool(&config.database_url).await?;
     run_migrations(&pool).await?;
-    let world_id = ensure_world(&pool, &config.world).await?;
+    let world = ensure_world(&pool, &config.world).await?;
     let rules = Arc::new(economy_rules()?);
     let units = Arc::new(unit_rules()?);
+    let map = Arc::new(WorldMap::new(
+        world.seed as u64,
+        config.world.radius,
+        map_rules()?,
+    ));
     let accounts = PgAccountRepository::new(
         pool.clone(),
-        world_id,
+        world.id,
+        world.seed,
         config.world.radius,
         rules.starting_amounts,
     );
@@ -47,6 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rules,
         build_rules: Arc::new(build_rules()?),
         unit_rules: units,
+        map,
         world: config.world,
         require_email_confirmation: env_flag("REQUIRE_EMAIL_CONFIRMATION"),
         cookie_key: load_cookie_key(),
