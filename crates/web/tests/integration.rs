@@ -83,6 +83,7 @@ async fn register_creates_village_and_view_is_fast() {
             ("username", user.as_str()),
             ("email", email.as_str()),
             ("password", "secret12"),
+            ("tribe", "gauls"),
         ])
         .send()
         .await
@@ -127,6 +128,7 @@ async fn login_succeeds_and_rejects_bad_password() {
             ("username", user.as_str()),
             ("email", email.as_str()),
             ("password", "secret12"),
+            ("tribe", "gauls"),
         ])
         .send()
         .await
@@ -185,6 +187,7 @@ async fn duplicate_username_is_rejected() {
             ("username", user.as_str()),
             ("email", email.as_str()),
             ("password", "secret12"),
+            ("tribe", "gauls"),
         ])
         .send()
         .await
@@ -197,6 +200,7 @@ async fn duplicate_username_is_rejected() {
             ("username", user.as_str()),
             ("email", email2.as_str()),
             ("password", "secret12"),
+            ("tribe", "gauls"),
         ])
         .send()
         .await
@@ -217,12 +221,28 @@ async fn register_rejects_invalid_input() {
             ("username", "validname"),
             ("email", "valid@example.com"),
             ("password", "short"),
+            ("tribe", "gauls"),
         ])
         .send()
         .await
         .unwrap();
     assert_eq!(res.status().as_u16(), 200);
     assert!(res.text().await.unwrap().contains("at least 8"));
+
+    // 004 AC1: an unknown tribe is rejected server-side, regardless of the form UI.
+    let res = client()
+        .post(format!("{base}/register"))
+        .form(&[
+            ("username", "validname2"),
+            ("email", "valid2@example.com"),
+            ("password", "secret12"),
+            ("tribe", "egyptians"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 200);
+    assert!(res.text().await.unwrap().contains("tribe"));
 }
 
 #[tokio::test]
@@ -240,6 +260,7 @@ async fn logout_ends_session() {
             ("username", user.as_str()),
             ("email", email.as_str()),
             ("password", "secret12"),
+            ("tribe", "gauls"),
         ])
         .send()
         .await
@@ -281,6 +302,7 @@ async fn village_shows_economy() {
             ("username", user.as_str()),
             ("email", email.as_str()),
             ("password", "secret12"),
+            ("tribe", "gauls"),
         ])
         .send()
         .await
@@ -313,6 +335,7 @@ async fn build_order_flow() {
             ("username", user.as_str()),
             ("email", email.as_str()),
             ("password", "secret12"),
+            ("tribe", "gauls"),
         ])
         .send()
         .await
@@ -385,6 +408,7 @@ async fn account_persists_across_restart() {
             ("username", user.as_str()),
             ("email", email.as_str()),
             ("password", "secret12"),
+            ("tribe", "gauls"),
         ])
         .send()
         .await

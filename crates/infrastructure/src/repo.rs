@@ -1,4 +1,4 @@
-//! PostgreSQL adapter for the application's [`AccountRepository`] port.
+﻿//! PostgreSQL adapter for the application's [`AccountRepository`] port.
 
 use async_trait::async_trait;
 use eperica_application::{
@@ -125,12 +125,16 @@ fn parse_tribe(s: Option<String>) -> Result<Option<Tribe>, RepoError> {
 
 fn row_to_user(r: &PgRow) -> Result<UserRecord, RepoError> {
     let id: Uuid = r.try_get("id").map_err(backend)?;
+    let tribe_str: String = r.try_get("tribe").map_err(backend)?;
+    let tribe = Tribe::from_slug(&tribe_str)
+        .ok_or_else(|| RepoError::Backend(format!("unknown tribe: {tribe_str}")))?;
     Ok(UserRecord {
         id: PlayerId(id.as_u128()),
         username: r.try_get("username").map_err(backend)?,
         email: r.try_get("email").map_err(backend)?,
         password_hash: r.try_get("password_hash").map_err(backend)?,
         email_confirmed: r.try_get("email_confirmed").map_err(backend)?,
+        tribe,
     })
 }
 
@@ -145,14 +149,15 @@ impl AccountRepository for PgAccountRepository {
 
         let user_id = Uuid::new_v4();
         let insert_user = sqlx::query(
-            "INSERT INTO users (id, username, email, password_hash, email_confirmed) \
-             VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO users (id, username, email, password_hash, email_confirmed, tribe) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(user_id)
         .bind(&user.username)
         .bind(&user.email)
         .bind(&user.password_hash)
         .bind(user.email_confirmed)
+        .bind(user.tribe.slug())
         .execute(&mut *tx)
         .await;
         if let Err(e) = insert_user {
@@ -171,7 +176,13 @@ impl AccountRepository for PgAccountRepository {
         let mut placed = false;
         for coord in coordinates_within(self.radius) {
             let village_uuid = Uuid::new_v4();
-            let village = Village::found(VillageId(village_uuid.as_u128()), owner, coord, template);
+            let village = Village::found(
+                VillageId(village_uuid.as_u128()),
+                owner,
+                coord,
+                user.tribe,
+                template,
+            );
 
             let mut sp = tx.begin().await.map_err(backend)?;
             let insert_village = sqlx::query(
@@ -183,7 +194,7 @@ impl AccountRepository for PgAccountRepository {
             .bind(user_id)
             .bind(coord.x)
             .bind(coord.y)
-            .bind(Option::<String>::None)
+            .bind(user.tribe.slug())
             .execute(&mut *sp)
             .await;
 
@@ -250,12 +261,13 @@ impl AccountRepository for PgAccountRepository {
             email: user.email,
             password_hash: user.password_hash,
             email_confirmed: user.email_confirmed,
+            tribe: user.tribe,
         })
     }
 
     async fn find_user_by_username(&self, username: &str) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
-            "SELECT id, username, email, password_hash, email_confirmed FROM users WHERE username = $1",
+            "SELECT id, username, email, password_hash, email_confirmed, tribe FROM users WHERE username = $1",
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -266,7 +278,7 @@ impl AccountRepository for PgAccountRepository {
 
     async fn find_user_by_id(&self, id: PlayerId) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
-            "SELECT id, username, email, password_hash, email_confirmed FROM users WHERE id = $1",
+            "SELECT id, username, email, password_hash, email_confirmed, tribe FROM users WHERE id = $1",
         )
         .bind(Uuid::from_u128(id.0))
         .fetch_optional(&self.pool)
@@ -587,6 +599,7 @@ mod tests {
             email: format!("{uname}@example.com"),
             password_hash: "hash".to_owned(),
             email_confirmed: true,
+            tribe: Tribe::Gauls,
         };
 
         let user = repo
@@ -601,6 +614,10 @@ mod tests {
         assert!(villages[0].buildings.len() >= 2);
         assert_eq!(villages[0].owner, user.id);
 
+        // 004 AC1: the chosen tribe is stored on the account and stamped on the village.
+        assert_eq!(user.tribe, Tribe::Gauls);
+        assert_eq!(villages[0].tribe, Some(Tribe::Gauls));
+
         // T4: starting resources were seeded and are readable.
         let stored = repo
             .stored_resources(villages[0].id)
@@ -614,6 +631,7 @@ mod tests {
             email: format!("{uname}-2@example.com"),
             password_hash: "hash".to_owned(),
             email_confirmed: true,
+            tribe: Tribe::Gauls,
         };
         assert!(matches!(
             repo.create_account(dup, &template).await,
@@ -657,6 +675,7 @@ mod tests {
                     email: format!("{uname}@example.com"),
                     password_hash: "hash".to_owned(),
                     email_confirmed: true,
+                    tribe: Tribe::Gauls,
                 },
                 &crate::starting_village().unwrap(),
             )
@@ -682,6 +701,69 @@ mod tests {
         .await
         .unwrap();
         assert!(repo.stored_resources(village_id).await.unwrap().is_some());
+    }
+
+    /// 004 AC3 migration-boundary guard: a village row that predates the tribe column being
+    /// populated (tribe NULL — the pre-004 state; the column stays nullable) must be repaired by
+    /// the 0005 backfill, which copies the owner's tribe.
+    #[tokio::test]
+    async fn tribe_backfill_repairs_pre_004_village() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping tribe backfill test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world_id = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world_id,
+            config.radius,
+            rules.starting_amounts,
+        );
+
+        let uname = format!("pretribe_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "hash".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &crate::starting_village().unwrap(),
+            )
+            .await
+            .expect("create account");
+        let village_id = repo.villages_of(user.id).await.unwrap()[0].id;
+
+        // Reproduce the pre-004 state: the village has no tribe yet.
+        sqlx::query("UPDATE villages SET tribe = NULL WHERE id = $1")
+            .bind(Uuid::from_u128(village_id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(repo.villages_of(user.id).await.unwrap()[0].tribe, None);
+
+        // Apply the backfill (same statement as migration 0005): tribe copied from the owner.
+        sqlx::query(
+            "UPDATE villages v SET tribe = u.tribe FROM users u \
+             WHERE v.owner_id = u.id AND v.tribe IS NULL",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            repo.villages_of(user.id).await.unwrap()[0].tribe,
+            Some(Tribe::Gauls)
+        );
     }
 
     #[tokio::test]
@@ -713,6 +795,7 @@ mod tests {
                     email: format!("{uname}@example.com"),
                     password_hash: "h".to_owned(),
                     email_confirmed: true,
+                    tribe: Tribe::Gauls,
                 },
                 &crate::starting_village().unwrap(),
             )
@@ -806,6 +889,7 @@ mod tests {
                     email: format!("{uname}@example.com"),
                     password_hash: "h".to_owned(),
                     email_confirmed: true,
+                    tribe: Tribe::Gauls,
                 },
                 &crate::starting_village().unwrap(),
             )
@@ -843,7 +927,7 @@ mod tests {
     }
 
     /// AC5 (building path): constructing a new building in an empty center slot exercises the
-    /// `apply_build` Building arm — the `INSERT ... ON CONFLICT` upsert taking its INSERT branch.
+    /// `apply_build` Building arm â€” the `INSERT ... ON CONFLICT` upsert taking its INSERT branch.
     /// The starting village has only Main Building (slot 0) + Rally Point (slot 1), so building a
     /// Warehouse at slot 2 creates a brand-new row (vs. the Field path, which only ever UPDATEs).
     #[tokio::test]
@@ -875,6 +959,7 @@ mod tests {
                     email: format!("{uname}@example.com"),
                     password_hash: "h".to_owned(),
                     email_confirmed: true,
+                    tribe: Tribe::Gauls,
                 },
                 &crate::starting_village().unwrap(),
             )

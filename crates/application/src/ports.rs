@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use eperica_domain::{
-    BuildTarget, EventKind, PlayerId, ResourceAmounts, StartingVillage, Timestamp, Village,
+    BuildTarget, EventKind, PlayerId, ResourceAmounts, StartingVillage, Timestamp, Tribe, Village,
     VillageId,
 };
 
@@ -20,6 +20,8 @@ pub struct NewUser {
     pub password_hash: String,
     /// Whether the account is considered email-confirmed at creation.
     pub email_confirmed: bool,
+    /// The tribe chosen at registration (immutable thereafter, 004 AC1/AC2).
+    pub tribe: Tribe,
 }
 
 /// A persisted account.
@@ -35,6 +37,8 @@ pub struct UserRecord {
     pub password_hash: String,
     /// Whether the email has been confirmed.
     pub email_confirmed: bool,
+    /// The account's tribe (chosen at registration; pre-004 accounts were backfilled).
+    pub tribe: Tribe,
 }
 
 /// Errors a repository/port can return to the application.

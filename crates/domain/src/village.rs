@@ -16,7 +16,7 @@ pub struct PlayerId(pub u128);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VillageId(pub u128);
 
-/// The three playable tribes. Selection is introduced in slice 004; a 001 village is tribe-agnostic.
+/// The three playable tribes, chosen once at registration (004 AC1/AC2; GDD §5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Tribe {
     /// Balanced, expensive all-rounders.
@@ -25,6 +25,27 @@ pub enum Tribe {
     Teutons,
     /// Fast, defensive specialists.
     Gauls,
+}
+
+impl Tribe {
+    /// The stable lowercase identifier used in forms, URLs, and storage.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Tribe::Romans => "romans",
+            Tribe::Teutons => "teutons",
+            Tribe::Gauls => "gauls",
+        }
+    }
+
+    /// Parse a [`slug`](Self::slug); `None` for anything else (server-side validation, P4).
+    pub fn from_slug(s: &str) -> Option<Self> {
+        match s {
+            "romans" => Some(Tribe::Romans),
+            "teutons" => Some(Tribe::Teutons),
+            "gauls" => Some(Tribe::Gauls),
+            _ => None,
+        }
+    }
 }
 
 /// One resource-field slot (a single woodcutter, clay pit, iron mine, or cropland) at a level.
@@ -97,21 +118,21 @@ pub struct Village {
 }
 
 impl Village {
-    /// Found a new village for `owner` at `coordinate` from a starting template.
-    ///
-    /// The village is tribe-agnostic at founding (slice 001). Server-side callers supply the
-    /// identity and coordinate (P4); the domain never invents them.
+    /// Found a new village for `owner` at `coordinate` from a starting template, carrying the
+    /// owner's `tribe` (004). Server-side callers supply the identity and coordinate (P4); the
+    /// domain never invents them.
     pub fn found(
         id: VillageId,
         owner: PlayerId,
         coordinate: Coordinate,
+        tribe: Tribe,
         template: &StartingVillage,
     ) -> Self {
         Self {
             id,
             owner,
             coordinate,
-            tribe: None,
+            tribe: Some(tribe),
             fields: template.fields().to_vec(),
             buildings: template.buildings().to_vec(),
         }
@@ -156,12 +177,13 @@ mod tests {
             VillageId(1),
             PlayerId(42),
             Coordinate::new(0, 0),
+            Tribe::Gauls,
             &balanced_template(),
         );
         assert_eq!(v.fields.len(), RESOURCE_FIELD_COUNT);
         assert_eq!(v.owner, PlayerId(42));
         assert_eq!(v.coordinate, Coordinate::new(0, 0));
-        assert_eq!(v.tribe, None);
+        assert_eq!(v.tribe, Some(Tribe::Gauls));
         let kinds: Vec<_> = v.buildings.iter().map(|b| b.kind).collect();
         assert!(kinds.contains(&BuildingKind::MainBuilding));
         assert!(kinds.contains(&BuildingKind::RallyPoint));

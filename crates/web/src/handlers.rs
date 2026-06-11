@@ -141,6 +141,9 @@ pub struct RegisterForm {
     username: String,
     email: String,
     password: String,
+    /// Tribe slug; validated server-side (004 AC1, P4).
+    #[serde(default)]
+    tribe: String,
 }
 
 /// Handle registration (AC1, AC3). On success (no confirmation required) logs the user in.
@@ -153,6 +156,7 @@ pub async fn register_submit(
         username: form.username,
         email: form.email,
         password: form.password,
+        tribe: form.tribe,
     };
     match register(
         state.accounts.as_ref(),

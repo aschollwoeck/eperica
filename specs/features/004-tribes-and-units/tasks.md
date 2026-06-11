@@ -23,7 +23,7 @@ Ordered for dependency and testability (pure domain first).
 - [x] **T4 — Units balance data + loader.** `specs/balance/units.toml`: 3 tribes × 10 faithful
   units (all §6.2 attributes, roles, trained_in, research cost/time/requirements) + `[smithy]`
   tables; `balance.rs` loader → `UnitRules`, **fail fast** on incomplete data. Tests (**AC4**).
-- [ ] **T5 — Tribe migration + registration.** `0005_tribes.sql` (users.tribe + CHECK, backfill
+- [x] **T5 — Tribe migration + registration.** `0005_tribes.sql` (users.tribe + CHECK, backfill
   Gauls, villages backfill); `RegisterCommand.tribe` validated (**AC1/AC2**); `create_account`
   stores tribe on user + village. Tests incl. migration-boundary backfill (**AC3**).
 - [ ] **T6 — Unit tables + repository.** `0006_units.sql` (`village_research`,
