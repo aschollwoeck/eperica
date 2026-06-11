@@ -4,10 +4,10 @@
 //! `DATABASE_URL` is not set, so `cargo test` stays green without a database.
 
 use axum_extra::extract::cookie::Key;
-use eperica_domain::{GameSpeed, WorldConfig};
+use eperica_domain::{GameSpeed, WorldConfig, WorldMap};
 use eperica_infrastructure::{
     Argon2Hasher, PgAccountRepository, build_rules, create_pool, economy_rules, ensure_world,
-    run_migrations, starting_village, unit_rules,
+    map_rules, run_migrations, starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -23,12 +23,18 @@ async fn spawn() -> Option<String> {
     run_migrations(&pool).await.expect("migrate");
 
     let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-    let world_id = ensure_world(&pool, &config).await.expect("ensure world");
+    let world = ensure_world(&pool, &config).await.expect("ensure world");
     let rules = economy_rules().expect("economy rules");
+    let map = Arc::new(WorldMap::new(
+        world.seed as u64,
+        config.radius,
+        map_rules().expect("map rules"),
+    ));
     let state = AppState {
         accounts: Arc::new(PgAccountRepository::new(
             pool.clone(),
-            world_id,
+            world.id,
+            world.seed,
             config.radius,
             rules.starting_amounts,
         )),
@@ -37,6 +43,7 @@ async fn spawn() -> Option<String> {
         rules: Arc::new(rules),
         build_rules: Arc::new(build_rules().expect("build rules")),
         unit_rules: Arc::new(unit_rules().expect("unit rules")),
+        map,
         world: config,
         require_email_confirmation: false,
         cookie_key: Key::generate(),

@@ -24,4 +24,4 @@ pub use db::{MIGRATOR, create_pool, run_migrations};
 pub use event_store::{PgEventStore, Scheduler, now};
 pub use repo::PgAccountRepository;
 pub use security::Argon2Hasher;
-pub use world::ensure_world;
+pub use world::{World, ensure_world};

@@ -9,7 +9,7 @@ use eperica_application::{
 use eperica_domain::{
     BuildTarget, BuildingKind, BuildingSlot, Coordinate, PlayerId, QueueLane, ResourceAmounts,
     ResourceField, ResourceKind, StartingVillage, Timestamp, Tribe, UnitCounts, UnitId, Village,
-    VillageId, WorldId, coordinates_within,
+    VillageId, WorldId, WorldMap, coordinates_within,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use uuid::Uuid;
@@ -19,23 +19,26 @@ use uuid::Uuid;
 pub struct PgAccountRepository {
     pool: PgPool,
     world_id: WorldId,
-    radius: u32,
+    map: WorldMap,
     starting_amounts: ResourceAmounts,
 }
 
 impl PgAccountRepository {
-    /// Create a repository for `world_id` (map `radius` for placement; `starting_amounts` seeded into
-    /// each new village's resources).
+    /// Create a repository for `world_id`. The world's `seed` + `radius` (with the embedded map
+    /// balance) drive the generated map used for village placement (006); `starting_amounts` are
+    /// seeded into each new village's resources.
     pub fn new(
         pool: PgPool,
         world_id: WorldId,
+        seed: i64,
         radius: u32,
         starting_amounts: ResourceAmounts,
     ) -> Self {
+        let rules = crate::balance::map_rules().expect("embedded map balance is valid");
         Self {
             pool,
             world_id,
-            radius,
+            map: WorldMap::new(seed as u64, radius, rules),
             starting_amounts,
         }
     }
@@ -210,7 +213,7 @@ impl AccountRepository for PgAccountRepository {
         // Place the village on the first free in-bounds tile. Each attempt is a SAVEPOINT so a
         // coordinate clash rolls back just that insert (not the whole transaction).
         let mut placed = false;
-        for coord in coordinates_within(self.radius) {
+        for coord in coordinates_within(self.map.radius()) {
             let village_uuid = Uuid::new_v4();
             let village = Village::found(
                 VillageId(village_uuid.as_u128()),
@@ -1316,13 +1319,14 @@ mod tests {
         crate::run_migrations(&pool).await.expect("migrate");
 
         let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world_id = crate::world::ensure_world(&pool, &config)
+        let world = crate::world::ensure_world(&pool, &config)
             .await
             .expect("ensure world");
         let rules = crate::economy_rules().expect("economy rules");
         let repo = PgAccountRepository::new(
             pool.clone(),
-            world_id,
+            world.id,
+            world.seed,
             config.radius,
             rules.starting_amounts,
         );
@@ -1377,6 +1381,69 @@ mod tests {
         assert!(repo.find_user_by_username(&uname).await.unwrap().is_some());
     }
 
+    /// 006 AC6 migration-boundary guard: the world `seed` is backfilled NOT NULL with the
+    /// deterministic per-world value, and adding it does not move a pre-existing village or change
+    /// its fields. (The NOT NULL is guaranteed by 0009's own `SET NOT NULL`, which aborts on any
+    /// row left NULL — like the 0005 tribe backfill — so only the determinism + village-stability
+    /// halves need a data-level test.)
+    #[tokio::test]
+    async fn world_seed_is_backfilled_and_villages_are_unmoved() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping world-seed test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        // The seed is non-null and equals the deterministic per-world backfill value.
+        let expected: i64 =
+            sqlx::query_scalar("SELECT hashtextextended(id::text, 0) FROM worlds WHERE id = $1")
+                .bind(Uuid::from_u128(world.id.0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(world.seed, expected);
+
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            rules.starting_amounts,
+        );
+        let uname = format!("seedstab_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &crate::starting_village().unwrap(),
+            )
+            .await
+            .expect("create account");
+        let before = repo.villages_of(user.id).await.unwrap();
+        let (coord, fields) = (before[0].coordinate, before[0].fields.clone());
+
+        // Re-running the 0009 backfill is a no-op (seed already set), and the village is unmoved.
+        sqlx::query("UPDATE worlds SET seed = hashtextextended(id::text, 0) WHERE seed IS NULL")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let after = repo.villages_of(user.id).await.unwrap();
+        assert_eq!(after[0].coordinate, coord);
+        assert_eq!(after[0].fields, fields);
+    }
+
     /// Regression for the migration-boundary bug: a village that predates `village_resources`
     /// (no resources row) must be repairable by the backfill. We reproduce the legacy state by
     /// deleting the seeded row, then apply the same backfill as migration 0003.
@@ -1391,13 +1458,14 @@ mod tests {
         crate::run_migrations(&pool).await.expect("migrate");
 
         let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world_id = crate::world::ensure_world(&pool, &config)
+        let world = crate::world::ensure_world(&pool, &config)
             .await
             .expect("ensure world");
         let rules = crate::economy_rules().expect("economy rules");
         let repo = PgAccountRepository::new(
             pool.clone(),
-            world_id,
+            world.id,
+            world.seed,
             config.radius,
             rules.starting_amounts,
         );
@@ -1456,13 +1524,14 @@ mod tests {
         crate::run_migrations(&pool).await.expect("migrate");
 
         let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world_id = crate::world::ensure_world(&pool, &config)
+        let world = crate::world::ensure_world(&pool, &config)
             .await
             .expect("ensure world");
         let rules = crate::economy_rules().expect("economy rules");
         let repo = PgAccountRepository::new(
             pool.clone(),
-            world_id,
+            world.id,
+            world.seed,
             config.radius,
             rules.starting_amounts,
         );
@@ -1515,13 +1584,14 @@ mod tests {
         let pool = crate::create_pool(&url).await.expect("connect");
         crate::run_migrations(&pool).await.expect("migrate");
         let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world_id = crate::world::ensure_world(&pool, &config)
+        let world = crate::world::ensure_world(&pool, &config)
             .await
             .expect("ensure world");
         let rules = crate::economy_rules().expect("economy rules");
         let repo = PgAccountRepository::new(
             pool.clone(),
-            world_id,
+            world.id,
+            world.seed,
             config.radius,
             rules.starting_amounts,
         );
@@ -1612,13 +1682,14 @@ mod tests {
         let pool = crate::create_pool(&url).await.expect("connect");
         crate::run_migrations(&pool).await.expect("migrate");
         let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world_id = crate::world::ensure_world(&pool, &config)
+        let world = crate::world::ensure_world(&pool, &config)
             .await
             .expect("ensure world");
         let rules = crate::economy_rules().expect("economy rules");
         let repo = PgAccountRepository::new(
             pool.clone(),
-            world_id,
+            world.id,
+            world.seed,
             config.radius,
             rules.starting_amounts,
         );
@@ -1721,13 +1792,14 @@ mod tests {
         let pool = crate::create_pool(&url).await.expect("connect");
         crate::run_migrations(&pool).await.expect("migrate");
         let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world_id = crate::world::ensure_world(&pool, &config)
+        let world = crate::world::ensure_world(&pool, &config)
             .await
             .expect("ensure world");
         let rules = crate::economy_rules().expect("economy rules");
         let repo = PgAccountRepository::new(
             pool.clone(),
-            world_id,
+            world.id,
+            world.seed,
             config.radius,
             rules.starting_amounts,
         );
@@ -1906,13 +1978,14 @@ mod tests {
         let pool = crate::create_pool(&url).await.expect("connect");
         crate::run_migrations(&pool).await.expect("migrate");
         let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world_id = crate::world::ensure_world(&pool, &config)
+        let world = crate::world::ensure_world(&pool, &config)
             .await
             .expect("ensure world");
         let rules = crate::economy_rules().expect("economy rules");
         let repo = PgAccountRepository::new(
             pool.clone(),
-            world_id,
+            world.id,
+            world.seed,
             config.radius,
             rules.starting_amounts,
         );
@@ -2063,13 +2136,14 @@ mod tests {
         let pool = crate::create_pool(&url).await.expect("connect");
         crate::run_migrations(&pool).await.expect("migrate");
         let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world_id = crate::world::ensure_world(&pool, &config)
+        let world = crate::world::ensure_world(&pool, &config)
             .await
             .expect("ensure world");
         let rules = crate::economy_rules().expect("economy rules");
         let repo = PgAccountRepository::new(
             pool.clone(),
-            world_id,
+            world.id,
+            world.seed,
             config.radius,
             rules.starting_amounts,
         );
@@ -2229,13 +2303,14 @@ mod tests {
         let pool = crate::create_pool(&url).await.expect("connect");
         crate::run_migrations(&pool).await.expect("migrate");
         let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world_id = crate::world::ensure_world(&pool, &config)
+        let world = crate::world::ensure_world(&pool, &config)
             .await
             .expect("ensure world");
         let rules = crate::economy_rules().expect("economy rules");
         let repo = PgAccountRepository::new(
             pool.clone(),
-            world_id,
+            world.id,
+            world.seed,
             config.radius,
             rules.starting_amounts,
         );
@@ -2302,13 +2377,14 @@ mod tests {
         let pool = crate::create_pool(&url).await.expect("connect");
         crate::run_migrations(&pool).await.expect("migrate");
         let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world_id = crate::world::ensure_world(&pool, &config)
+        let world = crate::world::ensure_world(&pool, &config)
             .await
             .expect("ensure world");
         let rules = crate::economy_rules().expect("economy rules");
         let repo = PgAccountRepository::new(
             pool.clone(),
-            world_id,
+            world.id,
+            world.seed,
             config.radius,
             rules.starting_amounts,
         );
