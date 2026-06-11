@@ -1,0 +1,125 @@
+# World-map generation balance (interim, tunable). The whole terrain is a pure function of the
+# world seed; these tables drive it (slice 006). Densities are per-mille of all tiles; the
+# remainder are valleys. Selection is seeded and integer-only (P6).
+
+# ~12% oasis, ~0.5% Natar, the rest valleys.
+oasis_permille = 120
+natar_permille = 5
+
+# Weighted valley field distributions (woodcutters / clay pits / iron mines / croplands). Each
+# MUST sum to 18 (GDD §3.1). The balanced 4-4-4-6 dominates; croppers are rare.
+[[distributions]]
+wood = 4
+clay = 4
+iron = 4
+crop = 6
+weight = 880
+
+[[distributions]]
+wood = 4
+clay = 5
+iron = 3
+crop = 6
+weight = 20
+
+[[distributions]]
+wood = 5
+clay = 3
+iron = 4
+crop = 6
+weight = 20
+
+[[distributions]]
+wood = 3
+clay = 4
+iron = 5
+crop = 6
+weight = 20
+
+[[distributions]]
+wood = 4
+clay = 4
+iron = 3
+crop = 7
+weight = 15
+
+[[distributions]]
+wood = 3
+clay = 4
+iron = 4
+crop = 7
+weight = 15
+
+[[distributions]]
+wood = 4
+clay = 3
+iron = 4
+crop = 7
+weight = 15
+
+# 9-cropper.
+[[distributions]]
+wood = 3
+clay = 3
+iron = 3
+crop = 9
+weight = 10
+
+# 15-cropper (the prized settling target).
+[[distributions]]
+wood = 1
+clay = 1
+iron = 1
+crop = 15
+weight = 5
+
+# Weighted oasis production bonuses (percent, by resource). Faithful Travian variants: single
+# +25%, single +50% crop, and +25%/+25% doubles.
+[[oasis_bonuses]]
+wood = 25
+clay = 0
+iron = 0
+crop = 0
+weight = 10
+
+[[oasis_bonuses]]
+wood = 0
+clay = 25
+iron = 0
+crop = 0
+weight = 10
+
+[[oasis_bonuses]]
+wood = 0
+clay = 0
+iron = 25
+crop = 0
+weight = 10
+
+[[oasis_bonuses]]
+wood = 0
+clay = 0
+iron = 0
+crop = 25
+weight = 10
+
+[[oasis_bonuses]]
+wood = 0
+clay = 0
+iron = 0
+crop = 50
+weight = 6
+
+[[oasis_bonuses]]
+wood = 25
+clay = 25
+iron = 0
+crop = 0
+weight = 4
+
+[[oasis_bonuses]]
+wood = 0
+clay = 0
+iron = 25
+crop = 25
+weight = 4

@@ -16,7 +16,7 @@ Ordered for dependency and testability (pure domain first).
 
 ## Balance + persistence
 
-- [ ] **T3 — Map balance data + loader.** `specs/balance/map.toml` (densities, distribution +
+- [x] **T3 — Map balance data + loader.** `specs/balance/map.toml` (densities, distribution +
   oasis-bonus tables); `balance.rs` loader → `MapRules`, fail-fast. Move the `4-4-4-6` default into
   the table. Tests (**AC2**).
 - [ ] **T4 — Seed migration + ensure_world.** `0009_world_seed.sql` (add `seed`, backfill
