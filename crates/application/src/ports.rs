@@ -544,7 +544,9 @@ pub struct BattleReportView {
     pub defender_name: String,
     pub defender_coord: Coordinate,
     pub attacker_player: PlayerId,
-    pub defender_player: PlayerId,
+    /// The defending player, or `None` when the defender is a village-less **oasis** (wild animals,
+    /// 012) — only the attacker is a party to such a report.
+    pub defender_player: Option<PlayerId>,
     pub attacker_won: bool,
     pub luck: f64,
     pub morale: f64,
@@ -833,8 +835,33 @@ pub enum OasisOwnership {
     Free,
 }
 
-/// The single-transaction application of a resolved oasis battle (012 AC3/AC4/AC10).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// An oasis battle report to persist (012 AC11), on the 009 `battle_reports` rails. The defending
+/// "village" is a tile + a synthetic label; `defender_player`/`defender_village` are set only when
+/// the oasis was **occupied** (a player owned it), `None` for a wild-animal defence.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewOasisReport {
+    pub attacker_player: PlayerId,
+    pub attacker_village: VillageId,
+    /// The defending owner, when the oasis was occupied (`None` ⇒ wild animals).
+    pub defender_player: Option<PlayerId>,
+    /// The defending owner's village, when occupied (`None` ⇒ wild animals).
+    pub defender_village: Option<VillageId>,
+    /// The oasis tile (stands in for the joined defender village's coordinate).
+    pub oasis: Coordinate,
+    /// The display label for the defender (e.g. `"Oasis"`).
+    pub label: String,
+    pub attacker_won: bool,
+    pub luck: f64,
+    pub morale: f64,
+    /// Forces sent / defending and the losses each took, as unit→count maps.
+    pub attacker_forces: UnitCounts,
+    pub attacker_losses: UnitCounts,
+    pub defender_forces: UnitCounts,
+    pub defender_losses: UnitCounts,
+}
+
+/// The single-transaction application of a resolved oasis battle (012 AC3/AC4/AC10/AC11).
+#[derive(Debug, Clone, PartialEq)]
 pub struct OasisBattleApply {
     /// The oasis-attack movement to mark `done`.
     pub movement_id: u128,
@@ -857,6 +884,8 @@ pub struct OasisBattleApply {
     pub battle_at: Timestamp,
     /// When the survivor return arrives home.
     pub return_arrive: Timestamp,
+    /// The battle report to persist in the same transaction (AC11).
+    pub report: NewOasisReport,
 }
 
 /// Persistence for oases (012): launch oasis attacks, read defenders/ownership/bonus, claim due

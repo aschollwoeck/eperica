@@ -5,10 +5,11 @@ use eperica_application::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
     BuildRepository, CombatRepository, DueAttack, DueBuild, DueMovement, DueOasisAttack, DueScout,
     DueTrade, DueTraining, DueUnitOrder, MovementRepository, MovementView, NewBuildOrder,
-    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
-    OasisRepository, OasisState, RazedBuilding, RepoError, ResourceWrite, ScoutApply, ScoutIntel,
-    ScoutReportView, ScoutRepository, StarvationRepository, StationedGroup, TradeRepository,
-    TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply,
+    OasisOwnership, OasisRepository, OasisState, RazedBuilding, RepoError, ResourceWrite,
+    ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, StarvationRepository, StationedGroup,
+    TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
+    VillageMarker,
 };
 use eperica_domain::{
     BuildTarget, BuildingKind, BuildingSlot, Coordinate, MovementKind, OasisBonus, OasisRules,
@@ -2325,7 +2326,7 @@ fn report_from_row(r: &PgRow) -> Result<BattleReportView, RepoError> {
     let occurred_ms: i64 = r.try_get("occurred_ms").map_err(backend)?;
     let kind: String = r.try_get("kind").map_err(backend)?;
     let ap: Uuid = r.try_get("attacker_player").map_err(backend)?;
-    let dp: Uuid = r.try_get("defender_player").map_err(backend)?;
+    let dp: Option<Uuid> = r.try_get("defender_player").map_err(backend)?;
     let af: serde_json::Value = r.try_get("attacker_forces").map_err(backend)?;
     let al: serde_json::Value = r.try_get("attacker_losses").map_err(backend)?;
     let df: serde_json::Value = r.try_get("defender_forces").map_err(backend)?;
@@ -2345,7 +2346,7 @@ fn report_from_row(r: &PgRow) -> Result<BattleReportView, RepoError> {
             r.try_get("dy").map_err(backend)?,
         ),
         attacker_player: PlayerId(ap.as_u128()),
-        defender_player: PlayerId(dp.as_u128()),
+        defender_player: dp.map(|u| PlayerId(u.as_u128())),
         attacker_won: r.try_get("attacker_won").map_err(backend)?,
         luck: r.try_get("luck").map_err(backend)?,
         morale: r.try_get("morale").map_err(backend)?,
@@ -2384,7 +2385,8 @@ fn report_from_row(r: &PgRow) -> Result<BattleReportView, RepoError> {
 const REPORT_SELECT: &str = "SELECT br.id, \
     (EXTRACT(EPOCH FROM br.occurred_at) * 1000)::bigint AS occurred_ms, br.kind, \
     au.username AS attacker_name, av.x AS ax, av.y AS ay, \
-    du.username AS defender_name, dv.x AS dx, dv.y AS dy, \
+    COALESCE(du.username, br.defender_label) AS defender_name, \
+    COALESCE(dv.x, br.defender_x) AS dx, COALESCE(dv.y, br.defender_y) AS dy, \
     br.attacker_player, br.defender_player, br.attacker_won, br.luck, br.morale, \
     br.wall_before, br.wall_after, br.attacker_forces, br.attacker_losses, \
     br.defender_forces, br.defender_losses, br.scouted, br.scout_target, \
@@ -2393,8 +2395,8 @@ const REPORT_SELECT: &str = "SELECT br.id, \
     FROM battle_reports br \
     JOIN users au ON au.id = br.attacker_player \
     JOIN villages av ON av.id = br.attacker_village \
-    JOIN users du ON du.id = br.defender_player \
-    JOIN villages dv ON dv.id = br.defender_village";
+    LEFT JOIN users du ON du.id = br.defender_player \
+    LEFT JOIN villages dv ON dv.id = br.defender_village";
 
 #[async_trait]
 impl CombatRepository for PgAccountRepository {
@@ -2730,6 +2732,43 @@ async fn insert_oasis_movement(
     Ok(())
 }
 
+/// Insert an **oasis** battle report into `battle_reports` (012 AC11) within an open transaction.
+/// The defender is a village-less oasis: its tile + a synthetic label stand in for the joined
+/// defender village, and `defender_player`/`defender_village` are NULL unless the oasis was occupied.
+async fn insert_oasis_report(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    r: &NewOasisReport,
+) -> Result<(), RepoError> {
+    sqlx::query(
+        "INSERT INTO battle_reports \
+         (id, kind, attacker_player, attacker_village, defender_player, defender_village, \
+          defender_x, defender_y, defender_label, \
+          attacker_won, luck, morale, wall_before, wall_after, \
+          attacker_forces, attacker_losses, defender_forces, defender_losses) \
+         VALUES ($1, 'oasis_attack', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0, 0, \
+                 $12, $13, $14, $15)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(Uuid::from_u128(r.attacker_player.0))
+    .bind(Uuid::from_u128(r.attacker_village.0))
+    .bind(r.defender_player.map(|p| Uuid::from_u128(p.0)))
+    .bind(r.defender_village.map(|v| Uuid::from_u128(v.0)))
+    .bind(r.oasis.x)
+    .bind(r.oasis.y)
+    .bind(r.label.as_str())
+    .bind(r.attacker_won)
+    .bind(r.luck)
+    .bind(r.morale)
+    .bind(counts_to_json(&r.attacker_forces))
+    .bind(counts_to_json(&r.attacker_losses))
+    .bind(counts_to_json(&r.defender_forces))
+    .bind(counts_to_json(&r.defender_losses))
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    Ok(())
+}
+
 /// Read an oasis's persisted garrison (the (world, x, y) rows of `oasis_garrison`), or an empty
 /// composition if none. The caller falls back to the seeded animals when the oasis has no row.
 async fn read_oasis_garrison(
@@ -3025,6 +3064,9 @@ impl OasisRepository for PgAccountRepository {
             )
             .await?;
         }
+
+        // The battle report (AC11), on the 009 rails — visible to the attacker (and the owner, if any).
+        insert_oasis_report(&mut tx, &apply.report).await?;
 
         sqlx::query("UPDATE troop_movements SET status = 'done' WHERE id = $1")
             .bind(Uuid::from_u128(apply.movement_id))
@@ -6585,9 +6627,35 @@ mod tests {
             survivors: vec![(UnitId("phalanx".into()), 25)],
             battle_at,
             return_arrive,
+            report: NewOasisReport {
+                attacker_player: attacker.id,
+                attacker_village: v.id,
+                defender_player: None,
+                defender_village: None,
+                oasis,
+                label: "Oasis".to_owned(),
+                attacker_won: true,
+                luck: 1.0,
+                morale: 1.0,
+                attacker_forces: vec![(UnitId("phalanx".into()), 30)],
+                attacker_losses: vec![(UnitId("phalanx".into()), 5)],
+                defender_forces: seeded.clone(),
+                defender_losses: seeded.clone(),
+            },
         })
         .await
         .expect("apply oasis battle");
+
+        // AC11: the oasis battle report is readable in the attacker's inbox, on the 009 rails.
+        let inbox = repo.reports_for(attacker.id, 50).await.unwrap();
+        let report = inbox
+            .iter()
+            .find(|r| r.kind == MovementKind::OasisAttack && r.defender_coord == oasis)
+            .expect("oasis report in the inbox");
+        assert_eq!(report.attacker_player, attacker.id);
+        assert_eq!(report.defender_player, None, "wild animals have no player");
+        assert_eq!(report.defender_name, "Oasis");
+        assert!(report.attacker_won);
 
         // The oasis is now owned and cleared of animals.
         let state = repo.oasis_at(oasis).await.unwrap().expect("materialised");
@@ -6707,6 +6775,21 @@ mod tests {
             survivors: Vec::new(),
             battle_at: Timestamp(3_000_000_000_000),
             return_arrive: Timestamp(3_000_000_100_000),
+            report: NewOasisReport {
+                attacker_player: attacker.id,
+                attacker_village: v.id,
+                defender_player: None,
+                defender_village: None,
+                oasis,
+                label: "Oasis".to_owned(),
+                attacker_won: true,
+                luck: 1.0,
+                morale: 1.0,
+                attacker_forces: Vec::new(),
+                attacker_losses: Vec::new(),
+                defender_forces: Vec::new(),
+                defender_losses: Vec::new(),
+            },
         })
         .await
         .expect("apply cleared-without-capacity");

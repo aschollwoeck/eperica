@@ -27,7 +27,7 @@ lands green on its own.
 
 ## Application — clear & occupy
 
-- [ ] **T4 — Oasis attack + clear/occupy.** `order_oasis_attack` (validate; debit; schedule);
+- [x] **T4 — Oasis attack + clear/occupy.** `order_oasis_attack` (validate; debit; schedule);
   `process_due_oasis_combat` (gather attacker pools + oasis defenders + Outpost capacity; `resolve_battle`
   no-Wall/morale-1; apply casualties; occupy if winning + capacity; survivor return; report). Fake/DB
   tests: clear+occupy, clear-without-capacity, losing attacker (**AC2**, **AC3**, **AC4**, **AC11**).
