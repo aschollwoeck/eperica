@@ -31,8 +31,10 @@ the existing `serde_json`/`jsonb`).
   data; world speed scales travel time (007).
 - **P11 (performance):** standalone resolution reads only the target's garrison + reinforcements (the
   same indexed reads 009 already makes for a combined attack) and writes the scouter's report + one
-  return in one tx; the claim reuses the indexed `(status, arrive_at, id)` order. The combined path adds
-  **no** extra queries to 009 — it reuses the garrison/reinforcements/village already loaded.
+  return in one tx; the claim reuses the indexed `(status, arrive_at, id)` order. A combined attack
+  reuses the garrison/reinforcements/village 009 already loaded for the battle; the **only** extra read
+  is one indexed `stored_resources` lookup, and only for a *Resources*-target attack whose scouts
+  survive (Defenses intel needs no extra query).
 
 ## Domain (`domain`, pure)
 

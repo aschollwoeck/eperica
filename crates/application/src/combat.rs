@@ -513,6 +513,8 @@ mod tests {
         home: Village,
         garrison: UnitCounts,
         target: Option<Village>,
+        /// The target village's garrison (defenders), keyed separately from the home garrison.
+        target_garrison: UnitCounts,
     }
 
     #[async_trait]
@@ -533,8 +535,12 @@ mod tests {
         async fn villages_of(&self, _owner: PlayerId) -> Result<Vec<Village>, RepoError> {
             Ok(vec![self.home.clone()])
         }
-        async fn village_by_id(&self, _v: VillageId) -> Result<Option<Village>, RepoError> {
-            Ok(Some(self.home.clone()))
+        async fn village_by_id(&self, v: VillageId) -> Result<Option<Village>, RepoError> {
+            if Some(v) == self.target.as_ref().map(|t| t.id) {
+                Ok(self.target.clone())
+            } else {
+                Ok(Some(self.home.clone()))
+            }
         }
         async fn stored_resources(
             &self,
@@ -550,8 +556,12 @@ mod tests {
                 Timestamp(0),
             )))
         }
-        async fn garrison(&self, _v: VillageId) -> Result<UnitCounts, RepoError> {
-            Ok(self.garrison.clone())
+        async fn garrison(&self, v: VillageId) -> Result<UnitCounts, RepoError> {
+            if v == self.home.id {
+                Ok(self.garrison.clone())
+            } else {
+                Ok(self.target_garrison.clone())
+            }
         }
         async fn villages_at(&self, _c: &[Coordinate]) -> Result<Vec<VillageMarker>, RepoError> {
             Ok(Vec::new())
@@ -568,11 +578,16 @@ mod tests {
         kind: MovementKind,
         troops: UnitCounts,
         arrive: Timestamp,
+        scout_target: Option<ScoutTarget>,
     }
 
     #[derive(Default)]
     struct FakeCombat {
         sent: Mutex<Option<Sent>>,
+        /// Attacks the combat processor will claim (drained once).
+        due: Mutex<Vec<DueAttack>>,
+        /// The resolved battle the processor handed back (captured for assertions).
+        applied: Mutex<Option<BattleApply>>,
     }
 
     #[async_trait]
@@ -588,7 +603,7 @@ mod tests {
             arrive_at: Timestamp,
             kind: MovementKind,
             troops: &[(UnitId, u32)],
-            _scout_target: Option<eperica_domain::ScoutTarget>,
+            scout_target: Option<ScoutTarget>,
         ) -> Result<(), RepoError> {
             *self.sent.lock().unwrap() = Some(Sent {
                 home,
@@ -596,6 +611,7 @@ mod tests {
                 kind,
                 troops: troops.to_vec(),
                 arrive: arrive_at,
+                scout_target,
             });
             Ok(())
         }
@@ -604,9 +620,10 @@ mod tests {
             _now: Timestamp,
             _limit: i64,
         ) -> Result<Vec<DueAttack>, RepoError> {
-            Ok(Vec::new())
+            Ok(std::mem::take(&mut self.due.lock().unwrap()))
         }
-        async fn apply_battle(&self, _a: BattleApply) -> Result<(), RepoError> {
+        async fn apply_battle(&self, a: BattleApply) -> Result<(), RepoError> {
+            *self.applied.lock().unwrap() = Some(a);
             Ok(())
         }
         async fn reports_for(
@@ -665,15 +682,21 @@ mod tests {
     }
 
     fn roster() -> Vec<UnitSpec> {
+        // u0..u8 are infantry; u9 is a Scout (attack 0, scouting 20) so the combined attack-with-
+        // scouts path can be exercised.
         (0..10)
             .map(|i| UnitSpec {
                 id: UnitId(format!("u{i}")),
                 name: format!("u{i}"),
-                role: UnitRole::Infantry,
-                attack: 10,
+                role: if i == 9 {
+                    UnitRole::Scout
+                } else {
+                    UnitRole::Infantry
+                },
+                attack: if i == 9 { 0 } else { 10 },
                 defense_infantry: 10,
                 defense_cavalry: 10,
-                scouting: 0,
+                scouting: if i == 9 { 20 } else { 0 },
                 speed: 6 + i as u32,
                 carry_capacity: 0,
                 crop_upkeep: 0,
@@ -749,6 +772,125 @@ mod tests {
             home: village(1, 1, Coordinate::new(0, 0)),
             garrison,
             target,
+            target_garrison: Vec::new(),
+        }
+    }
+
+    fn combat_rules() -> CombatRules {
+        use eperica_domain::WallProfile;
+        let wall = || WallProfile {
+            bonus_per_level: vec![0.0, 0.03],
+            ram_durability: 100.0,
+        };
+        CombatRules {
+            loss_exponent: 1.5,
+            luck_range: 0.25,
+            morale_exponent: 0.2,
+            base_defense: 10.0,
+            smithy_bonus_per_level: 0.015,
+            walls: HashMap::from([
+                (Tribe::Romans, wall()),
+                (Tribe::Teutons, wall()),
+                (Tribe::Gauls, wall()),
+            ]),
+        }
+    }
+
+    struct FakeUnits;
+    #[async_trait]
+    impl UnitRepository for FakeUnits {
+        async fn start_unit_order(
+            &self,
+            _v: VillageId,
+            _s: ResourceAmounts,
+            _sf: Timestamp,
+            _n: Timestamp,
+            _o: crate::ports::NewUnitOrder,
+        ) -> Result<(), RepoError> {
+            Ok(())
+        }
+        async fn active_unit_orders(
+            &self,
+            _v: VillageId,
+        ) -> Result<Vec<crate::ports::ActiveUnitOrder>, RepoError> {
+            Ok(Vec::new())
+        }
+        async fn researched_units(&self, _v: VillageId) -> Result<Vec<UnitId>, RepoError> {
+            Ok(Vec::new())
+        }
+        async fn unit_levels(&self, _v: VillageId) -> Result<Vec<(UnitId, u8)>, RepoError> {
+            Ok(Vec::new())
+        }
+        async fn claim_due_unit_orders(
+            &self,
+            _n: Timestamp,
+            _l: i64,
+        ) -> Result<Vec<crate::ports::DueUnitOrder>, RepoError> {
+            Ok(Vec::new())
+        }
+        async fn apply_unit_order(&self, _d: crate::ports::DueUnitOrder) -> Result<(), RepoError> {
+            Ok(())
+        }
+    }
+
+    /// A movements repo whose target stations a configurable counter-espionage / defence group.
+    struct FakeMovements {
+        reinforcements: Vec<crate::ports::StationedGroup>,
+    }
+    #[async_trait]
+    impl MovementRepository for FakeMovements {
+        async fn start_reinforcement(
+            &self,
+            _h: VillageId,
+            _d: VillageId,
+            _o: PlayerId,
+            _og: Coordinate,
+            _ds: Coordinate,
+            _n: Timestamp,
+            _a: Timestamp,
+            _t: &[(UnitId, u32)],
+        ) -> Result<(), RepoError> {
+            Ok(())
+        }
+        async fn start_return(
+            &self,
+            _h: VillageId,
+            _d: VillageId,
+            _o: PlayerId,
+            _og: Coordinate,
+            _ds: Coordinate,
+            _n: Timestamp,
+            _a: Timestamp,
+        ) -> Result<UnitCounts, RepoError> {
+            Ok(Vec::new())
+        }
+        async fn active_movements(
+            &self,
+            _o: PlayerId,
+        ) -> Result<Vec<crate::ports::MovementView>, RepoError> {
+            Ok(Vec::new())
+        }
+        async fn reinforcements_at(
+            &self,
+            _v: VillageId,
+        ) -> Result<Vec<crate::ports::StationedGroup>, RepoError> {
+            Ok(self.reinforcements.clone())
+        }
+        async fn reinforcements_of(
+            &self,
+            _o: PlayerId,
+        ) -> Result<Vec<crate::ports::StationedGroup>, RepoError> {
+            Ok(Vec::new())
+        }
+        async fn claim_due_movements(
+            &self,
+            _n: Timestamp,
+            _l: i64,
+        ) -> Result<Vec<crate::ports::DueMovement>, RepoError> {
+            Ok(Vec::new())
+        }
+        async fn apply_movement(&self, _d: &crate::ports::DueMovement) -> Result<(), RepoError> {
+            Ok(())
         }
     }
 
@@ -774,6 +916,132 @@ mod tests {
             None,
         )
         .await
+    }
+
+    async fn send_target(
+        acc: &FakeAccounts,
+        cb: &FakeCombat,
+        troops: Vec<(UnitId, u32)>,
+        scout_target: Option<ScoutTarget>,
+    ) -> Result<(), CombatError> {
+        order_attack(
+            acc,
+            cb,
+            &NoopStarvation,
+            &economy_rules(),
+            &unit_rules(),
+            &map(),
+            GameSpeed::new(1.0).unwrap(),
+            Timestamp(0),
+            PlayerId(1),
+            Coordinate::new(3, 4),
+            troops,
+            AttackMode::Attack,
+            scout_target,
+        )
+        .await
+    }
+
+    // AC2: an attack carrying scouts records a scout target (defaulting to Defenses); one without
+    // scouts records none.
+    #[tokio::test]
+    async fn combined_send_sets_scout_target() {
+        let target = || Some(village(2, 2, Coordinate::new(3, 4)));
+        // Scouts present, no explicit choice ⇒ defaults to Defenses.
+        let acc = accounts(
+            vec![(UnitId("u0".into()), 5), (UnitId("u9".into()), 5)],
+            target(),
+        );
+        let cb = FakeCombat::default();
+        send_target(
+            &acc,
+            &cb,
+            vec![(UnitId("u0".into()), 2), (UnitId("u9".into()), 3)],
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            cb.sent.lock().unwrap().clone().unwrap().scout_target,
+            Some(ScoutTarget::Defenses)
+        );
+
+        // Scouts present, explicit Resources ⇒ carried through.
+        send_target(
+            &acc,
+            &cb,
+            vec![(UnitId("u9".into()), 1)],
+            Some(ScoutTarget::Resources),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            cb.sent.lock().unwrap().clone().unwrap().scout_target,
+            Some(ScoutTarget::Resources)
+        );
+
+        // No scouts ⇒ no scouting intent even if a target is offered.
+        send_target(
+            &acc,
+            &cb,
+            vec![(UnitId("u0".into()), 1)],
+            Some(ScoutTarget::Resources),
+        )
+        .await
+        .unwrap();
+        assert_eq!(cb.sent.lock().unwrap().clone().unwrap().scout_target, None);
+    }
+
+    // AC7: scouts riding an attack that is annihilated bring **no** intel home, though espionage saw
+    // the target — the espionage survivors die in the main battle, so no scout returns to carry it.
+    #[tokio::test]
+    async fn combined_attack_wiped_returns_no_intel() {
+        let mut acc = accounts(Vec::new(), Some(village(2, 2, Coordinate::new(3, 4))));
+        // A crushing defence wipes the weak attacker; one defending scout provides counter-espionage.
+        acc.target_garrison = vec![(UnitId("u0".into()), 1000), (UnitId("u9".into()), 1)];
+        let cb = FakeCombat::default();
+        *cb.due.lock().unwrap() = vec![DueAttack {
+            id: 1,
+            kind: MovementKind::Attack,
+            owner: PlayerId(1),
+            home_village: VillageId(1),
+            target_village: VillageId(2),
+            origin: Coordinate::new(0, 0),
+            dest: Coordinate::new(3, 4),
+            arrive_at: Timestamp(1_000_000),
+            troops: vec![(UnitId("u0".into()), 1), (UnitId("u9".into()), 3)],
+            scout_target: Some(ScoutTarget::Defenses),
+        }];
+        let mv = FakeMovements {
+            reinforcements: Vec::new(),
+        };
+        process_due_combat(
+            &acc,
+            &mv,
+            &FakeUnits,
+            &cb,
+            &economy_rules(),
+            &unit_rules(),
+            &combat_rules(),
+            &ScoutRules { loss_exponent: 1.5 },
+            &map(),
+            GameSpeed::new(1.0).unwrap(),
+            42,
+            Timestamp(1_000_000),
+            100,
+        )
+        .await
+        .unwrap();
+
+        let applied = cb.applied.lock().unwrap().clone().expect("applied");
+        // The attacker is wiped — no survivors return at all.
+        assert!(applied.survivors.is_empty());
+        // Espionage detected the scouting (a defending scout killed ≥1), but no scout came home, so
+        // the intel is lost even though espionage gathered it.
+        assert!(applied.scouted);
+        let report = applied.scout_report.expect("scout report");
+        assert!(report.intel.is_none());
+        assert!(!report.scouts_lost.is_empty());
     }
 
     // AC1: a raid debits + schedules an attack/raid movement arriving at now + travelTime.
