@@ -1,6 +1,6 @@
 # Feature 010 — Scouting
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 004 (Scout-role units + Academy research), 005 (garrison + reinforcements), 006 (distance), 007 (movement engine), 009 (combat rails: attack/raid kinds, due-event resolution, battle reports, report inbox)
 **Roadmap:** M4 · slice 010 · GDD §6.1, §9.4 — information warfare; reveal a village's hidden resources and defenses, either with a dedicated reconnaissance run or by sending scouts **along with an attack**.
 

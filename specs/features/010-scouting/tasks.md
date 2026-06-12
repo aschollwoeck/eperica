@@ -58,7 +58,7 @@ Ordered for dependency and testability (pure domain first). Each task is a commi
   seedless determinism, intel snapshot, report redaction); `CLAUDE.md` active slice → 010.
 - [x] **T9 — End-user docs.** `docs/manual/` scouting guide (standalone vs scouts-with-attack,
   Resources vs Defenses, stealth); link from index.
-- [ ] **T10 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
+- [x] **T10 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
   **APPROVE**; PR.
 
 ## Done when

@@ -1,6 +1,6 @@
 # Feature 010 — Scouting — Technical Plan
 
-**Status:** Draft
+**Status:** Verified
 **Spec:** ./spec.md
 
 Espionage layered on the 009 combat rails: a pure scout-loss formula (no luck/morale, no RNG), one new
