@@ -2309,6 +2309,8 @@ fn report_from_row(r: &PgRow) -> Result<BattleReportView, RepoError> {
         attacker_losses: counts_from_json(&al),
         defender_forces: counts_from_json(&df),
         defender_losses: counts_from_json(&dl),
+        scouted: r.try_get("scouted").map_err(backend)?,
+        scout_target: parse_scout_target_opt(r.try_get("scout_target").map_err(backend)?)?,
     })
 }
 
@@ -2319,7 +2321,7 @@ const REPORT_SELECT: &str = "SELECT br.id, \
     du.username AS defender_name, dv.x AS dx, dv.y AS dy, \
     br.attacker_player, br.defender_player, br.attacker_won, br.luck, br.morale, \
     br.wall_before, br.wall_after, br.attacker_forces, br.attacker_losses, \
-    br.defender_forces, br.defender_losses \
+    br.defender_forces, br.defender_losses, br.scouted, br.scout_target \
     FROM battle_reports br \
     JOIN users au ON au.id = br.attacker_player \
     JOIN villages av ON av.id = br.attacker_village \
@@ -3688,6 +3690,7 @@ mod tests {
         let econ = crate::economy_rules().expect("economy rules");
         let units = crate::unit_rules().expect("unit rules");
         let combat = crate::combat_rules().expect("combat rules");
+        let scout = crate::scout_rules().expect("scout rules");
         let map = WorldMap::new(
             world.seed as u64,
             config.radius,
@@ -3762,6 +3765,7 @@ mod tests {
             &econ,
             &units,
             &combat,
+            &scout,
             &map,
             GameSpeed::new(1.0).unwrap(),
             world.seed as u64,
@@ -3781,6 +3785,135 @@ mod tests {
         // Survivors are heading home.
         let returning = repo.active_movements(attacker).await.unwrap();
         assert!(returning.iter().any(|m| m.kind == MovementKind::Return));
+    }
+
+    /// 010 AC6/AC7/AC8/AC9: scouts riding an attack scout the village in addition to the battle —
+    /// the espionage step runs first, the (surviving) scouts return with the army carrying intel,
+    /// and the defender's battle report is flagged because their counter-espionage killed a scout.
+    #[tokio::test]
+    async fn process_due_combat_with_scouts() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping combined-scout test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let units = crate::unit_rules().expect("unit rules");
+        let combat = crate::combat_rules().expect("combat rules");
+        let scout = crate::scout_rules().expect("scout rules");
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (attacker, a) = account("csatk").await;
+        let (_defender, d) = account("csdef").await;
+
+        // Attacker: 50 swordsmen + 5 pathfinders. Defender: 2 phalanx + 3 pathfinders (counter).
+        for (v, unit, n) in [
+            (a.id, "swordsman", 50),
+            (a.id, "pathfinder", 5),
+            (d.id, "phalanx", 2),
+            (d.id, "pathfinder", 3),
+        ] {
+            sqlx::query(
+                "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, $2, $3)",
+            )
+            .bind(Uuid::from_u128(v.0))
+            .bind(unit)
+            .bind(n)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let now = Timestamp(3_000_000_000_000);
+        let arrive = Timestamp(now.0 + 100_000);
+        repo.start_attack(
+            a.id,
+            d.id,
+            attacker,
+            a.coordinate,
+            d.coordinate,
+            now,
+            arrive,
+            MovementKind::Attack,
+            &[
+                (UnitId("swordsman".into()), 50),
+                (UnitId("pathfinder".into()), 5),
+            ],
+            Some(ScoutTarget::Defenses),
+        )
+        .await
+        .expect("attack");
+
+        eperica_application::process_due_combat(
+            &repo,
+            &repo,
+            &repo,
+            &repo,
+            &econ,
+            &units,
+            &combat,
+            &scout,
+            &map,
+            GameSpeed::new(1.0).unwrap(),
+            world.seed as u64,
+            arrive,
+            100,
+        )
+        .await
+        .expect("resolve");
+
+        // AC8: the battle report is flagged scouted (the defender's pathfinders killed a scout).
+        let reports = repo.reports_for(attacker, 10).await.unwrap();
+        assert_eq!(reports.len(), 1);
+        assert!(reports[0].attacker_won);
+        assert!(reports[0].scouted);
+        assert_eq!(reports[0].scout_target, Some(ScoutTarget::Defenses));
+
+        // AC7/AC9: a scouter-facing intel report exists with Defenses intel (a scout survived to
+        // return with the winning army).
+        let intel = repo.scout_reports_for(attacker, 10).await.unwrap();
+        assert_eq!(intel.len(), 1);
+        assert!(!intel[0].standalone);
+        assert!(matches!(intel[0].intel, Some(ScoutIntel::Defenses { .. })));
+        // Some scouts died to counter-espionage; some survived to bring it home.
+        assert!(!intel[0].scouts_lost.is_empty());
+        let returning = repo.active_movements(attacker).await.unwrap();
+        assert!(returning.iter().any(|m| m.kind == MovementKind::Return
+            && m.troops.iter().any(|(u, _)| u.as_str() == "pathfinder")));
     }
 
     /// 010 AC1/AC8/AC9/AC10/AC11: a standalone scout debits scouts, claims with its target type,
@@ -3989,6 +4122,7 @@ mod tests {
         let econ = crate::economy_rules().expect("economy rules");
         let units = crate::unit_rules().expect("unit rules");
         let combat = crate::combat_rules().expect("combat rules");
+        let scout = crate::scout_rules().expect("scout rules");
         let map = WorldMap::new(
             world.seed as u64,
             config.radius,
@@ -4068,6 +4202,7 @@ mod tests {
                 &econ,
                 &units,
                 &combat,
+                &scout,
                 &map,
                 GameSpeed::new(1.0).unwrap(),
                 world.seed as u64,

@@ -4,13 +4,15 @@
 
 use crate::ports::{
     AccountRepository, BattleApply, CombatRepository, MovementRepository, NewBattleReport,
-    RepoError, UnitRepository,
+    NewScoutReport, RepoError, UnitRepository,
 };
+use crate::scouting::gather_intel;
 use eperica_domain::{
     AttackMode, BattleInput, BuildingKind, CombatRules, Coordinate, EconomyRules, GameSpeed,
-    MovementKind, PlayerId, Timestamp, Tribe, UnitCounts, UnitId, UnitRules, Village, VillageId,
-    WorldMap, add_defense, apply_losses, attack_power, luck_factor, population, resolve_battle,
-    slowest_speed, travel_time_secs_floored,
+    MovementKind, PlayerId, ScoutRules, ScoutTarget, Timestamp, Tribe, UnitCounts, UnitId,
+    UnitRole, UnitRules, Village, VillageId, WorldMap, add_defense, apply_losses, attack_power,
+    luck_factor, population, resolve_battle, resolve_scouting, scouting_power, slowest_speed,
+    travel_time_secs_floored,
 };
 
 /// Why launching an attack/raid failed (009 AC2).
@@ -72,6 +74,7 @@ pub async fn order_attack<A, C, S>(
     target: Coordinate,
     troops: Vec<(UnitId, u32)>,
     mode: AttackMode,
+    scout_target: Option<ScoutTarget>,
 ) -> Result<(), CombatError>
 where
     A: AccountRepository,
@@ -119,6 +122,15 @@ where
         AttackMode::Attack => MovementKind::Attack,
         AttackMode::Raid => MovementKind::Raid,
     };
+    // Scouts riding along scout the village too (010); pick a target, defaulting to Defenses. With no
+    // scouts in the composition the attack carries no scouting intent.
+    let has_scouts = chosen.iter().any(|(id, _)| {
+        roster
+            .iter()
+            .find(|s| &s.id == id)
+            .is_some_and(|s| s.role == UnitRole::Scout)
+    });
+    let effective_scout_target = has_scouts.then(|| scout_target.unwrap_or(ScoutTarget::Defenses));
 
     combat
         .start_attack(
@@ -131,7 +143,7 @@ where
             arrive,
             kind,
             &chosen,
-            None,
+            effective_scout_target,
         )
         .await
         .map_err(|e| match e {
@@ -182,6 +194,7 @@ pub async fn process_due_combat<A, M, U, C>(
     economy_rules: &EconomyRules,
     unit_rules: &UnitRules,
     combat_rules: &CombatRules,
+    scout_rules: &ScoutRules,
     map: &WorldMap,
     speed: GameSpeed,
     world_seed: u64,
@@ -205,6 +218,7 @@ where
             economy_rules,
             unit_rules,
             combat_rules,
+            scout_rules,
             map,
             speed,
             world_seed,
@@ -230,6 +244,7 @@ async fn resolve_one<A, M, U, C>(
     economy_rules: &EconomyRules,
     unit_rules: &UnitRules,
     combat_rules: &CombatRules,
+    scout_rules: &ScoutRules,
     map: &WorldMap,
     speed: GameSpeed,
     world_seed: u64,
@@ -306,7 +321,60 @@ where
         })
         .filter(|(_, losses)| !losses.is_empty())
         .collect();
-    let (survivors, attacker_losses) = apply_losses(&attack.troops, outcome.attacker_loss_frac);
+    // Espionage sub-step (GDD §9.4 step 1) for scouts riding along — resolved **before** the main
+    // battle's effect on the attacker. Scouts add no combat power (009), so they never alter
+    // `outcome`. A non-scouting attack keeps the plain one-step casualty application.
+    let is_scout = |id: &UnitId| {
+        atk_roster
+            .iter()
+            .any(|s| &s.id == id && s.role == UnitRole::Scout)
+    };
+    let scouting = attack.scout_target.and_then(|target_type| {
+        let scouts: UnitCounts = attack
+            .troops
+            .iter()
+            .filter(|(id, _)| is_scout(id))
+            .cloned()
+            .collect();
+        (!scouts.is_empty()).then_some((target_type, scouts))
+    });
+
+    let (survivors, attacker_losses, scout_info) = if let Some((target_type, scouts)) = &scouting {
+        let non_scouts: UnitCounts = attack
+            .troops
+            .iter()
+            .filter(|(id, _)| !is_scout(id))
+            .cloned()
+            .collect();
+        let attacker_power = scouting_power(scouts, atk_roster);
+        let mut defender_power = scouting_power(&garrison, def_roster);
+        for group in &reinforcements {
+            let group_roster = group.home_tribe.map_or(&[][..], |t| unit_rules.roster(t));
+            defender_power += scouting_power(&group.troops, group_roster);
+        }
+        let espionage = resolve_scouting(attacker_power, defender_power, scout_rules);
+        let (scouts_after, esp_loss) = apply_losses(scouts, espionage.attacker_loss_frac);
+        // Then the main battle's attacker fraction hits the non-scouts and the espionage survivors.
+        let (ns_surv, ns_loss) = apply_losses(&non_scouts, outcome.attacker_loss_frac);
+        let (sc_surv, sc_loss) = apply_losses(&scouts_after, outcome.attacker_loss_frac);
+        let survivors = merge_counts(&[&ns_surv, &sc_surv]);
+        let attacker_losses = merge_counts(&[&ns_loss, &esp_loss, &sc_loss]);
+        let scouts_lost = merge_counts(&[&esp_loss, &sc_loss]);
+        (
+            survivors,
+            attacker_losses,
+            Some((
+                *target_type,
+                scouts.clone(),
+                scouts_lost,
+                sc_surv,
+                espionage.detected,
+            )),
+        )
+    } else {
+        let (survivors, attacker_losses) = apply_losses(&attack.troops, outcome.attacker_loss_frac);
+        (survivors, attacker_losses, None)
+    };
 
     // The survivors travel home (a return movement); empty ⇒ none.
     let return_arrive = match slowest_speed(&survivors, atk_roster) {
@@ -325,6 +393,46 @@ where
     let mut defender_loss_parts = vec![&defender_losses];
     defender_loss_parts.extend(reinf_loss_force);
     let defender_losses_total = merge_counts(&defender_loss_parts);
+
+    // Scouts that rode along: gather intel (only if one survives to return) and a scouter-facing
+    // report; the defender's battle report flags scouting only when detected (AC8).
+    let (scouted, scout_target, scout_report) = match scout_info {
+        Some((target_type, scouts_sent, scouts_lost, scout_survivors, detected)) => {
+            let intel = if scout_survivors.is_empty() {
+                None
+            } else {
+                Some(
+                    gather_intel(
+                        accounts,
+                        &target,
+                        &garrison,
+                        &reinforcements,
+                        target_type,
+                        economy_rules,
+                        unit_rules,
+                        speed,
+                        attack.arrive_at,
+                    )
+                    .await?,
+                )
+            };
+            let report = NewScoutReport {
+                scouter_player: attack.owner,
+                scouter_village: home.id,
+                target_player: target.owner,
+                target_village: target.id,
+                target_coord: attack.dest,
+                target_type,
+                scouts_sent,
+                scouts_lost,
+                detected,
+                standalone: false,
+                intel,
+            };
+            (detected, Some(target_type), Some(report))
+        }
+        None => (false, None, None),
+    };
 
     combat
         .apply_battle(BattleApply {
@@ -355,9 +463,9 @@ where
                 defender_forces,
                 defender_losses: defender_losses_total,
             },
-            scouted: false,
-            scout_target: None,
-            scout_report: None,
+            scouted,
+            scout_target,
+            scout_report,
         })
         .await?;
     Ok(Some(target.id))
@@ -663,6 +771,7 @@ mod tests {
             Coordinate::new(3, 4), // distance 5 from home
             troops,
             mode,
+            None,
         )
         .await
     }

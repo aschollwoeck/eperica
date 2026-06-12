@@ -1325,6 +1325,7 @@ pub async fn rally_send(
                 target,
                 troops,
                 mode,
+                None,
             )
             .await
             {

@@ -513,6 +513,10 @@ pub struct BattleReportView {
     pub attacker_losses: UnitCounts,
     pub defender_forces: UnitCounts,
     pub defender_losses: UnitCounts,
+    /// Whether scouts rode along and were **detected** (010 AC8) — the defender's report flags it.
+    pub scouted: bool,
+    /// What those scouts spied on, when `scouted`.
+    pub scout_target: Option<ScoutTarget>,
 }
 
 /// Persistence for combat (009): launch attacks, claim due battles, apply resolutions, read reports.

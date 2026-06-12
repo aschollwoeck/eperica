@@ -8,7 +8,8 @@ use eperica_application::{process_due_combat, process_due_movements, process_due
 use eperica_domain::{GameSpeed, Timestamp, WorldConfig, WorldMap};
 use eperica_infrastructure::{
     Argon2Hasher, PgAccountRepository, build_rules, combat_rules, create_pool, economy_rules,
-    ensure_world, map_rules, merchant_rules, now, run_migrations, starting_village, unit_rules,
+    ensure_world, map_rules, merchant_rules, now, run_migrations, scout_rules, starting_village,
+    unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -1290,6 +1291,7 @@ async fn combat_raid_and_reports_flow() {
     let econ = economy_rules().unwrap();
     let units = unit_rules().unwrap();
     let combat = combat_rules().unwrap();
+    let scout = scout_rules().unwrap();
     let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
     let world = ensure_world(&pool, &config).await.unwrap();
     let map = WorldMap::new(world.seed as u64, config.radius, map_rules().unwrap());
@@ -1302,6 +1304,7 @@ async fn combat_raid_and_reports_flow() {
         &econ,
         &units,
         &combat,
+        &scout,
         &map,
         GameSpeed::new(1.0).unwrap(),
         world.seed as u64,
