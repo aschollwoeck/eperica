@@ -9,10 +9,10 @@ use crate::ports::{
 use crate::scouting::gather_intel;
 use eperica_domain::{
     AttackMode, BattleInput, BuildingKind, CombatRules, Coordinate, EconomyRules, GameSpeed,
-    MovementKind, PlayerId, ScoutRules, ScoutTarget, Timestamp, Tribe, UnitCounts, UnitId,
-    UnitRole, UnitRules, Village, VillageId, WorldMap, add_defense, apply_losses, attack_power,
-    luck_factor, population, resolve_battle, resolve_scouting, scouting_power, slowest_speed,
-    travel_time_secs_floored,
+    MovementKind, PlayerId, ResourceAmounts, ScoutRules, ScoutTarget, Timestamp, Tribe, UnitCounts,
+    UnitId, UnitRole, UnitRules, Village, VillageId, WorldMap, add_defense, apply_losses,
+    attack_power, luck_factor, population, resolve_battle, resolve_scouting, scouting_power,
+    slowest_speed, travel_time_secs_floored,
 };
 
 /// Why launching an attack/raid failed (009 AC2).
@@ -144,6 +144,7 @@ where
             kind,
             &chosen,
             effective_scout_target,
+            None,
         )
         .await
         .map_err(|e| match e {
@@ -462,10 +463,15 @@ where
                 attacker_losses,
                 defender_forces,
                 defender_losses: defender_losses_total,
+                loot: ResourceAmounts::default(),
+                razed: None,
             },
             scouted,
             scout_target,
             scout_report,
+            loot: ResourceAmounts::default(),
+            target_debit: None,
+            razed: None,
         })
         .await?;
     Ok(Some(target.id))
@@ -579,6 +585,7 @@ mod tests {
         troops: UnitCounts,
         arrive: Timestamp,
         scout_target: Option<ScoutTarget>,
+        catapult_target: Option<BuildingKind>,
     }
 
     #[derive(Default)]
@@ -604,6 +611,7 @@ mod tests {
             kind: MovementKind,
             troops: &[(UnitId, u32)],
             scout_target: Option<ScoutTarget>,
+            catapult_target: Option<BuildingKind>,
         ) -> Result<(), RepoError> {
             *self.sent.lock().unwrap() = Some(Sent {
                 home,
@@ -612,6 +620,7 @@ mod tests {
                 troops: troops.to_vec(),
                 arrive: arrive_at,
                 scout_target,
+                catapult_target,
             });
             Ok(())
         }
@@ -892,7 +901,11 @@ mod tests {
         ) -> Result<Vec<crate::ports::DueMovement>, RepoError> {
             Ok(Vec::new())
         }
-        async fn apply_movement(&self, _d: &crate::ports::DueMovement) -> Result<(), RepoError> {
+        async fn apply_movement(
+            &self,
+            _d: &crate::ports::DueMovement,
+            _credit: Option<crate::ports::ResourceWrite>,
+        ) -> Result<(), RepoError> {
             Ok(())
         }
     }
@@ -968,6 +981,11 @@ mod tests {
             cb.sent.lock().unwrap().clone().unwrap().scout_target,
             Some(ScoutTarget::Defenses)
         );
+        // No catapults in these sends ⇒ no catapult target carried (011; T4 wires the real value).
+        assert_eq!(
+            cb.sent.lock().unwrap().clone().unwrap().catapult_target,
+            None
+        );
 
         // Scouts present, explicit Resources ⇒ carried through.
         send_target(
@@ -1014,6 +1032,7 @@ mod tests {
             arrive_at: Timestamp(1_000_000),
             troops: vec![(UnitId("u0".into()), 1), (UnitId("u9".into()), 3)],
             scout_target: Some(ScoutTarget::Defenses),
+            catapult_target: None,
         }];
         let mv = FakeMovements {
             reinforcements: Vec::new(),

@@ -967,7 +967,17 @@ async fn rally_send_station_and_return_flow() {
 
     // The System delivers the arrival (claim → apply), stationing the troops at the target (AC4).
     let future = Timestamp(now().0 + 10_000_000_000);
-    process_due_movements(&repo, future, 100).await.unwrap();
+    process_due_movements(
+        &repo,
+        &repo,
+        &economy_rules().unwrap(),
+        &unit_rules().unwrap(),
+        GameSpeed::new(1.0).unwrap(),
+        future,
+        100,
+    )
+    .await
+    .unwrap();
 
     // AC7: the target now shows the reinforcement, attributed to the sender.
     let host_view = ct
@@ -1007,7 +1017,17 @@ async fn rally_send_station_and_return_flow() {
         .unwrap();
     assert_eq!(res.status().as_u16(), 303);
     let future = Timestamp(now().0 + 20_000_000_000);
-    process_due_movements(&repo, future, 100).await.unwrap();
+    process_due_movements(
+        &repo,
+        &repo,
+        &economy_rules().unwrap(),
+        &unit_rules().unwrap(),
+        GameSpeed::new(1.0).unwrap(),
+        future,
+        100,
+    )
+    .await
+    .unwrap();
 
     // The garrison is whole again at home, and the target no longer hosts the reinforcement.
     let home = cs

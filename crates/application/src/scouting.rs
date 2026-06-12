@@ -587,7 +587,11 @@ mod tests {
         ) -> Result<Vec<crate::ports::DueMovement>, RepoError> {
             Ok(Vec::new())
         }
-        async fn apply_movement(&self, _d: &crate::ports::DueMovement) -> Result<(), RepoError> {
+        async fn apply_movement(
+            &self,
+            _d: &crate::ports::DueMovement,
+            _credit: Option<crate::ports::ResourceWrite>,
+        ) -> Result<(), RepoError> {
             Ok(())
         }
     }

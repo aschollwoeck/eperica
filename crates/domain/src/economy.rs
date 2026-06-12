@@ -10,7 +10,7 @@ use crate::world::GameSpeed;
 use std::collections::HashMap;
 
 /// Stored resource amounts (integer units).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ResourceAmounts {
     pub wood: i64,
     pub clay: i64,

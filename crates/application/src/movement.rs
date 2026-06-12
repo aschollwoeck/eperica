@@ -2,10 +2,13 @@
 //! arrivals. The travel timing is the pure domain (`travel_time_secs`); this layer validates,
 //! debits/stations through the repository, and re-syncs the home's starvation check.
 
-use crate::ports::{AccountRepository, MovementRepository, RepoError, StarvationRepository};
+use crate::ports::{
+    AccountRepository, MovementRepository, RepoError, ResourceWrite, StarvationRepository,
+};
 use eperica_domain::{
     Coordinate, EconomyRules, GameSpeed, MovementKind, PlayerId, Timestamp, UnitId, UnitRules,
-    VillageId, WorldMap, slowest_speed, travel_time_secs_floored,
+    VillageId, WorldMap, compute_economy, deposit_capped, garrison_upkeep, slowest_speed,
+    travel_time_secs_floored,
 };
 
 /// Why sending or returning troops failed (007 AC2).
@@ -209,20 +212,36 @@ where
 ///
 /// # Errors
 /// Propagates [`RepoError`] from the repository.
-pub async fn process_due_movements<M>(
+#[allow(clippy::too_many_arguments)]
+pub async fn process_due_movements<A, M>(
+    accounts: &A,
     movements: &M,
+    economy_rules: &EconomyRules,
+    unit_rules: &UnitRules,
+    speed: GameSpeed,
     now: Timestamp,
     limit: i64,
 ) -> Result<Vec<VillageId>, RepoError>
 where
+    A: AccountRepository,
     M: MovementRepository,
 {
     let due = movements.claim_due_movements(now, limit).await?;
     let mut returned_homes = Vec::new();
     for movement in due {
+        // A return carrying loot (011) credits the home's resources, capped at storage — settle the
+        // home forward then `deposit_capped`, written guarded in the same tx as the garrison rejoin.
+        let credit =
+            match loot_credit(accounts, economy_rules, unit_rules, speed, now, &movement).await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to compute loot credit");
+                    continue;
+                }
+            };
         // Log-and-continue: a failed apply must not strand the rest; the movement is recovered by
         // the startup orphan requeue and re-applied (apply is exactly-once).
-        match movements.apply_movement(&movement).await {
+        match movements.apply_movement(&movement, credit).await {
             Ok(()) if movement.kind == MovementKind::Return => {
                 returned_homes.push(movement.deliver_village);
             }
@@ -231,6 +250,54 @@ where
         }
     }
     Ok(returned_homes)
+}
+
+/// The snapshot-guarded loot credit for a `return` carrying loot (011): settle the home's resources
+/// to `now` and `deposit_capped` the loot (overflow lost). `None` for non-returns or loot-less returns.
+async fn loot_credit<A>(
+    accounts: &A,
+    economy_rules: &EconomyRules,
+    unit_rules: &UnitRules,
+    speed: GameSpeed,
+    now: Timestamp,
+    movement: &crate::ports::DueMovement,
+) -> Result<Option<ResourceWrite>, RepoError>
+where
+    A: AccountRepository,
+{
+    let loot = movement.loot;
+    if movement.kind != MovementKind::Return
+        || (loot.wood == 0 && loot.clay == 0 && loot.iron == 0 && loot.crop == 0)
+    {
+        return Ok(None);
+    }
+    let Some(home) = accounts.village_by_id(movement.deliver_village).await? else {
+        return Ok(None);
+    };
+    let Some((stored, snapshot)) = accounts.stored_resources(home.id).await? else {
+        return Ok(None);
+    };
+    let garrison = accounts.garrison(home.id).await?;
+    let upkeep = home
+        .tribe
+        .map_or(0, |t| garrison_upkeep(&garrison, unit_rules.roster(t)));
+    // Never let the clock regress below the snapshot (mirrors the 008 deliver).
+    let clock = Timestamp(now.0.max(snapshot.0));
+    let econ = compute_economy(
+        stored,
+        (clock.0 - snapshot.0) / 1000,
+        &home.fields,
+        &home.buildings,
+        upkeep,
+        economy_rules,
+        speed,
+    );
+    let after = deposit_capped(econ.amounts, loot, econ.capacities);
+    Ok(Some(ResourceWrite {
+        after,
+        settled_from: snapshot,
+        clock,
+    }))
 }
 
 #[cfg(test)]
@@ -458,7 +525,11 @@ mod tests {
         ) -> Result<Vec<DueMovement>, RepoError> {
             Ok(Vec::new())
         }
-        async fn apply_movement(&self, _due: &DueMovement) -> Result<(), RepoError> {
+        async fn apply_movement(
+            &self,
+            _due: &DueMovement,
+            _credit: Option<crate::ports::ResourceWrite>,
+        ) -> Result<(), RepoError> {
             Ok(())
         }
     }
