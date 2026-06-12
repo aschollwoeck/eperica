@@ -417,6 +417,7 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         BuildingKind::Granary,
         BuildingKind::Marketplace,
         BuildingKind::Wall,
+        BuildingKind::Cranny,
         BuildingKind::Barracks,
         BuildingKind::Academy,
         BuildingKind::Smithy,
@@ -1722,6 +1723,17 @@ pub async fn report_detail(
         };
         format!("The enemy also scouted your {what}.")
     });
+    // Loot + building damage (011): shown when present.
+    let l = report.loot;
+    let loot = (l.wood != 0 || l.clay != 0 || l.iron != 0 || l.crop != 0).then(|| {
+        format!(
+            "{} wood, {} clay, {} iron, {} crop",
+            l.wood, l.clay, l.iron, l.crop
+        )
+    });
+    let razed = report
+        .razed
+        .map(|d| format!("{} {} → {}", building_label(d.kind), d.before, d.after));
     page(&ReportTemplate {
         kind: if report.kind == MovementKind::Raid {
             "Raid"
@@ -1739,5 +1751,7 @@ pub async fn report_detail(
         defender_name: report.defender_name.clone(),
         defender_rows: force_rows(unit_rules, &report.defender_forces, &report.defender_losses),
         scouted_note,
+        loot,
+        razed,
     })
 }

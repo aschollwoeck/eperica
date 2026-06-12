@@ -46,7 +46,7 @@ Ordered for dependency and testability (pure domain first). Each task is a commi
 
 ## Web
 
-- [ ] **T5 — Catapult target + loot/damage UI + Cranny.** Rally Point send gains a **catapult target**
+- [x] **T5 — Catapult target + loot/damage UI + Cranny.** Rally Point send gains a **catapult target**
   select (shown when catapults are in the composition; "(random)" default) → `order_attack`. Battle
   reports show **Loot** (per resource) + **Building damaged** (before → after). **Cranny** appears in
   the build menu (from balance). Integration tests (**AC11**).

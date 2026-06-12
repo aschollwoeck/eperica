@@ -9,6 +9,12 @@
   {% match scouted_note %}{% when Some with (note) %}
   <p class="muted">⚠ {{ note }}</p>
   {% when None %}{% endmatch %}
+  {% match loot %}{% when Some with (l) %}
+  <p><strong>Loot:</strong> {{ l }}</p>
+  {% when None %}{% endmatch %}
+  {% match razed %}{% when Some with (r) %}
+  <p><strong>Building razed:</strong> {{ r }}</p>
+  {% when None %}{% endmatch %}
 </section>
 
 <section class="panel">

@@ -1526,3 +1526,153 @@ async fn scout_mission_and_intel_report_flow() {
         .unwrap();
     assert!(!t_reports.contains("Scouted"));
 }
+
+/// 011 AC11: a raid with catapults aimed at a building loots resources and razes the building; the
+/// battle report shows both. The Cranny appears in the build menu.
+#[tokio::test]
+async fn siege_loot_and_cranny_flow() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    let _ = dotenvy::dotenv();
+    let url = std::env::var("DATABASE_URL").unwrap();
+    let pool = create_pool(&url).await.unwrap();
+    let repo = movement_repo(&pool).await;
+
+    let attacker = unique("slweb_a");
+    let defender = unique("slweb_d");
+    let ca = client();
+    let cd = client();
+    for (c, u) in [(&ca, &attacker), (&cd, &defender)] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", "gauls"),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+
+    let atk_village: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&attacker)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (def_village, dx, dy): (uuid::Uuid, i32, i32) = sqlx::query_as(
+        "SELECT v.id, v.x, v.y FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&defender)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Overwhelming attacker with catapults; a token defence + a Warehouse and stored resources.
+    for (v, unit, n) in [
+        (atk_village, "swordsman", 80),
+        (atk_village, "trebuchet", 4),
+        (def_village, "phalanx", 2),
+    ] {
+        sqlx::query("INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, $2, $3)")
+            .bind(v)
+            .bind(unit)
+            .bind(n)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         VALUES ($1, 20, 'warehouse', 3)",
+    )
+    .bind(def_village)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE village_resources SET wood=900, clay=900, iron=900, crop=900 WHERE village_id=$1",
+    )
+    .bind(def_village)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // AC11: raid with catapults aimed at the Warehouse.
+    let res = ca
+        .post(format!("{base}/village/rally/send"))
+        .form(&[
+            ("mode", "raid"),
+            ("catapult_target", "warehouse"),
+            ("x", dx.to_string().as_str()),
+            ("y", dy.to_string().as_str()),
+            ("count_swordsman", "60"),
+            ("count_trebuchet", "4"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+
+    // The System resolves the battle.
+    let econ = economy_rules().unwrap();
+    let units = unit_rules().unwrap();
+    let combat = combat_rules().unwrap();
+    let scout = scout_rules().unwrap();
+    let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+    let world = ensure_world(&pool, &config).await.unwrap();
+    let map = WorldMap::new(world.seed as u64, config.radius, map_rules().unwrap());
+    let future = Timestamp(now().0 + 10_000_000_000);
+    process_due_combat(
+        &repo,
+        &repo,
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        &combat,
+        &scout,
+        &map,
+        GameSpeed::new(1.0).unwrap(),
+        world.seed as u64,
+        future,
+        100,
+    )
+    .await
+    .unwrap();
+
+    // AC11: the attacker's report detail shows the loot and the razed Warehouse.
+    let report_id: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM battle_reports WHERE attacker_village=$1")
+            .bind(atk_village)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let detail = ca
+        .get(format!("{base}/reports/{}", report_id.as_u128()))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(detail.contains("Loot:"), "report should show loot");
+    assert!(
+        detail.contains("Building razed:") && detail.contains("Warehouse"),
+        "report should show the razed Warehouse"
+    );
+
+    // AC10/AC11: the Cranny is offered in the build menu.
+    let village = ca
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(village.contains("Cranny"), "Cranny should be buildable");
+}

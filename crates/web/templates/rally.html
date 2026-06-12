@@ -36,6 +36,24 @@
       <span class="muted">Used only when scouting, or when an attack includes scouts. A
         <em>scout</em> mission sends scouts only — non-scout counts are ignored.</span>
     </div>
+    <div class="field">
+      <label>Catapult target</label>
+      <select name="catapult_target">
+        <option value="">(random building)</option>
+        <option value="warehouse">Warehouse</option>
+        <option value="granary">Granary</option>
+        <option value="marketplace">Marketplace</option>
+        <option value="cranny">Cranny</option>
+        <option value="barracks">Barracks</option>
+        <option value="stable">Stable</option>
+        <option value="workshop">Workshop</option>
+        <option value="academy">Academy</option>
+        <option value="smithy">Smithy</option>
+        <option value="main_building">Main Building</option>
+      </select>
+      <span class="muted">Which building your catapults aim at (when an attack includes catapults).
+        The Wall and Rally Point can't be hit.</span>
+    </div>
     <table class="table">
       <thead><tr><th>Unit</th><th class="num">In garrison</th><th>Send</th></tr></thead>
       <tbody>

@@ -341,6 +341,10 @@ pub struct ReportTemplate {
     pub defender_rows: Vec<ForceRow>,
     /// For the defender of a combined attack: "The enemy also scouted your defenses." (010 AC8).
     pub scouted_note: Option<String>,
+    /// Resources looted, formatted (011); `None` when nothing was taken.
+    pub loot: Option<String>,
+    /// The razed building, e.g. "Warehouse 3 → 1" (011); `None` when none.
+    pub razed: Option<String>,
 }
 
 /// One revealed resource line in a scout report's intel (010 AC9).
