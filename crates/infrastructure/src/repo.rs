@@ -4,13 +4,13 @@ use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
     BuildRepository, CombatRepository, CultureRepository, DueAttack, DueBuild, DueMovement,
-    DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueTrade, DueTraining,
+    DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining,
     DueUnitOrder, MovementRepository, MovementView, NewBuildOrder, NewOasisReport, NewScoutReport,
     NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
     OasisReinforceOutcome, OasisRepository, OasisState, RazedBuilding, RepoError, ResourceWrite,
-    ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, StarvationRepository, StationedGroup,
-    TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
-    VillageMarker,
+    ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply, SettleOutcome,
+    SettleRepository, StarvationRepository, StationedGroup, TradeRepository, TradeView,
+    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 use eperica_domain::{
     BuildTarget, BuildingKind, BuildingSlot, Coordinate, MovementKind, OasisBonus, OasisRules,
@@ -1452,6 +1452,7 @@ fn movement_kind_str(kind: MovementKind) -> &'static str {
         MovementKind::Scout => "scout",
         MovementKind::OasisAttack => "oasis_attack",
         MovementKind::OasisReinforce => "oasis_reinforce",
+        MovementKind::Settle => "settle",
     }
 }
 
@@ -1464,6 +1465,7 @@ fn parse_movement_kind(s: &str) -> Result<MovementKind, RepoError> {
         "scout" => Ok(MovementKind::Scout),
         "oasis_attack" => Ok(MovementKind::OasisAttack),
         "oasis_reinforce" => Ok(MovementKind::OasisReinforce),
+        "settle" => Ok(MovementKind::Settle),
         other => Err(RepoError::Backend(format!(
             "unknown movement kind: {other}"
         ))),
@@ -1842,9 +1844,10 @@ impl MovementRepository for PgAccountRepository {
                 | MovementKind::Raid
                 | MovementKind::Scout
                 | MovementKind::OasisAttack
-                | MovementKind::OasisReinforce => {
+                | MovementKind::OasisReinforce
+                | MovementKind::Settle => {
                     return Err(RepoError::Backend(
-                        "combat/scout/oasis movement routed to apply_movement".into(),
+                        "combat/scout/oasis/settle movement routed to apply_movement".into(),
                     ));
                 }
             }
@@ -3522,6 +3525,206 @@ impl CultureRepository for PgAccountRepository {
                 Ok(u8::try_from(level).unwrap_or(0))
             })
             .collect()
+    }
+}
+
+// ---------------------------------------------------------------- settling (013)
+
+#[async_trait]
+impl SettleRepository for PgAccountRepository {
+    #[allow(clippy::too_many_arguments)]
+    async fn start_settle(
+        &self,
+        home: VillageId,
+        owner: PlayerId,
+        origin: Coordinate,
+        target: Coordinate,
+        now: Timestamp,
+        arrive_at: Timestamp,
+        troops: &[(UnitId, u32)],
+    ) -> Result<(), RepoError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        guarded_debit(&mut tx, Uuid::from_u128(home.0), troops).await?;
+        insert_oasis_movement(
+            &mut tx,
+            Uuid::new_v4(),
+            owner,
+            MovementKind::Settle,
+            home,
+            origin,
+            target,
+            now,
+            arrive_at,
+            troops,
+        )
+        .await?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn claim_due_settles(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueSettle>, RepoError> {
+        let rows = sqlx::query(
+            "UPDATE troop_movements SET status = 'processing' WHERE id IN ( \
+                 SELECT id FROM troop_movements \
+                 WHERE status = 'in_transit' AND kind = 'settle' \
+                   AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
+                 ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
+             ) RETURNING id, owner_id, home_village, origin_x, origin_y, dest_x, dest_y, \
+                 (EXTRACT(EPOCH FROM arrive_at) * 1000)::bigint AS arrive_ms",
+        )
+        .bind(now.0 as f64)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let ids: Vec<Uuid> = rows
+            .iter()
+            .map(|r| r.try_get("id").map_err(backend))
+            .collect::<Result<_, RepoError>>()?;
+        let mut troops = movement_troops_batch(&self.pool, &ids).await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for (r, id) in rows.iter().zip(&ids) {
+            let owner: Uuid = r.try_get("owner_id").map_err(backend)?;
+            let home: Uuid = r.try_get("home_village").map_err(backend)?;
+            let arrive_ms: i64 = r.try_get("arrive_ms").map_err(backend)?;
+            out.push(DueSettle {
+                id: id.as_u128(),
+                owner: PlayerId(owner.as_u128()),
+                home_village: VillageId(home.as_u128()),
+                origin: Coordinate::new(
+                    r.try_get("origin_x").map_err(backend)?,
+                    r.try_get("origin_y").map_err(backend)?,
+                ),
+                target: Coordinate::new(
+                    r.try_get("dest_x").map_err(backend)?,
+                    r.try_get("dest_y").map_err(backend)?,
+                ),
+                arrive_at: Timestamp(arrive_ms),
+                troops: troops.remove(id).unwrap_or_default(),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn apply_settle(
+        &self,
+        apply: SettleApply,
+        template: &StartingVillage,
+    ) -> Result<(), RepoError> {
+        let world = Uuid::from_u128(self.world_id.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        match apply.outcome {
+            SettleOutcome::Found { culture_value } => {
+                // The new village's fields come from the seeded tile (the application validated it is a
+                // free valley); a concurrent founding on the same tile loses the unique insert.
+                let Some(TileKind::Valley(distribution)) = self.map.tile_at(apply.target) else {
+                    return Err(RepoError::Backend("settle target is not a valley".into()));
+                };
+                let vid = Uuid::new_v4();
+                let inserted = sqlx::query(
+                    "INSERT INTO villages (id, world_id, owner_id, x, y, tribe) \
+                     VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (world_id, x, y) DO NOTHING",
+                )
+                .bind(vid)
+                .bind(world)
+                .bind(Uuid::from_u128(apply.owner.0))
+                .bind(apply.target.x)
+                .bind(apply.target.y)
+                .bind(apply.tribe.slug())
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+                if inserted.rows_affected() == 0 {
+                    // The tile was taken in flight — bounce on a later tick after re-validation.
+                    return Err(RepoError::Conflict);
+                }
+                for (slot, f) in distribution.fields().iter().enumerate() {
+                    sqlx::query(
+                        "INSERT INTO village_fields (village_id, slot, resource_type, level) \
+                         VALUES ($1, $2, $3, $4)",
+                    )
+                    .bind(vid)
+                    .bind(slot as i16)
+                    .bind(resource_str(f.kind))
+                    .bind(i16::from(f.level))
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                }
+                for (slot, b) in template.buildings().iter().enumerate() {
+                    sqlx::query(
+                        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+                         VALUES ($1, $2, $3, $4)",
+                    )
+                    .bind(vid)
+                    .bind(slot as i16)
+                    .bind(building_str(b.kind))
+                    .bind(i16::from(b.level))
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                }
+                sqlx::query(
+                    "INSERT INTO village_resources (village_id, wood, clay, iron, crop, updated_at) \
+                     VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0))",
+                )
+                .bind(vid)
+                .bind(self.starting_amounts.wood)
+                .bind(self.starting_amounts.clay)
+                .bind(self.starting_amounts.iron)
+                .bind(self.starting_amounts.crop)
+                .bind(apply.battle_at.0 as f64)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+
+                // Re-anchor the player's culture at the founding instant: the new village joins the
+                // (live) rate from here, so the prior period is credited at the old rate (013 AC1/P2).
+                sqlx::query(
+                    "INSERT INTO player_culture (player_id, value, updated_at) \
+                     VALUES ($1, $2, to_timestamp($3::double precision / 1000.0)) \
+                     ON CONFLICT (player_id) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at",
+                )
+                .bind(Uuid::from_u128(apply.owner.0))
+                .bind(culture_value)
+                .bind(apply.battle_at.0 as f64)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+            }
+            SettleOutcome::Bounce { return_arrive } => {
+                // The tile was taken or the slot lost — send the settlers home (a `return`).
+                insert_movement(
+                    &mut tx,
+                    Uuid::new_v4(),
+                    apply.owner,
+                    MovementKind::Return,
+                    apply.home_village,
+                    apply.home_village,
+                    apply.target,
+                    apply.home_coord,
+                    apply.battle_at,
+                    return_arrive,
+                    &apply.troops,
+                )
+                .await?;
+            }
+        }
+
+        sqlx::query("UPDATE troop_movements SET status = 'done' WHERE id = $1")
+            .bind(Uuid::from_u128(apply.movement_id))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
     }
 }
 
@@ -7936,6 +8139,191 @@ mod tests {
             after_2h,
             base_rate + th_rate,
             "first hour at base, second hour with the Town Hall"
+        );
+    }
+
+    // 013 AC4/AC6/AC7/AC8/AC12: a settle founds a new, independent village on a free valley with a free
+    // slot; a settle whose target is taken in flight bounces the settlers home.
+    #[tokio::test]
+    async fn settle_founds_a_village_then_bounces_when_taken() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping settle test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let units = crate::unit_rules().expect("unit rules");
+        let crules = crate::culture_rules().expect("culture rules");
+        let template = crate::starting_village().unwrap();
+        let speed = GameSpeed::new(1.0).unwrap();
+
+        let uname = format!("settle_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &template,
+            )
+            .await
+            .expect("create account");
+        let v1 = repo.villages_of(user.id).await.unwrap()[0].clone();
+        let world_uuid = Uuid::from_u128(world.id.0);
+
+        // A Residence (slot capacity) + ample culture points so the player may found a 2nd village.
+        sqlx::query("INSERT INTO village_buildings (village_id, slot, building_type, level) VALUES ($1, 9, 'residence', 5) ON CONFLICT (village_id, slot) DO UPDATE SET building_type = EXCLUDED.building_type, level = EXCLUDED.level")
+            .bind(Uuid::from_u128(v1.id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let now = Timestamp(3_000_000_000_000);
+        repo.settle_culture(user.id, 100_000, now).await.unwrap();
+        // Settlers in the home garrison (the settler group + spares for a second attempt).
+        let settler = crules.settler_id.clone();
+        sqlx::query("INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, $2, $3)")
+            .bind(Uuid::from_u128(v1.id.0))
+            .bind(&settler)
+            .bind(i32::try_from(crules.settlers_per_village * 2).unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Two free valleys (the dev DB is saturated, so check no village sits there).
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let occupied: std::collections::HashSet<(i32, i32)> =
+            sqlx::query_as::<_, (i32, i32)>("SELECT x, y FROM villages WHERE world_id = $1")
+                .bind(world_uuid)
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+                .into_iter()
+                .collect();
+        let valleys: Vec<Coordinate> = coordinates_within(config.radius)
+            .filter(|c| {
+                matches!(map.tile_at(*c), Some(TileKind::Valley(_)))
+                    && *c != v1.coordinate
+                    && !occupied.contains(&(c.x, c.y))
+            })
+            .take(2)
+            .collect();
+        assert_eq!(valleys.len(), 2, "need two free valleys");
+        let (target, taken_target) = (valleys[0], valleys[1]);
+
+        // AC6: order a settle at a free valley and resolve it — a new village is founded.
+        eperica_application::order_settle(
+            &repo, &repo, &repo, &repo, &econ, &units, &crules, &map, speed, now, user.id, target,
+        )
+        .await
+        .expect("order settle");
+        // The settler group left the garrison.
+        let after_dispatch: i32 = sqlx::query_scalar(
+            "SELECT count FROM village_units WHERE village_id = $1 AND unit_id = $2",
+        )
+        .bind(Uuid::from_u128(v1.id.0))
+        .bind(&settler)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            after_dispatch,
+            i32::try_from(crules.settlers_per_village).unwrap()
+        );
+
+        let arrive = Timestamp(now.0 + 100_000_000);
+        eperica_application::process_due_settles(
+            &repo, &repo, &repo, &crules, &units, &template, &map, speed, arrive, 100,
+        )
+        .await
+        .expect("process settles");
+
+        // AC6/AC8: the player now has a 2nd, independent village at the target with its own resources.
+        let villages = repo.villages_of(user.id).await.unwrap();
+        assert_eq!(villages.len(), 2, "a new village was founded");
+        let founded = villages
+            .iter()
+            .find(|v| v.coordinate == target)
+            .expect("founded village at the target");
+        assert!(
+            !founded.fields.is_empty(),
+            "the new village has its own fields"
+        );
+        assert!(
+            repo.stored_resources(founded.id).await.unwrap().is_some(),
+            "the new village has its own resources"
+        );
+
+        // AC7: a settle whose target is taken in flight bounces the settlers home.
+        eperica_application::order_settle(
+            &repo,
+            &repo,
+            &repo,
+            &repo,
+            &econ,
+            &units,
+            &crules,
+            &map,
+            speed,
+            now,
+            user.id,
+            taken_target,
+        )
+        .await
+        .expect("order second settle");
+        // Someone else founds on that tile before the settlers arrive.
+        sqlx::query("INSERT INTO villages (id, world_id, owner_id, x, y, tribe) VALUES ($1, $2, $3, $4, $5, 'gauls')")
+            .bind(Uuid::new_v4())
+            .bind(world_uuid)
+            .bind(Uuid::from_u128(user.id.0))
+            .bind(taken_target.x)
+            .bind(taken_target.y)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let villages_before = repo.villages_of(user.id).await.unwrap().len();
+        eperica_application::process_due_settles(
+            &repo, &repo, &repo, &crules, &units, &template, &map, speed, arrive, 100,
+        )
+        .await
+        .expect("process second settle");
+        // No founding beyond the squatter; a survivor return is in flight carrying the settlers.
+        assert_eq!(
+            repo.villages_of(user.id).await.unwrap().len(),
+            villages_before
+        );
+        let returns: Vec<_> = repo
+            .active_movements(user.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|m| m.kind == MovementKind::Return)
+            .collect();
+        assert!(
+            returns.iter().any(|m| m
+                .troops
+                .iter()
+                .any(|(u, n)| u.0 == settler && *n == crules.settlers_per_village)),
+            "the settlers bounced home"
         );
     }
 }

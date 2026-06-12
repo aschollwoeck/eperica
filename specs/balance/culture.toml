@@ -14,5 +14,6 @@ cp_thresholds = [0, 0, 200, 500, 1000, 1800, 3000, 4800, 7400, 11000, 16000]
 # Expansion slots a single Residence/Palace grants, by its level (index = level).
 expansion_slots_per_level = [0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3]
 
-# Settlers consumed to found a new village.
+# Settlers consumed to found a new village, and the settler unit's id (tribe-agnostic in the roster).
 settlers_per_village = 3
+settler_id = "settler"

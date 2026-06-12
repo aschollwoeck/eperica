@@ -21,6 +21,8 @@ pub struct CultureRules {
     pub expansion_slots_per_level: Vec<u32>,
     /// Settlers consumed to found a new village.
     pub settlers_per_village: u32,
+    /// The unit id of the **settler** (the Expansion-role unit that founds villages; tribe-agnostic).
+    pub settler_id: String,
 }
 
 /// Clamp-to-last table lookup (level beyond the table reuses the last entry).
@@ -109,6 +111,7 @@ mod tests {
             cp_thresholds: vec![0, 0, 200, 500, 1000], // [1]=0 free; 2nd=200; 3rd=500; 4th=1000
             expansion_slots_per_level: vec![0, 1, 1, 2, 2, 3],
             settlers_per_village: 3,
+            settler_id: "settler".to_owned(),
         }
     }
 

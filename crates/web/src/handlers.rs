@@ -521,6 +521,9 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
                         m.destination.x, m.destination.y
                     )
                 }
+                MovementKind::Settle => {
+                    format!("Settlers to ({}|{})", m.destination.x, m.destination.y)
+                }
             },
             troops: troops_summary(unit_rules, &m.troops),
             arrive_ms: m.arrive_at.0,

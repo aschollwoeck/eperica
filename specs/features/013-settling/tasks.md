@@ -35,7 +35,7 @@ on its own.
 
 ## Application — settle
 
-- [ ] **T5 — Settle dispatch + found/bounce.** `troop_movements` `settle` kind (nullable deliver, 012).
+- [x] **T5 — Settle dispatch + found/bounce.** `troop_movements` `settle` kind (nullable deliver, 012).
   `settling.rs`: `order_settle` (own source village; free slot + settler group + Residence/Palace;
   target a free valley on another tile; debit + schedule) and `process_due_settles` / `apply_settle`
   (claim; re-validate tile-free + slot-free; **found** the 006-template village owned by the player and

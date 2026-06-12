@@ -205,7 +205,8 @@ where
         );
         if is_town_hall
             && let Ok(Some(v)) = accounts.village_by_id(order.village).await
-            && let Err(e) = crate::culture::reanchor_culture(culture, culture_rules, now, v.owner).await
+            && let Err(e) =
+                crate::culture::reanchor_culture(culture, culture_rules, now, v.owner).await
         {
             tracing::error!(error = %e, "failed to re-anchor culture before a Town Hall");
         }

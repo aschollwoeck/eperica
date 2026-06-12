@@ -16,6 +16,7 @@ pub mod ports;
 pub mod register;
 pub mod scheduler;
 pub mod scouting;
+pub mod settling;
 pub mod starvation;
 pub mod trade;
 pub mod units;
@@ -40,17 +41,19 @@ pub use oasis::{
 pub use ports::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
     BuildRepository, CombatRepository, CultureRepository, DueAttack, DueBuild, DueEvent,
-    DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueTrade,
+    DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade,
     DueTraining, DueUnitOrder, EventStore, MovementRepository, MovementView, NewBattleReport,
     NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
     OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
     PasswordHasher, RazedBuilding, RepoError, ResourceWrite, ScoutApply, ScoutIntel,
-    ScoutReportView, ScoutRepository, StarvationRepository, StationedGroup, TradeRepository,
-    TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    ScoutReportView, ScoutRepository, SettleApply, SettleOutcome, SettleRepository,
+    StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
+    UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;
 pub use scouting::{ScoutError, gather_intel, order_scout, process_due_scouts};
+pub use settling::{SettleError, order_settle, process_due_settles};
 pub use starvation::{process_due_starvation, sync_starvation_check, sync_starvation_checks};
 pub use trade::{TradeError, order_trade, process_due_trades};
 pub use units::{

@@ -72,6 +72,7 @@ mod tests {
             cp_thresholds: vec![0, 0, 200],
             expansion_slots_per_level: vec![0, 1],
             settlers_per_village: 3,
+            settler_id: "settler".to_owned(),
         }
     }
 

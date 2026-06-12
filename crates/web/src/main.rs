@@ -29,6 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scout = Arc::new(scout_rules()?);
     let oases = Arc::new(oasis_rules()?);
     let culture = Arc::new(culture_rules()?);
+    let template = Arc::new(starting_village()?);
     let map = Arc::new(WorldMap::new(
         world.seed as u64,
         config.world.radius,
@@ -54,6 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&scout),
         Arc::clone(&oases),
         Arc::clone(&culture),
+        Arc::clone(&template),
         Arc::clone(&map),
         config.world.speed,
         world.seed as u64,
@@ -63,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState {
         accounts: Arc::new(accounts),
         hasher: Arc::new(Argon2Hasher),
-        template: Arc::new(starting_village()?),
+        template,
         rules,
         build_rules: Arc::new(build_rules()?),
         unit_rules: units,

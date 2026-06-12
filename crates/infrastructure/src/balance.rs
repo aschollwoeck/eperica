@@ -501,6 +501,7 @@ struct CultureDto {
     cp_thresholds: Vec<i64>,
     expansion_slots_per_level: Vec<u32>,
     settlers_per_village: u32,
+    settler_id: String,
 }
 
 /// Load the culture-point / expansion rules (013) from the embedded balance data.
@@ -515,6 +516,7 @@ pub fn culture_rules() -> Result<CultureRules, BalanceError> {
         cp_thresholds: dto.cp_thresholds,
         expansion_slots_per_level: dto.expansion_slots_per_level,
         settlers_per_village: dto.settlers_per_village,
+        settler_id: dto.settler_id,
     })
 }
 
