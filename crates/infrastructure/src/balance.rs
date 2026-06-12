@@ -499,6 +499,8 @@ struct OasisGarrisonDto {
     tiles_per_step: u32,
     max_count: u32,
     tiles_per_tier: u32,
+    regrow_secs: i64,
+    regrow_per_step: u32,
 }
 
 #[derive(Deserialize)]
@@ -681,6 +683,8 @@ pub fn oasis_rules() -> Result<OasisRules, BalanceError> {
         tiles_per_step: dto.oasis_garrison.tiles_per_step,
         max_count: dto.oasis_garrison.max_count,
         tiles_per_tier: dto.oasis_garrison.tiles_per_tier,
+        regrow_secs: dto.oasis_garrison.regrow_secs,
+        regrow_per_step: dto.oasis_garrison.regrow_per_step,
     })
 }
 

@@ -46,7 +46,7 @@ lands green on its own.
   transfer (with capacity) or free. DB tests: reinforce stations + defends; a stronger attacker takes
   the oasis (**AC5**, **AC7**).
 
-- [ ] **T7 — Animal regrowth.** Per-oasis regrow due-event toward the seeded strength; occupying
+- [x] **T7 — Animal regrowth.** Per-oasis regrow due-event toward the seeded strength; occupying
   cancels, freeing reschedules. DB test: a cleared unoccupied oasis regrows (**AC9**).
 
 ## Web

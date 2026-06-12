@@ -4,12 +4,13 @@ use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
     BuildRepository, CombatRepository, DueAttack, DueBuild, DueMovement, DueOasisAttack,
-    DueOasisReinforce, DueScout, DueTrade, DueTraining, DueUnitOrder, MovementRepository,
-    MovementView, NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder,
-    NewUser, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
-    RazedBuilding, RepoError, ResourceWrite, ScoutApply, ScoutIntel, ScoutReportView,
-    ScoutRepository, StarvationRepository, StationedGroup, TradeRepository, TradeView,
-    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    DueOasisRegrow, DueOasisReinforce, DueScout, DueTrade, DueTraining, DueUnitOrder,
+    MovementRepository, MovementView, NewBuildOrder, NewOasisReport, NewScoutReport,
+    NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
+    OasisReinforceOutcome, OasisRepository, OasisState, RazedBuilding, RepoError, ResourceWrite,
+    ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, StarvationRepository, StationedGroup,
+    TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
+    VillageMarker,
 };
 use eperica_domain::{
     BuildTarget, BuildingKind, BuildingSlot, Coordinate, MovementKind, OasisBonus, OasisRules,
@@ -3029,6 +3030,20 @@ impl OasisRepository for PgAccountRepository {
             }
         }
 
+        // Schedule (or clear) the animal regrow (012 AC9): set when the oasis ends unoccupied (so its
+        // animals top back up over time), NULL when it ends occupied. The row exists after the upsert.
+        sqlx::query(
+            "UPDATE oases SET regrow_at = to_timestamp($1::double precision / 1000.0) \
+             WHERE world_id = $2 AND x = $3 AND y = $4",
+        )
+        .bind(apply.regrow_at.map(|t| t.0 as f64))
+        .bind(world)
+        .bind(coord.x)
+        .bind(coord.y)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+
         // Replace the oasis garrison with the post-battle defenders (the FK requires the oasis row,
         // inserted above). An empty `defenders_after` clears the oasis.
         sqlx::query("DELETE FROM oasis_garrison WHERE world_id = $1 AND x = $2 AND y = $3")
@@ -3281,6 +3296,101 @@ impl OasisRepository for PgAccountRepository {
 
         tx.commit().await.map_err(backend)?;
         Ok(troops)
+    }
+
+    async fn claim_due_oasis_regrows(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueOasisRegrow>, RepoError> {
+        let world = Uuid::from_u128(self.world_id.0);
+        let rows = sqlx::query(
+            "SELECT x, y, (EXTRACT(EPOCH FROM regrow_at) * 1000)::bigint AS regrow_ms \
+             FROM oases \
+             WHERE world_id = $1 AND owner_village IS NULL AND regrow_at IS NOT NULL \
+               AND regrow_at <= to_timestamp($2::double precision / 1000.0) \
+             ORDER BY regrow_at, x, y LIMIT $3",
+        )
+        .bind(world)
+        .bind(now.0 as f64)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let coord = Coordinate::new(
+                r.try_get("x").map_err(backend)?,
+                r.try_get("y").map_err(backend)?,
+            );
+            let regrow_ms: i64 = r.try_get("regrow_ms").map_err(backend)?;
+            let current = read_oasis_garrison(&self.pool, world, coord).await?;
+            out.push(DueOasisRegrow {
+                oasis: coord,
+                current,
+                regrow_at: Timestamp(regrow_ms),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn apply_oasis_regrow(
+        &self,
+        oasis: Coordinate,
+        garrison: &UnitCounts,
+        prev_regrow_at: Timestamp,
+        next_regrow_at: Option<Timestamp>,
+    ) -> Result<(), RepoError> {
+        let world = Uuid::from_u128(self.world_id.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        // Guard: the oasis must still be unoccupied and hold the same `regrow_at` we claimed — so
+        // occupying it in flight cancels the regrow and a concurrent tick applies exactly once.
+        let updated = sqlx::query(
+            "UPDATE oases SET regrow_at = to_timestamp($1::double precision / 1000.0) \
+             WHERE world_id = $2 AND x = $3 AND y = $4 AND owner_village IS NULL \
+               AND (EXTRACT(EPOCH FROM regrow_at) * 1000)::bigint = $5",
+        )
+        .bind(next_regrow_at.map(|t| t.0 as f64))
+        .bind(world)
+        .bind(oasis.x)
+        .bind(oasis.y)
+        .bind(prev_regrow_at.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if updated.rows_affected() == 0 {
+            // Occupied or already advanced — leave the garrison untouched.
+            tx.rollback().await.map_err(backend)?;
+            return Ok(());
+        }
+
+        // Set the garrison to the topped-up composition (replace; single animal kind).
+        sqlx::query("DELETE FROM oasis_garrison WHERE world_id = $1 AND x = $2 AND y = $3")
+            .bind(world)
+            .bind(oasis.x)
+            .bind(oasis.y)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        for (unit, n) in garrison.iter().filter(|(_, n)| *n > 0) {
+            sqlx::query(
+                "INSERT INTO oasis_garrison (world_id, x, y, unit_id, count) \
+                 VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(world)
+            .bind(oasis.x)
+            .bind(oasis.y)
+            .bind(unit.as_str())
+            .bind(i32::try_from(*n).unwrap_or(i32::MAX))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        }
+
+        tx.commit().await.map_err(backend)?;
+        Ok(())
     }
 }
 
@@ -6848,6 +6958,7 @@ mod tests {
                 defender_forces: seeded.clone(),
                 defender_losses: seeded.clone(),
             },
+            regrow_at: None,
         })
         .await
         .expect("apply oasis battle");
@@ -6996,6 +7107,7 @@ mod tests {
                 defender_forces: Vec::new(),
                 defender_losses: Vec::new(),
             },
+            regrow_at: None,
         })
         .await
         .expect("apply cleared-without-capacity");
@@ -7360,5 +7472,125 @@ mod tests {
         // The previous owner no longer holds it; the new owner does.
         assert!(repo.occupied_oases(dv.id).await.unwrap().is_empty());
         assert_eq!(repo.occupied_oases(av.id).await.unwrap().len(), 1);
+    }
+
+    // 012 AC9: a cleared, unoccupied oasis regrows its animals toward the seeded strength over due
+    // ticks, then stops (the regrow is cleared once full).
+    #[tokio::test]
+    async fn oasis_regrows_when_cleared() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping oasis regrow test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let units = crate::unit_rules().expect("unit rules");
+        let orules = crate::oasis_rules().expect("oasis rules");
+        let animals = units.wild_animal_roster();
+        let oasis = coordinates_within(config.radius)
+            .find(|c| map.oasis_bonus_at(*c).is_some())
+            .expect("an oasis");
+        let seeded = oasis_garrison(world.seed as u64, oasis, animals, &orules);
+        let seeded_total: u32 = seeded.iter().map(|(_, n)| *n).sum();
+        assert!(seeded_total > 0);
+
+        // Materialise the oasis as cleared + unoccupied with a regrow already due (empty garrison).
+        let now = Timestamp(3_000_000_000_000);
+        sqlx::query("DELETE FROM oases WHERE world_id = $1 AND x = $2 AND y = $3")
+            .bind(Uuid::from_u128(world.id.0))
+            .bind(oasis.x)
+            .bind(oasis.y)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO oases (world_id, x, y, owner_village, materialised, regrow_at) \
+             VALUES ($1, $2, $3, NULL, true, to_timestamp($4::double precision / 1000.0))",
+        )
+        .bind(Uuid::from_u128(world.id.0))
+        .bind(oasis.x)
+        .bind(oasis.y)
+        .bind(now.0 as f64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            repo.oasis_defenders(oasis, animals, &orules)
+                .await
+                .unwrap()
+                .is_empty(),
+            "starts cleared"
+        );
+
+        // Run regrow ticks until the oasis stops being due (full strength). The clock advances one
+        // regrow interval each tick (a regrow reschedules `regrow_secs` ahead).
+        let step_ms = orules.regrow_secs * 1000; // speed 1.0
+        let mut clock = Timestamp(now.0 + 1);
+        let mut prev_total = 0u32;
+        let mut ticks = 0;
+        loop {
+            let due = repo.claim_due_oasis_regrows(clock, 10).await.unwrap();
+            if !due.iter().any(|d| d.oasis == oasis) {
+                break;
+            }
+            eperica_application::process_due_oasis_regrow(
+                &repo,
+                &units,
+                &orules,
+                world.seed as u64,
+                GameSpeed::new(1.0).unwrap(),
+                clock,
+                10,
+            )
+            .await
+            .expect("regrow");
+            let total: u32 = repo
+                .oasis_defenders(oasis, animals, &orules)
+                .await
+                .unwrap()
+                .iter()
+                .map(|(_, n)| *n)
+                .sum();
+            assert!(total > prev_total, "each tick regrows more animals");
+            assert!(total <= seeded_total, "never exceeds the seeded strength");
+            prev_total = total;
+            clock = Timestamp(clock.0 + step_ms);
+            ticks += 1;
+            assert!(ticks < 100, "regrow should converge");
+        }
+        // It reached full strength and the regrow was cleared.
+        assert_eq!(
+            prev_total, seeded_total,
+            "regrew back to the seeded strength"
+        );
+        let state_row: Option<i64> = sqlx::query_scalar(
+            "SELECT (EXTRACT(EPOCH FROM regrow_at) * 1000)::bigint FROM oases \
+             WHERE world_id = $1 AND x = $2 AND y = $3",
+        )
+        .bind(Uuid::from_u128(world.id.0))
+        .bind(oasis.x)
+        .bind(oasis.y)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(state_row.is_none(), "regrow_at cleared once full");
     }
 }

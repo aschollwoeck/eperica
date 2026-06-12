@@ -23,6 +23,27 @@ pub struct OasisRules {
     pub max_count: u32,
     /// Tiles of distance between each rise in animal **strength tier** (the roster index).
     pub tiles_per_tier: u32,
+    /// Seconds between regrow ticks of a cleared, unoccupied oasis (012 AC9; pre-speed-scaling).
+    pub regrow_secs: i64,
+    /// Animals a single regrow tick adds back toward the seeded strength.
+    pub regrow_per_step: u32,
+}
+
+/// One regrow tick (012 AC9): top the oasis's (single-kind) animal garrison up toward its `seeded`
+/// strength by `per_step`, capped at the seeded count. Returns the new garrison and whether it has
+/// reached full strength (so the caller can stop rescheduling). Pure and deterministic.
+pub fn regrow_step(current: &UnitCounts, seeded: &UnitCounts, per_step: u32) -> (UnitCounts, bool) {
+    let Some((id, target)) = seeded.first() else {
+        return (Vec::new(), true);
+    };
+    let cur = current.iter().find(|(i, _)| i == id).map_or(0, |(_, n)| *n);
+    let next = cur.saturating_add(per_step.max(1)).min(*target);
+    let garrison = if next == 0 {
+        Vec::new()
+    } else {
+        vec![(id.clone(), next)]
+    };
+    (garrison, next >= *target)
 }
 
 /// The wild-animal garrison guarding the oasis at `coord`, seeded from the world `seed` (P6).
@@ -68,6 +89,8 @@ mod tests {
             tiles_per_step: 5,
             max_count: 60,
             tiles_per_tier: 15,
+            regrow_secs: 3600,
+            regrow_per_step: 2,
         }
     }
 
@@ -142,5 +165,27 @@ mod tests {
                 .unwrap()
         };
         assert!(tier_of(&far) >= tier_of(&near));
+    }
+
+    // AC9: a cleared oasis regrows toward the seeded strength, one step at a time, then stops.
+    #[test]
+    fn regrow_tops_up_toward_seeded() {
+        let seeded = vec![(UnitId("wolf".into()), 5)];
+        // From empty (cleared): each step adds `per_step`, capped at the target.
+        let (g1, full1) = regrow_step(&Vec::new(), &seeded, 2);
+        assert_eq!(g1, vec![(UnitId("wolf".into()), 2)]);
+        assert!(!full1);
+        let (g2, full2) = regrow_step(&g1, &seeded, 2);
+        assert_eq!(g2, vec![(UnitId("wolf".into()), 4)]);
+        assert!(!full2);
+        let (g3, full3) = regrow_step(&g2, &seeded, 2);
+        assert_eq!(
+            g3,
+            vec![(UnitId("wolf".into()), 5)],
+            "caps at the seeded count"
+        );
+        assert!(full3, "reaching the seeded strength stops the regrow");
+        // An empty seeded roster never regrows.
+        assert_eq!(regrow_step(&Vec::new(), &Vec::new(), 2), (Vec::new(), true));
     }
 }

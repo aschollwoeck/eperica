@@ -886,6 +886,20 @@ pub struct OasisBattleApply {
     pub return_arrive: Timestamp,
     /// The battle report to persist in the same transaction (AC11).
     pub report: NewOasisReport,
+    /// When the oasis should next regrow its animals (012 AC9) — `Some` when it ends **unoccupied**
+    /// (so its animals top back up over time), `None` when it ends occupied (no regrow).
+    pub regrow_at: Option<Timestamp>,
+}
+
+/// A claimed, due oasis regrow (012 AC9): a cleared, unoccupied oasis whose animals should top up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DueOasisRegrow {
+    /// The oasis tile.
+    pub oasis: Coordinate,
+    /// Its current (partial) animal garrison.
+    pub current: UnitCounts,
+    /// The `regrow_at` the row currently holds (guards the apply against a concurrent change).
+    pub regrow_at: Timestamp,
 }
 
 /// Persistence for oases (012): launch oasis attacks, read defenders/ownership/bonus, claim due
@@ -1019,6 +1033,32 @@ pub trait OasisRepository: Send + Sync {
         now: Timestamp,
         arrive_at: Timestamp,
     ) -> Result<UnitCounts, RepoError>;
+
+    /// Claim cleared, **unoccupied** oases whose `regrow_at` is due (012 AC9) — nearest first. Does
+    /// not mutate (the apply guards on `regrow_at`), so each is re-claimed until applied.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn claim_due_oasis_regrows(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueOasisRegrow>, RepoError>;
+
+    /// Apply a regrow tick in **one** transaction: set the oasis garrison to `garrison` and the next
+    /// `regrow_at` — guarded on the still-unoccupied oasis row holding `prev_regrow_at` (so occupying
+    /// the oasis in flight cancels the regrow, and a concurrent tick applies once). `next_regrow_at`
+    /// is `None` once the oasis is back to full strength.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn apply_oasis_regrow(
+        &self,
+        oasis: Coordinate,
+        garrison: &UnitCounts,
+        prev_regrow_at: Timestamp,
+        next_regrow_at: Option<Timestamp>,
+    ) -> Result<(), RepoError>;
 }
 
 /// A claimed, due oasis-reinforce movement ready to apply (012 AC7).

@@ -13,9 +13,18 @@ use crate::ports::{
 use eperica_domain::{
     AttackMode, BattleInput, BuildingKind, Coordinate, EconomyRules, GameSpeed, OasisRules,
     PlayerId, Timestamp, Tribe, UnitId, UnitRules, Village, VillageId, WorldMap, add_defense,
-    apply_losses, attack_power, luck_factor, resolve_battle, slowest_speed,
-    travel_time_secs_floored,
+    apply_losses, attack_power, luck_factor, oasis_garrison, regrow_step, resolve_battle,
+    slowest_speed, travel_time_secs_floored,
 };
+
+/// When a cleared, unoccupied oasis next regrows: `from + regrowSecs` scaled by world speed (P7 —
+/// a faster world regrows faster, mirroring travel/build scaling). Never sooner than one second.
+fn regrow_due(rules: &OasisRules, speed: GameSpeed, from: Timestamp) -> Timestamp {
+    let secs = (rules.regrow_secs as f64 / speed.multiplier())
+        .round()
+        .max(1.0) as i64;
+    Timestamp(from.0 + secs * 1000)
+}
 
 /// Why launching an oasis attack failed (012 AC2).
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -342,6 +351,8 @@ where
                 tiles_per_step: 1,
                 max_count: 0,
                 tiles_per_tier: 1,
+                regrow_secs: 1,
+                regrow_per_step: 1,
             },
         )
         .await?;
@@ -427,6 +438,45 @@ where
         }
     };
     oases.apply_oasis_reinforce(due, outcome).await
+}
+
+/// Claim and apply due animal regrows (the System actor, AC9). Each cleared, unoccupied oasis tops
+/// its animals up toward the seeded strength by one step and reschedules until full; occupying it in
+/// flight cancels the regrow (enforced by the repository's guard).
+///
+/// # Errors
+/// Propagates [`RepoError`]; a per-oasis failure is logged and skipped (re-claimed next tick).
+#[allow(clippy::too_many_arguments)]
+pub async fn process_due_oasis_regrow<O>(
+    oases: &O,
+    unit_rules: &UnitRules,
+    oasis_rules: &OasisRules,
+    world_seed: u64,
+    speed: GameSpeed,
+    now: Timestamp,
+    limit: i64,
+) -> Result<(), RepoError>
+where
+    O: OasisRepository,
+{
+    let due = oases.claim_due_oasis_regrows(now, limit).await?;
+    for r in due {
+        let seeded = oasis_garrison(
+            world_seed,
+            r.oasis,
+            unit_rules.wild_animal_roster(),
+            oasis_rules,
+        );
+        let (garrison, full) = regrow_step(&r.current, &seeded, oasis_rules.regrow_per_step);
+        let next = (!full).then(|| regrow_due(oasis_rules, speed, now));
+        if let Err(e) = oases
+            .apply_oasis_regrow(r.oasis, &garrison, r.regrow_at, next)
+            .await
+        {
+            tracing::error!(error = %e, "failed to apply due oasis regrow");
+        }
+    }
+    Ok(())
 }
 
 /// Resolve a single due oasis attack: gather the oasis's defenders, run the battle, decide
@@ -525,6 +575,13 @@ where
         None => (None, None),
     };
 
+    // Schedule the animal regrow (AC9) when the oasis ends **unoccupied**; an occupied one never
+    // regrows (it holds the owner's troops).
+    let regrow_at = match ownership {
+        OasisOwnership::Occupy(_) => None,
+        _ => Some(regrow_due(oasis_rules, speed, attack.arrive_at)),
+    };
+
     oases
         .apply_oasis_battle(OasisBattleApply {
             movement_id: attack.id,
@@ -537,6 +594,7 @@ where
             survivors: survivors.clone(),
             battle_at: attack.arrive_at,
             return_arrive,
+            regrow_at,
             report: NewOasisReport {
                 attacker_player: attack.owner,
                 attacker_village: home.id,
@@ -686,6 +744,8 @@ mod tests {
             tiles_per_step: 5,
             max_count: 50,
             tiles_per_tier: 15,
+            regrow_secs: 3600,
+            regrow_per_step: 2,
         }
     }
 
@@ -902,6 +962,22 @@ mod tests {
         ) -> Result<UnitCounts, RepoError> {
             *self.recalled.lock().unwrap() = true;
             Ok(vec![(UnitId("phalanx".into()), 5)])
+        }
+        async fn claim_due_oasis_regrows(
+            &self,
+            _now: Timestamp,
+            _limit: i64,
+        ) -> Result<Vec<crate::ports::DueOasisRegrow>, RepoError> {
+            Ok(Vec::new())
+        }
+        async fn apply_oasis_regrow(
+            &self,
+            _oasis: Coordinate,
+            _garrison: &UnitCounts,
+            _prev: Timestamp,
+            _next: Option<Timestamp>,
+        ) -> Result<(), RepoError> {
+            Ok(())
         }
     }
 

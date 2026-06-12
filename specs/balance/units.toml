@@ -636,3 +636,7 @@ extra_per_step = 3
 tiles_per_step = 5
 max_count = 80
 tiles_per_tier = 18
+# A cleared, unoccupied oasis regrows its animals (012 AC9): regrow_per_step animals every
+# regrow_secs (pre-speed-scaling) until it is back to its seeded strength.
+regrow_secs = 3600
+regrow_per_step = 4

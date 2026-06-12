@@ -31,11 +31,14 @@ pub use combat::{CombatError, order_attack, process_due_combat};
 pub use economy::{VillageEconomy, load_economy, settle_amounts};
 pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
 pub use movement::{MovementError, order_reinforcement, order_return, process_due_movements};
-pub use oasis::{OasisError, order_oasis_attack, process_due_oasis_combat};
+pub use oasis::{
+    OasisError, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
+    process_due_oasis_combat, process_due_oasis_regrow, process_due_oasis_reinforce,
+};
 pub use ports::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
     BuildRepository, CombatRepository, DueAttack, DueBuild, DueEvent, DueMovement, DueOasisAttack,
-    DueOasisReinforce, DueScout, DueTrade, DueTraining, DueUnitOrder, EventStore,
+    DueOasisRegrow, DueOasisReinforce, DueScout, DueTrade, DueTraining, DueUnitOrder, EventStore,
     MovementRepository, MovementView, NewBattleReport, NewBuildOrder, NewOasisReport,
     NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
     OasisReinforceOutcome, OasisRepository, OasisState, PasswordHasher, RazedBuilding, RepoError,
