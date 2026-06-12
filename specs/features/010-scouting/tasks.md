@@ -7,7 +7,7 @@ Ordered for dependency and testability (pure domain first). Each task is a commi
 
 ## Domain (pure, test-first)
 
-- [ ] **T1 — Scouting domain.** `MovementKind::Scout`; `UnitSpec.scouting: u32`; new `scouting.rs`:
+- [x] **T1 — Scouting domain.** `MovementKind::Scout`; `UnitSpec.scouting: u32`; new `scouting.rs`:
   `ScoutTarget`, `ScoutRules`, `scouting_power` (Scout-role only, no Smithy scaling), `resolve_scouting`
   → `ScoutOutcome { attacker_loss_frac, detected }` (zero counter ⇒ no loss/undetected; ≥ attacker ⇒
   all lost/detected; else power-law; defenders never lost). Unit tests: the four cases + monotonicity +
