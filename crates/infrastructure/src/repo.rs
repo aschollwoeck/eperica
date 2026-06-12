@@ -4104,6 +4104,120 @@ mod tests {
         assert_eq!(repo.scout_reports_for(target, 50).await.unwrap().len(), 1);
     }
 
+    /// 010 AC6/AC9/AC10 (processor + restart path): `process_due_scouts` resolves a due mission
+    /// end-to-end — a clean scout (no counter) returns its survivors with Resources intel, stays
+    /// undetected, and a crash before applying is recovered to resolve **exactly once**.
+    #[tokio::test]
+    async fn process_due_scouts_resolves_a_mission() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping scout processor test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let units = crate::unit_rules().expect("unit rules");
+        let scout = crate::scout_rules().expect("scout rules");
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (scouter, s) = account("pscout").await;
+        let (target, t) = account("psmark").await;
+
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'pathfinder', 4)",
+        )
+        .bind(Uuid::from_u128(s.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let now = Timestamp(3_000_000_000_000);
+        let arrive = Timestamp(now.0 + 100_000);
+        repo.start_scout(
+            s.id,
+            t.id,
+            scouter,
+            s.coordinate,
+            t.coordinate,
+            now,
+            arrive,
+            &[(UnitId("pathfinder".into()), 4)],
+            ScoutTarget::Resources,
+        )
+        .await
+        .expect("scout");
+
+        // Crash before applying: claim, requeue the orphan, then resolve via the processor once.
+        let claimed = repo.claim_due_scouts(arrive, 100).await.unwrap();
+        assert!(claimed.iter().any(|m| m.home_village == s.id));
+        assert!(repo.requeue_orphaned_movements().await.unwrap() >= 1);
+
+        let run = async || {
+            eperica_application::process_due_scouts(
+                &repo,
+                &repo,
+                &repo,
+                &econ,
+                &units,
+                &scout,
+                &map,
+                GameSpeed::new(1.0).unwrap(),
+                arrive,
+                100,
+            )
+            .await
+            .expect("process scouts")
+        };
+        run().await;
+        run().await; // a second tick finds nothing already-claimed.
+
+        // AC9: exactly one report, with Resources intel; the clean scout is undetected (AC8) so the
+        // target sees nothing; survivors head home (AC10).
+        let reports = repo.scout_reports_for(scouter, 10).await.unwrap();
+        assert_eq!(reports.len(), 1);
+        assert!(!reports[0].detected);
+        assert!(matches!(reports[0].intel, Some(ScoutIntel::Resources(_))));
+        assert!(reports[0].scouts_lost.is_empty());
+        assert!(repo.scout_reports_for(target, 10).await.unwrap().is_empty());
+
+        let returning = repo.active_movements(scouter).await.unwrap();
+        assert!(returning.iter().any(|m| m.kind == MovementKind::Return
+            && m.troops == vec![(UnitId("pathfinder".into()), 4)]));
+    }
+
     /// 009 AC6 (restart path): a battle claimed but not applied (a crash) is recovered by the shared
     /// orphan requeue and resolved **exactly once** — one report, the defender reduced a single time.
     #[tokio::test]

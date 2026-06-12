@@ -28,20 +28,20 @@ Ordered for dependency and testability (pure domain first). Each task is a commi
 
 ## Application
 
-- [ ] **T4 — Scout use-cases.** `ScoutError`; `order_scout` (validate own village → scouts-only →
+- [x] **T4 — Scout use-cases.** `ScoutError`; `order_scout` (validate own village → scouts-only →
   garrison → target → travel → debit/schedule → starvation re-sync); `process_due_scouts` (gather power
   → `resolve_scouting` → apply losses → gather intel if a scout survives → survivor return → report).
   Shared `gather_intel` helper (Resources accrues via 002; Defenses merges troops + Wall). Fake tests:
   send success + every rejection incl. `NotAllScouts`; resolution wires the domain outcome + intel to the
   repo apply (**AC1**, **AC3**, **AC6**).
-- [ ] **T5 — Combined scouting in `order_attack`/`process_due_combat`.** `order_attack` accepts
+- [x] **T5 — Combined scouting in `order_attack`/`process_due_combat`.** `order_attack` accepts
   `scout_target` (defaults to `Defenses` when scouts present); `resolve_one` runs the espionage sub-step
   **first** (split scouts/non-scouts, espionage losses, detection), then the unchanged 009 battle, then
   carries espionage-surviving scouts through the attacker loss fraction; intel delivered iff a scout
   returns; writes the scouter `scout_report` + the defender battle report's `scouted` flag — all in the
   existing one tx. Tests: espionage doesn't change the battle; wiped attacker ⇒ no intel; survivor ⇒
   intel; defender flagged (**AC2**, **AC6**, **AC7**, **AC8**).
-- [ ] **T6 — Scheduler.** Tick `process_due_scouts`; startup orphan requeue (shared). DB test via the
+- [x] **T6 — Scheduler.** Tick `process_due_scouts`; startup orphan requeue (shared). DB test via the
   processor (**AC10** restart path).
 
 ## Web
