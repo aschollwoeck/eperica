@@ -17,5 +17,6 @@ manual grows as the game does.
   arrive, and recall your troops home.
 - [Trading](trade.md) — build a Marketplace and send resources to other villages via merchants.
 - [Attacking & defending](combat.md) — launch attacks and raids, build a Wall, and read battle reports.
+- [Scouting](scouting.md) — send scouts to reveal an enemy's resources or defenses, and counter enemy spies.
 
-*(More chapters — scouting, siege & loot, settling — arrive as those features ship.)*
+*(More chapters — siege & loot, settling — arrive as those features ship.)*

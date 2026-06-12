@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Eperica is a from-scratch, **faithful Travian-style competitive strategy MMO** (medieval setting),
 built **spec-driven** and **performance-first** (sub-second timing is gameplay). The design is
 complete and implementation proceeds slice by slice from the roadmap; the foundation, economy,
-construction, tribes/units, training/upkeep, and world-map slices (001–006) are built — milestones
-M1, M2, and the start of M3.
+construction, tribes/units, training/upkeep, world-map, movement, trade, combat, and scouting slices
+(001–010) are built — milestones M1, M2, M3, and the start of M4 (the PvP conflict layer).
 
 ## Read the specs first — they are the source of truth
 
@@ -22,7 +22,7 @@ M1, M2, and the start of M3.
 - **`specs/roadmap.md`** — dependency-ordered build order (slices 001 → end-game).
 - **`specs/social-and-meta-features.md`** — app-layer features (chat, profiles, UX) — not sim rules.
 - **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the active slice. Currently:
-  `009-combat`.
+  `010-scouting`.
 
 If behavior must change, **update the spec first**, then the code.
 

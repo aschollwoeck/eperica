@@ -54,9 +54,9 @@ Ordered for dependency and testability (pure domain first). Each task is a commi
 
 ## Documentation & acceptance
 
-- [ ] **T8 — Technical docs.** rustdoc; `docs/architecture/00NN-scouting.md` (espionage sub-step,
+- [x] **T8 — Technical docs.** rustdoc; `docs/architecture/00NN-scouting.md` (espionage sub-step,
   seedless determinism, intel snapshot, report redaction); `CLAUDE.md` active slice → 010.
-- [ ] **T9 — End-user docs.** `docs/manual/` scouting guide (standalone vs scouts-with-attack,
+- [x] **T9 — End-user docs.** `docs/manual/` scouting guide (standalone vs scouts-with-attack,
   Resources vs Defenses, stealth); link from index.
 - [ ] **T10 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
   **APPROVE**; PR.
