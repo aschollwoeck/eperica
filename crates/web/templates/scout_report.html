@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Scouting report</h1>
+  <p class="muted"><a href="/reports">← All reports</a></p>
+  <p><strong>{{ headline }}</strong> — {{ summary }}</p>
+</section>
+
+{% if is_scouter %}
+<section class="panel">
+  <h2>{{ target_type }}</h2>
+  {% match intel_kind %}
+  {% when "resources" %}
+  <table class="table">
+    <thead><tr><th>Resource</th><th class="num">Stored</th></tr></thead>
+    <tbody>
+      {% for r in resources %}
+      <tr><td>{{ r.name }}</td><td class="num">{{ r.amount }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% when "defenses" %}
+  <p class="muted">Wall level {{ wall_level }}</p>
+  {% if troops.is_empty() %}
+  <p class="muted">No troops stationed.</p>
+  {% else %}
+  <table class="table">
+    <thead><tr><th>Unit</th><th class="num">Stationed</th></tr></thead>
+    <tbody>
+      {% for u in troops %}
+      <tr><td>{{ u.name }}</td><td class="num">{{ u.count }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% when _ %}
+  <p class="muted">No intel returned — the mission was lost.</p>
+  {% endmatch %}
+</section>
+{% endif %}
+{% endblock %}

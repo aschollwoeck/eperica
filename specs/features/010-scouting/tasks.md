@@ -46,7 +46,7 @@ Ordered for dependency and testability (pure domain first). Each task is a commi
 
 ## Web
 
-- [ ] **T7 — Scout send + intel reports.** Rally Point **mode** gains `scout` (scout units + target
+- [x] **T7 — Scout send + intel reports.** Rally Point **mode** gains `scout` (scout units + target
   type) → `order_scout`; attack/raid mode shows a scout-target dropdown when scouts are present (default
   Defenses) → `order_attack`. `GET /reports` merges battle + scout reports; `GET /reports/scout/{id}`
   detail (scouter intel vs target notification, redacted server-side); the 009 battle-report detail shows

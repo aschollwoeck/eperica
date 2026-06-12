@@ -3,8 +3,9 @@
 <section class="panel">
   <h1>Rally Point</h1>
   <p class="muted"><a href="/village">← Back to the village</a> · send troops to
-    <strong>reinforce</strong> a friendly village or <strong>attack/raid</strong> an enemy. Travel
-    time depends on distance and your slowest unit. <a href="/reports">Battle reports →</a></p>
+    <strong>reinforce</strong> a friendly village, <strong>attack/raid</strong> an enemy, or
+    <strong>scout</strong> to spy. Travel time depends on distance and your slowest unit.
+    <a href="/reports">Reports →</a></p>
 
   {% if units.is_empty() %}
   <p class="muted">No troops to send — train some at the Barracks, Stable, or Workshop first.</p>
@@ -16,6 +17,7 @@
         <option value="reinforce">Reinforce (defend an ally)</option>
         <option value="attack">Attack (fight to destroy)</option>
         <option value="raid">Raid (fight to plunder)</option>
+        <option value="scout">Scout (spy — scouts only)</option>
       </select>
     </div>
     <div class="field">
@@ -24,6 +26,14 @@
         x <input type="number" name="x" required style="width:5em">
         y <input type="number" name="y" required style="width:5em">
       </span>
+    </div>
+    <div class="field">
+      <label>Spy on</label>
+      <select name="scout_target">
+        <option value="defenses">Defenses (troops &amp; wall)</option>
+        <option value="resources">Resources</option>
+      </select>
+      <span class="muted">Used when scouting, or when an attack includes scouts.</span>
     </div>
     <table class="table">
       <thead><tr><th>Unit</th><th class="num">In garrison</th><th>Send</th></tr></thead>

@@ -294,16 +294,16 @@ pub struct ReinforcementRow {
     pub host_id: String,
 }
 
-/// One line in the battle-reports inbox (009 AC8).
+/// One line in the reports inbox (009 AC8 / 010 AC12) — a battle or a scout report.
 pub struct ReportRow {
-    /// Report id (for the detail link).
-    pub id: String,
     /// When it happened (Unix-ms UTC) for the relative display.
     pub when_ms: i64,
-    /// A one-line summary, e.g. "Raid on bob (3|4)".
+    /// A one-line summary, e.g. "Raid on bob (3|4)" or "Scouted bob (3|4)".
     pub headline: String,
-    /// The outcome from this player's perspective ("Victory" / "Defeat" / …).
+    /// The outcome from this player's perspective ("Victory" / "Intel gathered" / …).
     pub outcome: String,
+    /// The detail link for this report (battle vs scout route).
+    pub href: String,
 }
 
 #[derive(Template)]
@@ -339,6 +339,35 @@ pub struct ReportTemplate {
     pub attacker_rows: Vec<ForceRow>,
     pub defender_name: String,
     pub defender_rows: Vec<ForceRow>,
+    /// For the defender of a combined attack: "The enemy also scouted your defenses." (010 AC8).
+    pub scouted_note: Option<String>,
+}
+
+/// One revealed resource line in a scout report's intel (010 AC9).
+pub struct ScoutResourceRow {
+    pub name: String,
+    pub amount: i64,
+}
+
+#[derive(Template)]
+#[template(path = "scout_report.html")]
+pub struct ScoutReportTemplate {
+    /// The framed summary, e.g. "You scouted bob (3|4)" or "alice (1|2) scouted your village".
+    pub headline: String,
+    /// A one-line outcome (scouts sent/lost for the scouter; scouts destroyed for the target).
+    pub summary: String,
+    /// Whether the viewer is the scouter (sees intel) vs the detected target (notification only).
+    pub is_scouter: bool,
+    /// What was spied on ("Resources" / "Defenses").
+    pub target_type: &'static str,
+    /// Which intel block to render: "resources", "defenses", or "none".
+    pub intel_kind: &'static str,
+    /// Revealed resources (when `intel_kind == "resources"`).
+    pub resources: Vec<ScoutResourceRow>,
+    /// Revealed stationed troops (when `intel_kind == "defenses"`).
+    pub troops: Vec<ForceRow>,
+    /// The revealed Wall level (when `intel_kind == "defenses"`).
+    pub wall_level: u8,
 }
 
 /// A garrison-independent Marketplace view (008 AC6): merchant pool + per-tribe capacity.

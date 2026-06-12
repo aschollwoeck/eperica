@@ -44,6 +44,7 @@ pub fn router(state: AppState) -> Router {
         .route("/village/market", get(handlers::market))
         .route("/village/market/send", post(handlers::market_send))
         .route("/reports", get(handlers::reports))
+        .route("/reports/scout/{id}", get(handlers::scout_report_detail))
         .route("/reports/{id}", get(handlers::report_detail))
         .route("/styleguide", get(handlers::styleguide))
         .nest_service("/static", ServeDir::new("crates/web/static"))

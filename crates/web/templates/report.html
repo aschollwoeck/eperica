@@ -6,6 +6,9 @@
   <p><strong>{{ headline }}</strong> — {{ outcome }}</p>
   <p class="muted">Luck {{ luck_pct }}% · Morale {{ morale_pct }}% · Wall {{ wall_before }} →
     {{ wall_after }}</p>
+  {% match scouted_note %}{% when Some with (note) %}
+  <p class="muted">⚠ {{ note }}</p>
+  {% when None %}{% endmatch %}
 </section>
 
 <section class="panel">
