@@ -243,8 +243,16 @@ pub fn economy_rules() -> Result<EconomyRules, BalanceError> {
 #[derive(Deserialize)]
 struct ConstructionDto {
     speed: SpeedDto,
-    field: LevelSpecDto,
+    field: FieldSpecDto,
     buildings: BuildingsDto,
+}
+
+#[derive(Deserialize)]
+struct FieldSpecDto {
+    max_level: u8,
+    capital_max_level: u8,
+    #[serde(flatten)]
+    spec: LevelSpecDto,
 }
 
 #[derive(Deserialize)]
@@ -349,7 +357,9 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
         }
     }
     Ok(BuildRules {
-        field: level_spec(&dto.field),
+        field: level_spec(&dto.field.spec),
+        field_max_level: dto.field.max_level,
+        capital_field_max_level: dto.field.capital_max_level,
         buildings,
         prerequisites,
         main_building_factor_per_level: dto.speed.main_building_factor,
@@ -491,7 +501,6 @@ struct CultureDto {
     cp_thresholds: Vec<i64>,
     expansion_slots_per_level: Vec<u32>,
     settlers_per_village: u32,
-    capital_field_max_level: u8,
 }
 
 /// Load the culture-point / expansion rules (013) from the embedded balance data.
@@ -506,7 +515,6 @@ pub fn culture_rules() -> Result<CultureRules, BalanceError> {
         cp_thresholds: dto.cp_thresholds,
         expansion_slots_per_level: dto.expansion_slots_per_level,
         settlers_per_village: dto.settlers_per_village,
-        capital_field_max_level: dto.capital_field_max_level,
     })
 }
 
@@ -841,9 +849,20 @@ mod tests {
     fn loads_construction_rules() {
         let r = build_rules().expect("build rules");
         let field = BuildTarget::Field { slot: 0 };
-        assert_eq!(r.max_level(field), 10);
+        assert_eq!(r.max_level(field), 10); // the normal field cap
         assert!(r.cost(field, 0).is_some());
-        assert!(r.cost(field, 10).is_none()); // at max
+        // 013 AC10: the field cost table runs to the capital cap; a capital may build past 10.
+        assert_eq!(r.field_max_level(false), 10);
+        assert_eq!(r.field_max_level(true), 20);
+        assert!(r.field_max_level(true) > r.field_max_level(false));
+        assert!(
+            r.cost(field, 10).is_some(),
+            "capital level-11 field has a cost"
+        );
+        assert!(
+            r.cost(field, 20).is_none(),
+            "the table ends at the capital cap"
+        );
         assert_eq!(
             r.prerequisites(BuildingKind::Warehouse),
             &[(BuildingKind::MainBuilding, 1)]

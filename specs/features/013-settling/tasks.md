@@ -22,7 +22,7 @@ on its own.
 
 ## Persistence — capital & culture accumulator
 
-- [ ] **T3 — Capital flag + field cap.** `Village.is_capital` (domain field, folded into the village
+- [x] **T3 — Capital flag + field cap.** `Village.is_capital` (domain field, folded into the village
   read); `construction.rs` `field_max_level(is_capital)`; balance `capital_field_max_level`. Migration
   `0018` adds `villages.is_capital`; repo `set_capital(player, village)` (one per player) wired into
   `apply_build` on a **Palace** completion. Tests: a capital field exceeds the cap, a non-capital does

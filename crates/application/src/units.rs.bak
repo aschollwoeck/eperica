@@ -691,7 +691,6 @@ mod tests {
                 .map(|&(kind, level)| BuildingSlot { kind, level })
                 .collect(),
             oasis_bonus: Default::default(),
-            is_capital: false,
         }
     }
 

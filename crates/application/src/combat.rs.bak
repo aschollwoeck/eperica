@@ -671,7 +671,6 @@ mod tests {
                 level: 1,
             }],
             oasis_bonus: Default::default(),
-            is_capital: false,
         }
     }
 

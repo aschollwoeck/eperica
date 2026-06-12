@@ -40,8 +40,12 @@ impl LevelSpec {
 /// Injected construction balance.
 #[derive(Debug, Clone)]
 pub struct BuildRules {
-    /// Spec shared by all resource fields.
+    /// Spec shared by all resource fields (its cost/time tables run to the **capital** cap).
     pub field: LevelSpec,
+    /// The normal resource-field level cap (a non-capital village; 013 §3.4).
+    pub field_max_level: u8,
+    /// The resource-field level cap for a **capital** village (> `field_max_level`).
+    pub capital_field_max_level: u8,
     /// Per-building-kind specs.
     pub buildings: HashMap<BuildingKind, LevelSpec>,
     /// Building prerequisites: to build/upgrade the key, each `(kind, level)` must be met.
@@ -68,9 +72,25 @@ impl BuildRules {
         self.spec(target)?.time(current_level)
     }
 
-    /// Max level for a target; 0 if unknown.
+    /// Max level for a target; 0 if unknown. Resource fields use the **normal** field cap (the
+    /// capital's raised cap is [`BuildRules::field_max_level`]); buildings use their table length.
     pub fn max_level(&self, target: BuildTarget) -> u8 {
-        self.spec(target).map_or(0, LevelSpec::max_level)
+        match target {
+            BuildTarget::Field { .. } => self.field_max_level,
+            BuildTarget::Building { kind, .. } => {
+                self.buildings.get(&kind).map_or(0, LevelSpec::max_level)
+            }
+        }
+    }
+
+    /// The resource-field level cap for a village, raised for the **capital** (013 AC10, §3.4).
+    #[must_use]
+    pub fn field_max_level(&self, is_capital: bool) -> u8 {
+        if is_capital {
+            self.capital_field_max_level
+        } else {
+            self.field_max_level
+        }
     }
 
     /// Main Building speed factor at `mb_level` (clamped to the table).
@@ -188,6 +208,8 @@ mod tests {
         );
         BuildRules {
             field,
+            field_max_level: 3,
+            capital_field_max_level: 5,
             buildings,
             prerequisites,
             main_building_factor_per_level: vec![1.0, 1.2, 1.5],
@@ -200,8 +222,17 @@ mod tests {
         let f = BuildTarget::Field { slot: 0 };
         assert_eq!(r.cost(f, 0), Some(amounts(40))); // level 0 -> 1
         assert_eq!(r.cost(f, 2), Some(amounts(250))); // level 2 -> 3
-        assert_eq!(r.cost(f, 3), None); // at max
-        assert_eq!(r.max_level(f), 3);
+        assert_eq!(r.cost(f, 3), None); // beyond the table
+        assert_eq!(r.max_level(f), 3); // the normal field cap
+    }
+
+    // 013 AC10: a capital may raise its fields past the normal cap; a non-capital may not.
+    #[test]
+    fn capital_raises_the_field_cap() {
+        let r = rules();
+        assert_eq!(r.field_max_level(false), 3, "normal field cap");
+        assert_eq!(r.field_max_level(true), 5, "capital field cap");
+        assert!(r.field_max_level(true) > r.field_max_level(false));
     }
 
     #[test]

@@ -464,7 +464,6 @@ mod tests {
             fields: FieldDistribution::new(4, 4, 4, 6).unwrap().fields(),
             buildings,
             oasis_bonus: Default::default(),
-            is_capital: false,
         }
     }
 

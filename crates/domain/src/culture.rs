@@ -21,8 +21,6 @@ pub struct CultureRules {
     pub expansion_slots_per_level: Vec<u32>,
     /// Settlers consumed to found a new village.
     pub settlers_per_village: u32,
-    /// The highest level a **capital's** resource fields may reach (> the normal field cap, §3.4).
-    pub capital_field_max_level: u8,
 }
 
 /// Clamp-to-last table lookup (level beyond the table reuses the last entry).
@@ -111,7 +109,6 @@ mod tests {
             cp_thresholds: vec![0, 0, 200, 500, 1000], // [1]=0 free; 2nd=200; 3rd=500; 4th=1000
             expansion_slots_per_level: vec![0, 1, 1, 2, 2, 3],
             settlers_per_village: 3,
-            capital_field_max_level: 20,
         }
     }
 

@@ -379,7 +379,8 @@ impl AccountRepository for PgAccountRepository {
     async fn villages_of(&self, owner: PlayerId) -> Result<Vec<Village>, RepoError> {
         let owner_uuid = Uuid::from_u128(owner.0);
         let village_rows = sqlx::query(
-            "SELECT id, x, y, tribe FROM villages WHERE owner_id = $1 ORDER BY created_at, id",
+            "SELECT id, x, y, tribe, is_capital FROM villages WHERE owner_id = $1 \
+             ORDER BY created_at, id",
         )
         .bind(owner_uuid)
         .fetch_all(&self.pool)
@@ -392,6 +393,7 @@ impl AccountRepository for PgAccountRepository {
             let x: i32 = r.try_get("x").map_err(backend)?;
             let y: i32 = r.try_get("y").map_err(backend)?;
             let tribe_raw: Option<String> = r.try_get("tribe").map_err(backend)?;
+            let is_capital: bool = r.try_get("is_capital").map_err(backend)?;
 
             let field_rows = sqlx::query(
                 "SELECT resource_type, level FROM village_fields WHERE village_id = $1 ORDER BY slot",
@@ -440,6 +442,7 @@ impl AccountRepository for PgAccountRepository {
                 // Fold the village's occupied-oasis bonus into the read (012, AC8) so every economy
                 // computation that takes this `Village` sees it.
                 oasis_bonus: self.village_oasis_bonus(vid_typed).await?,
+                is_capital,
             });
         }
         Ok(villages)
@@ -447,11 +450,12 @@ impl AccountRepository for PgAccountRepository {
 
     async fn village_by_id(&self, village: VillageId) -> Result<Option<Village>, RepoError> {
         let vid = Uuid::from_u128(village.0);
-        let Some(r) = sqlx::query("SELECT owner_id, x, y, tribe FROM villages WHERE id = $1")
-            .bind(vid)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(backend)?
+        let Some(r) =
+            sqlx::query("SELECT owner_id, x, y, tribe, is_capital FROM villages WHERE id = $1")
+                .bind(vid)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(backend)?
         else {
             return Ok(None);
         };
@@ -459,6 +463,7 @@ impl AccountRepository for PgAccountRepository {
         let x: i32 = r.try_get("x").map_err(backend)?;
         let y: i32 = r.try_get("y").map_err(backend)?;
         let tribe_raw: Option<String> = r.try_get("tribe").map_err(backend)?;
+        let is_capital: bool = r.try_get("is_capital").map_err(backend)?;
 
         let field_rows = sqlx::query(
             "SELECT resource_type, level FROM village_fields WHERE village_id = $1 ORDER BY slot",
@@ -503,6 +508,7 @@ impl AccountRepository for PgAccountRepository {
             buildings,
             // Fold the village's occupied-oasis bonus into the read (012, AC8).
             oasis_bonus: self.village_oasis_bonus(village).await?,
+            is_capital,
         }))
     }
 
@@ -791,6 +797,19 @@ impl BuildRepository for PgAccountRepository {
                 .execute(&mut *tx)
                 .await
                 .map_err(backend)?;
+
+                // 013 AC9: completing a Palace makes this village the owner's capital — exactly one
+                // per player, so any prior capital (and Palace's capital role) is cleared.
+                if kind == BuildingKind::Palace {
+                    sqlx::query(
+                        "UPDATE villages SET is_capital = (id = $1) \
+                         WHERE owner_id = (SELECT owner_id FROM villages WHERE id = $1)",
+                    )
+                    .bind(vid)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                }
             }
         }
 
@@ -7645,5 +7664,107 @@ mod tests {
         .await
         .unwrap();
         assert!(state_row.is_none(), "regrow_at cleared once full");
+    }
+
+    // 013 AC9: completing a Palace makes the village the player's capital; building another Palace
+    // elsewhere relocates it (exactly one capital per player).
+    #[tokio::test]
+    async fn palace_sets_and_relocates_capital() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping capital test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let uname = format!("capital_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &template,
+            )
+            .await
+            .expect("create account");
+        let v1 = repo.villages_of(user.id).await.unwrap()[0].clone();
+        assert!(!v1.is_capital, "a fresh village is not capital");
+
+        // Complete a Palace in v1 → it becomes the capital.
+        let palace = |village: VillageId| DueBuild {
+            id: Uuid::new_v4().as_u128(),
+            village,
+            target: BuildTarget::Building {
+                slot: 15,
+                kind: BuildingKind::Palace,
+            },
+            target_level: 1,
+        };
+        repo.apply_build(palace(v1.id)).await.expect("build palace");
+        assert!(
+            repo.village_by_id(v1.id).await.unwrap().unwrap().is_capital,
+            "the Palace village is now the capital"
+        );
+
+        // A second village for the same player (founded directly for the test). The shared dev DB is
+        // saturated near the origin, so scan from the frontier for a free tile.
+        let world_uuid = Uuid::from_u128(world.id.0);
+        let (mut vx, mut vy) = (49i32, 49i32);
+        loop {
+            let taken: bool = sqlx::query_scalar(
+                "SELECT true FROM villages WHERE world_id = $1 AND x = $2 AND y = $3",
+            )
+            .bind(world_uuid)
+            .bind(vx)
+            .bind(vy)
+            .fetch_optional(&pool)
+            .await
+            .unwrap()
+            .unwrap_or(false);
+            if !taken {
+                break;
+            }
+            vx -= 1;
+            if vx < -49 {
+                vx = 49;
+                vy -= 1;
+            }
+        }
+        let v2_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO villages (id, world_id, owner_id, x, y, tribe) VALUES ($1, $2, $3, $4, $5, 'gauls')")
+            .bind(v2_id)
+            .bind(world_uuid)
+            .bind(Uuid::from_u128(user.id.0))
+            .bind(vx)
+            .bind(vy)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let v2 = VillageId(v2_id.as_u128());
+
+        // Building a Palace in v2 relocates the capital: v2 becomes it, v1 is cleared.
+        repo.apply_build(palace(v2)).await.expect("build palace v2");
+        assert!(repo.village_by_id(v2).await.unwrap().unwrap().is_capital);
+        assert!(
+            !repo.village_by_id(v1.id).await.unwrap().unwrap().is_capital,
+            "the previous capital is cleared — one per player"
+        );
     }
 }

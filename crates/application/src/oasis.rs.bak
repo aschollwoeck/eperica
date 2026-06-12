@@ -813,7 +813,6 @@ mod tests {
             fields: Vec::new(),
             buildings,
             oasis_bonus: Default::default(),
-            is_capital: false,
         }
     }
 

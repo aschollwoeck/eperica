@@ -16,6 +16,3 @@ expansion_slots_per_level = [0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3]
 
 # Settlers consumed to found a new village.
 settlers_per_village = 3
-
-# The highest level a capital's resource fields may reach (above the normal field cap of 10, §3.4).
-capital_field_max_level = 20
