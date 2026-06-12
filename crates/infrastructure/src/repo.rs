@@ -5,9 +5,10 @@ use eperica_application::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
     BuildRepository, CombatRepository, DueAttack, DueBuild, DueMovement, DueScout, DueTrade,
     DueTraining, DueUnitOrder, MovementRepository, MovementView, NewBuildOrder, NewScoutReport,
-    NewTrainingOrder, NewUnitOrder, NewUser, RepoError, ScoutApply, ScoutIntel, ScoutReportView,
-    ScoutRepository, StarvationRepository, StationedGroup, TradeRepository, TradeView,
-    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    NewTrainingOrder, NewUnitOrder, NewUser, RazedBuilding, RepoError, ResourceWrite, ScoutApply,
+    ScoutIntel, ScoutReportView, ScoutRepository, StarvationRepository, StationedGroup,
+    TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
+    VillageMarker,
 };
 use eperica_domain::{
     BuildTarget, BuildingKind, BuildingSlot, Coordinate, MovementKind, PlayerId, QueueLane,
@@ -151,6 +152,7 @@ fn building_str(kind: BuildingKind) -> &'static str {
         BuildingKind::Stable => "stable",
         BuildingKind::Workshop => "workshop",
         BuildingKind::Residence => "residence",
+        BuildingKind::Cranny => "cranny",
     }
 }
 
@@ -180,6 +182,7 @@ fn parse_building(s: &str) -> Result<BuildingKind, RepoError> {
         "stable" => Ok(BuildingKind::Stable),
         "workshop" => Ok(BuildingKind::Workshop),
         "residence" => Ok(BuildingKind::Residence),
+        "cranny" => Ok(BuildingKind::Cranny),
         other => Err(RepoError::Backend(format!(
             "unknown building_type: {other}"
         ))),
@@ -1706,7 +1709,8 @@ impl MovementRepository for PgAccountRepository {
                  WHERE status = 'in_transit' AND kind IN ('reinforce', 'return') \
                    AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
                  ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
-             ) RETURNING id, kind, home_village, deliver_village",
+             ) RETURNING id, kind, home_village, deliver_village, \
+                 loot_wood, loot_clay, loot_iron, loot_crop",
         )
         .bind(now.0 as f64)
         .bind(limit)
@@ -1731,12 +1735,22 @@ impl MovementRepository for PgAccountRepository {
                 home_village: VillageId(home.as_u128()),
                 deliver_village: VillageId(deliver.as_u128()),
                 troops: troops.remove(id).unwrap_or_default(),
+                loot: ResourceAmounts {
+                    wood: r.try_get("loot_wood").map_err(backend)?,
+                    clay: r.try_get("loot_clay").map_err(backend)?,
+                    iron: r.try_get("loot_iron").map_err(backend)?,
+                    crop: r.try_get("loot_crop").map_err(backend)?,
+                },
             });
         }
         Ok(out)
     }
 
-    async fn apply_movement(&self, due: &DueMovement) -> Result<(), RepoError> {
+    async fn apply_movement(
+        &self,
+        due: &DueMovement,
+        credit: Option<ResourceWrite>,
+    ) -> Result<(), RepoError> {
         let deliver = Uuid::from_u128(due.deliver_village.0);
         let home = Uuid::from_u128(due.home_village.0);
         let mut tx = self.pool.begin().await.map_err(backend)?;
@@ -1782,6 +1796,29 @@ impl MovementRepository for PgAccountRepository {
                         "attack/raid/scout movement routed to apply_movement".into(),
                     ));
                 }
+            }
+        }
+
+        // Loot credit (011): a `return` carrying loot writes the home's settled, capped resources —
+        // guarded on the snapshot the caller settled from (P2/P4).
+        if let Some(credit) = credit {
+            let updated = sqlx::query(
+                "UPDATE village_resources SET wood=$1, clay=$2, iron=$3, crop=$4, \
+                 updated_at = to_timestamp($5::double precision / 1000.0) \
+                 WHERE village_id=$6 AND (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint = $7",
+            )
+            .bind(credit.after.wood)
+            .bind(credit.after.clay)
+            .bind(credit.after.iron)
+            .bind(credit.after.crop)
+            .bind(credit.clock.0 as f64)
+            .bind(deliver)
+            .bind(credit.settled_from.0)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+            if updated.rows_affected() == 0 {
+                return Err(RepoError::Conflict);
             }
         }
 
@@ -2311,6 +2348,25 @@ fn report_from_row(r: &PgRow) -> Result<BattleReportView, RepoError> {
         defender_losses: counts_from_json(&dl),
         scouted: r.try_get("scouted").map_err(backend)?,
         scout_target: parse_scout_target_opt(r.try_get("scout_target").map_err(backend)?)?,
+        loot: ResourceAmounts {
+            wood: r.try_get("loot_wood").map_err(backend)?,
+            clay: r.try_get("loot_clay").map_err(backend)?,
+            iron: r.try_get("loot_iron").map_err(backend)?,
+            crop: r.try_get("loot_crop").map_err(backend)?,
+        },
+        razed: match r
+            .try_get::<Option<String>, _>("razed_building")
+            .map_err(backend)?
+        {
+            Some(b) => Some(RazedBuilding {
+                kind: parse_building(&b)?,
+                before: u8::try_from(r.try_get::<i16, _>("razed_before").map_err(backend)?)
+                    .unwrap_or(0),
+                after: u8::try_from(r.try_get::<i16, _>("razed_after").map_err(backend)?)
+                    .unwrap_or(0),
+            }),
+            None => None,
+        },
     })
 }
 
@@ -2321,7 +2377,9 @@ const REPORT_SELECT: &str = "SELECT br.id, \
     du.username AS defender_name, dv.x AS dx, dv.y AS dy, \
     br.attacker_player, br.defender_player, br.attacker_won, br.luck, br.morale, \
     br.wall_before, br.wall_after, br.attacker_forces, br.attacker_losses, \
-    br.defender_forces, br.defender_losses, br.scouted, br.scout_target \
+    br.defender_forces, br.defender_losses, br.scouted, br.scout_target, \
+    br.loot_wood, br.loot_clay, br.loot_iron, br.loot_crop, \
+    br.razed_building, br.razed_before, br.razed_after \
     FROM battle_reports br \
     JOIN users au ON au.id = br.attacker_player \
     JOIN villages av ON av.id = br.attacker_village \
@@ -2343,6 +2401,7 @@ impl CombatRepository for PgAccountRepository {
         kind: MovementKind,
         troops: &[(UnitId, u32)],
         scout_target: Option<ScoutTarget>,
+        catapult_target: Option<BuildingKind>,
     ) -> Result<(), RepoError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         guarded_debit(&mut tx, Uuid::from_u128(home.0), troops).await?;
@@ -2364,6 +2423,14 @@ impl CombatRepository for PgAccountRepository {
         if let Some(target) = scout_target {
             set_scout_target(&mut tx, movement_id, target).await?;
         }
+        if let Some(building) = catapult_target {
+            sqlx::query("UPDATE troop_movements SET catapult_target = $1 WHERE id = $2")
+                .bind(building_str(building))
+                .bind(movement_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+        }
         tx.commit().await.map_err(backend)?;
         Ok(())
     }
@@ -2380,7 +2447,7 @@ impl CombatRepository for PgAccountRepository {
                    AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
                  ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
              ) RETURNING id, kind, owner_id, home_village, deliver_village, \
-                 origin_x, origin_y, dest_x, dest_y, scout_target, \
+                 origin_x, origin_y, dest_x, dest_y, scout_target, catapult_target, \
                  (EXTRACT(EPOCH FROM arrive_at) * 1000)::bigint AS arrive_ms",
         )
         .bind(now.0 as f64)
@@ -2419,6 +2486,11 @@ impl CombatRepository for PgAccountRepository {
                 arrive_at: Timestamp(arrive_ms),
                 troops: troops.remove(id).unwrap_or_default(),
                 scout_target: parse_scout_target_opt(r.try_get("scout_target").map_err(backend)?)?,
+                catapult_target: r
+                    .try_get::<Option<String>, _>("catapult_target")
+                    .map_err(backend)?
+                    .map(|s| parse_building(&s))
+                    .transpose()?,
             });
         }
         Ok(out)
@@ -2434,6 +2506,42 @@ impl CombatRepository for PgAccountRepository {
             subtract_reinforcements(&mut tx, target, Uuid::from_u128(home.0), losses).await?;
         }
 
+        // Loot (011): write the target's settled, looted-down resources — guarded on the snapshot the
+        // caller settled from, so a concurrent settle is detected (Conflict → requeue + re-resolve).
+        if let Some(debit) = apply.target_debit {
+            let updated = sqlx::query(
+                "UPDATE village_resources SET wood=$1, clay=$2, iron=$3, crop=$4, \
+                 updated_at = to_timestamp($5::double precision / 1000.0) \
+                 WHERE village_id=$6 AND (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint = $7",
+            )
+            .bind(debit.after.wood)
+            .bind(debit.after.clay)
+            .bind(debit.after.iron)
+            .bind(debit.after.crop)
+            .bind(debit.clock.0 as f64)
+            .bind(target)
+            .bind(debit.settled_from.0)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+            if updated.rows_affected() == 0 {
+                return Err(RepoError::Conflict);
+            }
+        }
+
+        // Catapult damage (011): set the razed building's new level.
+        if let Some(razed) = apply.razed {
+            sqlx::query(
+                "UPDATE village_buildings SET level = $1 WHERE village_id = $2 AND building_type = $3",
+            )
+            .bind(i16::from(razed.after))
+            .bind(target)
+            .bind(building_str(razed.kind))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        }
+
         // The report (visible to both parties).
         let r = &apply.report;
         sqlx::query(
@@ -2441,8 +2549,10 @@ impl CombatRepository for PgAccountRepository {
              (id, kind, attacker_player, attacker_village, defender_player, defender_village, \
               attacker_won, luck, morale, wall_before, wall_after, \
               attacker_forces, attacker_losses, defender_forces, defender_losses, \
-              scouted, scout_target) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
+              scouted, scout_target, loot_wood, loot_clay, loot_iron, loot_crop, \
+              razed_building, razed_before, razed_after) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, \
+                     $18, $19, $20, $21, $22, $23, $24)",
         )
         .bind(Uuid::new_v4())
         .bind(movement_kind_str(r.kind))
@@ -2461,6 +2571,13 @@ impl CombatRepository for PgAccountRepository {
         .bind(counts_to_json(&r.defender_losses))
         .bind(apply.scouted)
         .bind(apply.scout_target.map(|t| t.as_str()))
+        .bind(r.loot.wood)
+        .bind(r.loot.clay)
+        .bind(r.loot.iron)
+        .bind(r.loot.crop)
+        .bind(r.razed.map(|d| building_str(d.kind)))
+        .bind(r.razed.map(|d| i16::from(d.before)))
+        .bind(r.razed.map(|d| i16::from(d.after)))
         .execute(&mut *tx)
         .await
         .map_err(backend)?;
@@ -2470,11 +2587,13 @@ impl CombatRepository for PgAccountRepository {
             insert_scout_report(&mut tx, report).await?;
         }
 
-        // The attacker's survivors travel home (a `return` movement rejoins the garrison).
+        // The attacker's survivors travel home (a `return` movement rejoins the garrison) carrying any
+        // loot (011), credited at arrival.
         if !apply.survivors.is_empty() {
+            let return_id = Uuid::new_v4();
             insert_movement(
                 &mut tx,
-                Uuid::new_v4(),
+                return_id,
                 apply.owner,
                 MovementKind::Return,
                 apply.attacker_home,
@@ -2486,6 +2605,21 @@ impl CombatRepository for PgAccountRepository {
                 &apply.survivors,
             )
             .await?;
+            let l = apply.loot;
+            if l.wood != 0 || l.clay != 0 || l.iron != 0 || l.crop != 0 {
+                sqlx::query(
+                    "UPDATE troop_movements SET loot_wood=$1, loot_clay=$2, loot_iron=$3, \
+                     loot_crop=$4 WHERE id=$5",
+                )
+                .bind(apply.loot.wood)
+                .bind(apply.loot.clay)
+                .bind(apply.loot.iron)
+                .bind(apply.loot.crop)
+                .bind(return_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+            }
         }
 
         sqlx::query("UPDATE troop_movements SET status = 'done' WHERE id = $1")
@@ -2972,7 +3106,9 @@ mod tests {
         assert!(repo.requeue_orphaned_movements().await.unwrap() >= 1);
         let due = repo.claim_due_movements(arrive, 100).await.unwrap();
         let mine = due.iter().find(|d| d.home_village == a.id).expect("due");
-        repo.apply_movement(mine).await.expect("apply reinforce");
+        repo.apply_movement(mine, None)
+            .await
+            .expect("apply reinforce");
 
         // AC4: stationed at Bob, owned by Alice; visible to both sides.
         let here = repo.reinforcements_at(b.id).await.unwrap();
@@ -3027,9 +3163,17 @@ mod tests {
 
         // The return arrives via the processor — the troops rejoin Alice's garrison (back to 10),
         // and the processor reports her home for a starvation re-sync (AC5).
-        let homes = eperica_application::process_due_movements(&repo, arrive2, 100)
-            .await
-            .expect("process movements");
+        let homes = eperica_application::process_due_movements(
+            &repo,
+            &repo,
+            &crate::economy_rules().unwrap(),
+            &crate::unit_rules().unwrap(),
+            GameSpeed::new(1.0).unwrap(),
+            arrive2,
+            100,
+        )
+        .await
+        .expect("process movements");
         assert!(homes.contains(&a.id));
         assert_eq!(
             repo.garrison(a.id).await.unwrap(),
@@ -3579,6 +3723,7 @@ mod tests {
             MovementKind::Raid,
             &troops,
             None,
+            None,
         )
         .await
         .expect("attack");
@@ -3624,10 +3769,15 @@ mod tests {
                 attacker_losses: vec![(UnitId("swordsman".into()), 2)],
                 defender_forces: vec![(UnitId("phalanx".into()), 12)],
                 defender_losses: vec![(UnitId("phalanx".into()), 6)],
+                loot: ResourceAmounts::default(),
+                razed: None,
             },
             scouted: false,
             scout_target: None,
             scout_report: None,
+            loot: ResourceAmounts::default(),
+            target_debit: None,
+            razed: None,
         })
         .await
         .expect("apply battle");
@@ -3669,6 +3819,389 @@ mod tests {
         assert!(repo.reports_for(ally, 50).await.unwrap().is_empty());
         assert!(repo.report(report_id, attacker).await.unwrap().is_some());
         assert!(repo.report(report_id, ally).await.unwrap().is_none()); // not a party
+    }
+
+    /// 011 AC2/AC6/AC9: `apply_battle` debits the target's resources, razes the targeted building,
+    /// attaches the loot to the survivor return, and records it on the report; the return then
+    /// credits the loot (capped) to the attacker on arrival.
+    #[tokio::test]
+    async fn siege_loot_persistence_and_credit() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping siege/loot test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let units = crate::unit_rules().expect("unit rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (attacker, a) = account("slatk").await;
+        let (_defender, d) = account("sldef").await;
+
+        // A fixed snapshot clock so the guarded debit/credit are deterministic.
+        let t = 3_000_000_000_000i64;
+        // The target holds 2000 of each resource at snapshot `t`; the attacker starts empty at `t`.
+        for (v, amt) in [(d.id, 2000i64), (a.id, 0)] {
+            sqlx::query(
+                "UPDATE village_resources SET wood=$1, clay=$1, iron=$1, crop=$1, \
+                 updated_at = to_timestamp($2::double precision / 1000.0) WHERE village_id=$3",
+            )
+            .bind(amt)
+            .bind(t as f64)
+            .bind(Uuid::from_u128(v.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        // The target has a Warehouse at level 3 for the catapults to raze.
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+             VALUES ($1, 20, 'warehouse', 3)",
+        )
+        .bind(Uuid::from_u128(d.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        // The attacker's garrison: 10 swordsmen.
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'swordsman', 10)",
+        )
+        .bind(Uuid::from_u128(a.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let now = Timestamp(t);
+        let arrive = Timestamp(t + 100_000);
+        // AC1: a raid aiming catapults at the Warehouse persists the target on the movement.
+        repo.start_attack(
+            a.id,
+            d.id,
+            attacker,
+            a.coordinate,
+            d.coordinate,
+            now,
+            arrive,
+            MovementKind::Raid,
+            &[(UnitId("swordsman".into()), 6)],
+            None,
+            Some(BuildingKind::Warehouse),
+        )
+        .await
+        .expect("attack");
+        let mine = repo
+            .claim_due_attacks(arrive, 100)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|x| x.home_village == a.id)
+            .expect("due");
+        assert_eq!(mine.catapult_target, Some(BuildingKind::Warehouse));
+
+        // Apply a resolved raid: loot (100,50,30,0), Warehouse razed 3→1, 4 survivors carry it home.
+        let loot = ResourceAmounts {
+            wood: 100,
+            clay: 50,
+            iron: 30,
+            crop: 0,
+        };
+        let after = ResourceAmounts {
+            wood: 1900,
+            clay: 1950,
+            iron: 1970,
+            crop: 2000,
+        };
+        let return_arrive = Timestamp(arrive.0 + 100_000);
+        repo.apply_battle(BattleApply {
+            movement_id: mine.id,
+            owner: attacker,
+            attacker_home: a.id,
+            attacker_origin: a.coordinate,
+            target: d.id,
+            target_coord: d.coordinate,
+            defender_losses: Vec::new(),
+            reinforcement_losses: Vec::new(),
+            survivors: vec![(UnitId("swordsman".into()), 4)],
+            battle_at: arrive,
+            return_arrive,
+            report: NewBattleReport {
+                kind: MovementKind::Raid,
+                attacker_player: attacker,
+                attacker_village: a.id,
+                defender_player: _defender,
+                defender_village: d.id,
+                attacker_won: true,
+                luck: 1.0,
+                morale: 1.0,
+                wall_before: 0,
+                wall_after: 0,
+                attacker_forces: vec![(UnitId("swordsman".into()), 6)],
+                attacker_losses: vec![(UnitId("swordsman".into()), 2)],
+                defender_forces: Vec::new(),
+                defender_losses: Vec::new(),
+                loot,
+                razed: Some(RazedBuilding {
+                    kind: BuildingKind::Warehouse,
+                    before: 3,
+                    after: 1,
+                }),
+            },
+            scouted: false,
+            scout_target: None,
+            scout_report: None,
+            loot,
+            target_debit: Some(ResourceWrite {
+                after,
+                settled_from: now,
+                clock: now,
+            }),
+            razed: Some(RazedBuilding {
+                kind: BuildingKind::Warehouse,
+                before: 3,
+                after: 1,
+            }),
+        })
+        .await
+        .expect("apply battle");
+
+        // AC6: the target's resources were debited; AC2: the Warehouse dropped to level 1.
+        let (tw, twl): (i64, i16) = sqlx::query_as(
+            "SELECT vr.wood, vb.level FROM village_resources vr \
+             JOIN village_buildings vb ON vb.village_id = vr.village_id AND vb.building_type='warehouse' \
+             WHERE vr.village_id=$1",
+        )
+        .bind(Uuid::from_u128(d.id.0))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(tw, 1900);
+        assert_eq!(twl, 1);
+
+        // The survivor return carries the loot; the razed building is recorded on the report.
+        let (rw, rc, ri): (i64, i64, i64) = sqlx::query_as(
+            "SELECT loot_wood, loot_clay, loot_iron \
+             FROM troop_movements WHERE home_village=$1 AND kind='return'",
+        )
+        .bind(Uuid::from_u128(a.id.0))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((rw, rc, ri), (100, 50, 30));
+        let report = &repo.reports_for(attacker, 10).await.unwrap()[0];
+        assert_eq!(report.loot, loot);
+        assert_eq!(report.razed.unwrap().after, 1);
+
+        // AC6: the return arrives and credits the loot (capped) to the attacker (empty at `t`).
+        eperica_application::process_due_movements(
+            &repo,
+            &repo,
+            &econ,
+            &units,
+            GameSpeed::new(1.0).unwrap(),
+            return_arrive,
+            100,
+        )
+        .await
+        .expect("process return");
+        let aw: i64 = sqlx::query_scalar("SELECT wood FROM village_resources WHERE village_id=$1")
+            .bind(Uuid::from_u128(a.id.0))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(aw >= 100, "attacker wood {aw} should include the 100 loot");
+    }
+
+    /// 011 AC4/AC5/AC10: a Cranny-defended village reads back (regresses the building parser) and
+    /// shields its per-level capacity from loot; a **Teuton** attacker digs past part of it.
+    #[tokio::test]
+    async fn cranny_protects_loot_and_teuton_bypasses() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping cranny test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let units = crate::unit_rules().expect("unit rules");
+        let combat = crate::combat_rules().expect("combat rules");
+        let scout = crate::scout_rules().expect("scout rules");
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str, tribe: Tribe| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (ga_p, ga) = account("crgaul", Tribe::Gauls).await;
+        let (te_p, te) = account("crteut", Tribe::Teutons).await;
+        let (_df, d) = account("crdef", Tribe::Gauls).await;
+
+        // The defender builds a Cranny at level 2 (per-level protection from balance).
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+             VALUES ($1, 20, 'cranny', 2)",
+        )
+        .bind(Uuid::from_u128(d.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Regression for the building parser: a Cranny-bearing village must still read back.
+        let v = repo
+            .village_by_id(d.id)
+            .await
+            .expect("read")
+            .expect("village");
+        assert!(
+            v.buildings
+                .iter()
+                .any(|b| b.kind == BuildingKind::Cranny && b.level == 2)
+        );
+        let floor = combat.cranny_capacity(2);
+        assert!(floor > 0);
+
+        // Each attacker brings an overwhelming, high-carry garrison + a token defender garrison.
+        for (v, unit, n) in [
+            (ga.id, "swordsman", 100),
+            (te.id, "clubswinger", 100),
+            (d.id, "phalanx", 1),
+        ] {
+            sqlx::query(
+                "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, $2, $3)",
+            )
+            .bind(Uuid::from_u128(v.0))
+            .bind(unit)
+            .bind(n)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Resolve a raid and return the resources the **defender** kept (what loot couldn't reach).
+        let raid =
+            async |attacker_home: VillageId, attacker: PlayerId, unit: &str, t: i64| -> i64 {
+                // Pin the defender's resources just above the Cranny floor, so loot is Cranny-bound
+                // (not carry-capacity-bound) — isolating the protection from the attacker's capacity.
+                sqlx::query(
+                    "UPDATE village_resources SET wood=$1, clay=$1, iron=$1, crop=$1, \
+                 updated_at = to_timestamp($2::double precision / 1000.0) WHERE village_id=$3",
+                )
+                .bind(floor + 400)
+                .bind(t as f64)
+                .bind(Uuid::from_u128(d.id.0))
+                .execute(&pool)
+                .await
+                .unwrap();
+                let now = Timestamp(t);
+                let arrive = Timestamp(t + 100_000);
+                repo.start_attack(
+                    attacker_home,
+                    d.id,
+                    attacker,
+                    Coordinate::new(0, 0),
+                    d.coordinate,
+                    now,
+                    arrive,
+                    MovementKind::Raid,
+                    &[(UnitId(unit.into()), 80)],
+                    None,
+                    None,
+                )
+                .await
+                .expect("attack");
+                eperica_application::process_due_combat(
+                    &repo,
+                    &repo,
+                    &repo,
+                    &repo,
+                    &econ,
+                    &units,
+                    &combat,
+                    &scout,
+                    &map,
+                    GameSpeed::new(1.0).unwrap(),
+                    world.seed as u64,
+                    arrive,
+                    100,
+                )
+                .await
+                .expect("resolve");
+                sqlx::query_scalar("SELECT wood FROM village_resources WHERE village_id=$1")
+                    .bind(Uuid::from_u128(d.id.0))
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap()
+            };
+
+        // AC4: a non-Teuton raid can never take below the Cranny floor.
+        let kept_gaul = raid(ga.id, ga_p, "swordsman", 3_000_000_000_000).await;
+        assert!(
+            kept_gaul >= floor,
+            "Gaul left {kept_gaul}, below the Cranny floor {floor}"
+        );
+
+        // AC5: a Teuton raid digs past part of the Cranny — it keeps strictly less than a non-Teuton.
+        let kept_teuton = raid(te.id, te_p, "clubswinger", 3_000_000_100_000).await;
+        assert!(
+            kept_teuton < kept_gaul,
+            "Teuton kept {kept_teuton} but should bypass below the Gaul's {kept_gaul}"
+        );
     }
 
     /// 009 AC3/AC6 (processor path): `process_due_combat` resolves a due raid end-to-end — the
@@ -3752,6 +4285,7 @@ mod tests {
             arrive,
             MovementKind::Raid,
             &[(UnitId("swordsman".into()), 100)],
+            None,
             None,
         )
         .await
@@ -3874,6 +4408,7 @@ mod tests {
                 (UnitId("pathfinder".into()), 5),
             ],
             Some(ScoutTarget::Defenses),
+            None,
         )
         .await
         .expect("attack");
@@ -4296,6 +4831,7 @@ mod tests {
             arrive,
             MovementKind::Raid,
             &[(UnitId("swordsman".into()), 100)],
+            None,
             None,
         )
         .await

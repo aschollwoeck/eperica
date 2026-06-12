@@ -64,6 +64,7 @@ fn building_label(kind: BuildingKind) -> &'static str {
         BuildingKind::Stable => "Stable",
         BuildingKind::Workshop => "Workshop",
         BuildingKind::Residence => "Residence",
+        BuildingKind::Cranny => "Cranny",
     }
 }
 
@@ -81,6 +82,7 @@ fn building_kind_id(kind: BuildingKind) -> &'static str {
         BuildingKind::Stable => "stable",
         BuildingKind::Workshop => "workshop",
         BuildingKind::Residence => "residence",
+        BuildingKind::Cranny => "cranny",
     }
 }
 
@@ -99,6 +101,7 @@ fn building_slot(kind: BuildingKind) -> u8 {
         BuildingKind::Residence => 9,
         BuildingKind::Marketplace => 10,
         BuildingKind::Wall => 11,
+        BuildingKind::Cranny => 12,
     }
 }
 
@@ -115,6 +118,7 @@ fn parse_building_kind(s: Option<&str>) -> Option<BuildingKind> {
         Some("smithy") => Some(BuildingKind::Smithy),
         Some("stable") => Some(BuildingKind::Stable),
         Some("workshop") => Some(BuildingKind::Workshop),
+        Some("cranny") => Some(BuildingKind::Cranny),
         _ => None,
     }
 }
@@ -413,6 +417,7 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         BuildingKind::Granary,
         BuildingKind::Marketplace,
         BuildingKind::Wall,
+        BuildingKind::Cranny,
         BuildingKind::Barracks,
         BuildingKind::Academy,
         BuildingKind::Smithy,
@@ -1309,6 +1314,8 @@ pub async fn rally_send(
     let scout_target = form
         .get("scout_target")
         .and_then(|s| ScoutTarget::from_slug(s));
+    // The building attached catapults aim at (011); ignored unless catapults are in the composition.
+    let catapult_target = parse_building_kind(form.get("catapult_target").map(String::as_str));
     // The mode selects the use-case: reinforce (007) defends; attack/raid (009) fight; scout (010) spies.
     match form.get("mode").map(String::as_str) {
         Some("scout") => {
@@ -1351,6 +1358,7 @@ pub async fn rally_send(
                 troops,
                 mode,
                 scout_target,
+                catapult_target,
             )
             .await
             {
@@ -1715,6 +1723,17 @@ pub async fn report_detail(
         };
         format!("The enemy also scouted your {what}.")
     });
+    // Loot + building damage (011): shown when present.
+    let l = report.loot;
+    let loot = (l.wood != 0 || l.clay != 0 || l.iron != 0 || l.crop != 0).then(|| {
+        format!(
+            "{} wood, {} clay, {} iron, {} crop",
+            l.wood, l.clay, l.iron, l.crop
+        )
+    });
+    let razed = report
+        .razed
+        .map(|d| format!("{} {} → {}", building_label(d.kind), d.before, d.after));
     page(&ReportTemplate {
         kind: if report.kind == MovementKind::Raid {
             "Raid"
@@ -1732,5 +1751,7 @@ pub async fn report_detail(
         defender_name: report.defender_name.clone(),
         defender_rows: force_rows(unit_rules, &report.defender_forces, &report.defender_losses),
         scouted_note,
+        loot,
+        razed,
     })
 }

@@ -279,7 +279,17 @@ impl Scheduler {
                 Ok(_) => {}
                 Err(e) => tracing::error!(error = %e, "scheduler training tick failed"),
             }
-            match process_due_movements(&self.builds, now(), 100).await {
+            match process_due_movements(
+                &self.builds,
+                &self.builds,
+                &self.economy_rules,
+                &self.unit_rules,
+                self.speed,
+                now(),
+                100,
+            )
+            .await
+            {
                 Ok(homes) if !homes.is_empty() => {
                     tracing::debug!(returned = homes.len(), "scheduler delivered movements");
                     // Returning troops rejoined a garrison — re-sync those depletion checks (AC5).

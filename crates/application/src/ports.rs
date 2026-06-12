@@ -201,6 +201,8 @@ pub struct DueMovement {
     pub deliver_village: VillageId,
     /// The composition.
     pub troops: UnitCounts,
+    /// Loot this movement carries home (011) — non-zero only on a `return` from a raid/attack.
+    pub loot: ResourceAmounts,
 }
 
 /// Persistence for troop movements and stationed reinforcements (due-events, P1; 007).
@@ -279,7 +281,13 @@ pub trait MovementRepository: Send + Sync {
     ///
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
-    async fn apply_movement(&self, due: &DueMovement) -> Result<(), RepoError>;
+    /// `credit` (011) is the snapshot-guarded loot credit for a `return` that carried loot — applied
+    /// to the home village's resources in the same transaction as the garrison rejoin.
+    async fn apply_movement(
+        &self,
+        due: &DueMovement,
+        credit: Option<ResourceWrite>,
+    ) -> Result<(), RepoError>;
 }
 
 /// An in-flight shipment, for the owner's view (008 AC6).
@@ -431,6 +439,29 @@ pub struct DueAttack {
     pub troops: UnitCounts,
     /// What the attached scouts spy on (010); `None` when the attack carries no scouting intent.
     pub scout_target: Option<ScoutTarget>,
+    /// The building the attached catapults aim at (011); `None` = no catapults / seeded-random target.
+    pub catapult_target: Option<BuildingKind>,
+}
+
+/// A building a battle razed with catapults (011) — its kind and the levels before/after.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RazedBuilding {
+    pub kind: BuildingKind,
+    pub before: u8,
+    pub after: u8,
+}
+
+/// A snapshot-guarded resource write: the settled-and-adjusted amounts, the snapshot they were
+/// computed from, and the new settle clock — the 008-deliver pattern reused for the loot debit (011
+/// target) and the loot credit (011 attacker return).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceWrite {
+    /// The amounts to write (already settled to `clock` and loot-adjusted).
+    pub after: ResourceAmounts,
+    /// The snapshot the amounts were settled from (the write is guarded on it, P2/P4).
+    pub settled_from: Timestamp,
+    /// The new `updated_at` clock (never earlier than `settled_from`).
+    pub clock: Timestamp,
 }
 
 /// A battle report to persist, visible to both parties (009 AC7).
@@ -454,6 +485,10 @@ pub struct NewBattleReport {
     pub attacker_losses: UnitCounts,
     pub defender_forces: UnitCounts,
     pub defender_losses: UnitCounts,
+    /// Resources the attacker looted (011); all-zero when nothing was taken.
+    pub loot: ResourceAmounts,
+    /// The building catapults razed (011), or `None`.
+    pub razed: Option<RazedBuilding>,
 }
 
 /// The single-transaction application of a resolved battle (009 AC6/AC7).
@@ -490,6 +525,12 @@ pub struct BattleApply {
     pub scout_target: Option<ScoutTarget>,
     /// The scouter-facing intel report to persist alongside the battle (010), if scouts rode along.
     pub scout_report: Option<NewScoutReport>,
+    /// Resources the attacker looted (011) — attached to the survivor `return` and the report.
+    pub loot: ResourceAmounts,
+    /// The target's settled, looted-down resources to write (011), snapshot-guarded; `None` = no loot.
+    pub target_debit: Option<ResourceWrite>,
+    /// The building catapults razed (011) — decremented on the target; `None` = none.
+    pub razed: Option<RazedBuilding>,
 }
 
 /// A persisted battle report for the inbox/detail view (009 AC8).
@@ -517,6 +558,10 @@ pub struct BattleReportView {
     pub scouted: bool,
     /// What those scouts spied on, when `scouted`.
     pub scout_target: Option<ScoutTarget>,
+    /// Resources the attacker looted (011); all-zero when nothing was taken.
+    pub loot: ResourceAmounts,
+    /// The building catapults razed (011), or `None`.
+    pub razed: Option<RazedBuilding>,
 }
 
 /// Persistence for combat (009): launch attacks, claim due battles, apply resolutions, read reports.
@@ -541,6 +586,7 @@ pub trait CombatRepository: Send + Sync {
         kind: MovementKind,
         troops: &[(UnitId, u32)],
         scout_target: Option<ScoutTarget>,
+        catapult_target: Option<BuildingKind>,
     ) -> Result<(), RepoError>;
 
     /// Atomically claim attack/raid movements whose arrival is due (`in_transit → processing`).

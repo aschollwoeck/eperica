@@ -35,9 +35,9 @@ pub use ports::{
     BuildRepository, CombatRepository, DueAttack, DueBuild, DueEvent, DueMovement, DueScout,
     DueTrade, DueTraining, DueUnitOrder, EventStore, MovementRepository, MovementView,
     NewBattleReport, NewBuildOrder, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
-    PasswordHasher, RepoError, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository,
-    StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
-    UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    PasswordHasher, RazedBuilding, RepoError, ResourceWrite, ScoutApply, ScoutIntel,
+    ScoutReportView, ScoutRepository, StarvationRepository, StationedGroup, TradeRepository,
+    TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;

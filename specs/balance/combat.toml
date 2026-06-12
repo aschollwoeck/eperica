@@ -11,6 +11,17 @@ morale_exponent = 0.2
 base_defense = 10.0
 # Combat-strength bonus per Smithy upgrade level (0.015 ⇒ +1.5% attack/defence per level).
 smithy_bonus_per_level = 0.015
+# Catapult attack power needed to raze one level of a targeted building (011); like ram durability but
+# for buildings. Surviving catapults raze floor(catapultPower / durability) levels of the target.
+catapult_durability = 110.0
+
+# Loot (011, GDD §8.4 / §9.4 step 6). A Teuton attacker digs past this fraction of a defender's Cranny
+# protection (GDD §5.2); other tribes face the full protection. `cranny_protection_per_level` is the
+# quantity of **each** resource a Cranny hides from looting, by Cranny level (index = level; level 0
+# protects nothing).
+[loot]
+teuton_cranny_bypass = 0.5
+cranny_protection_per_level = [0, 800, 1200, 1700, 2300, 3000, 3800, 4700, 5700, 6800, 8000]
 
 # Scouting / espionage (010, GDD §9.4 step 1). Unlike the main battle this has no luck, no morale, and
 # no Wall bonus — only the attacking scouts can die, by a power-law in the defender/attacker scouting

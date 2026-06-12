@@ -29,4 +29,6 @@ pub enum BuildingKind {
     Residence,
     /// Boosts the garrison's defence; reduced by rams in combat (009). Tribe-flavoured by balance.
     Wall,
+    /// Hides a per-level quantity of each resource from looting (011); Teutons partially bypass it.
+    Cranny,
 }

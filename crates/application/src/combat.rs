@@ -2,17 +2,19 @@
 //! pure domain (`combat`); this layer validates and debits the attacker, gathers the defender's
 //! state, runs `resolve_battle`, applies the casualties + survivor return, and writes the report.
 
+use crate::economy::settle_amounts;
 use crate::ports::{
     AccountRepository, BattleApply, CombatRepository, MovementRepository, NewBattleReport,
-    NewScoutReport, RepoError, UnitRepository,
+    NewScoutReport, RazedBuilding, RepoError, ResourceWrite, UnitRepository,
 };
 use crate::scouting::gather_intel;
 use eperica_domain::{
     AttackMode, BattleInput, BuildingKind, CombatRules, Coordinate, EconomyRules, GameSpeed,
-    MovementKind, PlayerId, ScoutRules, ScoutTarget, Timestamp, Tribe, UnitCounts, UnitId,
-    UnitRole, UnitRules, Village, VillageId, WorldMap, add_defense, apply_losses, attack_power,
-    luck_factor, population, resolve_battle, resolve_scouting, scouting_power, slowest_speed,
-    travel_time_secs_floored,
+    MovementKind, PlayerId, ResourceAmounts, ScoutRules, ScoutTarget, SiegeKind, Timestamp, Tribe,
+    UnitCounts, UnitId, UnitRole, UnitRules, Village, VillageId, WorldMap, add_defense,
+    apply_losses, attack_power, carry_capacity_total, catapult_power, cranny_protection,
+    loot_split, luck_factor, population, razed_levels, resolve_battle, resolve_scouting,
+    scouting_power, slowest_speed, travel_time_secs_floored,
 };
 
 /// Why launching an attack/raid failed (009 AC2).
@@ -30,6 +32,9 @@ pub enum CombatError {
     /// The target is the attacker's own village tile.
     #[error("cannot attack your own village")]
     SameTile,
+    /// The chosen catapult target is the Wall or Rally Point (not catapultable, 011).
+    #[error("that building cannot be targeted by catapults")]
+    InvalidCatapultTarget,
     /// The owning village/account was not found.
     #[error("not found")]
     NotFound,
@@ -50,6 +55,108 @@ fn building_level(village: &Village, kind: BuildingKind) -> u8 {
         .iter()
         .find(|b| b.kind == kind)
         .map_or(0, |b| b.level)
+}
+
+/// Choose the building catapults raze (011 AC2): the attacker's choice if the target has it at level
+/// ≥ 1, else a **seeded-random** eligible building (deterministic from the world seed + movement id,
+/// P6). The Wall and Rally Point are never eligible. `None` if no eligible building or nothing is razed.
+fn pick_razed_target(
+    target: &Village,
+    chosen: Option<BuildingKind>,
+    world_seed: u64,
+    movement_id: u128,
+    catapult_power: f64,
+    rules: &CombatRules,
+) -> Option<RazedBuilding> {
+    let eligible: Vec<(BuildingKind, u8)> = target
+        .buildings
+        .iter()
+        .filter(|b| {
+            b.level >= 1 && !matches!(b.kind, BuildingKind::Wall | BuildingKind::RallyPoint)
+        })
+        .map(|b| (b.kind, b.level))
+        .collect();
+    if catapult_power <= 0.0 || eligible.is_empty() {
+        return None;
+    }
+    let (kind, level) = chosen
+        .and_then(|c| eligible.iter().find(|(k, _)| *k == c).copied())
+        .unwrap_or_else(|| {
+            let r = (luck_factor(world_seed, movement_id, 0.5) - 0.5).clamp(0.0, 0.999_999);
+            let idx = ((r * eligible.len() as f64) as usize).min(eligible.len() - 1);
+            eligible[idx]
+        });
+    let razed = razed_levels(catapult_power, rules.catapult_durability, level);
+    (razed > 0).then_some(RazedBuilding {
+        kind,
+        before: level,
+        after: level - razed,
+    })
+}
+
+/// Compute the loot the surviving attackers carry off (011 AC3–AC6) and the target's looted-down,
+/// snapshot-guarded resource write — `(loot, debit)`. Settles the target's resources to the arrival,
+/// subtracts the Cranny protection (Teuton-adjusted), and bounds by the survivors' carry capacity.
+#[allow(clippy::too_many_arguments)]
+async fn compute_loot<A>(
+    accounts: &A,
+    target: &Village,
+    target_garrison: &UnitCounts,
+    survivors: &UnitCounts,
+    attacker_roster: &[eperica_domain::UnitSpec],
+    attacker_tribe: Option<Tribe>,
+    arrive_at: Timestamp,
+    combat_rules: &CombatRules,
+    economy_rules: &EconomyRules,
+    unit_rules: &UnitRules,
+    speed: GameSpeed,
+) -> Result<(ResourceAmounts, Option<ResourceWrite>), RepoError>
+where
+    A: AccountRepository,
+{
+    let Some((stored, snapshot)) = accounts.stored_resources(target.id).await? else {
+        return Ok((ResourceAmounts::default(), None));
+    };
+    // Settle to the resolution instant (never regressing the clock below the snapshot).
+    let clock = Timestamp(arrive_at.0.max(snapshot.0));
+    let settled = settle_amounts(
+        stored,
+        snapshot,
+        clock,
+        target,
+        target_garrison,
+        economy_rules,
+        unit_rules,
+        speed,
+    );
+    let is_teuton = attacker_tribe == Some(Tribe::Teutons);
+    let cap = combat_rules.cranny_capacity(building_level(target, BuildingKind::Cranny));
+    let protected = cranny_protection(cap, is_teuton, combat_rules.cranny_bypass_teuton);
+    let protection = ResourceAmounts {
+        wood: protected,
+        clay: protected,
+        iron: protected,
+        crop: protected,
+    };
+    let capacity = carry_capacity_total(survivors, attacker_roster);
+    let loot = loot_split(settled, protection, capacity);
+    if loot == ResourceAmounts::default() {
+        return Ok((ResourceAmounts::default(), None));
+    }
+    let after = ResourceAmounts {
+        wood: settled.wood - loot.wood,
+        clay: settled.clay - loot.clay,
+        iron: settled.iron - loot.iron,
+        crop: settled.crop - loot.crop,
+    };
+    Ok((
+        loot,
+        Some(ResourceWrite {
+            after,
+            settled_from: snapshot,
+            clock,
+        }),
+    ))
 }
 
 /// Launch an attack or raid from `owner`'s village against the village at `target` (009 AC1).
@@ -75,12 +182,20 @@ pub async fn order_attack<A, C, S>(
     troops: Vec<(UnitId, u32)>,
     mode: AttackMode,
     scout_target: Option<ScoutTarget>,
+    catapult_target: Option<BuildingKind>,
 ) -> Result<(), CombatError>
 where
     A: AccountRepository,
     C: CombatRepository,
     S: crate::ports::StarvationRepository,
 {
+    // The Wall (rams' job) and the ever-present Rally Point cannot be catapulted (011, P4).
+    if matches!(
+        catapult_target,
+        Some(BuildingKind::Wall | BuildingKind::RallyPoint)
+    ) {
+        return Err(CombatError::InvalidCatapultTarget);
+    }
     let Some(home) = accounts.villages_of(owner).await?.into_iter().next() else {
         return Err(CombatError::NotFound);
     };
@@ -131,6 +246,14 @@ where
             .is_some_and(|s| s.role == UnitRole::Scout)
     });
     let effective_scout_target = has_scouts.then(|| scout_target.unwrap_or(ScoutTarget::Defenses));
+    // A catapult target only rides an attack that actually carries catapults (011).
+    let has_catapults = chosen.iter().any(|(id, _)| {
+        roster
+            .iter()
+            .find(|s| &s.id == id)
+            .is_some_and(|s| s.siege_kind == Some(SiegeKind::Catapult))
+    });
+    let effective_catapult_target = if has_catapults { catapult_target } else { None };
 
     combat
         .start_attack(
@@ -144,6 +267,7 @@ where
             kind,
             &chosen,
             effective_scout_target,
+            effective_catapult_target,
         )
         .await
         .map_err(|e| match e {
@@ -376,6 +500,41 @@ where
         (survivors, attacker_losses, None)
     };
 
+    // Catapults (011 AC2): surviving catapults raze a building when the attacker prevails.
+    let razed = if outcome.attacker_won {
+        let cat_power = catapult_power(&survivors, atk_roster, &atk_levels, combat_rules);
+        pick_razed_target(
+            &target,
+            attack.catapult_target,
+            world_seed,
+            attack.id,
+            cat_power,
+            combat_rules,
+        )
+    } else {
+        None
+    };
+
+    // Loot (011 AC3–AC6): surviving attackers plunder, bounded by carry capacity minus the Cranny.
+    let (loot, target_debit) = if survivors.is_empty() {
+        (ResourceAmounts::default(), None)
+    } else {
+        compute_loot(
+            accounts,
+            &target,
+            &garrison,
+            &survivors,
+            atk_roster,
+            home.tribe,
+            attack.arrive_at,
+            combat_rules,
+            economy_rules,
+            unit_rules,
+            speed,
+        )
+        .await?
+    };
+
     // The survivors travel home (a return movement); empty ⇒ none.
     let return_arrive = match slowest_speed(&survivors, atk_roster) {
         Some(slow) => {
@@ -462,10 +621,15 @@ where
                 attacker_losses,
                 defender_forces,
                 defender_losses: defender_losses_total,
+                loot,
+                razed,
             },
             scouted,
             scout_target,
             scout_report,
+            loot,
+            target_debit,
+            razed,
         })
         .await?;
     Ok(Some(target.id))
@@ -546,15 +710,8 @@ mod tests {
             &self,
             _v: VillageId,
         ) -> Result<Option<(ResourceAmounts, Timestamp)>, RepoError> {
-            Ok(Some((
-                ResourceAmounts {
-                    wood: 0,
-                    clay: 0,
-                    iron: 0,
-                    crop: 0,
-                },
-                Timestamp(0),
-            )))
+            // The target holds 500 of each resource at snapshot 0 (for the loot path, 011).
+            Ok(Some((amounts(500), Timestamp(0))))
         }
         async fn garrison(&self, v: VillageId) -> Result<UnitCounts, RepoError> {
             if v == self.home.id {
@@ -579,6 +736,7 @@ mod tests {
         troops: UnitCounts,
         arrive: Timestamp,
         scout_target: Option<ScoutTarget>,
+        catapult_target: Option<BuildingKind>,
     }
 
     #[derive(Default)]
@@ -604,6 +762,7 @@ mod tests {
             kind: MovementKind,
             troops: &[(UnitId, u32)],
             scout_target: Option<ScoutTarget>,
+            catapult_target: Option<BuildingKind>,
         ) -> Result<(), RepoError> {
             *self.sent.lock().unwrap() = Some(Sent {
                 home,
@@ -612,6 +771,7 @@ mod tests {
                 troops: troops.to_vec(),
                 arrive: arrive_at,
                 scout_target,
+                catapult_target,
             });
             Ok(())
         }
@@ -682,23 +842,23 @@ mod tests {
     }
 
     fn roster() -> Vec<UnitSpec> {
-        // u0..u8 are infantry; u9 is a Scout (attack 0, scouting 20) so the combined attack-with-
-        // scouts path can be exercised.
+        // u0..u7 are infantry (carry 50); u8 is a Catapult (siege, carry 0); u9 is a Scout — so the
+        // loot (011), catapult-damage (011), and scout (010) paths can all be exercised.
         (0..10)
             .map(|i| UnitSpec {
                 id: UnitId(format!("u{i}")),
                 name: format!("u{i}"),
-                role: if i == 9 {
-                    UnitRole::Scout
-                } else {
-                    UnitRole::Infantry
+                role: match i {
+                    9 => UnitRole::Scout,
+                    8 => UnitRole::Siege,
+                    _ => UnitRole::Infantry,
                 },
                 attack: if i == 9 { 0 } else { 10 },
                 defense_infantry: 10,
                 defense_cavalry: 10,
                 scouting: if i == 9 { 20 } else { 0 },
                 speed: 6 + i as u32,
-                carry_capacity: 0,
+                carry_capacity: if i < 8 { 50 } else { 0 },
                 crop_upkeep: 0,
                 cost: amounts(1),
                 train_secs: 1,
@@ -708,7 +868,7 @@ mod tests {
                     time_secs: 1,
                     requirements: vec![],
                 }),
-                siege_kind: None,
+                siege_kind: (i == 8).then_some(SiegeKind::Catapult),
             })
             .collect()
     }
@@ -788,6 +948,9 @@ mod tests {
             morale_exponent: 0.2,
             base_defense: 10.0,
             smithy_bonus_per_level: 0.015,
+            catapult_durability: 100.0,
+            cranny_bypass_teuton: 0.5,
+            cranny_protection_per_level: vec![0, 1000, 2000],
             walls: HashMap::from([
                 (Tribe::Romans, wall()),
                 (Tribe::Teutons, wall()),
@@ -889,7 +1052,11 @@ mod tests {
         ) -> Result<Vec<crate::ports::DueMovement>, RepoError> {
             Ok(Vec::new())
         }
-        async fn apply_movement(&self, _d: &crate::ports::DueMovement) -> Result<(), RepoError> {
+        async fn apply_movement(
+            &self,
+            _d: &crate::ports::DueMovement,
+            _credit: Option<crate::ports::ResourceWrite>,
+        ) -> Result<(), RepoError> {
             Ok(())
         }
     }
@@ -913,6 +1080,7 @@ mod tests {
             Coordinate::new(3, 4), // distance 5 from home
             troops,
             mode,
+            None,
             None,
         )
         .await
@@ -938,6 +1106,7 @@ mod tests {
             troops,
             AttackMode::Attack,
             scout_target,
+            None,
         )
         .await
     }
@@ -964,6 +1133,11 @@ mod tests {
         assert_eq!(
             cb.sent.lock().unwrap().clone().unwrap().scout_target,
             Some(ScoutTarget::Defenses)
+        );
+        // No catapults in these sends ⇒ no catapult target carried (011; T4 wires the real value).
+        assert_eq!(
+            cb.sent.lock().unwrap().clone().unwrap().catapult_target,
+            None
         );
 
         // Scouts present, explicit Resources ⇒ carried through.
@@ -1011,6 +1185,7 @@ mod tests {
             arrive_at: Timestamp(1_000_000),
             troops: vec![(UnitId("u0".into()), 1), (UnitId("u9".into()), 3)],
             scout_target: Some(ScoutTarget::Defenses),
+            catapult_target: None,
         }];
         let mv = FakeMovements {
             reinforcements: Vec::new(),
@@ -1042,6 +1217,177 @@ mod tests {
         let report = applied.scout_report.expect("scout report");
         assert!(report.intel.is_none());
         assert!(!report.scouts_lost.is_empty());
+        // AC7 (011): a wiped attacker loots nothing and razes nothing.
+        assert_eq!(applied.loot, ResourceAmounts::default());
+        assert!(applied.target_debit.is_none());
+        assert!(applied.razed.is_none());
+    }
+
+    /// 011 AC1: an attack carrying catapults persists a valid target; the Wall/Rally Point is
+    /// rejected; an attack without catapults carries no catapult target.
+    #[tokio::test]
+    async fn order_attack_catapult_target() {
+        let target = || Some(village(2, 2, Coordinate::new(3, 4)));
+        let acc = accounts(
+            vec![(UnitId("u0".into()), 5), (UnitId("u8".into()), 5)],
+            target(),
+        );
+        let cb = FakeCombat::default();
+        let send_cat = async |t: Option<BuildingKind>, troops: Vec<(UnitId, u32)>| {
+            order_attack(
+                &acc,
+                &cb,
+                &NoopStarvation,
+                &economy_rules(),
+                &unit_rules(),
+                &map(),
+                GameSpeed::new(1.0).unwrap(),
+                Timestamp(0),
+                PlayerId(1),
+                Coordinate::new(3, 4),
+                troops,
+                AttackMode::Attack,
+                None,
+                t,
+            )
+            .await
+        };
+        // Catapults + a valid target → carried.
+        send_cat(
+            Some(BuildingKind::Warehouse),
+            vec![(UnitId("u0".into()), 2), (UnitId("u8".into()), 2)],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            cb.sent.lock().unwrap().clone().unwrap().catapult_target,
+            Some(BuildingKind::Warehouse)
+        );
+        // The Wall and Rally Point are rejected (P4).
+        assert_eq!(
+            send_cat(Some(BuildingKind::Wall), vec![(UnitId("u8".into()), 1)]).await,
+            Err(CombatError::InvalidCatapultTarget)
+        );
+        assert_eq!(
+            send_cat(
+                Some(BuildingKind::RallyPoint),
+                vec![(UnitId("u8".into()), 1)]
+            )
+            .await,
+            Err(CombatError::InvalidCatapultTarget)
+        );
+        // No catapults in the composition → no catapult target carried.
+        send_cat(
+            Some(BuildingKind::Warehouse),
+            vec![(UnitId("u0".into()), 1)],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            cb.sent.lock().unwrap().clone().unwrap().catapult_target,
+            None
+        );
+    }
+
+    /// 011 AC2/AC3: a won attack with surviving catapults razes the target building and the survivors
+    /// loot the target (bounded by carry capacity, debited from the target).
+    #[tokio::test]
+    async fn resolve_loots_and_razes() {
+        // A target with a Warehouse (level 3) and a weak garrison, against an overwhelming attacker
+        // carrying 20 catapults (power 200 ⇒ razes 2 levels at durability 100).
+        let mut target = village(2, 2, Coordinate::new(3, 4));
+        target.buildings.push(BuildingSlot {
+            kind: BuildingKind::Warehouse,
+            level: 3,
+        });
+        let acc = FakeAccounts {
+            home: village(1, 1, Coordinate::new(0, 0)),
+            garrison: Vec::new(),
+            target: Some(target.clone()),
+            target_garrison: vec![(UnitId("u0".into()), 1)],
+        };
+        let cb = FakeCombat::default();
+        *cb.due.lock().unwrap() = vec![DueAttack {
+            id: 5,
+            kind: MovementKind::Raid,
+            owner: PlayerId(1),
+            home_village: VillageId(1),
+            target_village: VillageId(2),
+            origin: Coordinate::new(0, 0),
+            dest: Coordinate::new(3, 4),
+            arrive_at: Timestamp(1_000_000),
+            troops: vec![(UnitId("u0".into()), 50), (UnitId("u8".into()), 20)],
+            scout_target: None,
+            catapult_target: Some(BuildingKind::Warehouse),
+        }];
+        let mv = FakeMovements {
+            reinforcements: Vec::new(),
+        };
+        process_due_combat(
+            &acc,
+            &mv,
+            &FakeUnits,
+            &cb,
+            &economy_rules(),
+            &unit_rules(),
+            &combat_rules(),
+            &ScoutRules { loss_exponent: 1.5 },
+            &map(),
+            GameSpeed::new(1.0).unwrap(),
+            42,
+            Timestamp(1_000_000),
+            100,
+        )
+        .await
+        .unwrap();
+
+        let applied = cb.applied.lock().unwrap().clone().expect("applied");
+        // AC2: the Warehouse is razed from 3 toward 1 (200 power / 100 durability = 2 levels).
+        let razed = applied.razed.expect("razed");
+        assert_eq!(razed.kind, BuildingKind::Warehouse);
+        assert_eq!(razed.before, 3);
+        assert_eq!(razed.after, 1);
+        // AC3: loot was taken (target holds 500 each, no Cranny) and debited from the target.
+        assert!(applied.loot.wood > 0);
+        assert!(applied.target_debit.is_some());
+        assert_eq!(applied.report.loot, applied.loot);
+    }
+
+    /// 011 AC2/AC8: catapult target selection — no power / no eligible building → nothing; an unset
+    /// target picks a seeded-random **eligible** building deterministically; a chosen-but-absent
+    /// building falls back to the random pick.
+    #[test]
+    fn pick_razed_target_branches() {
+        let rules = combat_rules(); // catapult_durability 100
+        let mut v = village(2, 2, Coordinate::new(3, 4)); // has only a Rally Point (ineligible)
+        // No catapult power ⇒ nothing razed; and no eligible building ⇒ nothing even with power.
+        assert!(pick_razed_target(&v, Some(BuildingKind::Warehouse), 1, 1, 0.0, &rules).is_none());
+        assert!(pick_razed_target(&v, None, 1, 1, 500.0, &rules).is_none());
+        // Add eligible buildings; an unset target picks a random eligible one, never Wall/Rally Point.
+        v.buildings.push(BuildingSlot {
+            kind: BuildingKind::Warehouse,
+            level: 3,
+        });
+        v.buildings.push(BuildingSlot {
+            kind: BuildingKind::Smithy,
+            level: 2,
+        });
+        v.buildings.push(BuildingSlot {
+            kind: BuildingKind::Wall,
+            level: 5,
+        });
+        let r1 = pick_razed_target(&v, None, 7, 42, 500.0, &rules).expect("random");
+        let r2 = pick_razed_target(&v, None, 7, 42, 500.0, &rules).expect("random");
+        assert_eq!(r1, r2); // deterministic from the seed + movement id (AC8)
+        assert!(matches!(
+            r1.kind,
+            BuildingKind::Warehouse | BuildingKind::Smithy
+        ));
+        // A chosen building the target lacks falls back to the only remaining eligible one.
+        v.buildings.retain(|b| b.kind != BuildingKind::Smithy);
+        let fallback = pick_razed_target(&v, Some(BuildingKind::Smithy), 7, 42, 500.0, &rules)
+            .expect("fallback");
+        assert_eq!(fallback.kind, BuildingKind::Warehouse);
     }
 
     // AC1: a raid debits + schedules an attack/raid movement arriving at now + travelTime.
