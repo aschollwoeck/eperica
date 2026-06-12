@@ -214,8 +214,8 @@ fn splitmix64(mut z: u64) -> u64 {
 
 /// Deterministically mix `(seed, x, y)` into a hash. `x`/`y` are bit-cast to unsigned so negative
 /// coordinates are handled uniformly; `y` is rotated into the high bits so it cannot collide with
-/// `x`.
-fn mix(seed: u64, x: i32, y: i32) -> u64 {
+/// `x`. Shared with the seeded oasis-animal generation (012, P6).
+pub(crate) fn mix(seed: u64, x: i32, y: i32) -> u64 {
     let h = splitmix64(seed);
     let h = splitmix64(h ^ u64::from(x as u32));
     splitmix64(h ^ u64::from(y as u32).rotate_left(32))

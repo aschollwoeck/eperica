@@ -13,6 +13,7 @@ pub mod error;
 pub mod event;
 pub mod map;
 pub mod movement;
+pub mod oasis;
 pub mod resource;
 pub mod scouting;
 pub mod trade;
@@ -38,6 +39,7 @@ pub use error::DomainError;
 pub use event::{EventKind, ScheduledEvent, Timestamp};
 pub use map::{FieldDistribution, MapRules, OasisBonus, TileKind, Weighted, WorldMap};
 pub use movement::{MovementKind, slowest_speed, travel_time_secs, travel_time_secs_floored};
+pub use oasis::{OasisRules, oasis_garrison};
 pub use resource::ResourceKind;
 pub use scouting::{ScoutOutcome, ScoutRules, ScoutTarget, resolve_scouting, scouting_power};
 pub use trade::{

@@ -768,6 +768,7 @@ fn role_label(role: UnitRole) -> &'static str {
         UnitRole::Scout => "Scout",
         UnitRole::Siege => "Siege",
         UnitRole::Expansion => "Expansion",
+        UnitRole::Wild => "Wild",
     }
 }
 

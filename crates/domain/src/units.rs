@@ -40,6 +40,8 @@ pub enum UnitRole {
     Scout,
     Siege,
     Expansion,
+    /// A wild animal guarding an oasis (012) — defends only, never attacks; not a trainable troop.
+    Wild,
 }
 
 /// What a siege unit targets in combat (009/011). Non-siege units carry `None`.
@@ -171,6 +173,8 @@ impl TrainingRules {
 #[derive(Debug, Clone)]
 pub struct UnitRules {
     rosters: HashMap<Tribe, Vec<UnitSpec>>,
+    /// Wild animals that guard oases (012) — not a tribe roster, not trainable; defence-only.
+    wild_animals: Vec<UnitSpec>,
     pub smithy: SmithyRules,
     pub training: TrainingRules,
 }
@@ -223,14 +227,27 @@ impl UnitRules {
         }
         Ok(Self {
             rosters,
+            wild_animals: Vec::new(),
             smithy,
             training,
         })
     }
 
+    /// Attach the wild-animal roster (012). Not tribe-validated — animals are free-form defenders.
+    #[must_use]
+    pub fn with_wild_animals(mut self, wild_animals: Vec<UnitSpec>) -> Self {
+        self.wild_animals = wild_animals;
+        self
+    }
+
     /// The tribe's full roster, in balance order.
     pub fn roster(&self, tribe: Tribe) -> &[UnitSpec] {
         self.rosters.get(&tribe).map_or(&[], Vec::as_slice)
+    }
+
+    /// The wild-animal roster (012) — oasis defenders, in balance (rising-strength) order.
+    pub fn wild_animal_roster(&self) -> &[UnitSpec] {
+        &self.wild_animals
     }
 
     /// Look up one unit type of a tribe.

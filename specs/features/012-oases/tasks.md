@@ -8,7 +8,7 @@ lands green on its own.
 
 ## Domain & balance
 
-- [ ] **T1 — Wild animals + seeded oasis garrison.** `UnitRole::Wild`; `UnitRules.wild_animals` +
+- [x] **T1 — Wild animals + seeded oasis garrison.** `UnitRole::Wild`; `UnitRules.wild_animals` +
   `wild_animal_roster()` (validator leaves them unconstrained); `units.toml [wild_animals]` roster;
   `oasis_garrison(world_seed, coord, animals, rules)` (pure, seeded, scaled by distance/bonus). Unit
   tests: deterministic from seed+coord; animals have attack 0 (**AC1**). Backfill `UnitRole` matches.
