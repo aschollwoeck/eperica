@@ -1313,6 +1313,8 @@ pub async fn rally_send(
     let scout_target = form
         .get("scout_target")
         .and_then(|s| ScoutTarget::from_slug(s));
+    // The building attached catapults aim at (011); ignored unless catapults are in the composition.
+    let catapult_target = parse_building_kind(form.get("catapult_target").map(String::as_str));
     // The mode selects the use-case: reinforce (007) defends; attack/raid (009) fight; scout (010) spies.
     match form.get("mode").map(String::as_str) {
         Some("scout") => {
@@ -1355,6 +1357,7 @@ pub async fn rally_send(
                 troops,
                 mode,
                 scout_target,
+                catapult_target,
             )
             .await
             {
