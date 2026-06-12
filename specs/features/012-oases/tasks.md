@@ -19,7 +19,7 @@ lands green on its own.
 
 ## Persistence
 
-- [ ] **T3 — Oasis tables + repository.** `0015_oases.sql`: `oases` (+ owner) + `oasis_garrison` tables;
+- [x] **T3 — Oasis tables + repository.** `0015_oases.sql`: `oases` (+ owner) + `oasis_garrison` tables;
   `troop_movements.deliver_village` nullable; `OasisAttack`/`OasisReinforce` kinds. Repo: `oasis_at`,
   `oasis_defenders` (materialised garrison or seeded animals), `occupied_oases`, `start_oasis_attack`,
   `claim_due_oasis_attacks`, single-tx `apply_oasis_battle`, `village_oasis_bonus`. DB tests: defenders

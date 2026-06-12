@@ -21,6 +21,10 @@ pub enum MovementKind {
     Raid,
     /// Scouts travel to spy on a village; espionage resolves separately, no main battle (010).
     Scout,
+    /// Troops travel to an **oasis tile** to clear its animals and (if able) occupy it (012).
+    OasisAttack,
+    /// Troops travel to reinforce one of the owner's **own** occupied oases (012).
+    OasisReinforce,
 }
 
 /// The slowest map speed among the unit types present in `troops` (fields/hour), or `None` if the

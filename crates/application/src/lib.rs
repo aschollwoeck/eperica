@@ -32,12 +32,13 @@ pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
 pub use movement::{MovementError, order_reinforcement, order_return, process_due_movements};
 pub use ports::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
-    BuildRepository, CombatRepository, DueAttack, DueBuild, DueEvent, DueMovement, DueScout,
-    DueTrade, DueTraining, DueUnitOrder, EventStore, MovementRepository, MovementView,
+    BuildRepository, CombatRepository, DueAttack, DueBuild, DueEvent, DueMovement, DueOasisAttack,
+    DueScout, DueTrade, DueTraining, DueUnitOrder, EventStore, MovementRepository, MovementView,
     NewBattleReport, NewBuildOrder, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
-    PasswordHasher, RazedBuilding, RepoError, ResourceWrite, ScoutApply, ScoutIntel,
-    ScoutReportView, ScoutRepository, StarvationRepository, StationedGroup, TradeRepository,
-    TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    OasisBattleApply, OasisOwnership, OasisRepository, OasisState, PasswordHasher, RazedBuilding,
+    RepoError, ResourceWrite, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository,
+    StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
+    UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;

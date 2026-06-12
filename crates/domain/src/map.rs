@@ -175,6 +175,20 @@ impl WorldMap {
         self.radius
     }
 
+    /// The world seed — drives all generate-on-read terrain and the seeded oasis-animal garrison
+    /// (012, P6). Exposed so the persistence layer can re-derive an un-fought oasis's defenders.
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    /// The production bonus an oasis at `coord` grants, or `None` if the tile is not an oasis (012).
+    pub fn oasis_bonus_at(&self, coord: Coordinate) -> Option<OasisBonus> {
+        match self.tile_at(coord) {
+            Some(TileKind::Oasis(bonus)) => Some(bonus),
+            _ => None,
+        }
+    }
+
     /// The tile at `coord`, or `None` if it is out of bounds (P6 deterministic; AC1).
     pub fn tile_at(&self, coord: Coordinate) -> Option<TileKind> {
         if !coord.in_bounds(self.radius) {

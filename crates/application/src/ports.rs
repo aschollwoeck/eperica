@@ -5,9 +5,9 @@
 
 use async_trait::async_trait;
 use eperica_domain::{
-    BuildTarget, BuildingKind, Coordinate, EventKind, MovementKind, PlayerId, QueueLane,
-    ResourceAmounts, ScoutTarget, StartingVillage, Timestamp, TradeKind, Tribe, UnitCounts, UnitId,
-    Village, VillageId,
+    BuildTarget, BuildingKind, Coordinate, EventKind, MovementKind, OasisBonus, OasisRules,
+    PlayerId, QueueLane, ResourceAmounts, ScoutTarget, StartingVillage, Timestamp, TradeKind,
+    Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
 };
 
 /// A village's public presence on the map: its tile and its owner's name (GDD §7.3 — layout and
@@ -791,6 +791,149 @@ pub trait ScoutRepository: Send + Sync {
         id: u128,
         player: PlayerId,
     ) -> Result<Option<ScoutReportView>, RepoError>;
+}
+
+/// An oasis's persisted state (012): its owner (`None` ⇒ unoccupied, wild animals defend) and
+/// whether a row has been materialised yet (an un-materialised oasis uses the seeded animals).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OasisState {
+    /// The occupying village, or `None` when the oasis is unoccupied.
+    pub owner: Option<VillageId>,
+    /// Whether a persisted row exists (the oasis has been fought/occupied at least once).
+    pub materialised: bool,
+}
+
+/// A claimed, due oasis-attack movement ready to resolve (012). Targets a **tile**, not a village.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DueOasisAttack {
+    /// The movement's identity (also seeds the battle's luck).
+    pub id: u128,
+    /// The attacker.
+    pub owner: PlayerId,
+    /// The attacker's home village (survivors return here).
+    pub home_village: VillageId,
+    /// The attacker's tile.
+    pub origin: Coordinate,
+    /// The oasis tile under attack.
+    pub oasis: Coordinate,
+    /// When the attack arrives (the resolution instant).
+    pub arrive_at: Timestamp,
+    /// The attacking composition.
+    pub troops: UnitCounts,
+}
+
+/// What happens to an oasis's ownership at the end of a resolved oasis battle (012).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OasisOwnership {
+    /// Leave ownership unchanged (cleared without free capacity, or the attacker lost).
+    Unchanged,
+    /// The attacker's village occupies/takes the oasis (AC4/AC5).
+    Occupy(VillageId),
+    /// Free the oasis — clear its owner (defenders wiped, attacker had no capacity; AC5).
+    Free,
+}
+
+/// The single-transaction application of a resolved oasis battle (012 AC3/AC4/AC10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OasisBattleApply {
+    /// The oasis-attack movement to mark `done`.
+    pub movement_id: u128,
+    /// The attacker (for the survivor return movement).
+    pub owner: PlayerId,
+    /// The attacker's home village.
+    pub attacker_home: VillageId,
+    /// The attacker's tile (the return's destination).
+    pub attacker_origin: Coordinate,
+    /// The oasis tile (the return's origin).
+    pub oasis: Coordinate,
+    /// The oasis's defenders after the battle — the garrison table is replaced with these (empty ⇒
+    /// cleared).
+    pub defenders_after: UnitCounts,
+    /// The ownership outcome to persist.
+    pub ownership: OasisOwnership,
+    /// The attacker's surviving troops (sent home as a `return` movement; empty ⇒ no return).
+    pub survivors: UnitCounts,
+    /// The resolution instant (the survivor return departs then).
+    pub battle_at: Timestamp,
+    /// When the survivor return arrives home.
+    pub return_arrive: Timestamp,
+}
+
+/// Persistence for oases (012): launch oasis attacks, read defenders/ownership/bonus, claim due
+/// oasis battles, apply resolutions. The seeded wild-animal fallback is computed here (the world seed
+/// lives in the infrastructure map), so the seeded-animal balance is injected by the application.
+#[async_trait]
+pub trait OasisRepository: Send + Sync {
+    /// The oasis's persisted state at `coord`, or `None` if no row has been materialised yet.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn oasis_at(&self, coord: Coordinate) -> Result<Option<OasisState>, RepoError>;
+
+    /// The oasis's **current defenders** at `coord`: the materialised garrison (wild animals while
+    /// unoccupied, or the owner's stationed troops while occupied), or — if no row is materialised —
+    /// the **seeded** wild animals computed from the world seed + `animals`/`rules` (P6).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn oasis_defenders(
+        &self,
+        coord: Coordinate,
+        animals: &[UnitSpec],
+        rules: &OasisRules,
+    ) -> Result<UnitCounts, RepoError>;
+
+    /// The village's occupied oases, each with its per-resource production bonus (for the Outpost
+    /// capacity check + the bonus read path; the bonus is derived from the seeded map, not stored).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn occupied_oases(
+        &self,
+        village: VillageId,
+    ) -> Result<Vec<(Coordinate, OasisBonus)>, RepoError>;
+
+    /// The summed per-resource bonus of the village's occupied oases (008-style bonus read path;
+    /// AC8). Per-resource values saturate at `u8::MAX`.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn village_oasis_bonus(&self, village: VillageId) -> Result<OasisBonus, RepoError>;
+
+    /// Atomically debit `troops` from the `home` garrison (guarded) and create an `oasis_attack`
+    /// movement to the `oasis` tile (no destination village) arriving at `arrive_at`.
+    ///
+    /// # Errors
+    /// [`RepoError::Conflict`] if the garrison no longer covers a requested count; [`RepoError`] else.
+    #[allow(clippy::too_many_arguments)]
+    async fn start_oasis_attack(
+        &self,
+        home: VillageId,
+        owner: PlayerId,
+        origin: Coordinate,
+        oasis: Coordinate,
+        now: Timestamp,
+        arrive_at: Timestamp,
+        troops: &[(UnitId, u32)],
+    ) -> Result<(), RepoError>;
+
+    /// Atomically claim oasis-attack movements whose arrival is due (`in_transit → processing`).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn claim_due_oasis_attacks(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueOasisAttack>, RepoError>;
+
+    /// Apply a resolved oasis battle in **one** transaction — materialise the oasis row, replace its
+    /// garrison with `defenders_after`, set ownership per `ownership`, schedule the survivor return
+    /// (if any), and mark the movement `done`. Exactly-once with the orphan requeue (AC10).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn apply_oasis_battle(&self, apply: OasisBattleApply) -> Result<(), RepoError>;
 }
 
 /// A claimed, due event ready to be processed.
