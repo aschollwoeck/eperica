@@ -59,8 +59,24 @@ pub struct EconomyRules {
     pub warehouse_capacity_per_level: Vec<i64>,
     /// Granary capacity by Granary level (index 0 = base, i.e. no Granary).
     pub granary_capacity_per_level: Vec<i64>,
+    /// How many oases an Outpost may hold, by Outpost level (index = level; 012). Level 0 (no
+    /// Outpost) holds none.
+    pub outpost_capacity_per_level: Vec<u8>,
     /// Stored amounts a new village starts with.
     pub starting_amounts: ResourceAmounts,
+}
+
+impl EconomyRules {
+    /// The number of oases a village whose Outpost is at `level` may occupy (012, **AC6**). Clamped
+    /// to the table; an empty table or level 0 holds none.
+    #[must_use]
+    pub fn outpost_capacity(&self, level: u8) -> u8 {
+        if self.outpost_capacity_per_level.is_empty() {
+            return 0;
+        }
+        let idx = (level as usize).min(self.outpost_capacity_per_level.len() - 1);
+        self.outpost_capacity_per_level[idx]
+    }
 }
 
 fn level_value(table: &[i64], level: u8) -> i64 {
@@ -223,6 +239,7 @@ mod tests {
             ]),
             warehouse_capacity_per_level: vec![800, 1200, 1700],
             granary_capacity_per_level: vec![800, 1200, 1700],
+            outpost_capacity_per_level: vec![0, 1, 1],
             starting_amounts: ResourceAmounts {
                 wood: 750,
                 clay: 750,

@@ -154,6 +154,7 @@ fn parse_building(name: &str) -> Result<BuildingKind, BalanceError> {
         "workshop" => Ok(BuildingKind::Workshop),
         "residence" => Ok(BuildingKind::Residence),
         "cranny" => Ok(BuildingKind::Cranny),
+        "outpost" => Ok(BuildingKind::Outpost),
         other => Err(BalanceError::UnknownBuilding(other.to_owned())),
     }
 }
@@ -163,7 +164,13 @@ struct EconomyDto {
     production: ProductionDto,
     population: PopulationDto,
     capacity: CapacityDto,
+    outpost: OutpostEconomyDto,
     starting_amounts: AmountsDto,
+}
+
+#[derive(Deserialize)]
+struct OutpostEconomyDto {
+    capacity_per_level: Vec<u8>,
 }
 
 #[derive(Deserialize)]
@@ -215,6 +222,7 @@ pub fn economy_rules() -> Result<EconomyRules, BalanceError> {
         building_population_per_level,
         warehouse_capacity_per_level: dto.capacity.warehouse,
         granary_capacity_per_level: dto.capacity.granary,
+        outpost_capacity_per_level: dto.outpost.capacity_per_level,
         starting_amounts: ResourceAmounts {
             wood: dto.starting_amounts.wood,
             clay: dto.starting_amounts.clay,
@@ -272,6 +280,7 @@ struct BuildingsDto {
     stable: LevelSpecDto,
     workshop: LevelSpecDto,
     cranny: LevelSpecDto,
+    outpost: LevelSpecDto,
 }
 
 fn level_spec(dto: &LevelSpecDto) -> LevelSpec {
@@ -317,6 +326,7 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
         (BuildingKind::Stable, &dto.buildings.stable),
         (BuildingKind::Workshop, &dto.buildings.workshop),
         (BuildingKind::Cranny, &dto.buildings.cranny),
+        (BuildingKind::Outpost, &dto.buildings.outpost),
     ] {
         buildings.insert(kind, level_spec(spec_dto));
         let pr = prereqs(spec_dto)?;
@@ -845,6 +855,30 @@ mod tests {
         // The training factor table loaded and is usable (T1/T3).
         let units = unit_rules().expect("unit rules");
         assert!(units.training.building_factor(10) > units.training.building_factor(1));
+    }
+
+    #[test]
+    fn loads_outpost_building_and_capacity() {
+        // 012 AC6: the Outpost is a constructable building with spec prerequisites, and its capacity
+        // table rises with level (level 0 holds none; higher levels hold more).
+        let r = build_rules().expect("build rules");
+        let outpost = BuildTarget::Building {
+            slot: 0,
+            kind: BuildingKind::Outpost,
+        };
+        assert_eq!(r.max_level(outpost), 10);
+        assert!(r.cost(outpost, 0).is_some());
+        assert_eq!(
+            r.prerequisites(BuildingKind::Outpost),
+            &[
+                (BuildingKind::MainBuilding, 3),
+                (BuildingKind::RallyPoint, 1)
+            ]
+        );
+        let economy = economy_rules().expect("economy rules");
+        assert_eq!(economy.outpost_capacity(0), 0, "no Outpost holds no oasis");
+        assert!(economy.outpost_capacity(1) >= 1);
+        assert!(economy.outpost_capacity(10) > economy.outpost_capacity(1));
     }
 
     #[test]

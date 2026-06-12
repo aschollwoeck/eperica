@@ -13,7 +13,7 @@ lands green on its own.
   `oasis_garrison(world_seed, coord, animals, rules)` (pure, seeded, scaled by distance/bonus). Unit
   tests: deterministic from seed+coord; animals have attack 0 (**AC1**). Backfill `UnitRole` matches.
 
-- [ ] **T2 — Outpost building.** `BuildingKind::Outpost` threaded through every mapping (the 011-Cranny
+- [x] **T2 — Outpost building.** `BuildingKind::Outpost` threaded through every mapping (the 011-Cranny
   set); `construction.toml [buildings.outpost]`; `economy.toml` population + `outpost_capacity_per_level`;
   an `outpost_capacity(level)` accessor. Tests: rules load; Outpost buildable; capacity rises (**AC6**).
 
