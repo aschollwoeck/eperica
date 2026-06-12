@@ -7,7 +7,7 @@
 use eperica_domain::{
     BuildRules, BuildingKind, BuildingSlot, CombatRules, DomainError, EconomyRules,
     FieldDistribution, LevelSpec, MapRules, MerchantProfile, MerchantRules, OasisBonus,
-    ResearchSpec, ResourceAmounts, ResourceField, ResourceKind, SiegeKind, SmithyRules,
+    ResearchSpec, ResourceAmounts, ResourceField, ResourceKind, ScoutRules, SiegeKind, SmithyRules,
     StartingVillage, TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec, WallProfile,
     Weighted,
 };
@@ -385,6 +385,12 @@ struct CombatDto {
     base_defense: f64,
     smithy_bonus_per_level: f64,
     walls: CombatWallsDto,
+    scouting: ScoutingDto,
+}
+
+#[derive(Deserialize)]
+struct ScoutingDto {
+    loss_exponent: f64,
 }
 
 #[derive(Deserialize)]
@@ -426,6 +432,17 @@ pub fn combat_rules() -> Result<CombatRules, BalanceError> {
             (Tribe::Teutons, WallProfile::from(&dto.walls.teutons)),
             (Tribe::Gauls, WallProfile::from(&dto.walls.gauls)),
         ]),
+    })
+}
+
+/// Load the scouting/espionage rules (the attacking-scout loss exponent) from combat balance (010).
+///
+/// # Errors
+/// Returns [`BalanceError`] if the data cannot be parsed.
+pub fn scout_rules() -> Result<ScoutRules, BalanceError> {
+    let dto: CombatDto = toml::from_str(COMBAT_TOML)?;
+    Ok(ScoutRules {
+        loss_exponent: dto.scouting.loss_exponent,
     })
 }
 
@@ -861,6 +878,28 @@ mod tests {
         let a = resolve_battle(AttackMode::Raid, base, &r, 1.0);
         let b = resolve_battle(AttackMode::Raid, walled, &r, 1.0);
         assert!(b.attacker_loss_frac > a.attacker_loss_frac);
+    }
+
+    #[test]
+    fn loads_scout_rules_and_scout_strengths() {
+        // 010: the espionage loss exponent loads and is a real power-law (> 1).
+        let s = scout_rules().expect("scout rules");
+        assert!(s.loss_exponent > 1.0);
+
+        // Every tribe's Scout-role unit carries a positive `scouting`; non-scouts stay at 0.
+        let units = unit_rules().expect("unit rules");
+        for tribe in [Tribe::Romans, Tribe::Teutons, Tribe::Gauls] {
+            let roster = units.roster(tribe);
+            let scouts: Vec<_> = roster
+                .iter()
+                .filter(|u| u.role == UnitRole::Scout)
+                .collect();
+            assert_eq!(scouts.len(), 1, "{tribe:?} should have one scout");
+            assert!(scouts[0].scouting > 0, "{tribe:?} scout needs scouting > 0");
+            for u in roster.iter().filter(|u| u.role != UnitRole::Scout) {
+                assert_eq!(u.scouting, 0, "non-scout {} must have scouting 0", u.id.0);
+            }
+        }
     }
 
     #[test]

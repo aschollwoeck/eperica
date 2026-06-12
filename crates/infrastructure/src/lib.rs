@@ -17,7 +17,7 @@ pub mod world;
 pub use eperica_application as application;
 
 pub use balance::{
-    BalanceError, build_rules, combat_rules, economy_rules, map_rules, merchant_rules,
+    BalanceError, build_rules, combat_rules, economy_rules, map_rules, merchant_rules, scout_rules,
     starting_village, unit_rules,
 };
 pub use config::{AppConfig, ConfigError};

@@ -12,6 +12,12 @@ base_defense = 10.0
 # Combat-strength bonus per Smithy upgrade level (0.015 ⇒ +1.5% attack/defence per level).
 smithy_bonus_per_level = 0.015
 
+# Scouting / espionage (010, GDD §9.4 step 1). Unlike the main battle this has no luck, no morale, and
+# no Wall bonus — only the attacking scouts can die, by a power-law in the defender/attacker scouting
+# power ratio. `loss_exponent` is that exponent k (matches the main battle's curve).
+[scouting]
+loss_exponent = 1.5
+
 # Per-tribe Wall: `bonus_per_level` is the defence multiplier bonus by Wall level (index = level);
 # `ram_durability` is the ram attack power needed to raze one level (GDD §5 — Romans highest bonus /
 # fragile, Teutons lowest bonus / toughest, Gauls balanced).
