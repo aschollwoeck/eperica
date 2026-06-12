@@ -1,6 +1,6 @@
 # Feature 011 — Siege & loot — Technical Plan
 
-**Status:** Draft
+**Status:** Verified
 **Spec:** ./spec.md
 
 Two extensions to the 009 resolution and one new building. The **catapult building-damage** and the

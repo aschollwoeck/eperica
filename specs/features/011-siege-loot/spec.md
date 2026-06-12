@@ -1,6 +1,6 @@
 # Feature 011 — Siege & loot
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 003 (construction — the Cranny is a built building), 009 (combat resolution + battle reports), 002 (resource accrual + warehouse/granary caps), 007 (the `return` movement that carries loot home)
 **Roadmap:** M4 · slice 011 · GDD §9.3–9.4, §8.4 — the **destruction + plunder** loop that turns a won fight into damage and stolen resources.
 
