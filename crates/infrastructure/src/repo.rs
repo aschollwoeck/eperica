@@ -7504,6 +7504,23 @@ mod tests {
         // The previous owner no longer holds it; the new owner does.
         assert!(repo.occupied_oases(dv.id).await.unwrap().is_empty());
         assert_eq!(repo.occupied_oases(av.id).await.unwrap().len(), 1);
+
+        // AC11: the oasis battle report reaches **both** parties — the attacker and the previous
+        // owner (the defending owner, since the oasis was occupied when attacked). These are fresh
+        // accounts, so each party has exactly this one oasis-attack report. (For an *occupied* oasis
+        // the report's defender is the owner's village, so `defender_coord` is the village tile.)
+        let oasis_report = |reports: Vec<BattleReportView>| {
+            reports
+                .into_iter()
+                .find(|r| r.kind == MovementKind::OasisAttack)
+        };
+        let atk_report = oasis_report(repo.reports_for(attacker.id, 50).await.unwrap())
+            .expect("attacker sees the oasis report");
+        assert!(atk_report.attacker_won);
+        assert_eq!(atk_report.defender_player, Some(defender.id));
+        let def_report = oasis_report(repo.reports_for(defender.id, 50).await.unwrap())
+            .expect("the previous owner sees the oasis report");
+        assert_eq!(def_report.attacker_player, attacker.id);
     }
 
     // 012 AC9: a cleared, unoccupied oasis regrows its animals toward the seeded strength over due

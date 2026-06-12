@@ -468,7 +468,10 @@ where
             oasis_rules,
         );
         let (garrison, full) = regrow_step(&r.current, &seeded, oasis_rules.regrow_per_step);
-        let next = (!full).then(|| regrow_due(oasis_rules, speed, now));
+        // Anchor the next tick to the **claimed due time**, not the processing wall-clock, so the
+        // regrow cadence is independent of scheduler latency (P2/P11) — mirroring how the first
+        // regrow is anchored to the battle instant in `resolve_oasis_one`.
+        let next = (!full).then(|| regrow_due(oasis_rules, speed, r.regrow_at));
         if let Err(e) = oases
             .apply_oasis_regrow(r.oasis, &garrison, r.regrow_at, next)
             .await
@@ -547,6 +550,10 @@ where
 
     // Occupation (AC4/AC5/AC6): on a winning attack, occupy if the attacker has free Outpost
     // capacity; otherwise clear an unoccupied oasis (Unchanged) or free a previously-occupied one.
+    // The capacity read is outside `apply_oasis_battle`'s transaction: this is exact under the
+    // **single-scheduler** deployment the scheduler assumes (sequential resolve+commit). Concurrent
+    // schedulers could occupy past capacity here — to be guarded with the requeue/scale-out work the
+    // scheduler comment already flags (P4).
     let ownership = if outcome.attacker_won {
         let capacity = economy_rules.outpost_capacity(building_level(&home, BuildingKind::Outpost));
         let occupied_now = oases.occupied_oases(home.id).await?.len();
