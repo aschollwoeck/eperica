@@ -36,7 +36,7 @@ Ordered for dependency and testability (pure domain first). Each task is a commi
 
 ## Application
 
-- [ ] **T4 — Siege & loot use-cases.** `order_attack` accepts `catapult_target` (rejects Wall/Rally
+- [x] **T4 — Siege & loot use-cases.** `order_attack` accepts `catapult_target` (rejects Wall/Rally
   Point; only persisted when catapults are present). `resolve_one` extended: surviving catapults →
   target pick (chosen, else seeded-random eligible) → `razed_levels`; surviving carry capacity →
   settle target resources → `cranny_protection` (Teuton-adjusted) → `loot_split` → debit; assemble the
