@@ -7,7 +7,7 @@ Ordered for dependency and testability (pure domain first). Each task is a commi
 
 ## Domain (pure, test-first)
 
-- [ ] **T1 — Siege & loot domain.** `BuildingKind::Cranny`; in `combat.rs`: `catapult_power`,
+- [x] **T1 — Siege & loot domain.** `BuildingKind::Cranny`; in `combat.rs`: `catapult_power`,
   `razed_levels` (factor the existing ram→Wall razing through it), `loot_split` (proportional,
   capacity-bound, cranny floor, round-half-to-even with conserved total), `cranny_protection`
   (Teuton bypass), `carry_capacity_total`; `CombatRules` gains `catapult_durability` +
@@ -16,7 +16,7 @@ Ordered for dependency and testability (pure domain first). Each task is a commi
 
 ## Balance & the Cranny building
 
-- [ ] **T2 — Balance + Cranny mappings.** `construction.toml` `[buildings.cranny]`; `economy.toml`
+- [x] **T2 — Balance + Cranny mappings.** `construction.toml` `[buildings.cranny]`; `economy.toml`
   `cranny_protection_per_level` + Cranny population; `combat.toml` `catapult_durability` + `[loot]
   teuton_cranny_bypass`; loaders (`combat_rules`, economy/build rules). Thread `BuildingKind::Cranny`
   through every mapping (balance `parse_building`/level table, web label/id/slot/parse, buildable list)
