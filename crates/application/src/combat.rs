@@ -1353,6 +1353,43 @@ mod tests {
         assert_eq!(applied.report.loot, applied.loot);
     }
 
+    /// 011 AC2/AC8: catapult target selection — no power / no eligible building → nothing; an unset
+    /// target picks a seeded-random **eligible** building deterministically; a chosen-but-absent
+    /// building falls back to the random pick.
+    #[test]
+    fn pick_razed_target_branches() {
+        let rules = combat_rules(); // catapult_durability 100
+        let mut v = village(2, 2, Coordinate::new(3, 4)); // has only a Rally Point (ineligible)
+        // No catapult power ⇒ nothing razed; and no eligible building ⇒ nothing even with power.
+        assert!(pick_razed_target(&v, Some(BuildingKind::Warehouse), 1, 1, 0.0, &rules).is_none());
+        assert!(pick_razed_target(&v, None, 1, 1, 500.0, &rules).is_none());
+        // Add eligible buildings; an unset target picks a random eligible one, never Wall/Rally Point.
+        v.buildings.push(BuildingSlot {
+            kind: BuildingKind::Warehouse,
+            level: 3,
+        });
+        v.buildings.push(BuildingSlot {
+            kind: BuildingKind::Smithy,
+            level: 2,
+        });
+        v.buildings.push(BuildingSlot {
+            kind: BuildingKind::Wall,
+            level: 5,
+        });
+        let r1 = pick_razed_target(&v, None, 7, 42, 500.0, &rules).expect("random");
+        let r2 = pick_razed_target(&v, None, 7, 42, 500.0, &rules).expect("random");
+        assert_eq!(r1, r2); // deterministic from the seed + movement id (AC8)
+        assert!(matches!(
+            r1.kind,
+            BuildingKind::Warehouse | BuildingKind::Smithy
+        ));
+        // A chosen building the target lacks falls back to the only remaining eligible one.
+        v.buildings.retain(|b| b.kind != BuildingKind::Smithy);
+        let fallback = pick_razed_target(&v, Some(BuildingKind::Smithy), 7, 42, 500.0, &rules)
+            .expect("fallback");
+        assert_eq!(fallback.kind, BuildingKind::Warehouse);
+    }
+
     // AC1: a raid debits + schedules an attack/raid movement arriving at now + travelTime.
     #[tokio::test]
     async fn launching_a_raid_schedules_the_arrival() {

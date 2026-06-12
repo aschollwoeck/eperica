@@ -182,6 +182,7 @@ fn parse_building(s: &str) -> Result<BuildingKind, RepoError> {
         "stable" => Ok(BuildingKind::Stable),
         "workshop" => Ok(BuildingKind::Workshop),
         "residence" => Ok(BuildingKind::Residence),
+        "cranny" => Ok(BuildingKind::Cranny),
         other => Err(RepoError::Backend(format!(
             "unknown building_type: {other}"
         ))),
@@ -4037,6 +4038,170 @@ mod tests {
             .await
             .unwrap();
         assert!(aw >= 100, "attacker wood {aw} should include the 100 loot");
+    }
+
+    /// 011 AC4/AC5/AC10: a Cranny-defended village reads back (regresses the building parser) and
+    /// shields its per-level capacity from loot; a **Teuton** attacker digs past part of it.
+    #[tokio::test]
+    async fn cranny_protects_loot_and_teuton_bypasses() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping cranny test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let units = crate::unit_rules().expect("unit rules");
+        let combat = crate::combat_rules().expect("combat rules");
+        let scout = crate::scout_rules().expect("scout rules");
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str, tribe: Tribe| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (ga_p, ga) = account("crgaul", Tribe::Gauls).await;
+        let (te_p, te) = account("crteut", Tribe::Teutons).await;
+        let (_df, d) = account("crdef", Tribe::Gauls).await;
+
+        // The defender builds a Cranny at level 2 (per-level protection from balance).
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+             VALUES ($1, 20, 'cranny', 2)",
+        )
+        .bind(Uuid::from_u128(d.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Regression for the building parser: a Cranny-bearing village must still read back.
+        let v = repo
+            .village_by_id(d.id)
+            .await
+            .expect("read")
+            .expect("village");
+        assert!(
+            v.buildings
+                .iter()
+                .any(|b| b.kind == BuildingKind::Cranny && b.level == 2)
+        );
+        let floor = combat.cranny_capacity(2);
+        assert!(floor > 0);
+
+        // Each attacker brings an overwhelming, high-carry garrison + a token defender garrison.
+        for (v, unit, n) in [
+            (ga.id, "swordsman", 100),
+            (te.id, "clubswinger", 100),
+            (d.id, "phalanx", 1),
+        ] {
+            sqlx::query(
+                "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, $2, $3)",
+            )
+            .bind(Uuid::from_u128(v.0))
+            .bind(unit)
+            .bind(n)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Resolve a raid and return the resources the **defender** kept (what loot couldn't reach).
+        let raid =
+            async |attacker_home: VillageId, attacker: PlayerId, unit: &str, t: i64| -> i64 {
+                // Pin the defender's resources just above the Cranny floor, so loot is Cranny-bound
+                // (not carry-capacity-bound) — isolating the protection from the attacker's capacity.
+                sqlx::query(
+                    "UPDATE village_resources SET wood=$1, clay=$1, iron=$1, crop=$1, \
+                 updated_at = to_timestamp($2::double precision / 1000.0) WHERE village_id=$3",
+                )
+                .bind(floor + 400)
+                .bind(t as f64)
+                .bind(Uuid::from_u128(d.id.0))
+                .execute(&pool)
+                .await
+                .unwrap();
+                let now = Timestamp(t);
+                let arrive = Timestamp(t + 100_000);
+                repo.start_attack(
+                    attacker_home,
+                    d.id,
+                    attacker,
+                    Coordinate::new(0, 0),
+                    d.coordinate,
+                    now,
+                    arrive,
+                    MovementKind::Raid,
+                    &[(UnitId(unit.into()), 80)],
+                    None,
+                    None,
+                )
+                .await
+                .expect("attack");
+                eperica_application::process_due_combat(
+                    &repo,
+                    &repo,
+                    &repo,
+                    &repo,
+                    &econ,
+                    &units,
+                    &combat,
+                    &scout,
+                    &map,
+                    GameSpeed::new(1.0).unwrap(),
+                    world.seed as u64,
+                    arrive,
+                    100,
+                )
+                .await
+                .expect("resolve");
+                sqlx::query_scalar("SELECT wood FROM village_resources WHERE village_id=$1")
+                    .bind(Uuid::from_u128(d.id.0))
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap()
+            };
+
+        // AC4: a non-Teuton raid can never take below the Cranny floor.
+        let kept_gaul = raid(ga.id, ga_p, "swordsman", 3_000_000_000_000).await;
+        assert!(
+            kept_gaul >= floor,
+            "Gaul left {kept_gaul}, below the Cranny floor {floor}"
+        );
+
+        // AC5: a Teuton raid digs past part of the Cranny — it keeps strictly less than a non-Teuton.
+        let kept_teuton = raid(te.id, te_p, "clubswinger", 3_000_000_100_000).await;
+        assert!(
+            kept_teuton < kept_gaul,
+            "Teuton kept {kept_teuton} but should bypass below the Gaul's {kept_gaul}"
+        );
     }
 
     /// 009 AC3/AC6 (processor path): `process_due_combat` resolves a due raid end-to-end — the

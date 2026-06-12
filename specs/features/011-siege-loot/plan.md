@@ -61,10 +61,12 @@ typed ints; building damage is small `jsonb`).
 
 - `construction.toml` — `[buildings.cranny]` (`time_secs`, `prerequisites = []`, `cost.{wood,clay,iron,
   crop}` per level), mirroring `[buildings.wall]`.
-- `economy.toml` — `cranny_protection_per_level = [...]` (per-type protected quantity by level) +
-  the Cranny **population** row; `EconomyRules` gains `cranny_protection_per_level: Vec<i64>` with a
-  `cranny_protection(level)` accessor (clamped to the table).
-- `combat.toml` — `catapult_durability` + `[loot] teuton_cranny_bypass = f`; `combat_rules()` loads both.
+- `economy.toml` — the Cranny **population** row.
+- `combat.toml` — `catapult_durability` + a `[loot]` table with `teuton_cranny_bypass` **and**
+  `cranny_protection_per_level` (the per-type protected quantity by level); `combat_rules()` loads them
+  and `CombatRules` gains a `cranny_capacity(level)` accessor (clamped to the table).
+  *(Decision: the Cranny protection lives on `CombatRules`, not `EconomyRules` — loot is a combat read,
+  and this avoids churning every `EconomyRules` literal across the test suite.)*
 - `BuildingKind::Cranny` arm added to every mapping: `parse_building`, the `BuildRules` per-kind level
   table, the web `building_label`/`building_kind_id`/`building_slot`/`parse_building_kind`, and the
   buildable list — exactly the set the 009 Wall touched.
