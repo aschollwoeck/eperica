@@ -6,14 +6,7 @@
       "Bash(rustup which:*)",
       "Bash(rustup show:*)",
       "Bash(rustup component:*)",
-      "Bash(cargo:*)",
-      "Bash(head:*)",
-      "Bash(tail:*)",
-      "Bash(grep:*)",
-      "Bash(echo:*)",
-      "Bash(cat:*)",
-      "Bash(wc:*)",
-      "Bash(sort:*)"
+      "Bash(cargo:*)"
     ]
   }
 }
