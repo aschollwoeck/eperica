@@ -6,8 +6,9 @@
 //! (casualties + occupy/free/clear + survivor return + report) in one transaction.
 
 use crate::ports::{
-    AccountRepository, DueOasisAttack, NewOasisReport, OasisBattleApply, OasisOwnership,
-    OasisRepository, RepoError, StarvationRepository, UnitRepository,
+    AccountRepository, DueOasisAttack, DueOasisReinforce, NewOasisReport, OasisBattleApply,
+    OasisOwnership, OasisReinforceOutcome, OasisRepository, RepoError, StarvationRepository,
+    UnitRepository,
 };
 use eperica_domain::{
     AttackMode, BattleInput, BuildingKind, Coordinate, EconomyRules, GameSpeed, OasisRules,
@@ -31,6 +32,12 @@ pub enum OasisError {
     /// The target is the player's own occupied oasis (use *reinforce* for that).
     #[error("that is your own oasis; reinforce it instead")]
     OwnOasis,
+    /// Reinforce/recall targets a tile that is not an oasis the player owns.
+    #[error("that is not your oasis")]
+    NotYourOasis,
+    /// Nothing is stationed at the oasis to recall (a race).
+    #[error("nothing stationed there")]
+    NothingStationed,
     /// The owning village/account was not found.
     #[error("not found")]
     NotFound,
@@ -198,6 +205,228 @@ where
         }
     }
     Ok(())
+}
+
+/// Send `troops` from `owner`'s village to reinforce an oasis **they own** (012 AC7).
+///
+/// Validates ownership, the composition, garrison availability, and that the target is the player's
+/// own occupied oasis; computes travel time (007, P7); debits the garrison and schedules the
+/// stationing; re-syncs the home's starvation check.
+///
+/// # Errors
+/// See [`OasisError`].
+#[allow(clippy::too_many_arguments)]
+pub async fn order_oasis_reinforce<A, O, S>(
+    accounts: &A,
+    oases: &O,
+    starvation: &S,
+    economy_rules: &EconomyRules,
+    unit_rules: &UnitRules,
+    map: &WorldMap,
+    speed: GameSpeed,
+    now: Timestamp,
+    owner: PlayerId,
+    target: Coordinate,
+    troops: Vec<(UnitId, u32)>,
+) -> Result<(), OasisError>
+where
+    A: AccountRepository,
+    O: OasisRepository,
+    S: StarvationRepository,
+{
+    let Some(home) = accounts.villages_of(owner).await?.into_iter().next() else {
+        return Err(OasisError::NotFound);
+    };
+    let Some(tribe) = home.tribe else {
+        return Err(OasisError::NotFound);
+    };
+    let roster = unit_rules.roster(tribe);
+
+    let chosen: Vec<(UnitId, u32)> = troops.into_iter().filter(|(_, n)| *n > 0).collect();
+    if chosen.is_empty() {
+        return Err(OasisError::EmptyComposition);
+    }
+
+    // The target must be an oasis this village owns (P4).
+    match oases.oasis_at(target).await? {
+        Some(state) if state.owner == Some(home.id) => {}
+        _ => return Err(OasisError::NotYourOasis),
+    }
+
+    let garrison = accounts.garrison(home.id).await?;
+    for (unit, n) in &chosen {
+        let have = garrison
+            .iter()
+            .find(|(u, _)| u == unit)
+            .map_or(0, |(_, c)| *c);
+        if have < *n {
+            return Err(OasisError::Insufficient);
+        }
+    }
+
+    let Some(slowest) = slowest_speed(&chosen, roster) else {
+        return Err(OasisError::EmptyComposition);
+    };
+    let distance = map.distance(home.coordinate, target);
+    let secs = travel_time_secs_floored(distance, slowest, speed);
+    let arrive = Timestamp(now.0 + secs * 1000);
+
+    oases
+        .start_oasis_reinforce(
+            home.id,
+            owner,
+            home.coordinate,
+            target,
+            now,
+            arrive,
+            &chosen,
+        )
+        .await
+        .map_err(|e| match e {
+            RepoError::Conflict => OasisError::Insufficient,
+            other => OasisError::Backend(other.to_string()),
+        })?;
+
+    crate::starvation::sync_starvation_check(
+        accounts,
+        starvation,
+        economy_rules,
+        unit_rules,
+        speed,
+        now,
+        home.id,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Recall the troops `owner` has stationed at an oasis **they own** back to their home garrison
+/// (012 AC7). The oasis stays owned but undefended; the troops travel home as a `return`.
+///
+/// # Errors
+/// See [`OasisError`].
+#[allow(clippy::too_many_arguments)]
+pub async fn order_oasis_recall<A, O>(
+    accounts: &A,
+    oases: &O,
+    unit_rules: &UnitRules,
+    map: &WorldMap,
+    speed: GameSpeed,
+    now: Timestamp,
+    owner: PlayerId,
+    target: Coordinate,
+) -> Result<(), OasisError>
+where
+    A: AccountRepository,
+    O: OasisRepository,
+{
+    let Some(home) = accounts.villages_of(owner).await?.into_iter().next() else {
+        return Err(OasisError::NotFound);
+    };
+    let Some(tribe) = home.tribe else {
+        return Err(OasisError::NotFound);
+    };
+    match oases.oasis_at(target).await? {
+        Some(state) if state.owner == Some(home.id) => {}
+        _ => return Err(OasisError::NotYourOasis),
+    }
+
+    // The stationed troops pace their own return; read them to find the slowest unit.
+    let stationed = oases
+        .oasis_defenders(
+            target,
+            unit_rules.wild_animal_roster(),
+            &OasisRules {
+                base_count: 0,
+                extra_per_step: 0,
+                tiles_per_step: 1,
+                max_count: 0,
+                tiles_per_tier: 1,
+            },
+        )
+        .await?;
+    if stationed.is_empty() {
+        return Err(OasisError::NothingStationed);
+    }
+    let roster = unit_rules.roster(tribe);
+    let slowest = slowest_speed(&stationed, roster).unwrap_or(1);
+    let distance = map.distance(target, home.coordinate);
+    let arrive = Timestamp(now.0 + travel_time_secs_floored(distance, slowest, speed) * 1000);
+
+    oases
+        .start_oasis_recall(target, home.id, owner, home.coordinate, now, arrive)
+        .await
+        .map_err(|e| match e {
+            RepoError::Conflict => OasisError::NothingStationed,
+            other => OasisError::Backend(other.to_string()),
+        })?;
+    Ok(())
+}
+
+/// Claim and apply oasis reinforcements whose arrival is due (the System actor, AC7). A reinforcement
+/// stations if the sender still owns the oasis, else bounces the troops home.
+///
+/// # Errors
+/// Propagates [`RepoError`]; a per-item failure is logged and skipped (recovered by the requeue).
+#[allow(clippy::too_many_arguments)]
+pub async fn process_due_oasis_reinforce<A, O>(
+    accounts: &A,
+    oases: &O,
+    unit_rules: &UnitRules,
+    map: &WorldMap,
+    speed: GameSpeed,
+    now: Timestamp,
+    limit: i64,
+) -> Result<(), RepoError>
+where
+    A: AccountRepository,
+    O: OasisRepository,
+{
+    let due = oases.claim_due_oasis_reinforcements(now, limit).await?;
+    for r in due {
+        if let Err(e) = apply_one_reinforce(accounts, oases, unit_rules, map, speed, &r).await {
+            tracing::error!(error = %e, "failed to apply due oasis reinforcement");
+        }
+    }
+    Ok(())
+}
+
+async fn apply_one_reinforce<A, O>(
+    accounts: &A,
+    oases: &O,
+    unit_rules: &UnitRules,
+    map: &WorldMap,
+    speed: GameSpeed,
+    due: &DueOasisReinforce,
+) -> Result<(), RepoError>
+where
+    A: AccountRepository,
+    O: OasisRepository,
+{
+    // Re-check ownership at arrival: station if still owned, else bounce the troops home (P4).
+    let still_owned = matches!(
+        oases.oasis_at(due.oasis).await?,
+        Some(state) if state.owner == Some(due.home_village)
+    );
+    let outcome = if still_owned {
+        OasisReinforceOutcome::Station
+    } else {
+        let home = accounts.village_by_id(due.home_village).await?;
+        let home_coord = home.as_ref().map_or(due.origin, |v| v.coordinate);
+        let roster = home
+            .as_ref()
+            .and_then(|v| v.tribe)
+            .map_or(&[][..], |t| unit_rules.roster(t));
+        let slowest = slowest_speed(&due.troops, roster).unwrap_or(1);
+        let distance = map.distance(due.oasis, home_coord);
+        let return_arrive =
+            Timestamp(due.arrive_at.0 + travel_time_secs_floored(distance, slowest, speed) * 1000);
+        OasisReinforceOutcome::BounceHome {
+            home_coord,
+            return_arrive,
+        }
+    };
+    oases.apply_oasis_reinforce(due, outcome).await
 }
 
 /// Resolve a single due oasis attack: gather the oasis's defenders, run the battle, decide
@@ -527,6 +756,9 @@ mod tests {
         oasis_state: Option<OasisState>,
         occupied: usize,
         started: Mutex<Option<(VillageId, Coordinate, UnitCounts)>>,
+        reinforced: Mutex<Option<(VillageId, Coordinate, UnitCounts)>>,
+        reinforce_outcome: Mutex<Option<OasisReinforceOutcome>>,
+        recalled: Mutex<bool>,
         home: Option<Village>,
     }
 
@@ -630,6 +862,46 @@ mod tests {
         async fn apply_oasis_battle(&self, apply: OasisBattleApply) -> Result<(), RepoError> {
             *self.applied.lock().unwrap() = Some(apply);
             Ok(())
+        }
+        async fn start_oasis_reinforce(
+            &self,
+            home: VillageId,
+            _owner: PlayerId,
+            _origin: Coordinate,
+            oasis: Coordinate,
+            _now: Timestamp,
+            _arrive: Timestamp,
+            troops: &[(UnitId, u32)],
+        ) -> Result<(), RepoError> {
+            *self.reinforced.lock().unwrap() = Some((home, oasis, troops.to_vec()));
+            Ok(())
+        }
+        async fn claim_due_oasis_reinforcements(
+            &self,
+            _now: Timestamp,
+            _limit: i64,
+        ) -> Result<Vec<DueOasisReinforce>, RepoError> {
+            Ok(Vec::new())
+        }
+        async fn apply_oasis_reinforce(
+            &self,
+            _due: &DueOasisReinforce,
+            outcome: OasisReinforceOutcome,
+        ) -> Result<(), RepoError> {
+            *self.reinforce_outcome.lock().unwrap() = Some(outcome);
+            Ok(())
+        }
+        async fn start_oasis_recall(
+            &self,
+            _oasis: Coordinate,
+            _home: VillageId,
+            _owner: PlayerId,
+            _home_coord: Coordinate,
+            _now: Timestamp,
+            _arrive: Timestamp,
+        ) -> Result<UnitCounts, RepoError> {
+            *self.recalled.lock().unwrap() = true;
+            Ok(vec![(UnitId("phalanx".into()), 5)])
         }
     }
 
@@ -889,6 +1161,136 @@ mod tests {
         assert!(matches!(applied.ownership, OasisOwnership::Unchanged));
         assert!(!applied.report.attacker_won);
         assert!(applied.survivors.is_empty(), "the weak attacker is wiped");
+    }
+
+    // AC7: reinforcing your own oasis schedules the stationing; a non-owned oasis is rejected.
+    #[tokio::test]
+    async fn reinforce_validates_ownership() {
+        let map = map();
+        let oasis = oasis_tile(&map);
+        let home = village(1, 100, Coordinate::new(0, 1), 1);
+        let speed = GameSpeed::new(1.0).unwrap();
+        let now = Timestamp(0);
+
+        let mine = Fakes {
+            garrison: vec![(UnitId("phalanx".into()), 50)],
+            home: Some(home.clone()),
+            oasis_state: Some(OasisState {
+                owner: Some(home.id),
+                materialised: true,
+            }),
+            ..Default::default()
+        };
+        order_oasis_reinforce(
+            &mine,
+            &mine,
+            &mine,
+            &economy_rules(vec![0, 1]),
+            &unit_rules(),
+            &map,
+            speed,
+            now,
+            PlayerId(100),
+            oasis,
+            vec![(UnitId("phalanx".into()), 10)],
+        )
+        .await
+        .expect("reinforce");
+        let r = mine.reinforced.lock().unwrap().clone().expect("scheduled");
+        assert_eq!(r.0, home.id);
+        assert_eq!(r.1, oasis);
+        assert_eq!(r.2, vec![(UnitId("phalanx".into()), 10)]);
+
+        // An oasis owned by someone else is rejected.
+        let theirs = Fakes {
+            garrison: vec![(UnitId("phalanx".into()), 50)],
+            home: Some(home.clone()),
+            oasis_state: Some(OasisState {
+                owner: Some(VillageId(999)),
+                materialised: true,
+            }),
+            ..Default::default()
+        };
+        let err = order_oasis_reinforce(
+            &theirs,
+            &theirs,
+            &theirs,
+            &economy_rules(vec![0, 1]),
+            &unit_rules(),
+            &map,
+            speed,
+            now,
+            PlayerId(100),
+            oasis,
+            vec![(UnitId("phalanx".into()), 10)],
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, OasisError::NotYourOasis);
+    }
+
+    // AC7: a due reinforcement stations when the sender still owns the oasis, else bounces home.
+    #[tokio::test]
+    async fn reinforce_stations_or_bounces() {
+        let map = map();
+        let oasis = oasis_tile(&map);
+        let home = village(1, 100, Coordinate::new(0, 1), 1);
+        let due = DueOasisReinforce {
+            id: 1,
+            owner: PlayerId(100),
+            home_village: home.id,
+            origin: home.coordinate,
+            oasis,
+            arrive_at: Timestamp(10_000),
+            troops: vec![(UnitId("phalanx".into()), 10)],
+        };
+
+        let owned = Fakes {
+            home: Some(home.clone()),
+            oasis_state: Some(OasisState {
+                owner: Some(home.id),
+                materialised: true,
+            }),
+            ..Default::default()
+        };
+        apply_one_reinforce(
+            &owned,
+            &owned,
+            &unit_rules(),
+            &map,
+            GameSpeed::new(1.0).unwrap(),
+            &due,
+        )
+        .await
+        .expect("apply");
+        assert!(matches!(
+            owned.reinforce_outcome.lock().unwrap().unwrap(),
+            OasisReinforceOutcome::Station
+        ));
+
+        // Lost in flight → bounce the troops home.
+        let lost = Fakes {
+            home: Some(home.clone()),
+            oasis_state: Some(OasisState {
+                owner: Some(VillageId(999)),
+                materialised: true,
+            }),
+            ..Default::default()
+        };
+        apply_one_reinforce(
+            &lost,
+            &lost,
+            &unit_rules(),
+            &map,
+            GameSpeed::new(1.0).unwrap(),
+            &due,
+        )
+        .await
+        .expect("apply");
+        assert!(matches!(
+            lost.reinforce_outcome.lock().unwrap().unwrap(),
+            OasisReinforceOutcome::BounceHome { .. }
+        ));
     }
 
     /// Resolve one attack against the fakes (the loop body of `process_due_oasis_combat`).

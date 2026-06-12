@@ -41,7 +41,7 @@ lands green on its own.
 
 ## Application — reinforce, lose, regrow
 
-- [ ] **T6 — Reinforce & lose.** `order_oasis_reinforce` (your oasis) + `apply_oasis_reinforce`
+- [x] **T6 — Reinforce & lose.** `order_oasis_reinforce` (your oasis) + `apply_oasis_reinforce`
   (station troops); recall via `return`; `process_due_oasis_combat` fights stationed defenders →
   transfer (with capacity) or free. DB tests: reinforce stations + defends; a stronger attacker takes
   the oasis (**AC5**, **AC7**).

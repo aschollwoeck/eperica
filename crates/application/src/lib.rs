@@ -35,12 +35,13 @@ pub use oasis::{OasisError, order_oasis_attack, process_due_oasis_combat};
 pub use ports::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
     BuildRepository, CombatRepository, DueAttack, DueBuild, DueEvent, DueMovement, DueOasisAttack,
-    DueScout, DueTrade, DueTraining, DueUnitOrder, EventStore, MovementRepository, MovementView,
-    NewBattleReport, NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder,
-    NewUser, OasisBattleApply, OasisOwnership, OasisRepository, OasisState, PasswordHasher,
-    RazedBuilding, RepoError, ResourceWrite, ScoutApply, ScoutIntel, ScoutReportView,
-    ScoutRepository, StarvationRepository, StationedGroup, TradeRepository, TradeView,
-    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    DueOasisReinforce, DueScout, DueTrade, DueTraining, DueUnitOrder, EventStore,
+    MovementRepository, MovementView, NewBattleReport, NewBuildOrder, NewOasisReport,
+    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
+    OasisReinforceOutcome, OasisRepository, OasisState, PasswordHasher, RazedBuilding, RepoError,
+    ResourceWrite, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, StarvationRepository,
+    StationedGroup, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
+    UserRecord, VillageMarker,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;

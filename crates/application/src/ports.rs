@@ -963,6 +963,95 @@ pub trait OasisRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn apply_oasis_battle(&self, apply: OasisBattleApply) -> Result<(), RepoError>;
+
+    /// Atomically debit `troops` from the `home` garrison (guarded) and create an `oasis_reinforce`
+    /// movement to the `oasis` tile the sender owns (AC7), arriving at `arrive_at`.
+    ///
+    /// # Errors
+    /// [`RepoError::Conflict`] if the garrison no longer covers a requested count; [`RepoError`] else.
+    #[allow(clippy::too_many_arguments)]
+    async fn start_oasis_reinforce(
+        &self,
+        home: VillageId,
+        owner: PlayerId,
+        origin: Coordinate,
+        oasis: Coordinate,
+        now: Timestamp,
+        arrive_at: Timestamp,
+        troops: &[(UnitId, u32)],
+    ) -> Result<(), RepoError>;
+
+    /// Atomically claim oasis-reinforce movements whose arrival is due (`in_transit → processing`).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn claim_due_oasis_reinforcements(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueOasisReinforce>, RepoError>;
+
+    /// Apply a due oasis reinforcement in **one** transaction (AC7): `Station` adds the troops to the
+    /// oasis garrison (the sender still owns it); `BounceHome` instead sends them back as a `return`
+    /// (the sender lost the oasis in flight). Marks the movement `done`. Exactly-once.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn apply_oasis_reinforce(
+        &self,
+        due: &DueOasisReinforce,
+        outcome: OasisReinforceOutcome,
+    ) -> Result<(), RepoError>;
+
+    /// Recall the troops a player has stationed at an oasis they own (AC7): atomically read+delete the
+    /// oasis garrison and create a `return` movement home arriving at `arrive_at`; returns the recalled
+    /// composition. The oasis stays owned but undefended.
+    ///
+    /// # Errors
+    /// [`RepoError::Conflict`] if nothing is stationed there (a race); [`RepoError`] otherwise.
+    #[allow(clippy::too_many_arguments)]
+    async fn start_oasis_recall(
+        &self,
+        oasis: Coordinate,
+        home: VillageId,
+        owner: PlayerId,
+        home_coord: Coordinate,
+        now: Timestamp,
+        arrive_at: Timestamp,
+    ) -> Result<UnitCounts, RepoError>;
+}
+
+/// A claimed, due oasis-reinforce movement ready to apply (012 AC7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DueOasisReinforce {
+    /// The movement's identity.
+    pub id: u128,
+    /// The sender (the troops belong to this player's home village).
+    pub owner: PlayerId,
+    /// The sender's home village (where the troops came from / bounce back to).
+    pub home_village: VillageId,
+    /// The sender's tile.
+    pub origin: Coordinate,
+    /// The destination oasis tile.
+    pub oasis: Coordinate,
+    /// When the reinforcement arrives.
+    pub arrive_at: Timestamp,
+    /// The reinforcing composition.
+    pub troops: UnitCounts,
+}
+
+/// What to do with a due oasis reinforcement once the sender's ownership is re-checked at arrival.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OasisReinforceOutcome {
+    /// The sender still owns the oasis — station the troops as its defenders.
+    Station,
+    /// The sender no longer owns the oasis — send the troops home (a `return` to `home_coord`).
+    BounceHome {
+        /// The home village's tile (the return's destination).
+        home_coord: Coordinate,
+        /// When the bounced troops arrive home.
+        return_arrive: Timestamp,
+    },
 }
 
 /// A claimed, due event ready to be processed.

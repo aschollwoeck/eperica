@@ -3,13 +3,13 @@
 use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
-    BuildRepository, CombatRepository, DueAttack, DueBuild, DueMovement, DueOasisAttack, DueScout,
-    DueTrade, DueTraining, DueUnitOrder, MovementRepository, MovementView, NewBuildOrder,
-    NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply,
-    OasisOwnership, OasisRepository, OasisState, RazedBuilding, RepoError, ResourceWrite,
-    ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, StarvationRepository, StationedGroup,
-    TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
-    VillageMarker,
+    BuildRepository, CombatRepository, DueAttack, DueBuild, DueMovement, DueOasisAttack,
+    DueOasisReinforce, DueScout, DueTrade, DueTraining, DueUnitOrder, MovementRepository,
+    MovementView, NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder,
+    NewUser, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
+    RazedBuilding, RepoError, ResourceWrite, ScoutApply, ScoutIntel, ScoutReportView,
+    ScoutRepository, StarvationRepository, StationedGroup, TradeRepository, TradeView,
+    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 use eperica_domain::{
     BuildTarget, BuildingKind, BuildingSlot, Coordinate, MovementKind, OasisBonus, OasisRules,
@@ -3081,6 +3081,206 @@ impl OasisRepository for PgAccountRepository {
             .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn start_oasis_reinforce(
+        &self,
+        home: VillageId,
+        owner: PlayerId,
+        origin: Coordinate,
+        oasis: Coordinate,
+        now: Timestamp,
+        arrive_at: Timestamp,
+        troops: &[(UnitId, u32)],
+    ) -> Result<(), RepoError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        guarded_debit(&mut tx, Uuid::from_u128(home.0), troops).await?;
+        insert_oasis_movement(
+            &mut tx,
+            Uuid::new_v4(),
+            owner,
+            MovementKind::OasisReinforce,
+            home,
+            origin,
+            oasis,
+            now,
+            arrive_at,
+            troops,
+        )
+        .await?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn claim_due_oasis_reinforcements(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueOasisReinforce>, RepoError> {
+        let rows = sqlx::query(
+            "UPDATE troop_movements SET status = 'processing' WHERE id IN ( \
+                 SELECT id FROM troop_movements \
+                 WHERE status = 'in_transit' AND kind = 'oasis_reinforce' \
+                   AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
+                 ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
+             ) RETURNING id, owner_id, home_village, origin_x, origin_y, dest_x, dest_y, \
+                 (EXTRACT(EPOCH FROM arrive_at) * 1000)::bigint AS arrive_ms",
+        )
+        .bind(now.0 as f64)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let ids: Vec<Uuid> = rows
+            .iter()
+            .map(|r| r.try_get("id").map_err(backend))
+            .collect::<Result<_, RepoError>>()?;
+        let mut troops = movement_troops_batch(&self.pool, &ids).await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for (r, id) in rows.iter().zip(&ids) {
+            let owner: Uuid = r.try_get("owner_id").map_err(backend)?;
+            let home: Uuid = r.try_get("home_village").map_err(backend)?;
+            let arrive_ms: i64 = r.try_get("arrive_ms").map_err(backend)?;
+            out.push(DueOasisReinforce {
+                id: id.as_u128(),
+                owner: PlayerId(owner.as_u128()),
+                home_village: VillageId(home.as_u128()),
+                origin: Coordinate::new(
+                    r.try_get("origin_x").map_err(backend)?,
+                    r.try_get("origin_y").map_err(backend)?,
+                ),
+                oasis: Coordinate::new(
+                    r.try_get("dest_x").map_err(backend)?,
+                    r.try_get("dest_y").map_err(backend)?,
+                ),
+                arrive_at: Timestamp(arrive_ms),
+                troops: troops.remove(id).unwrap_or_default(),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn apply_oasis_reinforce(
+        &self,
+        due: &DueOasisReinforce,
+        outcome: OasisReinforceOutcome,
+    ) -> Result<(), RepoError> {
+        let world = Uuid::from_u128(self.world_id.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        match outcome {
+            OasisReinforceOutcome::Station => {
+                // Add the troops to the oasis's defenders (the oasis row exists — it is occupied).
+                for (unit, n) in due.troops.iter().filter(|(_, n)| *n > 0) {
+                    sqlx::query(
+                        "INSERT INTO oasis_garrison (world_id, x, y, unit_id, count) \
+                         VALUES ($1, $2, $3, $4, $5) \
+                         ON CONFLICT (world_id, x, y, unit_id) \
+                         DO UPDATE SET count = oasis_garrison.count + EXCLUDED.count",
+                    )
+                    .bind(world)
+                    .bind(due.oasis.x)
+                    .bind(due.oasis.y)
+                    .bind(unit.as_str())
+                    .bind(i32::try_from(*n).unwrap_or(i32::MAX))
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                }
+            }
+            OasisReinforceOutcome::BounceHome {
+                home_coord,
+                return_arrive,
+            } => {
+                // The sender lost the oasis in flight — send the troops home (a `return`).
+                insert_movement(
+                    &mut tx,
+                    Uuid::new_v4(),
+                    due.owner,
+                    MovementKind::Return,
+                    due.home_village,
+                    due.home_village,
+                    due.oasis,
+                    home_coord,
+                    due.arrive_at,
+                    return_arrive,
+                    &due.troops,
+                )
+                .await?;
+            }
+        }
+        sqlx::query("UPDATE troop_movements SET status = 'done' WHERE id = $1")
+            .bind(Uuid::from_u128(due.id))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn start_oasis_recall(
+        &self,
+        oasis: Coordinate,
+        home: VillageId,
+        owner: PlayerId,
+        home_coord: Coordinate,
+        now: Timestamp,
+        arrive_at: Timestamp,
+    ) -> Result<UnitCounts, RepoError> {
+        let world = Uuid::from_u128(self.world_id.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        // Atomically read+delete the oasis garrison (lock it against a concurrent recall/battle).
+        let rows = sqlx::query(
+            "SELECT unit_id, count FROM oasis_garrison \
+             WHERE world_id = $1 AND x = $2 AND y = $3 ORDER BY unit_id FOR UPDATE",
+        )
+        .bind(world)
+        .bind(oasis.x)
+        .bind(oasis.y)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if rows.is_empty() {
+            return Err(RepoError::Conflict);
+        }
+        let troops: UnitCounts = rows
+            .iter()
+            .map(|r| {
+                let unit: String = r.try_get("unit_id").map_err(backend)?;
+                let count: i32 = r.try_get("count").map_err(backend)?;
+                Ok((UnitId(unit), u32::try_from(count).unwrap_or(0)))
+            })
+            .collect::<Result<_, RepoError>>()?;
+
+        sqlx::query("DELETE FROM oasis_garrison WHERE world_id = $1 AND x = $2 AND y = $3")
+            .bind(world)
+            .bind(oasis.x)
+            .bind(oasis.y)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+
+        insert_movement(
+            &mut tx,
+            Uuid::new_v4(),
+            owner,
+            MovementKind::Return,
+            home,
+            home,
+            oasis,
+            home_coord,
+            now,
+            arrive_at,
+            &troops,
+        )
+        .await?;
+
+        tx.commit().await.map_err(backend)?;
+        Ok(troops)
     }
 }
 
@@ -6934,5 +7134,231 @@ mod tests {
             boosted.wood + boosted.clay + boosted.iron > base.wood + base.clay + base.iron,
             "an occupied oasis lifts production"
         );
+    }
+
+    // 012 AC7/AC5: reinforcing an owned oasis stations defenders that read back and can be recalled;
+    // a stronger attacker then beats the stationed defenders and (with Outpost capacity) takes it.
+    #[tokio::test]
+    async fn oasis_reinforce_defend_recall_and_take() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping oasis reinforce test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            let v = repo.villages_of(user.id).await.unwrap()[0].clone();
+            (user, v)
+        };
+        let (defender, dv) = account("oasisdef").await;
+        let (attacker, av) = account("oasisatk").await;
+
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let oasis = coordinates_within(config.radius)
+            .find(|c| {
+                map.oasis_bonus_at(*c).is_some() && *c != dv.coordinate && *c != av.coordinate
+            })
+            .expect("an oasis exists");
+        let units = crate::unit_rules().expect("unit rules");
+        let orules = crate::oasis_rules().expect("oasis rules");
+        let animals = units.wild_animal_roster();
+
+        // The defender owns the (cleared) oasis.
+        sqlx::query(
+            "INSERT INTO oases (world_id, x, y, owner_village, materialised) VALUES ($1, $2, $3, $4, true) \
+             ON CONFLICT (world_id, x, y) DO UPDATE SET owner_village = EXCLUDED.owner_village, materialised = true",
+        )
+        .bind(Uuid::from_u128(world.id.0))
+        .bind(oasis.x)
+        .bind(oasis.y)
+        .bind(Uuid::from_u128(dv.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM oasis_garrison WHERE world_id = $1 AND x = $2 AND y = $3")
+            .bind(Uuid::from_u128(world.id.0))
+            .bind(oasis.x)
+            .bind(oasis.y)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // The defender reinforces the oasis with 20 phalanx.
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 60)",
+        )
+        .bind(Uuid::from_u128(dv.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let now = Timestamp(3_000_000_000_000);
+        let arrive = Timestamp(now.0 + 1000);
+        repo.start_oasis_reinforce(
+            dv.id,
+            defender.id,
+            dv.coordinate,
+            oasis,
+            now,
+            arrive,
+            &[(UnitId("phalanx".into()), 20)],
+        )
+        .await
+        .expect("reinforce");
+        let due = repo
+            .claim_due_oasis_reinforcements(arrive, 10)
+            .await
+            .unwrap();
+        let mine = due.iter().find(|d| d.home_village == dv.id).expect("due");
+        repo.apply_oasis_reinforce(mine, OasisReinforceOutcome::Station)
+            .await
+            .expect("station");
+        // AC7: the stationed troops are the oasis's defenders.
+        assert_eq!(
+            repo.oasis_defenders(oasis, animals, &orules).await.unwrap(),
+            vec![(UnitId("phalanx".into()), 20)]
+        );
+
+        // AC7: recall pulls them home; the oasis is left owned but undefended.
+        let recall_arrive = Timestamp(arrive.0 + 1000);
+        let recalled = repo
+            .start_oasis_recall(
+                oasis,
+                dv.id,
+                defender.id,
+                dv.coordinate,
+                arrive,
+                recall_arrive,
+            )
+            .await
+            .expect("recall");
+        assert_eq!(recalled, vec![(UnitId("phalanx".into()), 20)]);
+        assert!(
+            repo.oasis_defenders(oasis, animals, &orules)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            repo.oasis_at(oasis).await.unwrap().unwrap().owner,
+            Some(dv.id),
+            "recall leaves ownership unchanged"
+        );
+
+        // Re-station 20 phalanx, then a stronger attacker takes the oasis.
+        repo.start_oasis_reinforce(
+            dv.id,
+            defender.id,
+            dv.coordinate,
+            oasis,
+            now,
+            arrive,
+            &[(UnitId("phalanx".into()), 20)],
+        )
+        .await
+        .expect("reinforce 2");
+        let due = repo
+            .claim_due_oasis_reinforcements(arrive, 10)
+            .await
+            .unwrap();
+        let mine = due.iter().find(|d| d.home_village == dv.id).expect("due 2");
+        repo.apply_oasis_reinforce(mine, OasisReinforceOutcome::Station)
+            .await
+            .expect("station 2");
+
+        // The attacker has an Outpost (capacity ≥ 1) and a large army.
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) VALUES ($1, 20, 'outpost', 3) \
+             ON CONFLICT (village_id, slot) DO UPDATE SET building_type = EXCLUDED.building_type, level = EXCLUDED.level",
+        )
+        .bind(Uuid::from_u128(av.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 600)",
+        )
+        .bind(Uuid::from_u128(av.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let atk_now = Timestamp(now.0 + 10_000);
+        let atk_arrive = Timestamp(atk_now.0 + 1000);
+        repo.start_oasis_attack(
+            av.id,
+            attacker.id,
+            av.coordinate,
+            oasis,
+            atk_now,
+            atk_arrive,
+            &[(UnitId("phalanx".into()), 500)],
+        )
+        .await
+        .expect("attack");
+
+        eperica_application::process_due_oasis_combat(
+            &repo,
+            &repo,
+            &repo,
+            &econ,
+            &units,
+            &crate::combat_rules().unwrap(),
+            &orules,
+            &map,
+            GameSpeed::new(1.0).unwrap(),
+            world.seed as u64,
+            atk_arrive,
+            10,
+        )
+        .await
+        .expect("resolve oasis combat");
+
+        // AC5: the stronger attacker beat the stationed defenders and took the oasis.
+        assert_eq!(
+            repo.oasis_at(oasis).await.unwrap().unwrap().owner,
+            Some(av.id),
+            "the attacker took the oasis"
+        );
+        assert!(
+            repo.oasis_defenders(oasis, animals, &orules)
+                .await
+                .unwrap()
+                .is_empty(),
+            "the taken oasis is cleared of the old defenders"
+        );
+        // The previous owner no longer holds it; the new owner does.
+        assert!(repo.occupied_oases(dv.id).await.unwrap().is_empty());
+        assert_eq!(repo.occupied_oases(av.id).await.unwrap().len(), 1);
     }
 }
