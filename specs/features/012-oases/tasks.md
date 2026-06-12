@@ -57,7 +57,7 @@ lands green on its own.
 
 ## Scheduler & acceptance
 
-- [ ] **T9 — Scheduler + technical/end-user docs.** Tick `process_due_oasis_combat` + regrow; orphan
+- [x] **T9 — Scheduler + technical/end-user docs.** Tick `process_due_oasis_combat` + regrow; orphan
   requeue. rustdoc; `docs/architecture/00NN-oases.md`; `docs/manual/` oasis guide; `CLAUDE.md` active
   slice → 012.
 

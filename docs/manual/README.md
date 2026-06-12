@@ -19,5 +19,6 @@ manual grows as the game does.
 - [Attacking & defending](combat.md) — launch attacks and raids, build a Wall, and read battle reports.
 - [Scouting](scouting.md) — send scouts to reveal an enemy's resources or defenses, and counter enemy spies.
 - [Siege & loot](siege-and-loot.md) — raid for resources, smash buildings with catapults, and protect your stores with a Cranny.
+- [Oases](oases.md) — clear the wild animals, occupy oases through an Outpost, hold them for a production bonus, and lose them to a stronger neighbour.
 
 *(More chapters — settling, conquest — arrive as those features ship.)*
