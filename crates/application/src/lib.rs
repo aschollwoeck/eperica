@@ -13,6 +13,7 @@ pub mod movement;
 pub mod ports;
 pub mod register;
 pub mod scheduler;
+pub mod scouting;
 pub mod starvation;
 pub mod trade;
 pub mod units;
@@ -40,6 +41,7 @@ pub use ports::{
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;
+pub use scouting::{ScoutError, gather_intel, order_scout, process_due_scouts};
 pub use starvation::{process_due_starvation, sync_starvation_check, sync_starvation_checks};
 pub use trade::{TradeError, order_trade, process_due_trades};
 pub use units::{

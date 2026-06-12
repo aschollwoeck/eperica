@@ -15,9 +15,9 @@ Ordered for dependency and testability (pure domain first). Each task is a commi
 
 ## Balance & persistence
 
-- [ ] **T2 — Balance.** `units.toml`: `scouting = N` on the three Scout units (loader defaults 0
+- [x] **T2 — Balance.** `units.toml`: `scouting = N` on the three Scout units (loader defaults 0
   elsewhere). `combat.toml`: `[scouting] loss_exponent` + `scout_rules()` loader.
-- [ ] **T3 — Migration + scout repository.** `0013_scouting.sql`: widen `troop_movements.kind` CHECK to
+- [x] **T3 — Migration + scout repository.** `0013_scouting.sql`: widen `troop_movements.kind` CHECK to
   add `scout` + `scout_target text NULL`; `battle_reports` gains `scouted bool` + `scout_target`; new
   `scout_reports` table + indexes. `ScoutRepository` (`start_scout`, `claim_due_scouts`, single-tx
   `apply_scout`, `scout_reports_for`/`scout_report` with scouter/target redaction); `DueAttack.scout_target`
