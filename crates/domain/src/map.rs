@@ -68,7 +68,7 @@ impl FieldDistribution {
 }
 
 /// An oasis's percentage production bonus by resource (most entries zero) — GDD §7.1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct OasisBonus {
     pub wood: u8,
     pub clay: u8,
@@ -175,6 +175,20 @@ impl WorldMap {
         self.radius
     }
 
+    /// The world seed — drives all generate-on-read terrain and the seeded oasis-animal garrison
+    /// (012, P6). Exposed so the persistence layer can re-derive an un-fought oasis's defenders.
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    /// The production bonus an oasis at `coord` grants, or `None` if the tile is not an oasis (012).
+    pub fn oasis_bonus_at(&self, coord: Coordinate) -> Option<OasisBonus> {
+        match self.tile_at(coord) {
+            Some(TileKind::Oasis(bonus)) => Some(bonus),
+            _ => None,
+        }
+    }
+
     /// The tile at `coord`, or `None` if it is out of bounds (P6 deterministic; AC1).
     pub fn tile_at(&self, coord: Coordinate) -> Option<TileKind> {
         if !coord.in_bounds(self.radius) {
@@ -214,8 +228,8 @@ fn splitmix64(mut z: u64) -> u64 {
 
 /// Deterministically mix `(seed, x, y)` into a hash. `x`/`y` are bit-cast to unsigned so negative
 /// coordinates are handled uniformly; `y` is rotated into the high bits so it cannot collide with
-/// `x`.
-fn mix(seed: u64, x: i32, y: i32) -> u64 {
+/// `x`. Shared with the seeded oasis-animal generation (012, P6).
+pub(crate) fn mix(seed: u64, x: i32, y: i32) -> u64 {
     let h = splitmix64(seed);
     let h = splitmix64(h ^ u64::from(x as u32));
     splitmix64(h ^ u64::from(y as u32).rotate_left(32))

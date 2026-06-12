@@ -52,6 +52,7 @@ where
         upkeep,
         economy_rules,
         speed,
+        village.oasis_bonus,
     );
     match depletion_secs(economy.amounts.crop, economy.rates.crop_net) {
         None => starvation.cancel_starvation_check(village_id).await,
@@ -153,6 +154,7 @@ where
         upkeep,
         economy_rules,
         speed,
+        village.oasis_bonus,
     );
 
     if economy.rates.crop_net >= 0 {
@@ -270,6 +272,7 @@ mod tests {
             building_population_per_level: HashMap::new(),
             warehouse_capacity_per_level: vec![1_000_000],
             granary_capacity_per_level: vec![1_000_000],
+            outpost_capacity_per_level: vec![0, 1, 2, 3],
             starting_amounts: amounts(0),
         }
     }
@@ -328,6 +331,7 @@ mod tests {
                 level: 0,
             }],
             buildings: vec![],
+            oasis_bonus: Default::default(),
         }
     }
 

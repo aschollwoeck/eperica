@@ -30,6 +30,7 @@ pub fn settle_amounts(
         upkeep,
         rules,
         speed,
+        village.oasis_bonus,
     )
     .amounts
 }
@@ -83,6 +84,7 @@ where
         upkeep,
         rules,
         speed,
+        village.oasis_bonus,
     );
     Ok(Some(VillageEconomy {
         village,

@@ -4,12 +4,13 @@ use crate::repo::PgAccountRepository;
 use async_trait::async_trait;
 use eperica_application::{
     DueEvent, EventStore, RepoError, process_due, process_due_builds, process_due_combat,
-    process_due_movements, process_due_scouts, process_due_starvation, process_due_trades,
+    process_due_movements, process_due_oasis_combat, process_due_oasis_regrow,
+    process_due_oasis_reinforce, process_due_scouts, process_due_starvation, process_due_trades,
     process_due_training, process_due_unit_orders, sync_starvation_checks,
 };
 use eperica_domain::{
-    CombatRules, EconomyRules, EventKind, GameSpeed, MerchantRules, ScoutRules, Timestamp,
-    UnitRules, WorldMap,
+    CombatRules, EconomyRules, EventKind, GameSpeed, MerchantRules, OasisRules, ScoutRules,
+    Timestamp, UnitRules, WorldMap,
 };
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
@@ -142,6 +143,7 @@ pub struct Scheduler {
     merchant_rules: Arc<MerchantRules>,
     combat_rules: Arc<CombatRules>,
     scout_rules: Arc<ScoutRules>,
+    oasis_rules: Arc<OasisRules>,
     map: Arc<WorldMap>,
     speed: GameSpeed,
     world_seed: u64,
@@ -161,6 +163,7 @@ impl Scheduler {
         merchant_rules: Arc<MerchantRules>,
         combat_rules: Arc<CombatRules>,
         scout_rules: Arc<ScoutRules>,
+        oasis_rules: Arc<OasisRules>,
         map: Arc<WorldMap>,
         speed: GameSpeed,
         world_seed: u64,
@@ -173,6 +176,7 @@ impl Scheduler {
             merchant_rules,
             combat_rules,
             scout_rules,
+            oasis_rules,
             map,
             speed,
             world_seed,
@@ -361,6 +365,53 @@ impl Scheduler {
             .await
             {
                 tracing::error!(error = %e, "scheduler scout tick failed");
+            }
+            // Oases (012): clearing/occupying, reinforcing, and animal regrowth. None of these change
+            // a village garrison at resolution (survivors return via the movement tick), so there is
+            // nothing to re-sync here.
+            if let Err(e) = process_due_oasis_combat(
+                &self.builds,
+                &self.builds,
+                &self.builds,
+                &self.economy_rules,
+                &self.unit_rules,
+                &self.combat_rules,
+                &self.oasis_rules,
+                &self.map,
+                self.speed,
+                self.world_seed,
+                now(),
+                100,
+            )
+            .await
+            {
+                tracing::error!(error = %e, "scheduler oasis combat tick failed");
+            }
+            if let Err(e) = process_due_oasis_reinforce(
+                &self.builds,
+                &self.builds,
+                &self.unit_rules,
+                &self.map,
+                self.speed,
+                now(),
+                100,
+            )
+            .await
+            {
+                tracing::error!(error = %e, "scheduler oasis reinforce tick failed");
+            }
+            if let Err(e) = process_due_oasis_regrow(
+                &self.builds,
+                &self.unit_rules,
+                &self.oasis_rules,
+                self.world_seed,
+                self.speed,
+                now(),
+                100,
+            )
+            .await
+            {
+                tracing::error!(error = %e, "scheduler oasis regrow tick failed");
             }
             match process_due_starvation(
                 &self.builds,

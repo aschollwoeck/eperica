@@ -170,6 +170,7 @@ pub fn attack_power(
         let p = f64::from(spec.attack) * f64::from(*count) * rules.smithy_factor(level);
         match spec.role {
             UnitRole::Scout => {} // reconnaissance, resolved separately (010)
+            UnitRole::Wild => {}  // oasis animals defend only, never attack (012)
             UnitRole::Cavalry => power.cavalry += p,
             UnitRole::Siege if spec.siege_kind == Some(SiegeKind::Ram) => power.ram += p,
             _ => power.infantry += p,

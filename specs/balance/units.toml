@@ -561,3 +561,82 @@ cost = { wood = 4400, clay = 5600, iron = 4200, crop = 3900 }
 research = { time_secs = 9000, cost = { wood = 2300, clay = 2800, iron = 2100, crop = 2000 }, requirements = [
     { building = "main_building", level = 10 },
 ] }
+
+# ---------------------------------------------------------------- Wild animals (012)
+#
+# Oasis defenders (GDD §7.4). Not a tribe and not trainable — defence-only (attack 0). Listed in
+# rising-strength order; the seeded oasis garrison picks a tier by distance from the origin.
+
+[[wild_animals]]
+id = "rat"
+name = "Rat"
+defense_infantry = 25
+defense_cavalry = 20
+
+[[wild_animals]]
+id = "spider"
+name = "Spider"
+defense_infantry = 35
+defense_cavalry = 40
+
+[[wild_animals]]
+id = "snake"
+name = "Snake"
+defense_infantry = 40
+defense_cavalry = 60
+
+[[wild_animals]]
+id = "bat"
+name = "Bat"
+defense_infantry = 66
+defense_cavalry = 50
+
+[[wild_animals]]
+id = "boar"
+name = "Wild Boar"
+defense_infantry = 100
+defense_cavalry = 70
+
+[[wild_animals]]
+id = "wolf"
+name = "Wolf"
+defense_infantry = 100
+defense_cavalry = 150
+
+[[wild_animals]]
+id = "bear"
+name = "Bear"
+defense_infantry = 250
+defense_cavalry = 140
+
+[[wild_animals]]
+id = "crocodile"
+name = "Crocodile"
+defense_infantry = 450
+defense_cavalry = 380
+
+[[wild_animals]]
+id = "tiger"
+name = "Tiger"
+defense_infantry = 200
+defense_cavalry = 250
+
+[[wild_animals]]
+id = "elephant"
+name = "Elephant"
+defense_infantry = 600
+defense_cavalry = 440
+
+# Seeded oasis-garrison generation (012): count grows with distance from the origin (every
+# `tiles_per_step` tiles adds `extra_per_step`, capped at `max_count`); the animal strength tier rises
+# every `tiles_per_tier` tiles.
+[oasis_garrison]
+base_count = 5
+extra_per_step = 3
+tiles_per_step = 5
+max_count = 80
+tiles_per_tier = 18
+# A cleared, unoccupied oasis regrows its animals (012 AC9): regrow_per_step animals every
+# regrow_secs (pre-speed-scaling) until it is back to its seeded strength.
+regrow_secs = 3600
+regrow_per_step = 4

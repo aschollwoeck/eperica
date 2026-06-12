@@ -4,6 +4,7 @@
 //! background job — current amounts are computed on read from stored state + elapsed time (P1/P2).
 
 use crate::building::BuildingKind;
+use crate::map::OasisBonus;
 use crate::resource::ResourceKind;
 use crate::village::{BuildingSlot, ResourceField};
 use crate::world::GameSpeed;
@@ -59,8 +60,24 @@ pub struct EconomyRules {
     pub warehouse_capacity_per_level: Vec<i64>,
     /// Granary capacity by Granary level (index 0 = base, i.e. no Granary).
     pub granary_capacity_per_level: Vec<i64>,
+    /// How many oases an Outpost may hold, by Outpost level (index = level; 012). Level 0 (no
+    /// Outpost) holds none.
+    pub outpost_capacity_per_level: Vec<u8>,
     /// Stored amounts a new village starts with.
     pub starting_amounts: ResourceAmounts,
+}
+
+impl EconomyRules {
+    /// The number of oases a village whose Outpost is at `level` may occupy (012, **AC6**). Clamped
+    /// to the table; an empty table or level 0 holds none.
+    #[must_use]
+    pub fn outpost_capacity(&self, level: u8) -> u8 {
+        if self.outpost_capacity_per_level.is_empty() {
+            return 0;
+        }
+        let idx = (level as usize).min(self.outpost_capacity_per_level.len() - 1);
+        self.outpost_capacity_per_level[idx]
+    }
 }
 
 fn level_value(table: &[i64], level: u8) -> i64 {
@@ -112,13 +129,19 @@ fn scale(base: i64, speed: GameSpeed) -> i64 {
 
 /// Hourly production rates for a village's fields/buildings at the given world speed (P7).
 /// `troop_upkeep` is the garrison's total crop consumption per hour (005 AC6; 0 with no army).
+/// `oasis_bonus` is the summed per-resource production bonus from the oases the village holds (012,
+/// AC8): it boosts the **gross** field output of each resource (floor), before population/upkeep are
+/// subtracted from crop and before speed scaling — zero for a village holding no oasis.
 pub fn production_rates(
     fields: &[ResourceField],
     buildings: &[BuildingSlot],
     troop_upkeep: i64,
     rules: &EconomyRules,
     speed: GameSpeed,
+    oasis_bonus: OasisBonus,
 ) -> ProductionRates {
+    // Boost a gross hourly rate by a per-resource oasis percentage (integer floor).
+    let boosted = |base: i64, pct: u8| -> i64 { base + base * i64::from(pct) / 100 };
     let base = |kind: ResourceKind| -> i64 {
         fields
             .iter()
@@ -126,11 +149,12 @@ pub fn production_rates(
             .map(|f| rules.field_production(kind, f.level))
             .sum()
     };
-    let crop_base = base(ResourceKind::Crop) - population(fields, buildings, rules) - troop_upkeep;
+    let crop_gross = boosted(base(ResourceKind::Crop), oasis_bonus.crop);
+    let crop_base = crop_gross - population(fields, buildings, rules) - troop_upkeep;
     ProductionRates {
-        wood: scale(base(ResourceKind::Wood), speed),
-        clay: scale(base(ResourceKind::Clay), speed),
-        iron: scale(base(ResourceKind::Iron), speed),
+        wood: scale(boosted(base(ResourceKind::Wood), oasis_bonus.wood), speed),
+        clay: scale(boosted(base(ResourceKind::Clay), oasis_bonus.clay), speed),
+        iron: scale(boosted(base(ResourceKind::Iron), oasis_bonus.iron), speed),
         crop_net: scale(crop_base, speed),
     }
 }
@@ -180,6 +204,7 @@ pub fn accrue(stored: i64, rate_per_hour: i64, elapsed_secs: i64, capacity: i64)
 
 /// Compute the current economy from stored amounts + elapsed time (the read path, P1/P2).
 /// `troop_upkeep` is the garrison's total crop consumption per hour (005 AC6; 0 with no army).
+#[allow(clippy::too_many_arguments)]
 pub fn compute_economy(
     stored: ResourceAmounts,
     elapsed_secs: i64,
@@ -188,8 +213,9 @@ pub fn compute_economy(
     troop_upkeep: i64,
     rules: &EconomyRules,
     speed: GameSpeed,
+    oasis_bonus: OasisBonus,
 ) -> Economy {
-    let rates = production_rates(fields, buildings, troop_upkeep, rules, speed);
+    let rates = production_rates(fields, buildings, troop_upkeep, rules, speed, oasis_bonus);
     let caps = capacities(buildings, rules);
     let amounts = ResourceAmounts {
         wood: accrue(stored.wood, rates.wood, elapsed_secs, caps.warehouse),
@@ -223,6 +249,7 @@ mod tests {
             ]),
             warehouse_capacity_per_level: vec![800, 1200, 1700],
             granary_capacity_per_level: vec![800, 1200, 1700],
+            outpost_capacity_per_level: vec![0, 1, 1],
             starting_amounts: ResourceAmounts {
                 wood: 750,
                 clay: 750,
@@ -261,8 +288,22 @@ mod tests {
     #[test]
     fn production_scales_with_speed() {
         let fields: Vec<_> = (0..4).map(|_| field(ResourceKind::Wood, 0)).collect();
-        let r1 = production_rates(&fields, &[], 0, &rules(), GameSpeed::new(1.0).unwrap());
-        let r2 = production_rates(&fields, &[], 0, &rules(), GameSpeed::new(2.0).unwrap());
+        let r1 = production_rates(
+            &fields,
+            &[],
+            0,
+            &rules(),
+            GameSpeed::new(1.0).unwrap(),
+            OasisBonus::default(),
+        );
+        let r2 = production_rates(
+            &fields,
+            &[],
+            0,
+            &rules(),
+            GameSpeed::new(2.0).unwrap(),
+            OasisBonus::default(),
+        );
         assert_eq!(r1.wood, 40); // 4 fields x 10
         assert_eq!(r2.wood, 80); // doubled
     }
@@ -287,6 +328,7 @@ mod tests {
             0,
             &rules(),
             GameSpeed::new(1.0).unwrap(),
+            OasisBonus::default(),
         );
         assert_eq!(r.crop_net, 60 - 3);
     }
@@ -305,6 +347,7 @@ mod tests {
             0,
             &rules(),
             GameSpeed::new(1.0).unwrap(),
+            OasisBonus::default(),
         );
         let r2 = production_rates(
             &fields,
@@ -312,6 +355,7 @@ mod tests {
             0,
             &rules(),
             GameSpeed::new(2.0).unwrap(),
+            OasisBonus::default(),
         );
         assert_eq!(r1.crop_net, 58);
         assert_eq!(r2.crop_net, 2 * r1.crop_net);
@@ -321,11 +365,32 @@ mod tests {
     #[test]
     fn crop_net_subtracts_troop_upkeep() {
         let fields = vec![field(ResourceKind::Crop, 0); 6]; // 60 base
-        let r0 = production_rates(&fields, &[], 0, &rules(), GameSpeed::new(1.0).unwrap());
-        let r25 = production_rates(&fields, &[], 25, &rules(), GameSpeed::new(1.0).unwrap());
+        let r0 = production_rates(
+            &fields,
+            &[],
+            0,
+            &rules(),
+            GameSpeed::new(1.0).unwrap(),
+            OasisBonus::default(),
+        );
+        let r25 = production_rates(
+            &fields,
+            &[],
+            25,
+            &rules(),
+            GameSpeed::new(1.0).unwrap(),
+            OasisBonus::default(),
+        );
         assert_eq!(r25.crop_net, r0.crop_net - 25);
         // Upkeep can push the net negative; it scales with speed like the rest (P7).
-        let starving = production_rates(&fields, &[], 100, &rules(), GameSpeed::new(2.0).unwrap());
+        let starving = production_rates(
+            &fields,
+            &[],
+            100,
+            &rules(),
+            GameSpeed::new(2.0).unwrap(),
+            OasisBonus::default(),
+        );
         assert_eq!(starving.crop_net, 2 * (60 - 100));
     }
 
@@ -346,6 +411,7 @@ mod tests {
             0,
             &rules(),
             GameSpeed::new(1.0).unwrap(),
+            OasisBonus::default(),
         );
         assert!(
             r.crop_net < 0,
@@ -372,6 +438,7 @@ mod tests {
             0,
             &rules(),
             GameSpeed::new(1.0).unwrap(),
+            OasisBonus::default(),
         );
         let b = compute_economy(
             stored,
@@ -381,8 +448,53 @@ mod tests {
             0,
             &rules(),
             GameSpeed::new(1.0).unwrap(),
+            OasisBonus::default(),
         );
         assert_eq!(a, b);
         assert_eq!(a.amounts.wood, 140); // 100 + 40/h
+    }
+
+    // --- 012 AC8: an oasis production bonus boosts gross output, before pop/upkeep and scaling ---
+    #[test]
+    fn oasis_bonus_boosts_gross_production() {
+        let speed = GameSpeed::new(1.0).unwrap();
+        let wood = vec![field(ResourceKind::Wood, 0); 4]; // 4 x 10 = 40 gross
+        let none = production_rates(&wood, &[], 0, &rules(), speed, OasisBonus::default());
+        let plus25 = production_rates(
+            &wood,
+            &[],
+            0,
+            &rules(),
+            speed,
+            OasisBonus {
+                wood: 25,
+                ..Default::default()
+            },
+        );
+        assert_eq!(none.wood, 40);
+        assert_eq!(plus25.wood, 50, "40 + 25% = 50");
+        assert_eq!(plus25.clay, 0, "the bonus is per-resource");
+
+        // A crop bonus boosts the gross crop *before* population/upkeep subtract — so it lifts net
+        // crop by the full bonus on gross (not a percentage of the already-reduced net).
+        let crop = vec![field(ResourceKind::Crop, 0); 6]; // 60 gross
+        let buildings = vec![BuildingSlot {
+            kind: BuildingKind::MainBuilding,
+            level: 1,
+        }]; // pop 2
+        let c0 = production_rates(&crop, &buildings, 0, &rules(), speed, OasisBonus::default());
+        let c50 = production_rates(
+            &crop,
+            &buildings,
+            0,
+            &rules(),
+            speed,
+            OasisBonus {
+                crop: 50,
+                ..Default::default()
+            },
+        );
+        // gross 60 → 90; the +30 lands entirely on net crop (population unchanged).
+        assert_eq!(c50.crop_net - c0.crop_net, 30);
     }
 }

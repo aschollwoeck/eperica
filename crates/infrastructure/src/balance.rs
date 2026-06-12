@@ -6,7 +6,7 @@
 
 use eperica_domain::{
     BuildRules, BuildingKind, BuildingSlot, CombatRules, DomainError, EconomyRules,
-    FieldDistribution, LevelSpec, MapRules, MerchantProfile, MerchantRules, OasisBonus,
+    FieldDistribution, LevelSpec, MapRules, MerchantProfile, MerchantRules, OasisBonus, OasisRules,
     ResearchSpec, ResourceAmounts, ResourceField, ResourceKind, ScoutRules, SiegeKind, SmithyRules,
     StartingVillage, TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec, WallProfile,
     Weighted,
@@ -154,6 +154,7 @@ fn parse_building(name: &str) -> Result<BuildingKind, BalanceError> {
         "workshop" => Ok(BuildingKind::Workshop),
         "residence" => Ok(BuildingKind::Residence),
         "cranny" => Ok(BuildingKind::Cranny),
+        "outpost" => Ok(BuildingKind::Outpost),
         other => Err(BalanceError::UnknownBuilding(other.to_owned())),
     }
 }
@@ -163,7 +164,13 @@ struct EconomyDto {
     production: ProductionDto,
     population: PopulationDto,
     capacity: CapacityDto,
+    outpost: OutpostEconomyDto,
     starting_amounts: AmountsDto,
+}
+
+#[derive(Deserialize)]
+struct OutpostEconomyDto {
+    capacity_per_level: Vec<u8>,
 }
 
 #[derive(Deserialize)]
@@ -215,6 +222,7 @@ pub fn economy_rules() -> Result<EconomyRules, BalanceError> {
         building_population_per_level,
         warehouse_capacity_per_level: dto.capacity.warehouse,
         granary_capacity_per_level: dto.capacity.granary,
+        outpost_capacity_per_level: dto.outpost.capacity_per_level,
         starting_amounts: ResourceAmounts {
             wood: dto.starting_amounts.wood,
             clay: dto.starting_amounts.clay,
@@ -272,6 +280,7 @@ struct BuildingsDto {
     stable: LevelSpecDto,
     workshop: LevelSpecDto,
     cranny: LevelSpecDto,
+    outpost: LevelSpecDto,
 }
 
 fn level_spec(dto: &LevelSpecDto) -> LevelSpec {
@@ -317,6 +326,7 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
         (BuildingKind::Stable, &dto.buildings.stable),
         (BuildingKind::Workshop, &dto.buildings.workshop),
         (BuildingKind::Cranny, &dto.buildings.cranny),
+        (BuildingKind::Outpost, &dto.buildings.outpost),
     ] {
         buildings.insert(kind, level_spec(spec_dto));
         let pr = prereqs(spec_dto)?;
@@ -467,6 +477,30 @@ struct UnitsDto {
     romans: TribeUnitsDto,
     teutons: TribeUnitsDto,
     gauls: TribeUnitsDto,
+    /// Oasis defenders (012) — defence-only, not a tribe.
+    #[serde(default)]
+    wild_animals: Vec<WildAnimalDto>,
+    /// Seeded oasis-garrison generation balance (012).
+    oasis_garrison: OasisGarrisonDto,
+}
+
+#[derive(Deserialize)]
+struct WildAnimalDto {
+    id: String,
+    name: String,
+    defense_infantry: u32,
+    defense_cavalry: u32,
+}
+
+#[derive(Deserialize)]
+struct OasisGarrisonDto {
+    base_count: u32,
+    extra_per_step: u32,
+    tiles_per_step: u32,
+    max_count: u32,
+    tiles_per_tier: u32,
+    regrow_secs: i64,
+    regrow_per_step: u32,
 }
 
 #[derive(Deserialize)]
@@ -576,6 +610,28 @@ fn parse_siege(s: Option<&str>) -> Result<Option<SiegeKind>, BalanceError> {
     }
 }
 
+/// Build a wild-animal [`UnitSpec`] (012): a defence-only oasis guard with no offence, no upkeep,
+/// no cost, and no training — every non-defensive attribute is zero/empty.
+fn wild_animal_spec(dto: &WildAnimalDto) -> UnitSpec {
+    UnitSpec {
+        id: UnitId(dto.id.clone()),
+        name: dto.name.clone(),
+        role: UnitRole::Wild,
+        attack: 0,
+        defense_infantry: dto.defense_infantry,
+        defense_cavalry: dto.defense_cavalry,
+        scouting: 0,
+        speed: 0,
+        carry_capacity: 0,
+        crop_upkeep: 0,
+        cost: ResourceAmounts::default(),
+        train_secs: 0,
+        trained_in: BuildingKind::Barracks,
+        research: None,
+        siege_kind: None,
+    }
+}
+
 /// Load the per-tribe unit rosters and Smithy upgrade tables from balance data.
 ///
 /// Fails fast (004 AC4): parsing or [`UnitRules`] roster validation errors surface immediately.
@@ -609,7 +665,27 @@ fn parse_unit_rules(toml_src: &str) -> Result<UnitRules, BalanceError> {
     let training = TrainingRules {
         building_factor_per_level: dto.training.building_factor,
     };
-    UnitRules::new(rosters, smithy, training).map_err(BalanceError::Domain)
+    let wild_animals: Vec<UnitSpec> = dto.wild_animals.iter().map(wild_animal_spec).collect();
+    UnitRules::new(rosters, smithy, training)
+        .map(|r| r.with_wild_animals(wild_animals))
+        .map_err(BalanceError::Domain)
+}
+
+/// Load the seeded oasis-garrison generation rules (012) from unit balance data.
+///
+/// # Errors
+/// Returns [`BalanceError`] if the data cannot be parsed.
+pub fn oasis_rules() -> Result<OasisRules, BalanceError> {
+    let dto: UnitsDto = toml::from_str(UNITS_TOML)?;
+    Ok(OasisRules {
+        base_count: dto.oasis_garrison.base_count,
+        extra_per_step: dto.oasis_garrison.extra_per_step,
+        tiles_per_step: dto.oasis_garrison.tiles_per_step,
+        max_count: dto.oasis_garrison.max_count,
+        tiles_per_tier: dto.oasis_garrison.tiles_per_tier,
+        regrow_secs: dto.oasis_garrison.regrow_secs,
+        regrow_per_step: dto.oasis_garrison.regrow_per_step,
+    })
 }
 
 #[derive(Deserialize)]
@@ -713,6 +789,7 @@ mod tests {
             0,
             &rules,
             GameSpeed::new(1.0).unwrap(),
+            eperica_domain::OasisBonus::default(),
         );
         assert!(rates.wood > 0);
         assert!(rates.clay > 0);
@@ -786,6 +863,30 @@ mod tests {
     }
 
     #[test]
+    fn loads_outpost_building_and_capacity() {
+        // 012 AC6: the Outpost is a constructable building with spec prerequisites, and its capacity
+        // table rises with level (level 0 holds none; higher levels hold more).
+        let r = build_rules().expect("build rules");
+        let outpost = BuildTarget::Building {
+            slot: 0,
+            kind: BuildingKind::Outpost,
+        };
+        assert_eq!(r.max_level(outpost), 10);
+        assert!(r.cost(outpost, 0).is_some());
+        assert_eq!(
+            r.prerequisites(BuildingKind::Outpost),
+            &[
+                (BuildingKind::MainBuilding, 3),
+                (BuildingKind::RallyPoint, 1)
+            ]
+        );
+        let economy = economy_rules().expect("economy rules");
+        assert_eq!(economy.outpost_capacity(0), 0, "no Outpost holds no oasis");
+        assert!(economy.outpost_capacity(1) >= 1);
+        assert!(economy.outpost_capacity(10) > economy.outpost_capacity(1));
+    }
+
+    #[test]
     fn loads_valid_map_rules() {
         // 006 AC2: the shipped map balance loads, every valley distribution sums to 18, and the
         // origin region has valleys to place on.
@@ -847,6 +948,34 @@ mod tests {
         assert!(r.unit(Tribe::Gauls, &UnitId("phalanx".into())).is_some());
         // Smithy tables cover 20 levels.
         assert_eq!(r.smithy.max_level(), 20);
+    }
+
+    #[test]
+    fn loads_wild_animals_and_oasis_rules() {
+        // 012: the wild-animal roster loads as defence-only guards and the oasis-garrison balance
+        // produces a non-empty, distance-scaled garrison.
+        use eperica_domain::{Coordinate, oasis_garrison};
+        let units = unit_rules().expect("unit rules");
+        let animals = units.wild_animal_roster();
+        assert!(!animals.is_empty(), "wild-animal roster must be populated");
+        for a in animals {
+            assert_eq!(a.role, UnitRole::Wild);
+            assert_eq!(a.attack, 0, "wild animals have no offence");
+            assert!(
+                a.defense_infantry > 0 || a.defense_cavalry > 0,
+                "{} must defend",
+                a.id.0
+            );
+            assert_eq!(a.crop_upkeep, 0);
+        }
+        let rules = oasis_rules().expect("oasis rules");
+        assert!(rules.base_count > 0);
+        let near = oasis_garrison(7, Coordinate::new(1, 0), animals, &rules);
+        let far = oasis_garrison(7, Coordinate::new(60, 0), animals, &rules);
+        assert!(!near.is_empty(), "origin oasis must hold animals");
+        let total = |g: &eperica_domain::UnitCounts| g.iter().map(|(_, n)| *n).sum::<u32>();
+        assert!(total(&far) >= total(&near));
+        assert!(total(&far) <= rules.max_count);
     }
 
     #[test]

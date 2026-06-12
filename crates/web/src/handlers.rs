@@ -4,9 +4,9 @@ use crate::auth::{AuthUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
 use crate::templates::{
     AcademyRow, AcademyTemplate, ActiveView, BuildRow, ForceRow, GarrisonRow, IndexTemplate,
-    LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MovementRow, QueueView, RallyTemplate,
-    RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate,
-    ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate,
+    LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MovementRow, OasisRow, QueueView,
+    RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate,
+    ReportsTemplate, ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate,
     StyleGuideTemplate, TrainRow, TroopsTemplate, VillageTemplate,
 };
 use askama::Template;
@@ -17,9 +17,10 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
     AccountRepository, BattleReportView, BuildRepository, CombatRepository, LoginError,
-    MovementRepository, RegisterCommand, RegisterError, ScoutIntel, ScoutReportView,
-    ScoutRepository, TradeRepository, TrainingRepository, UnitOrderKind, UnitRepository,
-    authenticate, load_economy, map_viewport, order_attack, order_build, order_reinforcement,
+    MovementRepository, OasisRepository, RegisterCommand, RegisterError, ScoutIntel,
+    ScoutReportView, ScoutRepository, TradeRepository, TrainingRepository, UnitOrderKind,
+    UnitRepository, authenticate, load_economy, map_viewport, order_attack, order_build,
+    order_oasis_attack, order_oasis_recall, order_oasis_reinforce, order_reinforcement,
     order_research, order_return, order_scout, order_smithy_upgrade, order_trade, order_train,
     register, viewport_coords,
 };
@@ -65,6 +66,7 @@ fn building_label(kind: BuildingKind) -> &'static str {
         BuildingKind::Workshop => "Workshop",
         BuildingKind::Residence => "Residence",
         BuildingKind::Cranny => "Cranny",
+        BuildingKind::Outpost => "Outpost",
     }
 }
 
@@ -83,6 +85,7 @@ fn building_kind_id(kind: BuildingKind) -> &'static str {
         BuildingKind::Workshop => "workshop",
         BuildingKind::Residence => "residence",
         BuildingKind::Cranny => "cranny",
+        BuildingKind::Outpost => "outpost",
     }
 }
 
@@ -102,6 +105,7 @@ fn building_slot(kind: BuildingKind) -> u8 {
         BuildingKind::Marketplace => 10,
         BuildingKind::Wall => 11,
         BuildingKind::Cranny => 12,
+        BuildingKind::Outpost => 13,
     }
 }
 
@@ -119,6 +123,7 @@ fn parse_building_kind(s: Option<&str>) -> Option<BuildingKind> {
         Some("stable") => Some(BuildingKind::Stable),
         Some("workshop") => Some(BuildingKind::Workshop),
         Some("cranny") => Some(BuildingKind::Cranny),
+        Some("outpost") => Some(BuildingKind::Outpost),
         _ => None,
     }
 }
@@ -418,6 +423,7 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         BuildingKind::Marketplace,
         BuildingKind::Wall,
         BuildingKind::Cranny,
+        BuildingKind::Outpost,
         BuildingKind::Barracks,
         BuildingKind::Academy,
         BuildingKind::Smithy,
@@ -494,6 +500,15 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
                 MovementKind::Scout => {
                     format!("Scouting ({}|{})", m.destination.x, m.destination.y)
                 }
+                MovementKind::OasisAttack => {
+                    format!("Oasis attack on ({}|{})", m.destination.x, m.destination.y)
+                }
+                MovementKind::OasisReinforce => {
+                    format!(
+                        "Oasis reinforcement to ({}|{})",
+                        m.destination.x, m.destination.y
+                    )
+                }
             },
             troops: troops_summary(unit_rules, &m.troops),
             arrive_ms: m.arrive_at.0,
@@ -543,6 +558,22 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         })
         .collect();
 
+    // The oases this village holds (012 AC12): their tile, bonus, and a recall action.
+    let oases: Vec<OasisRow> = match state.accounts.occupied_oases(village.id).await {
+        Ok(o) => o
+            .iter()
+            .map(|(c, b)| OasisRow {
+                x: c.x,
+                y: c.y,
+                bonus: oasis_label(*b),
+            })
+            .collect(),
+        Err(e) => {
+            tracing::error!(error = %e, "occupied oases lookup failed");
+            return server_error();
+        }
+    };
+
     page(&VillageTemplate {
         username: user.username,
         tribe: tribe_label(village.tribe),
@@ -574,6 +605,7 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         reinforcements_here,
         reinforcements_abroad,
         shipments,
+        oases,
         fields,
         buildings,
     })
@@ -660,6 +692,16 @@ pub async fn map(
     };
     let viewport = map_viewport(state.map.as_ref(), center, MAP_HALF, &markers);
 
+    // Which oases in view are occupied, and by whom (012 AC12).
+    let oasis_owners: std::collections::HashMap<Coordinate, String> =
+        match state.accounts.oasis_owners_at(&coords).await {
+            Ok(o) => o.into_iter().collect(),
+            Err(e) => {
+                tracing::error!(error = %e, "oasis owners lookup failed");
+                return server_error();
+            }
+        };
+
     let rows: Vec<Vec<MapCellView>> = viewport
         .rows
         .iter()
@@ -671,6 +713,7 @@ pub async fn map(
                     let mut class = format!("map-grid__cell {kind_class}");
                     let mut glyph = glyph;
                     let mut label = format!("{base_label} ({}|{})", coord.x, coord.y);
+                    let mut href = None;
                     if let Some(marker) = &cell.marker {
                         class.push_str(" map-grid__cell--village");
                         if marker.owner_name == user.username {
@@ -681,11 +724,27 @@ pub async fn map(
                             "{} — {} ({}|{})",
                             base_label, marker.owner_name, coord.x, coord.y
                         );
+                    } else if matches!(cell.tile, TileKind::Oasis(_)) {
+                        // An oasis links to the Rally Point pre-filled with the tile (attack, or
+                        // reinforce your own); its owner (if any) is shown in the label.
+                        if let Some(owner) = oasis_owners.get(&coord) {
+                            class.push_str(" map-grid__cell--occupied");
+                            if owner == &user.username {
+                                class.push_str(" map-grid__cell--self");
+                            }
+                            label =
+                                format!("{base_label} — held by {owner} ({}|{})", coord.x, coord.y);
+                        } else {
+                            label =
+                                format!("{base_label} — wild animals ({}|{})", coord.x, coord.y);
+                        }
+                        href = Some(format!("/village/rally?x={}&y={}", coord.x, coord.y));
                     }
                     MapCellView {
                         cell_class: class,
                         glyph,
                         label,
+                        href,
                     }
                 })
                 .collect()
@@ -768,6 +827,7 @@ fn role_label(role: UnitRole) -> &'static str {
         UnitRole::Scout => "Scout",
         UnitRole::Siege => "Siege",
         UnitRole::Expansion => "Expansion",
+        UnitRole::Wild => "Wild",
     }
 }
 
@@ -1255,7 +1315,11 @@ pub async fn smithy_upgrade_submit(
 }
 
 /// The Rally Point: the garrison troops that can be sent to reinforce (007 AC7; Player only, P4).
-pub async fn rally(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+pub async fn rally(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Query(q): Query<MapQuery>,
+) -> Response {
     let (village, _amounts) = match village_view_data(&state, player).await {
         Ok(v) => v,
         Err(r) => return r,
@@ -1284,7 +1348,19 @@ pub async fn rally(State(state): State<AppState>, AuthUser(player): AuthUser) ->
             }
         })
         .collect();
-    page(&RallyTemplate { units })
+    // Pre-fill the target from the map link, and flag when it is an oasis (so the form can hint
+    // attack/reinforce instead of the village modes, 012 AC12).
+    let target = match (q.x, q.y) {
+        (Some(x), Some(y)) => Some(Coordinate::new(x, y)),
+        _ => None,
+    };
+    let target_is_oasis = target.is_some_and(|c| state.map.oasis_bonus_at(c).is_some());
+    page(&RallyTemplate {
+        units,
+        target_x: q.x,
+        target_y: q.y,
+        target_is_oasis,
+    })
 }
 
 /// Send a reinforcement from the Rally Point, then return to the village (Player only, P4).
@@ -1339,34 +1415,75 @@ pub async fn rally_send(
             }
         }
         Some(mode @ ("attack" | "raid")) => {
-            let mode = if mode == "raid" {
-                AttackMode::Raid
+            // An oasis tile (no village) routes to the oasis-attack use-case (012); a village tile
+            // to the 009 attack/raid.
+            if state.map.oasis_bonus_at(target).is_some() {
+                if let Err(e) = order_oasis_attack(
+                    state.accounts.as_ref(),
+                    state.accounts.as_ref(),
+                    state.accounts.as_ref(),
+                    state.rules.as_ref(),
+                    state.unit_rules.as_ref(),
+                    state.map.as_ref(),
+                    state.world.speed,
+                    now(),
+                    player,
+                    target,
+                    troops,
+                )
+                .await
+                {
+                    tracing::warn!(error = %e, "oasis attack rejected");
+                }
             } else {
-                AttackMode::Attack
-            };
-            if let Err(e) = order_attack(
-                state.accounts.as_ref(),
-                state.accounts.as_ref(),
-                state.accounts.as_ref(),
-                state.rules.as_ref(),
-                state.unit_rules.as_ref(),
-                state.map.as_ref(),
-                state.world.speed,
-                now(),
-                player,
-                target,
-                troops,
-                mode,
-                scout_target,
-                catapult_target,
-            )
-            .await
-            {
-                tracing::warn!(error = %e, "attack order rejected");
+                let mode = if mode == "raid" {
+                    AttackMode::Raid
+                } else {
+                    AttackMode::Attack
+                };
+                if let Err(e) = order_attack(
+                    state.accounts.as_ref(),
+                    state.accounts.as_ref(),
+                    state.accounts.as_ref(),
+                    state.rules.as_ref(),
+                    state.unit_rules.as_ref(),
+                    state.map.as_ref(),
+                    state.world.speed,
+                    now(),
+                    player,
+                    target,
+                    troops,
+                    mode,
+                    scout_target,
+                    catapult_target,
+                )
+                .await
+                {
+                    tracing::warn!(error = %e, "attack order rejected");
+                }
             }
         }
         _ => {
-            if let Err(e) = order_reinforcement(
+            // Reinforcing an oasis tile stations troops on it (012); a village tile defends it (007).
+            if state.map.oasis_bonus_at(target).is_some() {
+                if let Err(e) = order_oasis_reinforce(
+                    state.accounts.as_ref(),
+                    state.accounts.as_ref(),
+                    state.accounts.as_ref(),
+                    state.rules.as_ref(),
+                    state.unit_rules.as_ref(),
+                    state.map.as_ref(),
+                    state.world.speed,
+                    now(),
+                    player,
+                    target,
+                    troops,
+                )
+                .await
+                {
+                    tracing::warn!(error = %e, "oasis reinforcement rejected");
+                }
+            } else if let Err(e) = order_reinforcement(
                 state.accounts.as_ref(),
                 state.accounts.as_ref(),
                 state.accounts.as_ref(),
@@ -1416,6 +1533,38 @@ pub async fn rally_return(
     .await
     {
         tracing::warn!(error = %e, "return order rejected");
+    }
+    Redirect::to("/village").into_response()
+}
+
+/// Recall form fields (the oasis tile to recall stationed troops from).
+#[derive(Deserialize)]
+pub struct OasisRecallForm {
+    x: i32,
+    y: i32,
+}
+
+/// Recall the player's troops stationed at one of their oases, then return to the village (012 AC7;
+/// Player only, P4).
+pub async fn oasis_recall(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<OasisRecallForm>,
+) -> Response {
+    let target = Coordinate::new(form.x, form.y);
+    if let Err(e) = order_oasis_recall(
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.unit_rules.as_ref(),
+        state.map.as_ref(),
+        state.world.speed,
+        now(),
+        player,
+        target,
+    )
+    .await
+    {
+        tracing::warn!(error = %e, "oasis recall rejected");
     }
     Redirect::to("/village").into_response()
 }

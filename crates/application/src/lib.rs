@@ -10,6 +10,7 @@ pub mod combat;
 pub mod economy;
 pub mod map;
 pub mod movement;
+pub mod oasis;
 pub mod ports;
 pub mod register;
 pub mod scheduler;
@@ -30,14 +31,20 @@ pub use combat::{CombatError, order_attack, process_due_combat};
 pub use economy::{VillageEconomy, load_economy, settle_amounts};
 pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
 pub use movement::{MovementError, order_reinforcement, order_return, process_due_movements};
+pub use oasis::{
+    OasisError, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
+    process_due_oasis_combat, process_due_oasis_regrow, process_due_oasis_reinforce,
+};
 pub use ports::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
-    BuildRepository, CombatRepository, DueAttack, DueBuild, DueEvent, DueMovement, DueScout,
-    DueTrade, DueTraining, DueUnitOrder, EventStore, MovementRepository, MovementView,
-    NewBattleReport, NewBuildOrder, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
-    PasswordHasher, RazedBuilding, RepoError, ResourceWrite, ScoutApply, ScoutIntel,
-    ScoutReportView, ScoutRepository, StarvationRepository, StationedGroup, TradeRepository,
-    TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    BuildRepository, CombatRepository, DueAttack, DueBuild, DueEvent, DueMovement, DueOasisAttack,
+    DueOasisRegrow, DueOasisReinforce, DueScout, DueTrade, DueTraining, DueUnitOrder, EventStore,
+    MovementRepository, MovementView, NewBattleReport, NewBuildOrder, NewOasisReport,
+    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
+    OasisReinforceOutcome, OasisRepository, OasisState, PasswordHasher, RazedBuilding, RepoError,
+    ResourceWrite, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, StarvationRepository,
+    StationedGroup, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
+    UserRecord, VillageMarker,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;

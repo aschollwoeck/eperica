@@ -2,7 +2,7 @@
 
 use crate::building::BuildingKind;
 use crate::error::DomainError;
-use crate::map::FieldDistribution;
+use crate::map::{FieldDistribution, OasisBonus};
 use crate::resource::ResourceKind;
 use crate::world::Coordinate;
 
@@ -116,6 +116,10 @@ pub struct Village {
     pub fields: Vec<ResourceField>,
     /// The center buildings.
     pub buildings: Vec<BuildingSlot>,
+    /// The summed per-resource production bonus from the oases this village occupies (012, AC8).
+    /// Folded into the village read (the repository derives it from the village's owned oases) so it
+    /// rides every economy computation; zero for a village holding no oases.
+    pub oasis_bonus: OasisBonus,
 }
 
 impl Village {
@@ -138,6 +142,7 @@ impl Village {
             tribe: Some(tribe),
             fields: distribution.fields(),
             buildings: template.buildings().to_vec(),
+            oasis_bonus: OasisBonus::default(),
         }
     }
 }

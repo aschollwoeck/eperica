@@ -31,4 +31,6 @@ pub enum BuildingKind {
     Wall,
     /// Hides a per-level quantity of each resource from looting (011); Teutons partially bypass it.
     Cranny,
+    /// Garrisons troops on a captured oasis; its level sets how many oases a village may hold (012).
+    Outpost,
 }

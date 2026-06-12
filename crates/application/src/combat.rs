@@ -670,6 +670,7 @@ mod tests {
                 kind: BuildingKind::RallyPoint,
                 level: 1,
             }],
+            oasis_bonus: Default::default(),
         }
     }
 
@@ -923,6 +924,7 @@ mod tests {
             building_population_per_level: HashMap::new(),
             warehouse_capacity_per_level: vec![1_000_000],
             granary_capacity_per_level: vec![1_000_000],
+            outpost_capacity_per_level: vec![0, 1, 2, 3],
             starting_amounts: amounts(0),
         }
     }

@@ -22,7 +22,9 @@
       {% for row in rows %}
       <tr>
         {% for cell in row %}
-        <td class="{{ cell.cell_class }}" title="{{ cell.label }}">{{ cell.glyph }}</td>
+        <td class="{{ cell.cell_class }}" title="{{ cell.label }}">
+          {% match cell.href %}{% when Some with (href) %}<a href="{{ href }}">{{ cell.glyph }}</a>{% when None %}{{ cell.glyph }}{% endmatch %}
+        </td>
         {% endfor %}
       </tr>
       {% endfor %}
