@@ -5,7 +5,7 @@
 //! types, keeping the domain itself free of serialization concerns.
 
 use eperica_domain::{
-    BuildRules, BuildingKind, BuildingSlot, CombatRules, DomainError, EconomyRules,
+    BuildRules, BuildingKind, BuildingSlot, CombatRules, CultureRules, DomainError, EconomyRules,
     FieldDistribution, LevelSpec, MapRules, MerchantProfile, MerchantRules, OasisBonus, OasisRules,
     ResearchSpec, ResourceAmounts, ResourceField, ResourceKind, ScoutRules, SiegeKind, SmithyRules,
     StartingVillage, TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec, WallProfile,
@@ -54,6 +54,12 @@ const TRADE_TOML: &str = include_str!(concat!(
 const COMBAT_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../specs/balance/combat.toml"
+));
+
+/// Embedded culture/expansion balance data.
+const CULTURE_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/culture.toml"
 ));
 
 /// Errors that can occur while loading balance data.
@@ -155,6 +161,7 @@ fn parse_building(name: &str) -> Result<BuildingKind, BalanceError> {
         "residence" => Ok(BuildingKind::Residence),
         "cranny" => Ok(BuildingKind::Cranny),
         "outpost" => Ok(BuildingKind::Outpost),
+        "town_hall" => Ok(BuildingKind::TownHall),
         other => Err(BalanceError::UnknownBuilding(other.to_owned())),
     }
 }
@@ -281,6 +288,7 @@ struct BuildingsDto {
     workshop: LevelSpecDto,
     cranny: LevelSpecDto,
     outpost: LevelSpecDto,
+    town_hall: LevelSpecDto,
 }
 
 fn level_spec(dto: &LevelSpecDto) -> LevelSpec {
@@ -327,6 +335,7 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
         (BuildingKind::Workshop, &dto.buildings.workshop),
         (BuildingKind::Cranny, &dto.buildings.cranny),
         (BuildingKind::Outpost, &dto.buildings.outpost),
+        (BuildingKind::TownHall, &dto.buildings.town_hall),
     ] {
         buildings.insert(kind, level_spec(spec_dto));
         let pr = prereqs(spec_dto)?;
@@ -467,6 +476,32 @@ pub fn scout_rules() -> Result<ScoutRules, BalanceError> {
     let dto: CombatDto = toml::from_str(COMBAT_TOML)?;
     Ok(ScoutRules {
         loss_exponent: dto.scouting.loss_exponent,
+    })
+}
+
+#[derive(Deserialize)]
+struct CultureDto {
+    base_cp_per_village: i64,
+    town_hall_cp_per_level: Vec<i64>,
+    cp_thresholds: Vec<i64>,
+    expansion_slots_per_level: Vec<u32>,
+    settlers_per_village: u32,
+    capital_field_max_level: u8,
+}
+
+/// Load the culture-point / expansion rules (013) from the embedded balance data.
+///
+/// # Errors
+/// Returns [`BalanceError`] if the data cannot be parsed.
+pub fn culture_rules() -> Result<CultureRules, BalanceError> {
+    let dto: CultureDto = toml::from_str(CULTURE_TOML)?;
+    Ok(CultureRules {
+        base_cp_per_village: dto.base_cp_per_village,
+        town_hall_cp_per_level: dto.town_hall_cp_per_level,
+        cp_thresholds: dto.cp_thresholds,
+        expansion_slots_per_level: dto.expansion_slots_per_level,
+        settlers_per_village: dto.settlers_per_village,
+        capital_field_max_level: dto.capital_field_max_level,
     })
 }
 
@@ -884,6 +919,43 @@ mod tests {
         assert_eq!(economy.outpost_capacity(0), 0, "no Outpost holds no oasis");
         assert!(economy.outpost_capacity(1) >= 1);
         assert!(economy.outpost_capacity(10) > economy.outpost_capacity(1));
+    }
+
+    #[test]
+    fn loads_culture_rules_and_town_hall() {
+        // 013 AC1/AC2: culture balance loads; the Town Hall is a constructable building whose CP rate
+        // rises with level; the CP gate + slots are well-formed.
+        use eperica_domain::{allowed_villages, cp_allows, culture_rate};
+        let r = culture_rules().expect("culture rules");
+        assert!(r.base_cp_per_village > 0);
+        assert_eq!(r.town_hall_cp(0), 0, "no Town Hall adds nothing");
+        assert!(r.town_hall_cp(10) > r.town_hall_cp(1));
+        assert_eq!(r.cp_thresholds[1], 0, "the first village is free");
+        // A Town Hall raises the player's rate.
+        assert!(culture_rate(&[3], &r) > culture_rate(&[0], &r));
+        // The CP gate and the combined gate behave.
+        assert_eq!(cp_allows(0, &r), 1);
+        assert!(cp_allows(1_000_000, &r) >= 2);
+        assert_eq!(
+            allowed_villages(1_000_000, &[], &r),
+            1,
+            "no Residence ⇒ home only"
+        );
+
+        // The Town Hall is buildable (constructable + has population data).
+        let build = build_rules().expect("build rules");
+        let th = BuildTarget::Building {
+            slot: 0,
+            kind: BuildingKind::TownHall,
+        };
+        assert_eq!(build.max_level(th), 10);
+        assert!(build.cost(th, 0).is_some());
+        let economy = economy_rules().expect("economy rules");
+        assert!(
+            economy
+                .building_population_per_level
+                .contains_key(&BuildingKind::TownHall)
+        );
     }
 
     #[test]

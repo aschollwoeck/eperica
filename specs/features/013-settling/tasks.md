@@ -8,7 +8,7 @@ on its own.
 
 ## Domain & balance
 
-- [ ] **T1 — Culture points + Town Hall.** `culture.rs`: `CultureRules` + pure `culture_rate`,
+- [x] **T1 — Culture points + Town Hall.** `culture.rs`: `CultureRules` + pure `culture_rate`,
   `settle_value` (uncapped accrue), `cp_allows`, `expansion_slots`, `allowed_villages`. `culture.toml`
   + `culture_rules()` loader. `BuildingKind::TownHall` threaded through every mapping (the 012-Outpost
   set); `construction.toml [buildings.town_hall]` + `economy.toml` population. Unit tests: rate sums

@@ -33,4 +33,6 @@ pub enum BuildingKind {
     Cranny,
     /// Garrisons troops on a captured oasis; its level sets how many oases a village may hold (012).
     Outpost,
+    /// Produces culture points that gate expansion (013, GDD §11.1).
+    TownHall,
 }
