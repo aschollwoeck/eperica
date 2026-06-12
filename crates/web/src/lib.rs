@@ -41,6 +41,7 @@ pub fn router(state: AppState) -> Router {
         .route("/village/rally", get(handlers::rally))
         .route("/village/rally/send", post(handlers::rally_send))
         .route("/village/rally/return", post(handlers::rally_return))
+        .route("/village/oasis/recall", post(handlers::oasis_recall))
         .route("/village/market", get(handlers::market))
         .route("/village/market/send", post(handlers::market_send))
         .route("/reports", get(handlers::reports))

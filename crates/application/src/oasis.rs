@@ -899,6 +899,12 @@ mod tests {
                 crop: 0,
             })
         }
+        async fn oasis_owners_at(
+            &self,
+            _coords: &[Coordinate],
+        ) -> Result<Vec<(Coordinate, String)>, RepoError> {
+            Ok(Vec::new())
+        }
         async fn start_oasis_attack(
             &self,
             home: VillageId,

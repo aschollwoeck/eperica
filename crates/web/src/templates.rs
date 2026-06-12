@@ -54,6 +54,7 @@ mod tests {
             reinforcements_here: Vec::new(),
             reinforcements_abroad: Vec::new(),
             shipments: Vec::new(),
+            oases: Vec::new(),
             fields: Vec::new(),
             buildings: Vec::new(),
         }
@@ -236,6 +237,9 @@ pub struct MapCellView {
     pub glyph: &'static str,
     /// The hover label: full tile description, coordinate, and owner if occupied.
     pub label: String,
+    /// A target link for actionable tiles (an oasis → the Rally Point pre-filled with the tile);
+    /// `None` for plain terrain (012 AC12).
+    pub href: Option<String>,
 }
 
 #[derive(Template)]
@@ -270,6 +274,11 @@ pub struct RallyUnitRow {
 pub struct RallyTemplate {
     /// The garrison units that can be sent (empty hides the form).
     pub units: Vec<RallyUnitRow>,
+    /// Pre-filled target tile from a map link (012 AC12), if any.
+    pub target_x: Option<i32>,
+    pub target_y: Option<i32>,
+    /// Whether the pre-filled target is an oasis (hints attack/reinforce over the village modes).
+    pub target_is_oasis: bool,
 }
 
 /// An in-flight movement line on the village page (007 AC7).
@@ -280,6 +289,17 @@ pub struct MovementRow {
     pub troops: String,
     /// Arrival time (Unix-ms UTC) for the live countdown.
     pub arrive_ms: i64,
+}
+
+/// An occupied-oasis line on the village page (012 AC12): its tile, the bonus it grants, and a
+/// recall action.
+pub struct OasisRow {
+    /// The oasis tile x.
+    pub x: i32,
+    /// The oasis tile y.
+    pub y: i32,
+    /// The bonus it grants, e.g. "Oasis +25% wood".
+    pub bonus: String,
 }
 
 /// A stationed-reinforcement line (here or abroad) on the village page (007 AC7).
@@ -444,6 +464,8 @@ pub struct VillageTemplate {
     pub reinforcements_abroad: Vec<ReinforcementRow>,
     /// The player's in-flight shipments (008); empty hides the panel.
     pub shipments: Vec<ShipmentRow>,
+    /// The oases this village holds, with their bonus + a recall action (012 AC12); empty hides it.
+    pub oases: Vec<OasisRow>,
     /// Resource-field build rows.
     pub fields: Vec<BuildRow>,
     /// Building build rows.

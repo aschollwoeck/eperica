@@ -51,7 +51,7 @@ lands green on its own.
 
 ## Web
 
-- [ ] **T8 — Map occupation + send/reinforce + Outpost.** Map shows oasis bonus + owner + Attack/
+- [x] **T8 — Map occupation + send/reinforce + Outpost.** Map shows oasis bonus + owner + Attack/
   Reinforce links; Rally Point routes oasis targets; village page shows occupied oases + bonus; Outpost
   buildable. Integration tests (**AC12**).
 

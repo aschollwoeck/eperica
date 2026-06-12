@@ -2898,6 +2898,38 @@ impl OasisRepository for PgAccountRepository {
         })
     }
 
+    async fn oasis_owners_at(
+        &self,
+        coords: &[Coordinate],
+    ) -> Result<Vec<(Coordinate, String)>, RepoError> {
+        if coords.is_empty() {
+            return Ok(Vec::new());
+        }
+        let xs: Vec<i32> = coords.iter().map(|c| c.x).collect();
+        let ys: Vec<i32> = coords.iter().map(|c| c.y).collect();
+        let rows = sqlx::query(
+            "SELECT o.x, o.y, u.username FROM oases o \
+             JOIN villages v ON v.id = o.owner_village \
+             JOIN users u ON u.id = v.owner_id \
+             WHERE o.world_id = $1 AND o.owner_village IS NOT NULL \
+               AND (o.x, o.y) IN (SELECT * FROM unnest($2::int[], $3::int[]))",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(&xs)
+        .bind(&ys)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let x: i32 = r.try_get("x").map_err(backend)?;
+                let y: i32 = r.try_get("y").map_err(backend)?;
+                let owner: String = r.try_get("username").map_err(backend)?;
+                Ok((Coordinate::new(x, y), owner))
+            })
+            .collect()
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn start_oasis_attack(
         &self,

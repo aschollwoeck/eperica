@@ -943,6 +943,16 @@ pub trait OasisRepository: Send + Sync {
     /// [`RepoError::Backend`] on storage failure.
     async fn village_oasis_bonus(&self, village: VillageId) -> Result<OasisBonus, RepoError>;
 
+    /// The **occupied** oases among `coords`, each with its owner's login name — for the map view
+    /// (012 AC12). `coords` should already be canonical (in-bounds) coordinates.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn oasis_owners_at(
+        &self,
+        coords: &[Coordinate],
+    ) -> Result<Vec<(Coordinate, String)>, RepoError>;
+
     /// Atomically debit `troops` from the `home` garrison (guarded) and create an `oasis_attack`
     /// movement to the `oasis` tile (no destination village) arriving at `arrive_at`.
     ///

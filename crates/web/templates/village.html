@@ -59,6 +59,34 @@
 </section>
 {% endif %}
 
+{% if !oases.is_empty() %}
+<section class="panel">
+  <h2>Oases you hold</h2>
+  <table class="table">
+    <thead><tr><th>Tile</th><th>Bonus</th><th></th></tr></thead>
+    <tbody>
+      {% for o in oases %}
+      <tr>
+        <td>({{ o.x }}|{{ o.y }})</td>
+        <td>{{ o.bonus }}</td>
+        <td>
+          <span class="map-controls">
+            <a class="btn btn--secondary" href="/village/rally?x={{ o.x }}&amp;y={{ o.y }}">Reinforce</a>
+            <form method="post" action="/village/oasis/recall">
+              <input type="hidden" name="x" value="{{ o.x }}">
+              <input type="hidden" name="y" value="{{ o.y }}">
+              <button class="btn btn--secondary" type="submit">Recall troops</button>
+            </form>
+          </span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">Each oasis adds its bonus to this village's production while you hold it.</p>
+</section>
+{% endif %}
+
 {% if !reinforcements_here.is_empty() %}
 <section class="panel">
   <h2>Reinforcements stationed here</h2>

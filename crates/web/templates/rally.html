@@ -23,9 +23,11 @@
     <div class="field">
       <label>Target tile</label>
       <span class="map-controls">
-        x <input type="number" name="x" required style="width:5em">
-        y <input type="number" name="y" required style="width:5em">
+        x <input type="number" name="x" required style="width:5em" {% match target_x %}{% when Some with (x) %}value="{{ x }}"{% when None %}{% endmatch %}>
+        y <input type="number" name="y" required style="width:5em" {% match target_y %}{% when Some with (y) %}value="{{ y }}"{% when None %}{% endmatch %}>
       </span>
+      {% if target_is_oasis %}<span class="muted">This tile is an <strong>oasis</strong>: choose
+        <em>attack</em> to clear &amp; occupy it, or <em>reinforce</em> to garrison one you hold.</span>{% endif %}
     </div>
     <div class="field">
       <label>Spy on</label>

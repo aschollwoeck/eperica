@@ -5,13 +5,16 @@
 
 use axum_extra::extract::cookie::Key;
 use eperica_application::{
-    process_due_combat, process_due_movements, process_due_scouts, process_due_trades,
+    process_due_combat, process_due_movements, process_due_oasis_combat, process_due_scouts,
+    process_due_trades,
 };
-use eperica_domain::{GameSpeed, Timestamp, WorldConfig, WorldMap};
+use eperica_domain::{
+    Coordinate, GameSpeed, TileKind, Timestamp, WorldConfig, WorldMap, coordinates_within,
+};
 use eperica_infrastructure::{
     Argon2Hasher, PgAccountRepository, build_rules, combat_rules, create_pool, economy_rules,
-    ensure_world, map_rules, merchant_rules, now, run_migrations, scout_rules, starting_village,
-    unit_rules,
+    ensure_world, map_rules, merchant_rules, now, oasis_rules, run_migrations, scout_rules,
+    starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -1675,4 +1678,186 @@ async fn siege_loot_and_cranny_flow() {
         .await
         .unwrap();
     assert!(village.contains("Cranny"), "Cranny should be buildable");
+}
+
+// 012 AC12: the map shows oasis tiles with a Rally Point link; an oasis attack from the Rally Point
+// clears + occupies the oasis (Outpost gives capacity); the village page then shows the held oasis +
+// its bonus; the map shows it held by the player. The Outpost is buildable.
+#[tokio::test]
+async fn oasis_attack_occupy_and_bonus_flow() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    let _ = dotenvy::dotenv();
+    let url = std::env::var("DATABASE_URL").unwrap();
+    let pool = create_pool(&url).await.unwrap();
+    let repo = movement_repo(&pool).await;
+    let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+    let world = ensure_world(&pool, &config).await.unwrap();
+    let map = WorldMap::new(world.seed as u64, config.radius, map_rules().unwrap());
+
+    let user = unique("oasis");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", format!("{user}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    let (vid, vx, vy): (uuid::Uuid, i32, i32) = sqlx::query_as(
+        "SELECT v.id, v.x, v.y FROM villages v JOIN users u ON u.id = v.owner_id \
+         WHERE u.username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let village_coord = Coordinate::new(vx, vy);
+
+    // Pick an oasis tile with **no village** on it (the long-lived dev DB has villages on some oasis
+    // tiles from older seeds; those would render as village cells, not oases).
+    let occupied: std::collections::HashSet<(i32, i32)> =
+        sqlx::query_as::<_, (i32, i32)>("SELECT x, y FROM villages WHERE world_id = $1")
+            .bind(uuid::Uuid::from_u128(world.id.0))
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .collect();
+    let oasis = coordinates_within(config.radius)
+        .find(|coord| {
+            matches!(map.tile_at(*coord), Some(TileKind::Oasis(_)))
+                && *coord != village_coord
+                && !occupied.contains(&(coord.x, coord.y))
+        })
+        .expect("a free oasis exists");
+    sqlx::query("DELETE FROM oases WHERE world_id = $1 AND x = $2 AND y = $3")
+        .bind(uuid::Uuid::from_u128(world.id.0))
+        .bind(oasis.x)
+        .bind(oasis.y)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The Outpost is buildable (it appears in the village build menu) — AC12.
+    let village = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(village.contains("Outpost"), "Outpost should be buildable");
+
+    // Give the village an Outpost (capacity ≥ 1) and a strong garrison.
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         VALUES ($1, 20, 'outpost', 3) \
+         ON CONFLICT (village_id, slot) DO UPDATE SET building_type = EXCLUDED.building_type, level = EXCLUDED.level",
+    )
+    .bind(vid)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 600)",
+    )
+    .bind(vid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // AC12: the map (centered on the oasis) shows it as an oasis with a Rally Point link.
+    let map_html = c
+        .get(format!("{base}/map?x={}&y={}", oasis.x, oasis.y))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        map_html.contains(&format!("/village/rally?x={}&amp;y={}", oasis.x, oasis.y)),
+        "the oasis links to the Rally Point pre-filled with its tile"
+    );
+
+    // AC12: send an oasis attack from the Rally Point; PRG back to the village.
+    let res = c
+        .post(format!("{base}/village/rally/send"))
+        .form(&[
+            ("mode", "attack"),
+            ("x", oasis.x.to_string().as_str()),
+            ("y", oasis.y.to_string().as_str()),
+            ("count_phalanx", "500"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+    // The oasis attack movement was created (garrison debited from 600 to 100).
+    let after: i32 = sqlx::query_scalar(
+        "SELECT count FROM village_units WHERE village_id = $1 AND unit_id = 'phalanx'",
+    )
+    .bind(vid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(after, 100, "the oasis attack debited the garrison");
+
+    // The System resolves the due oasis battle: the village clears + occupies the oasis.
+    let future = Timestamp(now().0 + 10_000_000_000);
+    process_due_oasis_combat(
+        &repo,
+        &repo,
+        &repo,
+        &economy_rules().unwrap(),
+        &unit_rules().unwrap(),
+        &combat_rules().unwrap(),
+        &oasis_rules().unwrap(),
+        &map,
+        GameSpeed::new(1.0).unwrap(),
+        world.seed as u64,
+        future,
+        100,
+    )
+    .await
+    .unwrap();
+
+    // AC12: the village page shows the held oasis + its bonus.
+    let village = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        village.contains("Oases you hold"),
+        "village lists held oases"
+    );
+    assert!(
+        village.contains(&format!("({}|{})", oasis.x, oasis.y)),
+        "the held oasis tile is shown"
+    );
+
+    // AC12: the map now shows the oasis held by the player.
+    let map_html = c
+        .get(format!("{base}/map?x={}&y={}", oasis.x, oasis.y))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        map_html.contains(&format!("held by {user}")),
+        "the map shows the oasis owner"
+    );
 }
