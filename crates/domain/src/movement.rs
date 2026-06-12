@@ -19,6 +19,8 @@ pub enum MovementKind {
     Attack,
     /// Troops travel to an enemy village to fight to plunder (009).
     Raid,
+    /// Scouts travel to spy on a village; espionage resolves separately, no main battle (010).
+    Scout,
 }
 
 /// The slowest map speed among the unit types present in `troops` (fields/hour), or `None` if the
@@ -58,6 +60,7 @@ mod tests {
             attack: 1,
             defense_infantry: 1,
             defense_cavalry: 1,
+            scouting: 0,
             speed,
             carry_capacity: 0,
             crop_upkeep: 1,

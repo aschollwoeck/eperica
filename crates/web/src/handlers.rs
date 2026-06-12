@@ -485,6 +485,9 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
                 MovementKind::Raid => {
                     format!("Raid on ({}|{})", m.destination.x, m.destination.y)
                 }
+                MovementKind::Scout => {
+                    format!("Scouting ({}|{})", m.destination.x, m.destination.y)
+                }
             },
             troops: troops_summary(unit_rules, &m.troops),
             arrive_ms: m.arrive_at.0,

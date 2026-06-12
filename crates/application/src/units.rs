@@ -604,6 +604,7 @@ mod tests {
             attack: 40,
             defense_infantry: 35,
             defense_cavalry: 50,
+            scouting: 0,
             speed: 6,
             carry_capacity: 50,
             crop_upkeep: 1,

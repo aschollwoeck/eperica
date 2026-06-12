@@ -265,6 +265,7 @@ mod tests {
                 attack: 1,
                 defense_infantry: 1,
                 defense_cavalry: 1,
+                scouting: 0,
                 speed: 6 + i as u32, // u0 slowest (6)
                 carry_capacity: 0,
                 crop_upkeep: 1,

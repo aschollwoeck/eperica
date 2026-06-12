@@ -560,6 +560,7 @@ mod tests {
                 attack: 10,
                 defense_infantry: 10,
                 defense_cavalry: 10,
+                scouting: 0,
                 speed: 6 + i as u32,
                 carry_capacity: 0,
                 crop_upkeep: 0,

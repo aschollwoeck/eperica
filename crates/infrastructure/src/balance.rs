@@ -462,6 +462,9 @@ struct UnitDto {
     attack: u32,
     defense_infantry: u32,
     defense_cavalry: u32,
+    /// Espionage / counter-espionage strength (010); absent (⇒ 0) for every non-Scout unit.
+    #[serde(default)]
+    scouting: u32,
     speed: u32,
     carry_capacity: u32,
     crop_upkeep: u32,
@@ -521,6 +524,7 @@ fn unit_spec(dto: &UnitDto) -> Result<UnitSpec, BalanceError> {
         attack: dto.attack,
         defense_infantry: dto.defense_infantry,
         defense_cavalry: dto.defense_cavalry,
+        scouting: dto.scouting,
         speed: dto.speed,
         carry_capacity: dto.carry_capacity,
         crop_upkeep: dto.crop_upkeep,

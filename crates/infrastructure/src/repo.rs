@@ -1401,6 +1401,7 @@ fn movement_kind_str(kind: MovementKind) -> &'static str {
         MovementKind::Return => "return",
         MovementKind::Attack => "attack",
         MovementKind::Raid => "raid",
+        MovementKind::Scout => "scout",
     }
 }
 
@@ -1410,6 +1411,7 @@ fn parse_movement_kind(s: &str) -> Result<MovementKind, RepoError> {
         "return" => Ok(MovementKind::Return),
         "attack" => Ok(MovementKind::Attack),
         "raid" => Ok(MovementKind::Raid),
+        "scout" => Ok(MovementKind::Scout),
         other => Err(RepoError::Backend(format!(
             "unknown movement kind: {other}"
         ))),
@@ -1771,11 +1773,11 @@ impl MovementRepository for PgAccountRepository {
                     .await
                     .map_err(backend)?;
                 }
-                // Attack/raid arrivals are resolved by the combat processor, not stationed here;
-                // `claim_due_movements` excludes them, so this is unreachable.
-                MovementKind::Attack | MovementKind::Raid => {
+                // Attack/raid/scout arrivals are resolved by the combat/scout processors, not
+                // stationed here; `claim_due_movements` excludes them, so this is unreachable.
+                MovementKind::Attack | MovementKind::Raid | MovementKind::Scout => {
                     return Err(RepoError::Backend(
-                        "attack/raid movement routed to apply_movement".into(),
+                        "attack/raid/scout movement routed to apply_movement".into(),
                     ));
                 }
             }
