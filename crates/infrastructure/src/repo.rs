@@ -151,6 +151,7 @@ fn building_str(kind: BuildingKind) -> &'static str {
         BuildingKind::Stable => "stable",
         BuildingKind::Workshop => "workshop",
         BuildingKind::Residence => "residence",
+        BuildingKind::Cranny => "cranny",
     }
 }
 

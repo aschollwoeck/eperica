@@ -23,7 +23,8 @@ pub mod world;
 pub use building::BuildingKind;
 pub use combat::{
     AttackMode, AttackPower, BattleInput, BattleOutcome, CombatRules, WallProfile, add_defense,
-    apply_losses, attack_power, luck_factor, resolve_battle,
+    apply_losses, attack_power, carry_capacity_total, catapult_power, cranny_protection,
+    loot_split, luck_factor, razed_levels, resolve_battle,
 };
 pub use construction::{
     BuildRules, BuildTarget, LevelSpec, QueueLane, build_time_secs, building_levels_met,

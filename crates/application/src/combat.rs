@@ -788,6 +788,8 @@ mod tests {
             morale_exponent: 0.2,
             base_defense: 10.0,
             smithy_bonus_per_level: 0.015,
+            catapult_durability: 100.0,
+            cranny_bypass_teuton: 0.5,
             walls: HashMap::from([
                 (Tribe::Romans, wall()),
                 (Tribe::Teutons, wall()),

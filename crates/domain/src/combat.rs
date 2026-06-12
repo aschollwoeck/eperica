@@ -4,6 +4,7 @@
 //! on both sides. Everything here is pure over numbers + injected [`CombatRules`] (P3); the
 //! application layer assembles the inputs from persisted state and applies the results.
 
+use crate::economy::ResourceAmounts;
 use crate::units::{SiegeKind, UnitCounts, UnitId, UnitRole, UnitSpec};
 use crate::village::Tribe;
 use std::collections::HashMap;
@@ -50,6 +51,10 @@ pub struct CombatRules {
     pub base_defense: f64,
     /// Combat-strength bonus per Smithy level (e.g. `0.015` ⇒ +1.5 %/level).
     pub smithy_bonus_per_level: f64,
+    /// Catapult attack power needed to raze **one** level of a targeted building (011).
+    pub catapult_durability: f64,
+    /// Fraction of a Cranny's protection a **Teuton** attacker ignores when looting (011, `0..=1`).
+    pub cranny_bypass_teuton: f64,
     /// Per-tribe Wall profiles.
     pub walls: HashMap<Tribe, WallProfile>,
 }
@@ -225,12 +230,7 @@ pub fn resolve_battle(
 ) -> BattleOutcome {
     let wall = rules.wall(input.wall_tribe);
     let durability = wall.map_or(f64::INFINITY, |w| w.ram_durability.max(1.0));
-    let razed = (input.attack.ram / durability).floor();
-    let razed = if razed >= f64::from(input.wall_level) {
-        input.wall_level
-    } else {
-        razed as u8
-    };
+    let razed = razed_levels(input.attack.ram, durability, input.wall_level);
     let wall_after = input.wall_level - razed;
     let wall_bonus = wall.map_or(0.0, |w| w.bonus(wall_after));
 
@@ -286,6 +286,128 @@ pub fn apply_losses(counts: &UnitCounts, frac: f64) -> (UnitCounts, UnitCounts) 
     (survivors, losses)
 }
 
+// ---------------------------------------------------------------- siege & loot (011)
+
+/// Whole levels razed by `power` against a structure of `durability` per level, capped at `level`.
+/// Shared by rams→Wall (009) and catapults→building (011); a non-positive/infinite case razes 0.
+pub fn razed_levels(power: f64, durability: f64, level: u8) -> u8 {
+    if power <= 0.0 || !durability.is_finite() || durability <= 0.0 {
+        return 0;
+    }
+    let n = (power / durability).floor();
+    if n >= f64::from(level) {
+        level
+    } else {
+        n as u8
+    }
+}
+
+/// Total catapult attack power of a composition (Smithy-scaled) — `Σ count·attack·smithy` over
+/// **`Catapult`** siege units only. Used on the **surviving** attackers for building damage (011).
+pub fn catapult_power(
+    troops: &UnitCounts,
+    roster: &[UnitSpec],
+    levels: &[(UnitId, u8)],
+    rules: &CombatRules,
+) -> f64 {
+    troops
+        .iter()
+        .filter_map(|(id, count)| {
+            roster
+                .iter()
+                .find(|s| &s.id == id)
+                .filter(|s| s.siege_kind == Some(SiegeKind::Catapult))
+                .map(|s| {
+                    let level = levels.iter().find(|(u, _)| u == id).map_or(0, |(_, l)| *l);
+                    f64::from(s.attack) * f64::from(*count) * rules.smithy_factor(level)
+                })
+        })
+        .sum()
+}
+
+/// Total carry capacity of a composition — `Σ count·carryCapacity` (011 loot bound).
+pub fn carry_capacity_total(troops: &UnitCounts, roster: &[UnitSpec]) -> u64 {
+    troops
+        .iter()
+        .filter_map(|(id, count)| {
+            roster
+                .iter()
+                .find(|s| &s.id == id)
+                .map(|s| u64::from(s.carry_capacity) * u64::from(*count))
+        })
+        .sum()
+}
+
+/// The per-resource amount a Cranny of `level_capacity` shields from loot — reduced by the configured
+/// **bypass** fraction when the attacker is a **Teuton** (011, GDD §5.2).
+pub fn cranny_protection(level_capacity: i64, is_teuton: bool, bypass: f64) -> i64 {
+    if level_capacity <= 0 {
+        return 0;
+    }
+    if is_teuton {
+        let kept = (1.0 - bypass.clamp(0.0, 1.0)).max(0.0);
+        (level_capacity as f64 * kept).floor() as i64
+    } else {
+        level_capacity
+    }
+}
+
+/// Split the loot an army carries off: per resource `lootable = max(0, stored − protection)`; the
+/// **total** taken is `min(Σ lootable, capacity)`, distributed across the four resources **in
+/// proportion** to each one's lootable share (round-half-to-even; the rounding remainder is placed on
+/// the largest-lootable types so `Σ loot == total` and `0 ≤ loot ≤ lootable`). Pure (011 AC3).
+pub fn loot_split(
+    stored: ResourceAmounts,
+    protection: ResourceAmounts,
+    capacity: u64,
+) -> ResourceAmounts {
+    let lootable = [
+        (stored.wood - protection.wood).max(0),
+        (stored.clay - protection.clay).max(0),
+        (stored.iron - protection.iron).max(0),
+        (stored.crop - protection.crop).max(0),
+    ];
+    let total_lootable: i64 = lootable.iter().sum();
+    let cap = i64::try_from(capacity).unwrap_or(i64::MAX);
+    let total = total_lootable.min(cap);
+    let bundle = |a: [i64; 4]| ResourceAmounts {
+        wood: a[0],
+        clay: a[1],
+        iron: a[2],
+        crop: a[3],
+    };
+    if total <= 0 {
+        return bundle([0; 4]);
+    }
+    if total == total_lootable {
+        return bundle(lootable); // capacity covers everything outside the Cranny
+    }
+    // Proportional shares of `total`, rounded; then fix the remainder deterministically.
+    let mut loot = [0i64; 4];
+    for i in 0..4 {
+        let exact = lootable[i] as f64 * total as f64 / total_lootable as f64;
+        loot[i] = exact.round_ties_even() as i64;
+    }
+    let mut diff = total - loot.iter().sum::<i64>();
+    // Adjust one unit at a time, largest-lootable first (ties by index), respecting `[0, lootable]`.
+    let mut order: Vec<usize> = (0..4).collect();
+    order.sort_by(|&a, &b| lootable[b].cmp(&lootable[a]).then(a.cmp(&b)));
+    let step = if diff > 0 { 1 } else { -1 };
+    let mut guard = 0;
+    let mut oi = 0;
+    while diff != 0 && guard < 256 {
+        let i = order[oi % 4];
+        let next = loot[i] + step;
+        if (0..=lootable[i]).contains(&next) {
+            loot[i] = next;
+            diff -= step;
+        }
+        oi += 1;
+        guard += 1;
+    }
+    bundle(loot)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,6 +458,8 @@ mod tests {
             morale_exponent: 0.2,
             base_defense: 10.0,
             smithy_bonus_per_level: 0.015,
+            catapult_durability: 100.0,
+            cranny_bypass_teuton: 0.5,
             walls: HashMap::from([
                 (
                     Tribe::Gauls,
@@ -577,5 +701,109 @@ mod tests {
         // Total wipe and zero loss.
         assert_eq!(apply_losses(&counts, 1.0).0, Vec::new());
         assert_eq!(apply_losses(&counts, 0.0).1, Vec::new());
+    }
+
+    fn res(w: i64, c: i64, i: i64, cr: i64) -> ResourceAmounts {
+        ResourceAmounts {
+            wood: w,
+            clay: c,
+            iron: i,
+            crop: cr,
+        }
+    }
+
+    // AC2: razed_levels floors and caps; degenerate inputs raze nothing.
+    #[test]
+    fn razed_levels_floors_and_caps() {
+        assert_eq!(razed_levels(550.0, 100.0, 5), 5); // 5.5 floored → 5, capped at 5
+        assert_eq!(razed_levels(250.0, 100.0, 5), 2); // 2.5 floored → 2
+        assert_eq!(razed_levels(99.0, 100.0, 5), 0);
+        assert_eq!(razed_levels(10_000.0, 100.0, 3), 3); // capped at the level
+        assert_eq!(razed_levels(0.0, 100.0, 5), 0);
+        assert_eq!(razed_levels(500.0, f64::INFINITY, 5), 0); // no profile ⇒ no razing
+    }
+
+    // AC2: catapult_power sums only catapults (Smithy-scaled); rams/other roles excluded.
+    #[test]
+    fn catapult_power_counts_catapults_only() {
+        let roster = vec![
+            unit(
+                "cat",
+                UnitRole::Siege,
+                75,
+                60,
+                10,
+                Some(SiegeKind::Catapult),
+            ),
+            unit("ram", UnitRole::Siege, 60, 30, 75, Some(SiegeKind::Ram)),
+            unit("sword", UnitRole::Infantry, 50, 35, 20, None),
+        ];
+        let troops = vec![
+            (UnitId("cat".into()), 4),
+            (UnitId("ram".into()), 3),
+            (UnitId("sword".into()), 10),
+        ];
+        assert_eq!(catapult_power(&troops, &roster, &[], &rules()), 75.0 * 4.0);
+        // Smithy level scales it.
+        let lv = [(UnitId("cat".into()), 10u8)];
+        let scaled = catapult_power(&troops, &roster, &lv, &rules());
+        assert!(scaled > 75.0 * 4.0);
+    }
+
+    // AC3: carry_capacity_total sums count·carryCapacity.
+    #[test]
+    fn carry_capacity_sums() {
+        let mut a = unit("a", UnitRole::Infantry, 1, 1, 1, None);
+        a.carry_capacity = 50;
+        let mut b = unit("b", UnitRole::Cavalry, 1, 1, 1, None);
+        b.carry_capacity = 100;
+        let roster = vec![a, b];
+        let troops = vec![(UnitId("a".into()), 10), (UnitId("b".into()), 3)];
+        assert_eq!(carry_capacity_total(&troops, &roster), 50 * 10 + 100 * 3);
+    }
+
+    // AC5: a Teuton attacker faces less Cranny protection than others; level 0 protects nothing.
+    #[test]
+    fn cranny_protection_teuton_bypass() {
+        assert_eq!(cranny_protection(2000, false, 0.5), 2000);
+        assert_eq!(cranny_protection(2000, true, 0.5), 1000); // half bypassed
+        assert_eq!(cranny_protection(0, false, 0.5), 0);
+        assert_eq!(cranny_protection(2000, true, 1.0), 0); // full bypass
+    }
+
+    // AC3/AC4: loot is bounded by capacity, floored by the Cranny, proportional, and conserved.
+    #[test]
+    fn loot_split_is_bounded_proportional_and_conserved() {
+        // No Cranny, capacity covers everything → take it all.
+        let all = loot_split(res(1000, 800, 600, 400), res(0, 0, 0, 0), 10_000);
+        assert_eq!(all, res(1000, 800, 600, 400));
+
+        // Cranny shields 500 of each → lootable (500,300,100,0)=900; capacity 10000 → take all surplus.
+        let shielded = loot_split(res(1000, 800, 600, 400), res(500, 500, 500, 500), 10_000);
+        assert_eq!(shielded, res(500, 300, 100, 0));
+
+        // Capacity-bound: lootable 900 but capacity 300 → exactly 300 taken, proportional, conserved.
+        let capped = loot_split(res(1000, 800, 600, 400), res(500, 500, 500, 500), 300);
+        let total: i64 = capped.wood + capped.clay + capped.iron + capped.crop;
+        assert_eq!(total, 300);
+        assert!(capped.wood >= capped.clay && capped.clay >= capped.iron); // largest share leads
+        // Never exceeds the lootable surplus per type.
+        assert!(capped.wood <= 500 && capped.clay <= 300 && capped.iron <= 100 && capped.crop == 0);
+
+        // Nothing lootable (everything shielded) or zero capacity → no loot.
+        assert_eq!(
+            loot_split(res(100, 100, 100, 100), res(100, 100, 100, 100), 9999),
+            res(0, 0, 0, 0)
+        );
+        assert_eq!(
+            loot_split(res(1000, 1000, 1000, 1000), res(0, 0, 0, 0), 0),
+            res(0, 0, 0, 0)
+        );
+
+        // AC8: deterministic — same inputs, same split.
+        assert_eq!(
+            loot_split(res(1000, 800, 600, 400), res(500, 500, 500, 500), 300),
+            capped
+        );
     }
 }

@@ -384,8 +384,15 @@ struct CombatDto {
     morale_exponent: f64,
     base_defense: f64,
     smithy_bonus_per_level: f64,
+    catapult_durability: f64,
     walls: CombatWallsDto,
     scouting: ScoutingDto,
+    loot: LootDto,
+}
+
+#[derive(Deserialize)]
+struct LootDto {
+    teuton_cranny_bypass: f64,
 }
 
 #[derive(Deserialize)]
@@ -427,6 +434,8 @@ pub fn combat_rules() -> Result<CombatRules, BalanceError> {
         morale_exponent: dto.morale_exponent,
         base_defense: dto.base_defense,
         smithy_bonus_per_level: dto.smithy_bonus_per_level,
+        catapult_durability: dto.catapult_durability,
+        cranny_bypass_teuton: dto.loot.teuton_cranny_bypass,
         walls: HashMap::from([
             (Tribe::Romans, WallProfile::from(&dto.walls.romans)),
             (Tribe::Teutons, WallProfile::from(&dto.walls.teutons)),
