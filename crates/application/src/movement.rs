@@ -291,6 +291,7 @@ where
         upkeep,
         economy_rules,
         speed,
+        home.oasis_bonus,
     );
     let after = deposit_capped(econ.amounts, loot, econ.capacities);
     Ok(Some(ResourceWrite {
@@ -416,6 +417,7 @@ mod tests {
                 kind: BuildingKind::RallyPoint,
                 level: 1,
             }],
+            oasis_bonus: Default::default(),
         }
     }
 

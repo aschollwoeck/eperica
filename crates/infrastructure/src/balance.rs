@@ -785,6 +785,7 @@ mod tests {
             0,
             &rules,
             GameSpeed::new(1.0).unwrap(),
+            eperica_domain::OasisBonus::default(),
         );
         assert!(rates.wood > 0);
         assert!(rates.clay > 0);

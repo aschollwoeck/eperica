@@ -121,6 +121,7 @@ where
         upkeep,
         economy_rules,
         speed,
+        village.oasis_bonus,
     )
     .amounts;
     if !can_afford(amounts, cost) {
@@ -232,6 +233,7 @@ mod tests {
             tribe: None,
             fields,
             buildings,
+            oasis_bonus: Default::default(),
         }
     }
 

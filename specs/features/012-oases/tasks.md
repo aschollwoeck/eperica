@@ -34,7 +34,7 @@ lands green on its own.
 
 ## Application — bonus
 
-- [ ] **T5 — Production bonus.** `production_rates`/`compute_economy`/`settle_amounts` gain
+- [x] **T5 — Production bonus.** `production_rates`/`compute_economy`/`settle_amounts` gain
   `oasis_bonus`; `village_oasis_bonus` summed and threaded through `load_economy` + every settle site
   (default-zero first, then wired). Tests: bonuses apply + stack; a holding village reads higher
   production (**AC8**).

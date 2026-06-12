@@ -424,13 +424,17 @@ impl AccountRepository for PgAccountRepository {
                 });
             }
 
+            let vid_typed = VillageId(vid.as_u128());
             villages.push(Village {
-                id: VillageId(vid.as_u128()),
+                id: vid_typed,
                 owner,
                 coordinate: Coordinate::new(x, y),
                 tribe: parse_tribe(tribe_raw)?,
                 fields,
                 buildings,
+                // Fold the village's occupied-oasis bonus into the read (012, AC8) so every economy
+                // computation that takes this `Village` sees it.
+                oasis_bonus: self.village_oasis_bonus(vid_typed).await?,
             });
         }
         Ok(villages)
@@ -492,6 +496,8 @@ impl AccountRepository for PgAccountRepository {
             tribe: parse_tribe(tribe_raw)?,
             fields,
             buildings,
+            // Fold the village's occupied-oasis bonus into the read (012, AC8).
+            oasis_bonus: self.village_oasis_bonus(village).await?,
         }))
     }
 
@@ -6804,5 +6810,129 @@ mod tests {
             "a cleared oasis has no defenders until it regrows"
         );
         assert!(repo.occupied_oases(v.id).await.unwrap().is_empty());
+    }
+
+    // 012 AC8: the bonus of the oases a village occupies is folded into its read and stacks across
+    // multiple oases, lifting its production.
+    #[tokio::test]
+    async fn occupied_oasis_bonus_stacks_into_village_read() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping oasis-bonus test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            rules.starting_amounts,
+        );
+
+        let template = crate::starting_village().unwrap();
+        let uname = format!("oasisbonus_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &template,
+            )
+            .await
+            .expect("create account");
+        let v = repo.villages_of(user.id).await.unwrap()[0].clone();
+        assert_eq!(
+            v.oasis_bonus,
+            OasisBonus::default(),
+            "a fresh village holds no oasis"
+        );
+
+        // Two oasis tiles, occupied by this village.
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let oases: Vec<Coordinate> = coordinates_within(config.radius)
+            .filter(|c| map.oasis_bonus_at(*c).is_some())
+            .take(2)
+            .collect();
+        assert_eq!(oases.len(), 2, "need two oases on the seeded map");
+        for c in &oases {
+            sqlx::query(
+                "INSERT INTO oases (world_id, x, y, owner_village, materialised) \
+                 VALUES ($1, $2, $3, $4, true) \
+                 ON CONFLICT (world_id, x, y) \
+                 DO UPDATE SET owner_village = EXCLUDED.owner_village, materialised = true",
+            )
+            .bind(Uuid::from_u128(world.id.0))
+            .bind(c.x)
+            .bind(c.y)
+            .bind(Uuid::from_u128(v.id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // The summed bonus stacks the two tiles' per-resource bonuses (saturating at u8).
+        let sum = |pick: fn(&OasisBonus) -> u8| -> u8 {
+            oases
+                .iter()
+                .map(|c| u32::from(pick(&map.oasis_bonus_at(*c).unwrap())))
+                .sum::<u32>()
+                .min(u32::from(u8::MAX)) as u8
+        };
+        let expected = OasisBonus {
+            wood: sum(|b| b.wood),
+            clay: sum(|b| b.clay),
+            iron: sum(|b| b.iron),
+            crop: sum(|b| b.crop),
+        };
+        assert_eq!(repo.village_oasis_bonus(v.id).await.unwrap(), expected);
+
+        // It is folded into the village read, so every economy computation sees it.
+        let read = repo.village_by_id(v.id).await.unwrap().expect("village");
+        assert_eq!(read.oasis_bonus, expected);
+        assert_eq!(
+            repo.villages_of(user.id).await.unwrap()[0].oasis_bonus,
+            expected
+        );
+
+        // A holding village's production is at least as high as without the bonus (strictly higher
+        // when any tile grants a bonus, which the shipped balance always does).
+        use eperica_domain::production_rates;
+        let speed = GameSpeed::new(1.0).unwrap();
+        let base = production_rates(
+            &read.fields,
+            &read.buildings,
+            0,
+            &rules,
+            speed,
+            OasisBonus::default(),
+        );
+        let boosted = production_rates(
+            &read.fields,
+            &read.buildings,
+            0,
+            &rules,
+            speed,
+            read.oasis_bonus,
+        );
+        assert!(boosted.wood >= base.wood && boosted.clay >= base.clay);
+        assert!(
+            boosted.wood + boosted.clay + boosted.iron > base.wood + base.clay + base.iron,
+            "an occupied oasis lifts production"
+        );
     }
 }

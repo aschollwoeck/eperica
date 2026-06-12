@@ -282,6 +282,7 @@ where
             village_upkeep(&target, &garrison, unit_rules),
             economy_rules,
             speed,
+            target.oasis_bonus,
         );
         let credited = deposit_capped(economy.amounts, leg.bundle, economy.capacities);
         match trades
@@ -462,6 +463,7 @@ mod tests {
             tribe: Some(Tribe::Gauls),
             fields: FieldDistribution::new(4, 4, 4, 6).unwrap().fields(),
             buildings,
+            oasis_bonus: Default::default(),
         }
     }
 

@@ -120,6 +120,7 @@ async fn village_and_amounts<A: AccountRepository>(
         upkeep,
         economy_rules,
         speed,
+        village.oasis_bonus,
     )
     .amounts;
     Ok(Some((village, tribe, amounts, updated_at)))
@@ -529,6 +530,7 @@ where
             upkeep,
             economy_rules,
             speed,
+            village.oasis_bonus,
         )
         .amounts;
         from = Timestamp(from.0.max(t_i.0));
@@ -688,6 +690,7 @@ mod tests {
                 .iter()
                 .map(|&(kind, level)| BuildingSlot { kind, level })
                 .collect(),
+            oasis_bonus: Default::default(),
         }
     }
 

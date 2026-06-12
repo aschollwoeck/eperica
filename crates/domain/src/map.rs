@@ -68,7 +68,7 @@ impl FieldDistribution {
 }
 
 /// An oasis's percentage production bonus by resource (most entries zero) — GDD §7.1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct OasisBonus {
     pub wood: u8,
     pub clay: u8,

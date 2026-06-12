@@ -516,6 +516,7 @@ mod tests {
             tribe: Some(Tribe::Gauls),
             fields: Vec::new(),
             buildings,
+            oasis_bonus: Default::default(),
         }
     }
 

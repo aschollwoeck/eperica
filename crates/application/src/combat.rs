@@ -670,6 +670,7 @@ mod tests {
                 kind: BuildingKind::RallyPoint,
                 level: 1,
             }],
+            oasis_bonus: Default::default(),
         }
     }
 

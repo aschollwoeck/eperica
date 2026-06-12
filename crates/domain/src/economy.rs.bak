@@ -288,22 +288,8 @@ mod tests {
     #[test]
     fn production_scales_with_speed() {
         let fields: Vec<_> = (0..4).map(|_| field(ResourceKind::Wood, 0)).collect();
-        let r1 = production_rates(
-            &fields,
-            &[],
-            0,
-            &rules(),
-            GameSpeed::new(1.0).unwrap(),
-            OasisBonus::default(),
-        );
-        let r2 = production_rates(
-            &fields,
-            &[],
-            0,
-            &rules(),
-            GameSpeed::new(2.0).unwrap(),
-            OasisBonus::default(),
-        );
+        let r1 = production_rates(&fields, &[], 0, &rules(), GameSpeed::new(1.0).unwrap(), OasisBonus::default());
+        let r2 = production_rates(&fields, &[], 0, &rules(), GameSpeed::new(2.0).unwrap(), OasisBonus::default());
         assert_eq!(r1.wood, 40); // 4 fields x 10
         assert_eq!(r2.wood, 80); // doubled
     }
@@ -328,7 +314,6 @@ mod tests {
             0,
             &rules(),
             GameSpeed::new(1.0).unwrap(),
-            OasisBonus::default(),
         );
         assert_eq!(r.crop_net, 60 - 3);
     }
@@ -347,7 +332,6 @@ mod tests {
             0,
             &rules(),
             GameSpeed::new(1.0).unwrap(),
-            OasisBonus::default(),
         );
         let r2 = production_rates(
             &fields,
@@ -355,7 +339,6 @@ mod tests {
             0,
             &rules(),
             GameSpeed::new(2.0).unwrap(),
-            OasisBonus::default(),
         );
         assert_eq!(r1.crop_net, 58);
         assert_eq!(r2.crop_net, 2 * r1.crop_net);
@@ -365,32 +348,11 @@ mod tests {
     #[test]
     fn crop_net_subtracts_troop_upkeep() {
         let fields = vec![field(ResourceKind::Crop, 0); 6]; // 60 base
-        let r0 = production_rates(
-            &fields,
-            &[],
-            0,
-            &rules(),
-            GameSpeed::new(1.0).unwrap(),
-            OasisBonus::default(),
-        );
-        let r25 = production_rates(
-            &fields,
-            &[],
-            25,
-            &rules(),
-            GameSpeed::new(1.0).unwrap(),
-            OasisBonus::default(),
-        );
+        let r0 = production_rates(&fields, &[], 0, &rules(), GameSpeed::new(1.0).unwrap(), OasisBonus::default());
+        let r25 = production_rates(&fields, &[], 25, &rules(), GameSpeed::new(1.0).unwrap(), OasisBonus::default());
         assert_eq!(r25.crop_net, r0.crop_net - 25);
         // Upkeep can push the net negative; it scales with speed like the rest (P7).
-        let starving = production_rates(
-            &fields,
-            &[],
-            100,
-            &rules(),
-            GameSpeed::new(2.0).unwrap(),
-            OasisBonus::default(),
-        );
+        let starving = production_rates(&fields, &[], 100, &rules(), GameSpeed::new(2.0).unwrap(), OasisBonus::default());
         assert_eq!(starving.crop_net, 2 * (60 - 100));
     }
 
@@ -411,7 +373,6 @@ mod tests {
             0,
             &rules(),
             GameSpeed::new(1.0).unwrap(),
-            OasisBonus::default(),
         );
         assert!(
             r.crop_net < 0,
@@ -438,7 +399,6 @@ mod tests {
             0,
             &rules(),
             GameSpeed::new(1.0).unwrap(),
-            OasisBonus::default(),
         );
         let b = compute_economy(
             stored,
@@ -448,53 +408,8 @@ mod tests {
             0,
             &rules(),
             GameSpeed::new(1.0).unwrap(),
-            OasisBonus::default(),
         );
         assert_eq!(a, b);
         assert_eq!(a.amounts.wood, 140); // 100 + 40/h
-    }
-
-    // --- 012 AC8: an oasis production bonus boosts gross output, before pop/upkeep and scaling ---
-    #[test]
-    fn oasis_bonus_boosts_gross_production() {
-        let speed = GameSpeed::new(1.0).unwrap();
-        let wood = vec![field(ResourceKind::Wood, 0); 4]; // 4 x 10 = 40 gross
-        let none = production_rates(&wood, &[], 0, &rules(), speed, OasisBonus::default());
-        let plus25 = production_rates(
-            &wood,
-            &[],
-            0,
-            &rules(),
-            speed,
-            OasisBonus {
-                wood: 25,
-                ..Default::default()
-            },
-        );
-        assert_eq!(none.wood, 40);
-        assert_eq!(plus25.wood, 50, "40 + 25% = 50");
-        assert_eq!(plus25.clay, 0, "the bonus is per-resource");
-
-        // A crop bonus boosts the gross crop *before* population/upkeep subtract — so it lifts net
-        // crop by the full bonus on gross (not a percentage of the already-reduced net).
-        let crop = vec![field(ResourceKind::Crop, 0); 6]; // 60 gross
-        let buildings = vec![BuildingSlot {
-            kind: BuildingKind::MainBuilding,
-            level: 1,
-        }]; // pop 2
-        let c0 = production_rates(&crop, &buildings, 0, &rules(), speed, OasisBonus::default());
-        let c50 = production_rates(
-            &crop,
-            &buildings,
-            0,
-            &rules(),
-            speed,
-            OasisBonus {
-                crop: 50,
-                ..Default::default()
-            },
-        );
-        // gross 60 → 90; the +30 lands entirely on net crop (population unchanged).
-        assert_eq!(c50.crop_net - c0.crop_net, 30);
     }
 }
