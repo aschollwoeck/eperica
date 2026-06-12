@@ -131,6 +131,7 @@ where
             arrive,
             kind,
             &chosen,
+            None,
         )
         .await
         .map_err(|e| match e {
@@ -354,6 +355,9 @@ where
                 defender_forces,
                 defender_losses: defender_losses_total,
             },
+            scouted: false,
+            scout_target: None,
+            scout_report: None,
         })
         .await?;
     Ok(Some(target.id))
@@ -476,6 +480,7 @@ mod tests {
             arrive_at: Timestamp,
             kind: MovementKind,
             troops: &[(UnitId, u32)],
+            _scout_target: Option<eperica_domain::ScoutTarget>,
         ) -> Result<(), RepoError> {
             *self.sent.lock().unwrap() = Some(Sent {
                 home,
