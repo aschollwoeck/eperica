@@ -14,7 +14,7 @@ on its own.
   set); `construction.toml [buildings.town_hall]` + `economy.toml` population. Unit tests: rate sums
   base + Town Hall; `cp_allows`/`allowed_villages` (**AC1**, **AC2**, **AC4** math).
 
-- [ ] **T2 — Residence & Palace + settler training.** `BuildingKind::Palace` (Residence exists) threaded
+- [x] **T2 — Residence & Palace + settler training.** `BuildingKind::Palace` (Residence exists) threaded
   through every mapping; `construction.toml` `[buildings.residence]`/`[buildings.palace]` (Palace
   exclusive) + population. `expansion_slots_per_level` in balance. Enable the 005 settler-training gate
   (Residence **or** Palace satisfies it); confirm a settler per tribe in `units.toml`. Tests: buildings

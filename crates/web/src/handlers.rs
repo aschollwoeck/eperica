@@ -68,6 +68,7 @@ fn building_label(kind: BuildingKind) -> &'static str {
         BuildingKind::Cranny => "Cranny",
         BuildingKind::Outpost => "Outpost",
         BuildingKind::TownHall => "Town Hall",
+        BuildingKind::Palace => "Palace",
     }
 }
 
@@ -88,6 +89,7 @@ fn building_kind_id(kind: BuildingKind) -> &'static str {
         BuildingKind::Cranny => "cranny",
         BuildingKind::Outpost => "outpost",
         BuildingKind::TownHall => "town_hall",
+        BuildingKind::Palace => "palace",
     }
 }
 
@@ -109,6 +111,7 @@ fn building_slot(kind: BuildingKind) -> u8 {
         BuildingKind::Cranny => 12,
         BuildingKind::Outpost => 13,
         BuildingKind::TownHall => 14,
+        BuildingKind::Palace => 15,
     }
 }
 
@@ -128,6 +131,8 @@ fn parse_building_kind(s: Option<&str>) -> Option<BuildingKind> {
         Some("cranny") => Some(BuildingKind::Cranny),
         Some("outpost") => Some(BuildingKind::Outpost),
         Some("town_hall") => Some(BuildingKind::TownHall),
+        Some("residence") => Some(BuildingKind::Residence),
+        Some("palace") => Some(BuildingKind::Palace),
         _ => None,
     }
 }
@@ -429,6 +434,8 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         BuildingKind::Cranny,
         BuildingKind::Outpost,
         BuildingKind::TownHall,
+        BuildingKind::Residence,
+        BuildingKind::Palace,
         BuildingKind::Barracks,
         BuildingKind::Academy,
         BuildingKind::Smithy,

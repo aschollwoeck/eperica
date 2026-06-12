@@ -342,13 +342,24 @@ pub fn scaled_time_secs(base_secs: i64, speed: GameSpeed) -> i64 {
     ((base_secs as f64 / speed.multiplier()).round() as i64).max(1)
 }
 
-/// The buildings whose training queues exist in slice 005. `trained_in` kinds outside this set
-/// (Residence — settlers/administrators) are trainable in later slices.
+/// The buildings whose training queues exist. Troop buildings (005) plus the **Residence** — the
+/// expansion building that trains settlers/administrators (013); a **Palace** trains the same units.
 fn trains_here(kind: BuildingKind) -> bool {
     matches!(
         kind,
-        BuildingKind::Barracks | BuildingKind::Stable | BuildingKind::Workshop
+        BuildingKind::Barracks
+            | BuildingKind::Stable
+            | BuildingKind::Workshop
+            | BuildingKind::Residence
     )
+}
+
+/// Whether the village holds the building a unit trains in — at level ≥ 1. A **Palace** counts as a
+/// **Residence** for training expansion units (013), so either satisfies a Residence-trained unit.
+fn training_building_present(required: BuildingKind, buildings: &[BuildingSlot]) -> bool {
+    building_levels_met(&[(required, 1)], buildings)
+        || (required == BuildingKind::Residence
+            && building_levels_met(&[(BuildingKind::Palace, 1)], buildings))
 }
 
 /// Why a training batch is denied (beyond affordability and queue occupancy).
@@ -383,7 +394,7 @@ pub fn can_train(
     if !trains_here(unit.trained_in) {
         return Err(TrainDenied::BuildingUnavailable);
     }
-    if !building_levels_met(&[(unit.trained_in, 1)], buildings) {
+    if !training_building_present(unit.trained_in, buildings) {
         return Err(TrainDenied::BuildingMissing);
     }
     Ok(())
@@ -713,12 +724,20 @@ mod tests {
             can_train(&infantry, false, 5, &slots(&[(BuildingKind::Stable, 1)])),
             Err(TrainDenied::BuildingMissing)
         );
-        // Residence-trained units are unavailable until 013.
+        // 013: Residence-trained settlers train at a Residence **or** a Palace, not without either.
         let mut settler = unit("settler", None);
         settler.trained_in = BuildingKind::Residence;
         assert_eq!(
             can_train(&settler, true, 1, &slots(&[(BuildingKind::Residence, 1)])),
-            Err(TrainDenied::BuildingUnavailable)
+            Ok(())
+        );
+        assert_eq!(
+            can_train(&settler, true, 1, &slots(&[(BuildingKind::Palace, 1)])),
+            Ok(())
+        );
+        assert_eq!(
+            can_train(&settler, true, 1, &slots(&[(BuildingKind::Barracks, 1)])),
+            Err(TrainDenied::BuildingMissing)
         );
     }
 

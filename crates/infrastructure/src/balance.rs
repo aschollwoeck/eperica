@@ -162,6 +162,7 @@ fn parse_building(name: &str) -> Result<BuildingKind, BalanceError> {
         "cranny" => Ok(BuildingKind::Cranny),
         "outpost" => Ok(BuildingKind::Outpost),
         "town_hall" => Ok(BuildingKind::TownHall),
+        "palace" => Ok(BuildingKind::Palace),
         other => Err(BalanceError::UnknownBuilding(other.to_owned())),
     }
 }
@@ -289,6 +290,8 @@ struct BuildingsDto {
     cranny: LevelSpecDto,
     outpost: LevelSpecDto,
     town_hall: LevelSpecDto,
+    residence: LevelSpecDto,
+    palace: LevelSpecDto,
 }
 
 fn level_spec(dto: &LevelSpecDto) -> LevelSpec {
@@ -336,6 +339,8 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
         (BuildingKind::Cranny, &dto.buildings.cranny),
         (BuildingKind::Outpost, &dto.buildings.outpost),
         (BuildingKind::TownHall, &dto.buildings.town_hall),
+        (BuildingKind::Residence, &dto.buildings.residence),
+        (BuildingKind::Palace, &dto.buildings.palace),
     ] {
         buildings.insert(kind, level_spec(spec_dto));
         let pr = prereqs(spec_dto)?;
@@ -942,20 +947,25 @@ mod tests {
             "no Residence ⇒ home only"
         );
 
-        // The Town Hall is buildable (constructable + has population data).
+        // Town Hall / Residence / Palace are buildable (constructable + have population data).
         let build = build_rules().expect("build rules");
-        let th = BuildTarget::Building {
-            slot: 0,
-            kind: BuildingKind::TownHall,
-        };
-        assert_eq!(build.max_level(th), 10);
-        assert!(build.cost(th, 0).is_some());
         let economy = economy_rules().expect("economy rules");
-        assert!(
-            economy
-                .building_population_per_level
-                .contains_key(&BuildingKind::TownHall)
-        );
+        for kind in [
+            BuildingKind::TownHall,
+            BuildingKind::Residence,
+            BuildingKind::Palace,
+        ] {
+            let target = BuildTarget::Building { slot: 0, kind };
+            assert_eq!(build.max_level(target), 10, "{kind:?}");
+            assert!(build.cost(target, 0).is_some(), "{kind:?}");
+            assert!(
+                economy.building_population_per_level.contains_key(&kind),
+                "{kind:?} population"
+            );
+        }
+        // 013 AC3: a Residence/Palace grants expansion slots, rising with level.
+        assert_eq!(r.slots_at(0), 0);
+        assert!(r.slots_at(10) > r.slots_at(1));
     }
 
     #[test]

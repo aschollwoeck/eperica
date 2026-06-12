@@ -35,4 +35,7 @@ pub enum BuildingKind {
     Outpost,
     /// Produces culture points that gate expansion (013, GDD §11.1).
     TownHall,
+    /// Designates the player's **capital** and trains settlers/administrators; at most one per player.
+    /// The Residence is its non-capital counterpart. (Loyalty defence + conquest are 014.)
+    Palace,
 }
