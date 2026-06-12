@@ -1,6 +1,6 @@
 # Feature 012 — Oases: clear & occupy
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 006 (oasis tiles + bonuses + seeded map), 007 (troop movement engine), 009 (combat resolution + battle reports), 003 (the Outpost is a built building), 002 (production the bonus boosts)
 **Roadmap:** M4 · slice 012 · GDD §7.4, §4.4, §7.1 — the PvE/contest layer: clear the wild animals, occupy an oasis through the **Outpost**, hold it for a production bonus, and lose it to a stronger neighbour.
 

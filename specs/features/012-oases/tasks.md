@@ -61,7 +61,7 @@ lands green on its own.
   requeue. rustdoc; `docs/architecture/00NN-oases.md`; `docs/manual/` oasis guide; `CLAUDE.md` active
   slice → 012.
 
-- [ ] **T10 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
+- [x] **T10 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
   **APPROVE**; PR.
 
 ## Done when

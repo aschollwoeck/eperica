@@ -1,6 +1,6 @@
 # Feature 012 — Oases: clear & occupy — Technical Plan
 
-**Status:** Draft
+**Status:** Verified
 **Spec:** ./spec.md
 
 Oases become persisted, contestable entities on the existing seeded map. The **battle math is
