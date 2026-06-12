@@ -55,6 +55,8 @@ pub struct CombatRules {
     pub catapult_durability: f64,
     /// Fraction of a Cranny's protection a **Teuton** attacker ignores when looting (011, `0..=1`).
     pub cranny_bypass_teuton: f64,
+    /// The quantity of **each** resource a Cranny hides from looting, by level (index = level; 011).
+    pub cranny_protection_per_level: Vec<i64>,
     /// Per-tribe Wall profiles.
     pub walls: HashMap<Tribe, WallProfile>,
 }
@@ -62,6 +64,16 @@ pub struct CombatRules {
 impl CombatRules {
     fn wall(&self, tribe: Tribe) -> Option<&WallProfile> {
         self.walls.get(&tribe)
+    }
+
+    /// The per-resource quantity a Cranny of `level` hides from looting (clamped to the table; an
+    /// empty table or level 0 protects nothing).
+    pub fn cranny_capacity(&self, level: u8) -> i64 {
+        if self.cranny_protection_per_level.is_empty() {
+            return 0;
+        }
+        let idx = (level as usize).min(self.cranny_protection_per_level.len() - 1);
+        self.cranny_protection_per_level[idx]
     }
 
     /// The combat-strength multiplier for a unit upgraded to Smithy `level`.
@@ -460,6 +472,7 @@ mod tests {
             smithy_bonus_per_level: 0.015,
             catapult_durability: 100.0,
             cranny_bypass_teuton: 0.5,
+            cranny_protection_per_level: vec![0, 1000, 2000],
             walls: HashMap::from([
                 (
                     Tribe::Gauls,

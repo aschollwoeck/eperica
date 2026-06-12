@@ -118,6 +118,7 @@ fn parse_building_kind(s: Option<&str>) -> Option<BuildingKind> {
         Some("smithy") => Some(BuildingKind::Smithy),
         Some("stable") => Some(BuildingKind::Stable),
         Some("workshop") => Some(BuildingKind::Workshop),
+        Some("cranny") => Some(BuildingKind::Cranny),
         _ => None,
     }
 }

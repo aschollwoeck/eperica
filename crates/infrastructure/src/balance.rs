@@ -153,6 +153,7 @@ fn parse_building(name: &str) -> Result<BuildingKind, BalanceError> {
         "stable" => Ok(BuildingKind::Stable),
         "workshop" => Ok(BuildingKind::Workshop),
         "residence" => Ok(BuildingKind::Residence),
+        "cranny" => Ok(BuildingKind::Cranny),
         other => Err(BalanceError::UnknownBuilding(other.to_owned())),
     }
 }
@@ -270,6 +271,7 @@ struct BuildingsDto {
     smithy: LevelSpecDto,
     stable: LevelSpecDto,
     workshop: LevelSpecDto,
+    cranny: LevelSpecDto,
 }
 
 fn level_spec(dto: &LevelSpecDto) -> LevelSpec {
@@ -314,6 +316,7 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
         (BuildingKind::Smithy, &dto.buildings.smithy),
         (BuildingKind::Stable, &dto.buildings.stable),
         (BuildingKind::Workshop, &dto.buildings.workshop),
+        (BuildingKind::Cranny, &dto.buildings.cranny),
     ] {
         buildings.insert(kind, level_spec(spec_dto));
         let pr = prereqs(spec_dto)?;
@@ -393,6 +396,7 @@ struct CombatDto {
 #[derive(Deserialize)]
 struct LootDto {
     teuton_cranny_bypass: f64,
+    cranny_protection_per_level: Vec<i64>,
 }
 
 #[derive(Deserialize)]
@@ -436,6 +440,7 @@ pub fn combat_rules() -> Result<CombatRules, BalanceError> {
         smithy_bonus_per_level: dto.smithy_bonus_per_level,
         catapult_durability: dto.catapult_durability,
         cranny_bypass_teuton: dto.loot.teuton_cranny_bypass,
+        cranny_protection_per_level: dto.loot.cranny_protection_per_level,
         walls: HashMap::from([
             (Tribe::Romans, WallProfile::from(&dto.walls.romans)),
             (Tribe::Teutons, WallProfile::from(&dto.walls.teutons)),
@@ -865,6 +870,11 @@ mod tests {
         assert!((0.0..=1.0).contains(&r.luck_range));
         assert_eq!(r.smithy_factor(0), 1.0);
         assert!(r.smithy_factor(10) > 1.0);
+        // 011 siege/loot balance: catapult durability + Cranny protection load and rise with level.
+        assert!(r.catapult_durability > 0.0);
+        assert!((0.0..=1.0).contains(&r.cranny_bypass_teuton));
+        assert_eq!(r.cranny_capacity(0), 0);
+        assert!(r.cranny_capacity(10) > r.cranny_capacity(1));
         // A Wall raises defence: resolving with a wall hurts the attacker more than without.
         use eperica_domain::{AttackMode, AttackPower, BattleInput, resolve_battle};
         let base = BattleInput {

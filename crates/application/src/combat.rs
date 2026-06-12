@@ -790,6 +790,7 @@ mod tests {
             smithy_bonus_per_level: 0.015,
             catapult_durability: 100.0,
             cranny_bypass_teuton: 0.5,
+            cranny_protection_per_level: vec![0, 1000, 2000],
             walls: HashMap::from([
                 (Tribe::Romans, wall()),
                 (Tribe::Teutons, wall()),
