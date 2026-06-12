@@ -24,7 +24,7 @@ Ordered for dependency and testability (pure domain first). Each task is a commi
 
 ## Persistence
 
-- [ ] **T3 — Migration + repository.** `0014_siege_loot.sql`: `troop_movements` gains `catapult_target`
+- [x] **T3 — Migration + repository.** `0014_siege_loot.sql`: `troop_movements` gains `catapult_target`
   + `loot_{wood,clay,iron,crop}`; `battle_reports` gains `loot_*` + `razed_building/before/after`.
   `start_attack` writes `catapult_target`; `claim_due_attacks` → `DueAttack.catapult_target`.
   `BattleApply` gains loot + building damage + the target's looted-down resource snapshot; `apply_battle`
