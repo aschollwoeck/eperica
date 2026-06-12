@@ -53,9 +53,9 @@ Ordered for dependency and testability (pure domain first). Each task is a commi
 
 ## Documentation & acceptance
 
-- [ ] **T6 — Technical docs.** rustdoc; `docs/architecture/00NN-siege-loot.md` (catapult razing,
+- [x] **T6 — Technical docs.** rustdoc; `docs/architecture/00NN-siege-loot.md` (catapult razing,
   loot split + conservation across two txs, Cranny + Teuton bypass); `CLAUDE.md` active slice → 011.
-- [ ] **T7 — End-user docs.** `docs/manual/` siege & loot guide (aiming catapults, raiding for
+- [x] **T7 — End-user docs.** `docs/manual/` siege & loot guide (aiming catapults, raiding for
   resources, the Cranny, Teuton bypass); link from index.
 - [ ] **T8 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
   **APPROVE**; PR.
