@@ -9,8 +9,8 @@ use eperica_application::{
     process_due_training, process_due_unit_orders, sync_starvation_checks,
 };
 use eperica_domain::{
-    CombatRules, EconomyRules, EventKind, GameSpeed, MerchantRules, OasisRules, ScoutRules,
-    Timestamp, UnitRules, WorldMap,
+    CombatRules, CultureRules, EconomyRules, EventKind, GameSpeed, MerchantRules, OasisRules,
+    ScoutRules, Timestamp, UnitRules, WorldMap,
 };
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
@@ -144,6 +144,7 @@ pub struct Scheduler {
     combat_rules: Arc<CombatRules>,
     scout_rules: Arc<ScoutRules>,
     oasis_rules: Arc<OasisRules>,
+    culture_rules: Arc<CultureRules>,
     map: Arc<WorldMap>,
     speed: GameSpeed,
     world_seed: u64,
@@ -164,6 +165,7 @@ impl Scheduler {
         combat_rules: Arc<CombatRules>,
         scout_rules: Arc<ScoutRules>,
         oasis_rules: Arc<OasisRules>,
+        culture_rules: Arc<CultureRules>,
         map: Arc<WorldMap>,
         speed: GameSpeed,
         world_seed: u64,
@@ -177,6 +179,7 @@ impl Scheduler {
             combat_rules,
             scout_rules,
             oasis_rules,
+            culture_rules,
             map,
             speed,
             world_seed,
@@ -245,7 +248,16 @@ impl Scheduler {
                 Ok(_) => {}
                 Err(e) => tracing::error!(error = %e, "scheduler tick failed"),
             }
-            match process_due_builds(&self.builds, now(), 100).await {
+            match process_due_builds(
+                &self.builds,
+                &self.builds,
+                &self.builds,
+                &self.culture_rules,
+                now(),
+                100,
+            )
+            .await
+            {
                 Ok(villages) if !villages.is_empty() => {
                     tracing::debug!(applied = villages.len(), "scheduler applied due builds");
                     // Population moved — re-sync the affected depletion checks (005 AC7).

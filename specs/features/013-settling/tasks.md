@@ -28,7 +28,7 @@ on its own.
   `apply_build` on a **Palace** completion. Tests: a capital field exceeds the cap, a non-capital does
   not (domain); building a Palace sets/relocates the capital (DB) (**AC9**, **AC10**).
 
-- [ ] **T4 — Culture accumulator + rate.** Migration `0018` adds `player_culture`; `create_account`
+- [x] **T4 — Culture accumulator + rate.** Migration `0018` adds `player_culture`; `create_account`
   seeds it. Repo: `player_culture`, `settle_culture` (re-anchor), `village_town_hall_levels`; a
   `recompute_culture_rate` helper (settle-then-re-anchor) wired into `apply_build` when a **Town Hall**
   completes. DB tests: CP reads back, accrues, and re-anchors on a Town Hall change (**AC1**, **AC2**).

@@ -1104,6 +1104,39 @@ pub enum OasisReinforceOutcome {
     },
 }
 
+/// Persistence for the per-player culture-point accumulator (013, §11.1). CP is pooled across a
+/// player's villages and **lazy** (002 model): the stored `(value, updated_at)` is settled on read at
+/// the **live rate** (derived from the villages' Town Hall levels), and re-anchored whenever that rate
+/// changes.
+#[async_trait]
+pub trait CultureRepository: Send + Sync {
+    /// The player's stored culture-point accumulator: `(value, last-settled instant)`. A freshly
+    /// registered player has `(0, registrationTime)`.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn player_culture(&self, player: PlayerId) -> Result<(i64, Timestamp), RepoError>;
+
+    /// Re-anchor the accumulator: write the settled `value` and set the last-settled instant to `at`
+    /// (an upsert). Called at each rate change so the next read accrues at the new rate from `at`.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn settle_culture(
+        &self,
+        player: PlayerId,
+        value: i64,
+        at: Timestamp,
+    ) -> Result<(), RepoError>;
+
+    /// The Town Hall level of **each** of the player's villages (0 where there is no Town Hall) — the
+    /// input to the live culture rate. One entry per owned village.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn village_town_hall_levels(&self, player: PlayerId) -> Result<Vec<u8>, RepoError>;
+}
+
 /// A claimed, due event ready to be processed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DueEvent {

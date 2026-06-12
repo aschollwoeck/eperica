@@ -172,19 +172,43 @@ where
 /// Claim and apply all builds due at `now` (up to `limit`); returns the villages whose levels
 /// changed (003 AC5; population moved — 005 callers re-sync starvation checks for them).
 ///
+/// A completing **Town Hall** changes the owner's culture rate (013 AC1/AC2), so the player's culture
+/// accumulator is **re-anchored before** the level-up is applied — crediting the elapsed period at the
+/// old rate (P2).
+///
 /// # Errors
 /// Propagates [`RepoError`] from the repository.
-pub async fn process_due_builds<B>(
+#[allow(clippy::too_many_arguments)]
+pub async fn process_due_builds<B, A, C>(
     builds: &B,
+    accounts: &A,
+    culture: &C,
+    culture_rules: &eperica_domain::CultureRules,
     now: Timestamp,
     limit: i64,
 ) -> Result<Vec<eperica_domain::VillageId>, RepoError>
 where
     B: BuildRepository,
+    A: AccountRepository,
+    C: crate::ports::CultureRepository,
 {
     let due = builds.claim_due_builds(now, limit).await?;
     let mut villages = Vec::new();
     for order in due {
+        // A Town Hall completing changes the rate: settle the owner's culture at the old rate first.
+        let is_town_hall = matches!(
+            order.target,
+            BuildTarget::Building {
+                kind: BuildingKind::TownHall,
+                ..
+            }
+        );
+        if is_town_hall
+            && let Ok(Some(v)) = accounts.village_by_id(order.village).await
+            && let Err(e) = crate::culture::reanchor_culture(culture, culture_rules, now, v.owner).await
+        {
+            tracing::error!(error = %e, "failed to re-anchor culture before a Town Hall");
+        }
         // Log-and-continue: one failed apply must not strand the rest of the claimed batch. Failed
         // (still-`processing`) orders are recovered at scheduler startup; apply_build is idempotent.
         match builds.apply_build(order).await {

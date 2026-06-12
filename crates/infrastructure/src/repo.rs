@@ -3,9 +3,9 @@
 use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
-    BuildRepository, CombatRepository, DueAttack, DueBuild, DueMovement, DueOasisAttack,
-    DueOasisRegrow, DueOasisReinforce, DueScout, DueTrade, DueTraining, DueUnitOrder,
-    MovementRepository, MovementView, NewBuildOrder, NewOasisReport, NewScoutReport,
+    BuildRepository, CombatRepository, CultureRepository, DueAttack, DueBuild, DueMovement,
+    DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueTrade, DueTraining,
+    DueUnitOrder, MovementRepository, MovementView, NewBuildOrder, NewOasisReport, NewScoutReport,
     NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
     OasisReinforceOutcome, OasisRepository, OasisState, RazedBuilding, RepoError, ResourceWrite,
     ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, StarvationRepository, StationedGroup,
@@ -342,6 +342,16 @@ impl AccountRepository for PgAccountRepository {
         if !placed {
             return Err(RepoError::WorldFull);
         }
+
+        // Seed the per-player culture accumulator (013): value 0, anchored now; the rate accrues live
+        // from this village's Town Hall (none yet) on read.
+        sqlx::query(
+            "INSERT INTO player_culture (player_id, value, updated_at) VALUES ($1, 0, now())",
+        )
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
 
         tx.commit().await.map_err(backend)?;
         Ok(UserRecord {
@@ -3446,6 +3456,72 @@ impl OasisRepository for PgAccountRepository {
 
         tx.commit().await.map_err(backend)?;
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------- culture (013)
+
+#[async_trait]
+impl CultureRepository for PgAccountRepository {
+    async fn player_culture(&self, player: PlayerId) -> Result<(i64, Timestamp), RepoError> {
+        let row = sqlx::query(
+            "SELECT value, (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint AS updated_ms \
+             FROM player_culture WHERE player_id = $1",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        match row {
+            Some(r) => Ok((
+                r.try_get("value").map_err(backend)?,
+                Timestamp(r.try_get("updated_ms").map_err(backend)?),
+            )),
+            // A pre-013 account with no row yet: treat as zero, anchored at epoch (the first
+            // re-anchor stamps a real instant).
+            None => Ok((0, Timestamp(0))),
+        }
+    }
+
+    async fn settle_culture(
+        &self,
+        player: PlayerId,
+        value: i64,
+        at: Timestamp,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            "INSERT INTO player_culture (player_id, value, updated_at) \
+             VALUES ($1, $2, to_timestamp($3::double precision / 1000.0)) \
+             ON CONFLICT (player_id) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .bind(value)
+        .bind(at.0 as f64)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn village_town_hall_levels(&self, player: PlayerId) -> Result<Vec<u8>, RepoError> {
+        // One entry per village: the Town Hall level (0 when the village has none).
+        let rows = sqlx::query(
+            "SELECT COALESCE(vb.level, 0) AS th_level \
+             FROM villages v \
+             LEFT JOIN village_buildings vb \
+               ON vb.village_id = v.id AND vb.building_type = 'town_hall' \
+             WHERE v.owner_id = $1 ORDER BY v.created_at, v.id",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let level: i32 = r.try_get("th_level").map_err(backend)?;
+                Ok(u8::try_from(level).unwrap_or(0))
+            })
+            .collect()
     }
 }
 
@@ -6775,9 +6851,16 @@ mod tests {
         // T6/AC5: the scheduler's use-case claims and applies due orders. `claim_due_builds` is
         // DB-global, and parallel tests may have their own due orders, so assert *this* village's
         // outcome (its field reached level 1) rather than a global processed count.
-        eperica_application::process_due_builds(&repo, now, 1000)
-            .await
-            .expect("process due builds");
+        eperica_application::process_due_builds(
+            &repo,
+            &repo,
+            &repo,
+            &crate::culture_rules().unwrap(),
+            now,
+            1000,
+        )
+        .await
+        .expect("process due builds");
         let fields = repo.villages_of(user.id).await.unwrap()[0].fields.clone();
         assert_eq!(fields[1].level, 1);
     }
@@ -7765,6 +7848,94 @@ mod tests {
         assert!(
             !repo.village_by_id(v1.id).await.unwrap().unwrap().is_capital,
             "the previous capital is cleared — one per player"
+        );
+    }
+
+    // 013 AC1/AC2: the per-player culture accumulator is seeded at registration, accrues at the live
+    // rate (base per village), and a Town Hall raises that rate (re-anchored exactly).
+    #[tokio::test]
+    async fn culture_accrues_and_a_town_hall_raises_the_rate() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping culture test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let crules = crate::culture_rules().expect("culture rules");
+        let template = crate::starting_village().unwrap();
+        let uname = format!("culture_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &template,
+            )
+            .await
+            .expect("create account");
+        let v = repo.villages_of(user.id).await.unwrap()[0].clone();
+
+        // AC1: registration seeded the accumulator (value 0); the village has no Town Hall yet.
+        assert_eq!(repo.player_culture(user.id).await.unwrap().0, 0);
+        assert_eq!(
+            repo.village_town_hall_levels(user.id).await.unwrap(),
+            vec![0]
+        );
+
+        // Baseline at a controlled instant, then accrue one hour at the no-Town-Hall rate.
+        let t0 = Timestamp(3_000_000_000_000);
+        repo.settle_culture(user.id, 0, t0).await.unwrap();
+        use eperica_domain::culture_rate;
+        let base_rate = culture_rate(&[0], &crules); // one village, no Town Hall
+        eperica_application::reanchor_culture(&repo, &crules, Timestamp(t0.0 + 3_600_000), user.id)
+            .await
+            .unwrap();
+        let (after_1h, _) = repo.player_culture(user.id).await.unwrap();
+        assert_eq!(after_1h, base_rate, "one hour at the base rate");
+
+        // Build a Town Hall (level 3); the rate rises.
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+             VALUES ($1, 14, 'town_hall', 3) \
+             ON CONFLICT (village_id, slot) DO UPDATE SET building_type = EXCLUDED.building_type, level = EXCLUDED.level",
+        )
+        .bind(Uuid::from_u128(v.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            repo.village_town_hall_levels(user.id).await.unwrap(),
+            vec![3]
+        );
+
+        // AC2: another hour now accrues at the higher Town-Hall rate.
+        let th_rate = culture_rate(&[3], &crules);
+        assert!(th_rate > base_rate, "a Town Hall raises the rate");
+        eperica_application::reanchor_culture(&repo, &crules, Timestamp(t0.0 + 7_200_000), user.id)
+            .await
+            .unwrap();
+        let (after_2h, _) = repo.player_culture(user.id).await.unwrap();
+        assert_eq!(
+            after_2h,
+            base_rate + th_rate,
+            "first hour at base, second hour with the Town Hall"
         );
     }
 }
