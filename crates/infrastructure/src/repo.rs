@@ -3,15 +3,17 @@
 use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
-    BuildRepository, CombatRepository, DueAttack, DueBuild, DueMovement, DueTrade, DueTraining,
-    DueUnitOrder, MovementRepository, MovementView, NewBuildOrder, NewTrainingOrder, NewUnitOrder,
-    NewUser, RepoError, StarvationRepository, StationedGroup, TradeRepository, TradeView,
+    BuildRepository, CombatRepository, DueAttack, DueBuild, DueMovement, DueScout, DueTrade,
+    DueTraining, DueUnitOrder, MovementRepository, MovementView, NewBuildOrder, NewScoutReport,
+    NewTrainingOrder, NewUnitOrder, NewUser, RepoError, ScoutApply, ScoutIntel, ScoutReportView,
+    ScoutRepository, StarvationRepository, StationedGroup, TradeRepository, TradeView,
     TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 use eperica_domain::{
     BuildTarget, BuildingKind, BuildingSlot, Coordinate, MovementKind, PlayerId, QueueLane,
-    ResourceAmounts, ResourceField, ResourceKind, StartingVillage, TileKind, Timestamp, TradeKind,
-    Tribe, UnitCounts, UnitId, Village, VillageId, WorldId, WorldMap, coordinates_within,
+    ResourceAmounts, ResourceField, ResourceKind, ScoutTarget, StartingVillage, TileKind,
+    Timestamp, TradeKind, Tribe, UnitCounts, UnitId, Village, VillageId, WorldId, WorldMap,
+    coordinates_within,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use uuid::Uuid;
@@ -1401,6 +1403,7 @@ fn movement_kind_str(kind: MovementKind) -> &'static str {
         MovementKind::Return => "return",
         MovementKind::Attack => "attack",
         MovementKind::Raid => "raid",
+        MovementKind::Scout => "scout",
     }
 }
 
@@ -1410,6 +1413,7 @@ fn parse_movement_kind(s: &str) -> Result<MovementKind, RepoError> {
         "return" => Ok(MovementKind::Return),
         "attack" => Ok(MovementKind::Attack),
         "raid" => Ok(MovementKind::Raid),
+        "scout" => Ok(MovementKind::Scout),
         other => Err(RepoError::Backend(format!(
             "unknown movement kind: {other}"
         ))),
@@ -1771,11 +1775,11 @@ impl MovementRepository for PgAccountRepository {
                     .await
                     .map_err(backend)?;
                 }
-                // Attack/raid arrivals are resolved by the combat processor, not stationed here;
-                // `claim_due_movements` excludes them, so this is unreachable.
-                MovementKind::Attack | MovementKind::Raid => {
+                // Attack/raid/scout arrivals are resolved by the combat/scout processors, not
+                // stationed here; `claim_due_movements` excludes them, so this is unreachable.
+                MovementKind::Attack | MovementKind::Raid | MovementKind::Scout => {
                     return Err(RepoError::Backend(
-                        "attack/raid movement routed to apply_movement".into(),
+                        "attack/raid/scout movement routed to apply_movement".into(),
                     ));
                 }
             }
@@ -2305,6 +2309,8 @@ fn report_from_row(r: &PgRow) -> Result<BattleReportView, RepoError> {
         attacker_losses: counts_from_json(&al),
         defender_forces: counts_from_json(&df),
         defender_losses: counts_from_json(&dl),
+        scouted: r.try_get("scouted").map_err(backend)?,
+        scout_target: parse_scout_target_opt(r.try_get("scout_target").map_err(backend)?)?,
     })
 }
 
@@ -2315,7 +2321,7 @@ const REPORT_SELECT: &str = "SELECT br.id, \
     du.username AS defender_name, dv.x AS dx, dv.y AS dy, \
     br.attacker_player, br.defender_player, br.attacker_won, br.luck, br.morale, \
     br.wall_before, br.wall_after, br.attacker_forces, br.attacker_losses, \
-    br.defender_forces, br.defender_losses \
+    br.defender_forces, br.defender_losses, br.scouted, br.scout_target \
     FROM battle_reports br \
     JOIN users au ON au.id = br.attacker_player \
     JOIN villages av ON av.id = br.attacker_village \
@@ -2336,12 +2342,14 @@ impl CombatRepository for PgAccountRepository {
         arrive_at: Timestamp,
         kind: MovementKind,
         troops: &[(UnitId, u32)],
+        scout_target: Option<ScoutTarget>,
     ) -> Result<(), RepoError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         guarded_debit(&mut tx, Uuid::from_u128(home.0), troops).await?;
+        let movement_id = Uuid::new_v4();
         insert_movement(
             &mut tx,
-            Uuid::new_v4(),
+            movement_id,
             owner,
             kind,
             home,
@@ -2353,6 +2361,9 @@ impl CombatRepository for PgAccountRepository {
             troops,
         )
         .await?;
+        if let Some(target) = scout_target {
+            set_scout_target(&mut tx, movement_id, target).await?;
+        }
         tx.commit().await.map_err(backend)?;
         Ok(())
     }
@@ -2369,7 +2380,7 @@ impl CombatRepository for PgAccountRepository {
                    AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
                  ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
              ) RETURNING id, kind, owner_id, home_village, deliver_village, \
-                 origin_x, origin_y, dest_x, dest_y, \
+                 origin_x, origin_y, dest_x, dest_y, scout_target, \
                  (EXTRACT(EPOCH FROM arrive_at) * 1000)::bigint AS arrive_ms",
         )
         .bind(now.0 as f64)
@@ -2407,6 +2418,7 @@ impl CombatRepository for PgAccountRepository {
                 ),
                 arrive_at: Timestamp(arrive_ms),
                 troops: troops.remove(id).unwrap_or_default(),
+                scout_target: parse_scout_target_opt(r.try_get("scout_target").map_err(backend)?)?,
             });
         }
         Ok(out)
@@ -2428,8 +2440,9 @@ impl CombatRepository for PgAccountRepository {
             "INSERT INTO battle_reports \
              (id, kind, attacker_player, attacker_village, defender_player, defender_village, \
               attacker_won, luck, morale, wall_before, wall_after, \
-              attacker_forces, attacker_losses, defender_forces, defender_losses) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+              attacker_forces, attacker_losses, defender_forces, defender_losses, \
+              scouted, scout_target) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
         )
         .bind(Uuid::new_v4())
         .bind(movement_kind_str(r.kind))
@@ -2446,9 +2459,16 @@ impl CombatRepository for PgAccountRepository {
         .bind(counts_to_json(&r.attacker_losses))
         .bind(counts_to_json(&r.defender_forces))
         .bind(counts_to_json(&r.defender_losses))
+        .bind(apply.scouted)
+        .bind(apply.scout_target.map(|t| t.as_str()))
         .execute(&mut *tx)
         .await
         .map_err(backend)?;
+
+        // The scouter-facing intel report from scouts that rode the attack (010), if any.
+        if let Some(report) = &apply.scout_report {
+            insert_scout_report(&mut tx, report).await?;
+        }
 
         // The attacker's survivors travel home (a `return` movement rejoins the garrison).
         if !apply.survivors.is_empty() {
@@ -2511,6 +2531,343 @@ impl CombatRepository for PgAccountRepository {
             .await
             .map_err(backend)?;
         row.as_ref().map(report_from_row).transpose()
+    }
+}
+
+// ---------------------------------------------------------------- scouting (010)
+
+/// Set a movement's `scout_target` after insertion (standalone scout, or an attack carrying scouts).
+async fn set_scout_target(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    movement_id: Uuid,
+    target: ScoutTarget,
+) -> Result<(), RepoError> {
+    sqlx::query("UPDATE troop_movements SET scout_target = $1 WHERE id = $2")
+        .bind(target.as_str())
+        .bind(movement_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    Ok(())
+}
+
+/// Parse a nullable `scout_target` text column into a [`ScoutTarget`].
+fn parse_scout_target_opt(s: Option<String>) -> Result<Option<ScoutTarget>, RepoError> {
+    match s {
+        None => Ok(None),
+        Some(s) => ScoutTarget::from_slug(&s)
+            .map(Some)
+            .ok_or_else(|| RepoError::Backend(format!("unknown scout target: {s}"))),
+    }
+}
+
+/// Serialise scout intel as a tagged jsonb payload.
+fn scout_intel_to_json(intel: &ScoutIntel) -> serde_json::Value {
+    match intel {
+        ScoutIntel::Resources(a) => serde_json::json!({
+            "type": "resources", "wood": a.wood, "clay": a.clay, "iron": a.iron, "crop": a.crop,
+        }),
+        ScoutIntel::Defenses { troops, wall_level } => serde_json::json!({
+            "type": "defenses", "wall": *wall_level, "troops": counts_to_json(troops),
+        }),
+    }
+}
+
+/// Read scout intel back from its jsonb column (`None` for null or an unknown tag).
+fn scout_intel_from_json(value: &serde_json::Value) -> Option<ScoutIntel> {
+    match value.get("type").and_then(serde_json::Value::as_str)? {
+        "resources" => Some(ScoutIntel::Resources(ResourceAmounts {
+            wood: value
+                .get("wood")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0),
+            clay: value
+                .get("clay")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0),
+            iron: value
+                .get("iron")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0),
+            crop: value
+                .get("crop")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0),
+        })),
+        "defenses" => Some(ScoutIntel::Defenses {
+            troops: value
+                .get("troops")
+                .map(counts_from_json)
+                .unwrap_or_default(),
+            wall_level: u8::try_from(
+                value
+                    .get("wall")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+            )
+            .unwrap_or(u8::MAX),
+        }),
+        _ => None,
+    }
+}
+
+/// Insert one intel report (shared by the standalone apply and the combined-attack apply).
+async fn insert_scout_report(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    r: &NewScoutReport,
+) -> Result<(), RepoError> {
+    sqlx::query(
+        "INSERT INTO scout_reports \
+         (id, scouter_player, scouter_village, target_player, target_village, target_x, target_y, \
+          target_type, scouts_sent, scouts_lost, detected, standalone, intel) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(Uuid::from_u128(r.scouter_player.0))
+    .bind(Uuid::from_u128(r.scouter_village.0))
+    .bind(Uuid::from_u128(r.target_player.0))
+    .bind(Uuid::from_u128(r.target_village.0))
+    .bind(r.target_coord.x)
+    .bind(r.target_coord.y)
+    .bind(r.target_type.as_str())
+    .bind(counts_to_json(&r.scouts_sent))
+    .bind(counts_to_json(&r.scouts_lost))
+    .bind(r.detected)
+    .bind(r.standalone)
+    .bind(r.intel.as_ref().map(scout_intel_to_json))
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    Ok(())
+}
+
+/// The `SELECT` of a scout report joined to scouter/target names + the scouter's coordinate.
+const SCOUT_REPORT_SELECT: &str = "SELECT sr.id, \
+    (EXTRACT(EPOCH FROM sr.occurred_at) * 1000)::bigint AS occurred_ms, \
+    su.username AS scouter_name, sv.x AS sx, sv.y AS sy, \
+    tu.username AS target_name, sr.target_x AS tx, sr.target_y AS ty, \
+    sr.scouter_player, sr.target_player, sr.target_type, \
+    sr.scouts_sent, sr.scouts_lost, sr.detected, sr.standalone, sr.intel \
+    FROM scout_reports sr \
+    JOIN users su ON su.id = sr.scouter_player \
+    JOIN villages sv ON sv.id = sr.scouter_village \
+    JOIN users tu ON tu.id = sr.target_player";
+
+/// Map a joined `scout_reports` row to a [`ScoutReportView`], applying target-side redaction (P4):
+/// a non-scouter viewer sees only the notification (scouts destroyed) — never the intel or the
+/// scouts that were sent.
+fn scout_report_from_row(r: &PgRow, player: PlayerId) -> Result<ScoutReportView, RepoError> {
+    let id: Uuid = r.try_get("id").map_err(backend)?;
+    let occurred_ms: i64 = r.try_get("occurred_ms").map_err(backend)?;
+    let scouter: Uuid = r.try_get("scouter_player").map_err(backend)?;
+    let target: Uuid = r.try_get("target_player").map_err(backend)?;
+    let tt: String = r.try_get("target_type").map_err(backend)?;
+    let sent: serde_json::Value = r.try_get("scouts_sent").map_err(backend)?;
+    let lost: serde_json::Value = r.try_get("scouts_lost").map_err(backend)?;
+    let intel_json: Option<serde_json::Value> = r.try_get("intel").map_err(backend)?;
+    let viewer_is_scouter = scouter.as_u128() == player.0;
+    let target_type = ScoutTarget::from_slug(&tt)
+        .ok_or_else(|| RepoError::Backend(format!("unknown scout target: {tt}")))?;
+    Ok(ScoutReportView {
+        id: id.as_u128(),
+        occurred_at: Timestamp(occurred_ms),
+        scouter_player: PlayerId(scouter.as_u128()),
+        scouter_name: r.try_get("scouter_name").map_err(backend)?,
+        scouter_coord: Coordinate::new(
+            r.try_get("sx").map_err(backend)?,
+            r.try_get("sy").map_err(backend)?,
+        ),
+        target_player: PlayerId(target.as_u128()),
+        target_name: r.try_get("target_name").map_err(backend)?,
+        target_coord: Coordinate::new(
+            r.try_get("tx").map_err(backend)?,
+            r.try_get("ty").map_err(backend)?,
+        ),
+        target_type,
+        scouts_sent: if viewer_is_scouter {
+            counts_from_json(&sent)
+        } else {
+            Vec::new()
+        },
+        scouts_lost: counts_from_json(&lost),
+        detected: r.try_get("detected").map_err(backend)?,
+        standalone: r.try_get("standalone").map_err(backend)?,
+        intel: if viewer_is_scouter {
+            intel_json.as_ref().and_then(scout_intel_from_json)
+        } else {
+            None
+        },
+        viewer_is_scouter,
+    })
+}
+
+#[async_trait]
+impl ScoutRepository for PgAccountRepository {
+    #[allow(clippy::too_many_arguments)]
+    async fn start_scout(
+        &self,
+        home: VillageId,
+        deliver: VillageId,
+        owner: PlayerId,
+        origin: Coordinate,
+        dest: Coordinate,
+        now: Timestamp,
+        arrive_at: Timestamp,
+        troops: &[(UnitId, u32)],
+        target: ScoutTarget,
+    ) -> Result<(), RepoError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        guarded_debit(&mut tx, Uuid::from_u128(home.0), troops).await?;
+        let movement_id = Uuid::new_v4();
+        insert_movement(
+            &mut tx,
+            movement_id,
+            owner,
+            MovementKind::Scout,
+            home,
+            deliver,
+            origin,
+            dest,
+            now,
+            arrive_at,
+            troops,
+        )
+        .await?;
+        set_scout_target(&mut tx, movement_id, target).await?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn claim_due_scouts(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueScout>, RepoError> {
+        let rows = sqlx::query(
+            "UPDATE troop_movements SET status = 'processing' WHERE id IN ( \
+                 SELECT id FROM troop_movements \
+                 WHERE status = 'in_transit' AND kind = 'scout' \
+                   AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
+                 ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
+             ) RETURNING id, owner_id, home_village, deliver_village, \
+                 origin_x, origin_y, dest_x, dest_y, scout_target, \
+                 (EXTRACT(EPOCH FROM arrive_at) * 1000)::bigint AS arrive_ms",
+        )
+        .bind(now.0 as f64)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let ids: Vec<Uuid> = rows
+            .iter()
+            .map(|r| r.try_get("id").map_err(backend))
+            .collect::<Result<_, RepoError>>()?;
+        let mut troops = movement_troops_batch(&self.pool, &ids).await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for (r, id) in rows.iter().zip(&ids) {
+            let owner: Uuid = r.try_get("owner_id").map_err(backend)?;
+            let home: Uuid = r.try_get("home_village").map_err(backend)?;
+            let target: Uuid = r.try_get("deliver_village").map_err(backend)?;
+            let arrive_ms: i64 = r.try_get("arrive_ms").map_err(backend)?;
+            // A scout movement always carries a target; a missing one is corrupt data.
+            let target_type = parse_scout_target_opt(r.try_get("scout_target").map_err(backend)?)?
+                .ok_or_else(|| RepoError::Backend("scout movement without a target".into()))?;
+            out.push(DueScout {
+                id: id.as_u128(),
+                owner: PlayerId(owner.as_u128()),
+                home_village: VillageId(home.as_u128()),
+                target_village: VillageId(target.as_u128()),
+                origin: Coordinate::new(
+                    r.try_get("origin_x").map_err(backend)?,
+                    r.try_get("origin_y").map_err(backend)?,
+                ),
+                dest: Coordinate::new(
+                    r.try_get("dest_x").map_err(backend)?,
+                    r.try_get("dest_y").map_err(backend)?,
+                ),
+                arrive_at: Timestamp(arrive_ms),
+                troops: troops.remove(id).unwrap_or_default(),
+                target_type,
+            });
+        }
+        Ok(out)
+    }
+
+    async fn apply_scout(&self, apply: ScoutApply) -> Result<(), RepoError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        insert_scout_report(&mut tx, &apply.report).await?;
+
+        // Surviving scouts travel home (a `return` movement rejoins the garrison).
+        if !apply.survivors.is_empty() {
+            insert_movement(
+                &mut tx,
+                Uuid::new_v4(),
+                apply.owner,
+                MovementKind::Return,
+                apply.scouter_home,
+                apply.scouter_home,
+                apply.target_coord,
+                apply.scouter_origin,
+                apply.scouted_at,
+                apply.return_arrive,
+                &apply.survivors,
+            )
+            .await?;
+        }
+
+        sqlx::query("UPDATE troop_movements SET status = 'done' WHERE id = $1")
+            .bind(Uuid::from_u128(apply.movement_id))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn scout_reports_for(
+        &self,
+        player: PlayerId,
+        limit: i64,
+    ) -> Result<Vec<ScoutReportView>, RepoError> {
+        // The scouter sees their own missions; the target sees only detected standalone ones.
+        let sql = format!(
+            "{SCOUT_REPORT_SELECT} \
+             WHERE sr.scouter_player = $1 \
+                OR (sr.target_player = $1 AND sr.detected AND sr.standalone) \
+             ORDER BY sr.occurred_at DESC LIMIT $2"
+        );
+        let rows = sqlx::query(&sql)
+            .bind(Uuid::from_u128(player.0))
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend)?;
+        rows.iter()
+            .map(|r| scout_report_from_row(r, player))
+            .collect()
+    }
+
+    async fn scout_report(
+        &self,
+        id: u128,
+        player: PlayerId,
+    ) -> Result<Option<ScoutReportView>, RepoError> {
+        let sql = format!(
+            "{SCOUT_REPORT_SELECT} WHERE sr.id = $1 \
+             AND (sr.scouter_player = $2 \
+                  OR (sr.target_player = $2 AND sr.detected AND sr.standalone))"
+        );
+        let row = sqlx::query(&sql)
+            .bind(Uuid::from_u128(id))
+            .bind(Uuid::from_u128(player.0))
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(backend)?;
+        row.as_ref()
+            .map(|r| scout_report_from_row(r, player))
+            .transpose()
     }
 }
 
@@ -3221,6 +3578,7 @@ mod tests {
             arrive,
             MovementKind::Raid,
             &troops,
+            None,
         )
         .await
         .expect("attack");
@@ -3267,6 +3625,9 @@ mod tests {
                 defender_forces: vec![(UnitId("phalanx".into()), 12)],
                 defender_losses: vec![(UnitId("phalanx".into()), 6)],
             },
+            scouted: false,
+            scout_target: None,
+            scout_report: None,
         })
         .await
         .expect("apply battle");
@@ -3329,6 +3690,7 @@ mod tests {
         let econ = crate::economy_rules().expect("economy rules");
         let units = crate::unit_rules().expect("unit rules");
         let combat = crate::combat_rules().expect("combat rules");
+        let scout = crate::scout_rules().expect("scout rules");
         let map = WorldMap::new(
             world.seed as u64,
             config.radius,
@@ -3390,6 +3752,7 @@ mod tests {
             arrive,
             MovementKind::Raid,
             &[(UnitId("swordsman".into()), 100)],
+            None,
         )
         .await
         .expect("attack");
@@ -3402,6 +3765,7 @@ mod tests {
             &econ,
             &units,
             &combat,
+            &scout,
             &map,
             GameSpeed::new(1.0).unwrap(),
             world.seed as u64,
@@ -3423,6 +3787,437 @@ mod tests {
         assert!(returning.iter().any(|m| m.kind == MovementKind::Return));
     }
 
+    /// 010 AC6/AC7/AC8/AC9: scouts riding an attack scout the village in addition to the battle —
+    /// the espionage step runs first, the (surviving) scouts return with the army carrying intel,
+    /// and the defender's battle report is flagged because their counter-espionage killed a scout.
+    #[tokio::test]
+    async fn process_due_combat_with_scouts() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping combined-scout test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let units = crate::unit_rules().expect("unit rules");
+        let combat = crate::combat_rules().expect("combat rules");
+        let scout = crate::scout_rules().expect("scout rules");
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (attacker, a) = account("csatk").await;
+        let (_defender, d) = account("csdef").await;
+
+        // Attacker: 50 swordsmen + 5 pathfinders. Defender: 2 phalanx + 3 pathfinders (counter).
+        for (v, unit, n) in [
+            (a.id, "swordsman", 50),
+            (a.id, "pathfinder", 5),
+            (d.id, "phalanx", 2),
+            (d.id, "pathfinder", 3),
+        ] {
+            sqlx::query(
+                "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, $2, $3)",
+            )
+            .bind(Uuid::from_u128(v.0))
+            .bind(unit)
+            .bind(n)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let now = Timestamp(3_000_000_000_000);
+        let arrive = Timestamp(now.0 + 100_000);
+        repo.start_attack(
+            a.id,
+            d.id,
+            attacker,
+            a.coordinate,
+            d.coordinate,
+            now,
+            arrive,
+            MovementKind::Attack,
+            &[
+                (UnitId("swordsman".into()), 50),
+                (UnitId("pathfinder".into()), 5),
+            ],
+            Some(ScoutTarget::Defenses),
+        )
+        .await
+        .expect("attack");
+
+        eperica_application::process_due_combat(
+            &repo,
+            &repo,
+            &repo,
+            &repo,
+            &econ,
+            &units,
+            &combat,
+            &scout,
+            &map,
+            GameSpeed::new(1.0).unwrap(),
+            world.seed as u64,
+            arrive,
+            100,
+        )
+        .await
+        .expect("resolve");
+
+        // AC8: the battle report is flagged scouted (the defender's pathfinders killed a scout).
+        let reports = repo.reports_for(attacker, 10).await.unwrap();
+        assert_eq!(reports.len(), 1);
+        assert!(reports[0].attacker_won);
+        assert!(reports[0].scouted);
+        assert_eq!(reports[0].scout_target, Some(ScoutTarget::Defenses));
+
+        // AC7/AC9: a scouter-facing intel report exists with Defenses intel (a scout survived to
+        // return with the winning army).
+        let intel = repo.scout_reports_for(attacker, 10).await.unwrap();
+        assert_eq!(intel.len(), 1);
+        assert!(!intel[0].standalone);
+        assert!(matches!(intel[0].intel, Some(ScoutIntel::Defenses { .. })));
+        // Some scouts died to counter-espionage; some survived to bring it home.
+        assert!(!intel[0].scouts_lost.is_empty());
+        let returning = repo.active_movements(attacker).await.unwrap();
+        assert!(returning.iter().any(|m| m.kind == MovementKind::Return
+            && m.troops.iter().any(|(u, _)| u.as_str() == "pathfinder")));
+    }
+
+    /// 010 AC1/AC8/AC9/AC10/AC11: a standalone scout debits scouts, claims with its target type,
+    /// applies an intel report + a survivor return once (crash-resume safe), and the report redacts
+    /// for the target while the scouter reads the intel; an undetected mission stays hidden.
+    #[tokio::test]
+    async fn scout_apply_and_reports() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping scout test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let rules = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            rules.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (scouter, s) = account("scout").await;
+        let (target, t) = account("mark").await;
+        let (third, _th) = account("third").await;
+
+        // Scouter garrison: 5 pathfinders (Gaul scout).
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'pathfinder', 5)",
+        )
+        .bind(Uuid::from_u128(s.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // AC1: send 3 pathfinders to spy on resources — the garrison drops to 2, a scout is in flight
+        // carrying its target type.
+        let now = Timestamp(3_000_000_000_000);
+        let arrive = Timestamp(now.0 + 100_000);
+        repo.start_scout(
+            s.id,
+            t.id,
+            scouter,
+            s.coordinate,
+            t.coordinate,
+            now,
+            arrive,
+            &[(UnitId("pathfinder".into()), 3)],
+            ScoutTarget::Resources,
+        )
+        .await
+        .expect("scout");
+        assert_eq!(
+            repo.garrison(s.id).await.unwrap(),
+            vec![(UnitId("pathfinder".into()), 2)]
+        );
+
+        // Crash-resume: claim, "crash", requeue, re-claim, apply once.
+        let due = repo.claim_due_scouts(arrive, 100).await.unwrap();
+        let mine = due.iter().find(|x| x.home_village == s.id).expect("due");
+        assert_eq!(mine.target_type, ScoutTarget::Resources);
+        assert_eq!(mine.troops, vec![(UnitId("pathfinder".into()), 3)]);
+        assert!(repo.requeue_orphaned_movements().await.unwrap() >= 1);
+        let due = repo.claim_due_scouts(arrive, 100).await.unwrap();
+        let mine = due.iter().find(|x| x.home_village == s.id).expect("due");
+
+        // AC9/AC10/AC11: the target detected 1 of the 3 scouts; 2 survive (return); intel returns.
+        let return_arrive = Timestamp(arrive.0 + 100_000);
+        repo.apply_scout(ScoutApply {
+            movement_id: mine.id,
+            owner: scouter,
+            scouter_home: s.id,
+            scouter_origin: s.coordinate,
+            target_coord: t.coordinate,
+            survivors: vec![(UnitId("pathfinder".into()), 2)],
+            scouted_at: arrive,
+            return_arrive,
+            report: NewScoutReport {
+                scouter_player: scouter,
+                scouter_village: s.id,
+                target_player: target,
+                target_village: t.id,
+                target_coord: t.coordinate,
+                target_type: ScoutTarget::Resources,
+                scouts_sent: vec![(UnitId("pathfinder".into()), 3)],
+                scouts_lost: vec![(UnitId("pathfinder".into()), 1)],
+                detected: true,
+                standalone: true,
+                intel: Some(ScoutIntel::Resources(ResourceAmounts {
+                    wood: 700,
+                    clay: 540,
+                    iron: 120,
+                    crop: 410,
+                })),
+            },
+        })
+        .await
+        .expect("apply scout");
+
+        // The survivor return is in flight; the scout movement is done (does not re-claim).
+        let returning = repo.active_movements(scouter).await.unwrap();
+        assert!(returning.iter().any(|m| m.kind == MovementKind::Return
+            && m.troops == vec![(UnitId("pathfinder".into()), 2)]));
+        assert!(
+            repo.claim_due_scouts(arrive, 100)
+                .await
+                .unwrap()
+                .iter()
+                .all(|x| x.home_village != s.id)
+        );
+
+        // AC11: the scouter reads the full intel; the target sees a redacted notification (scouts
+        // destroyed, no intel, no scouts-sent); a third party sees nothing.
+        let mine = repo.scout_reports_for(scouter, 50).await.unwrap();
+        assert_eq!(mine.len(), 1);
+        let report_id = mine[0].id;
+        assert!(mine[0].viewer_is_scouter);
+        assert_eq!(mine[0].scouts_sent, vec![(UnitId("pathfinder".into()), 3)]);
+        assert!(matches!(mine[0].intel, Some(ScoutIntel::Resources(_))));
+
+        let theirs = repo.scout_reports_for(target, 50).await.unwrap();
+        assert_eq!(theirs.len(), 1);
+        assert!(!theirs[0].viewer_is_scouter);
+        assert!(theirs[0].scouts_sent.is_empty()); // redacted
+        assert_eq!(
+            theirs[0].scouts_lost,
+            vec![(UnitId("pathfinder".into()), 1)]
+        );
+        assert!(theirs[0].intel.is_none()); // redacted
+
+        assert!(repo.scout_reports_for(third, 50).await.unwrap().is_empty());
+        assert!(
+            repo.scout_report(report_id, scouter)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            repo.scout_report(report_id, target)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(repo.scout_report(report_id, third).await.unwrap().is_none());
+
+        // AC8: an undetected standalone mission leaves no target-visible report.
+        sqlx::query(
+            "INSERT INTO scout_reports \
+             (id, scouter_player, scouter_village, target_player, target_village, target_x, \
+              target_y, target_type, scouts_sent, scouts_lost, detected, standalone, intel) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'defenses', '{}'::jsonb, '{}'::jsonb, false, \
+                     true, NULL)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(Uuid::from_u128(scouter.0))
+        .bind(Uuid::from_u128(s.id.0))
+        .bind(Uuid::from_u128(target.0))
+        .bind(Uuid::from_u128(t.id.0))
+        .bind(t.coordinate.x)
+        .bind(t.coordinate.y)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // The scouter now has two; the target still sees only the one detected mission.
+        assert_eq!(repo.scout_reports_for(scouter, 50).await.unwrap().len(), 2);
+        assert_eq!(repo.scout_reports_for(target, 50).await.unwrap().len(), 1);
+    }
+
+    /// 010 AC6/AC9/AC10 (processor + restart path): `process_due_scouts` resolves a due mission
+    /// end-to-end — a clean scout (no counter) returns its survivors with Resources intel, stays
+    /// undetected, and a crash before applying is recovered to resolve **exactly once**.
+    #[tokio::test]
+    async fn process_due_scouts_resolves_a_mission() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping scout processor test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let units = crate::unit_rules().expect("unit rules");
+        let scout = crate::scout_rules().expect("scout rules");
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (scouter, s) = account("pscout").await;
+        let (target, t) = account("psmark").await;
+
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'pathfinder', 4)",
+        )
+        .bind(Uuid::from_u128(s.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let now = Timestamp(3_000_000_000_000);
+        let arrive = Timestamp(now.0 + 100_000);
+        repo.start_scout(
+            s.id,
+            t.id,
+            scouter,
+            s.coordinate,
+            t.coordinate,
+            now,
+            arrive,
+            &[(UnitId("pathfinder".into()), 4)],
+            ScoutTarget::Resources,
+        )
+        .await
+        .expect("scout");
+
+        // Crash before applying: claim, requeue the orphan, then resolve via the processor once.
+        let claimed = repo.claim_due_scouts(arrive, 100).await.unwrap();
+        assert!(claimed.iter().any(|m| m.home_village == s.id));
+        assert!(repo.requeue_orphaned_movements().await.unwrap() >= 1);
+
+        let run = async || {
+            eperica_application::process_due_scouts(
+                &repo,
+                &repo,
+                &repo,
+                &econ,
+                &units,
+                &scout,
+                &map,
+                GameSpeed::new(1.0).unwrap(),
+                arrive,
+                100,
+            )
+            .await
+            .expect("process scouts")
+        };
+        run().await;
+        run().await; // a second tick finds nothing already-claimed.
+
+        // AC9: exactly one report, with Resources intel; the clean scout is undetected (AC8) so the
+        // target sees nothing; survivors head home (AC10).
+        let reports = repo.scout_reports_for(scouter, 10).await.unwrap();
+        assert_eq!(reports.len(), 1);
+        assert!(!reports[0].detected);
+        assert!(matches!(reports[0].intel, Some(ScoutIntel::Resources(_))));
+        assert!(reports[0].scouts_lost.is_empty());
+        assert!(repo.scout_reports_for(target, 10).await.unwrap().is_empty());
+
+        let returning = repo.active_movements(scouter).await.unwrap();
+        assert!(returning.iter().any(|m| m.kind == MovementKind::Return
+            && m.troops == vec![(UnitId("pathfinder".into()), 4)]));
+    }
+
     /// 009 AC6 (restart path): a battle claimed but not applied (a crash) is recovered by the shared
     /// orphan requeue and resolved **exactly once** — one report, the defender reduced a single time.
     #[tokio::test]
@@ -3441,6 +4236,7 @@ mod tests {
         let econ = crate::economy_rules().expect("economy rules");
         let units = crate::unit_rules().expect("unit rules");
         let combat = crate::combat_rules().expect("combat rules");
+        let scout = crate::scout_rules().expect("scout rules");
         let map = WorldMap::new(
             world.seed as u64,
             config.radius,
@@ -3500,6 +4296,7 @@ mod tests {
             arrive,
             MovementKind::Raid,
             &[(UnitId("swordsman".into()), 100)],
+            None,
         )
         .await
         .expect("attack");
@@ -3519,6 +4316,7 @@ mod tests {
                 &econ,
                 &units,
                 &combat,
+                &scout,
                 &map,
                 GameSpeed::new(1.0).unwrap(),
                 world.seed as u64,

@@ -14,6 +14,7 @@ pub mod event;
 pub mod map;
 pub mod movement;
 pub mod resource;
+pub mod scouting;
 pub mod trade;
 pub mod units;
 pub mod village;
@@ -37,6 +38,7 @@ pub use event::{EventKind, ScheduledEvent, Timestamp};
 pub use map::{FieldDistribution, MapRules, OasisBonus, TileKind, Weighted, WorldMap};
 pub use movement::{MovementKind, slowest_speed, travel_time_secs, travel_time_secs_floored};
 pub use resource::ResourceKind;
+pub use scouting::{ScoutOutcome, ScoutRules, ScoutTarget, resolve_scouting, scouting_power};
 pub use trade::{
     MerchantProfile, MerchantRules, TradeKind, bundle_is_empty, bundle_total, deposit_capped,
     merchants_required,

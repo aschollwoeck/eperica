@@ -284,6 +284,7 @@ mod tests {
                     attack: 1,
                     defense_infantry: 1,
                     defense_cavalry: 1,
+                    scouting: 0,
                     speed: 1,
                     carry_capacity: 0,
                     crop_upkeep: 1,

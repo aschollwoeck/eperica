@@ -6,8 +6,8 @@
 use async_trait::async_trait;
 use eperica_domain::{
     BuildTarget, BuildingKind, Coordinate, EventKind, MovementKind, PlayerId, QueueLane,
-    ResourceAmounts, StartingVillage, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, Village,
-    VillageId,
+    ResourceAmounts, ScoutTarget, StartingVillage, Timestamp, TradeKind, Tribe, UnitCounts, UnitId,
+    Village, VillageId,
 };
 
 /// A village's public presence on the map: its tile and its owner's name (GDD §7.3 — layout and
@@ -429,6 +429,8 @@ pub struct DueAttack {
     pub arrive_at: Timestamp,
     /// The attacking composition.
     pub troops: UnitCounts,
+    /// What the attached scouts spy on (010); `None` when the attack carries no scouting intent.
+    pub scout_target: Option<ScoutTarget>,
 }
 
 /// A battle report to persist, visible to both parties (009 AC7).
@@ -481,6 +483,13 @@ pub struct BattleApply {
     pub return_arrive: Timestamp,
     /// The report to persist.
     pub report: NewBattleReport,
+    /// Whether the attached scouts were **detected** (≥1 died to counter-espionage) — sets the
+    /// defender battle report's `scouted` flag (010 AC8); `false` when no scouts rode along.
+    pub scouted: bool,
+    /// What the attached scouts spied on (mirrors `scouted`), for the defender's report.
+    pub scout_target: Option<ScoutTarget>,
+    /// The scouter-facing intel report to persist alongside the battle (010), if scouts rode along.
+    pub scout_report: Option<NewScoutReport>,
 }
 
 /// A persisted battle report for the inbox/detail view (009 AC8).
@@ -504,6 +513,10 @@ pub struct BattleReportView {
     pub attacker_losses: UnitCounts,
     pub defender_forces: UnitCounts,
     pub defender_losses: UnitCounts,
+    /// Whether scouts rode along and were **detected** (010 AC8) — the defender's report flags it.
+    pub scouted: bool,
+    /// What those scouts spied on, when `scouted`.
+    pub scout_target: Option<ScoutTarget>,
 }
 
 /// Persistence for combat (009): launch attacks, claim due battles, apply resolutions, read reports.
@@ -527,6 +540,7 @@ pub trait CombatRepository: Send + Sync {
         arrive_at: Timestamp,
         kind: MovementKind,
         troops: &[(UnitId, u32)],
+        scout_target: Option<ScoutTarget>,
     ) -> Result<(), RepoError>;
 
     /// Atomically claim attack/raid movements whose arrival is due (`in_transit → processing`).
@@ -566,6 +580,171 @@ pub trait CombatRepository: Send + Sync {
         id: u128,
         player: PlayerId,
     ) -> Result<Option<BattleReportView>, RepoError>;
+}
+
+/// Intel a successful scout brought home (010 AC9) — what the chosen target type revealed at arrival.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScoutIntel {
+    /// The target village's stored resources at the resolution instant (computed-on-read, P1).
+    Resources(ResourceAmounts),
+    /// The target's stationed troops (garrison + reinforcements, merged) and Wall level.
+    Defenses { troops: UnitCounts, wall_level: u8 },
+}
+
+/// A claimed, due standalone `scout` movement ready to resolve (010).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DueScout {
+    /// The scout movement's identity.
+    pub id: u128,
+    /// The scouting player.
+    pub owner: PlayerId,
+    /// The scouter's home village (survivors return here).
+    pub home_village: VillageId,
+    /// The village being scouted.
+    pub target_village: VillageId,
+    /// The scouter's tile.
+    pub origin: Coordinate,
+    /// The target's tile.
+    pub dest: Coordinate,
+    /// When the scouts arrive (the resolution instant).
+    pub arrive_at: Timestamp,
+    /// The scouting composition (scouts only).
+    pub troops: UnitCounts,
+    /// What this mission spies on.
+    pub target_type: ScoutTarget,
+}
+
+/// A scout intel report to persist (010 AC8/AC11). Visible in full to the scouter; visible redacted
+/// to the target only when `detected && standalone`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewScoutReport {
+    pub scouter_player: PlayerId,
+    pub scouter_village: VillageId,
+    pub target_player: PlayerId,
+    pub target_village: VillageId,
+    /// The target's tile (shown to the scouter).
+    pub target_coord: Coordinate,
+    pub target_type: ScoutTarget,
+    /// The scouts sent (scouter-only).
+    pub scouts_sent: UnitCounts,
+    /// The scouts lost to counter-espionage (also "scouts destroyed" for a notified target).
+    pub scouts_lost: UnitCounts,
+    /// Whether the defender detected the mission (≥1 scout died).
+    pub detected: bool,
+    /// Standalone mission (`true`) vs scouts riding an attack (`false`) — gates the target's view.
+    pub standalone: bool,
+    /// The revealed intel, or `None` when no scout survived to carry it home.
+    pub intel: Option<ScoutIntel>,
+}
+
+/// The single-transaction application of a resolved **standalone** scout mission (010).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScoutApply {
+    /// The scout movement to mark `done`.
+    pub movement_id: u128,
+    /// The scouter (for the survivor return movement).
+    pub owner: PlayerId,
+    /// The scouter's home village.
+    pub scouter_home: VillageId,
+    /// The scouter's tile (the return's destination).
+    pub scouter_origin: Coordinate,
+    /// The target's tile (the return's origin).
+    pub target_coord: Coordinate,
+    /// The surviving scouts (sent home as a `return` movement; empty ⇒ no return).
+    pub survivors: UnitCounts,
+    /// The resolution instant (the survivor return departs then).
+    pub scouted_at: Timestamp,
+    /// When the survivor return arrives home.
+    pub return_arrive: Timestamp,
+    /// The intel report to persist.
+    pub report: NewScoutReport,
+}
+
+/// A persisted scout report for the inbox/detail view (010 AC11). The repository applies redaction:
+/// for a target viewer it strips the intel and the scouts-sent, leaving only the notification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScoutReportView {
+    pub id: u128,
+    pub occurred_at: Timestamp,
+    pub scouter_player: PlayerId,
+    pub scouter_name: String,
+    pub scouter_coord: Coordinate,
+    pub target_player: PlayerId,
+    pub target_name: String,
+    pub target_coord: Coordinate,
+    pub target_type: ScoutTarget,
+    /// The scouts sent — empty when the viewer is the target (redacted, P4).
+    pub scouts_sent: UnitCounts,
+    pub scouts_lost: UnitCounts,
+    pub detected: bool,
+    pub standalone: bool,
+    /// The revealed intel — `None` when the viewer is the target, or no scout returned.
+    pub intel: Option<ScoutIntel>,
+    /// Whether the requesting player is the scouter (drives the template; redaction already applied).
+    pub viewer_is_scouter: bool,
+}
+
+/// Persistence for scouting (010): launch standalone scouts, claim due missions, apply resolutions,
+/// read intel reports. (Scouts riding an attack are handled by [`CombatRepository::apply_battle`].)
+#[async_trait]
+pub trait ScoutRepository: Send + Sync {
+    /// Atomically debit `troops` (scouts) from the `home` garrison (guarded) and create a `scout`
+    /// movement to `deliver` arriving at `arrive_at` with the chosen `target`. Target id fixed (P4).
+    ///
+    /// # Errors
+    /// [`RepoError::Conflict`] if the garrison no longer covers a requested count; [`RepoError`] else.
+    #[allow(clippy::too_many_arguments)]
+    async fn start_scout(
+        &self,
+        home: VillageId,
+        deliver: VillageId,
+        owner: PlayerId,
+        origin: Coordinate,
+        dest: Coordinate,
+        now: Timestamp,
+        arrive_at: Timestamp,
+        troops: &[(UnitId, u32)],
+        target: ScoutTarget,
+    ) -> Result<(), RepoError>;
+
+    /// Atomically claim standalone scout movements whose arrival is due (`in_transit → processing`).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn claim_due_scouts(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueScout>, RepoError>;
+
+    /// Apply a resolved standalone scout in **one** transaction — insert the intel report, schedule
+    /// the survivor return (if any), and mark the scout movement `done`. Exactly-once (010 AC10/AC11).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn apply_scout(&self, apply: ScoutApply) -> Result<(), RepoError>;
+
+    /// The player's scout reports — their own missions (full), plus detected-standalone
+    /// notifications where they were the target (redacted), newest first.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn scout_reports_for(
+        &self,
+        player: PlayerId,
+        limit: i64,
+    ) -> Result<Vec<ScoutReportView>, RepoError>;
+
+    /// One scout report, only if `player` may see it (scouter, or a detected-standalone target),
+    /// redacted for a target viewer (P4).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn scout_report(
+        &self,
+        id: u128,
+        player: PlayerId,
+    ) -> Result<Option<ScoutReportView>, RepoError>;
 }
 
 /// A claimed, due event ready to be processed.

@@ -46,5 +46,6 @@ After every battle, both sides get a **report** (see **Reports** from your villa
 side's forces and losses, how far the Wall was knocked down, and the **luck and morale** that applied —
 so the outcome is always explainable. Only the two parties to a battle can read its report.
 
-> Coming next: scouting (see what's defending before you commit), and siege & loot (catapults wreck
-> buildings; raids carry resources home, minus what a Cranny hides).
+> See also **[Scouting](scouting.md)** — reveal an enemy's defenses or resources before you commit.
+> Coming next: siege & loot (catapults wreck buildings; raids carry resources home, minus what a
+> Cranny hides).

@@ -7,7 +7,7 @@ use eperica_domain::WorldMap;
 use eperica_infrastructure::{
     AppConfig, Argon2Hasher, PgAccountRepository, PgEventStore, Scheduler, build_rules,
     combat_rules, create_pool, economy_rules, ensure_world, map_rules, merchant_rules,
-    run_migrations, starting_village, unit_rules,
+    run_migrations, scout_rules, starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -26,6 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let units = Arc::new(unit_rules()?);
     let merchants = Arc::new(merchant_rules()?);
     let combat = Arc::new(combat_rules()?);
+    let scout = Arc::new(scout_rules()?);
     let map = Arc::new(WorldMap::new(
         world.seed as u64,
         config.world.radius,
@@ -48,6 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&units),
         Arc::clone(&merchants),
         Arc::clone(&combat),
+        Arc::clone(&scout),
         Arc::clone(&map),
         config.world.speed,
         world.seed as u64,

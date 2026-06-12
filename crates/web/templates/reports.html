@@ -1,21 +1,21 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="panel">
-  <h1>Battle reports</h1>
+  <h1>Reports</h1>
   <p class="muted"><a href="/village">← Back to the village</a></p>
 
   {% if reports.is_empty() %}
-  <p class="muted">No battle reports yet. Launch an attack or raid from the Rally Point.</p>
+  <p class="muted">No reports yet. Launch an attack, raid, or scout from the Rally Point.</p>
   {% else %}
   <table class="table">
-    <thead><tr><th>When</th><th>Battle</th><th>Result</th><th></th></tr></thead>
+    <thead><tr><th>When</th><th>Report</th><th>Result</th><th></th></tr></thead>
     <tbody>
       {% for r in reports %}
       <tr>
         <td class="muted"><span class="when" data-ms="{{ r.when_ms }}">…</span></td>
         <td>{{ r.headline }}</td>
         <td>{{ r.outcome }}</td>
-        <td><a href="/reports/{{ r.id }}">View</a></td>
+        <td><a href="{{ r.href }}">View</a></td>
       </tr>
       {% endfor %}
     </tbody>

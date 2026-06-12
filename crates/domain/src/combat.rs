@@ -317,6 +317,7 @@ mod tests {
             attack,
             defense_infantry: di,
             defense_cavalry: dc,
+            scouting: 0,
             speed: 6,
             carry_capacity: 0,
             crop_upkeep: 1,

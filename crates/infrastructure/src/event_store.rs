@@ -4,11 +4,12 @@ use crate::repo::PgAccountRepository;
 use async_trait::async_trait;
 use eperica_application::{
     DueEvent, EventStore, RepoError, process_due, process_due_builds, process_due_combat,
-    process_due_movements, process_due_starvation, process_due_trades, process_due_training,
-    process_due_unit_orders, sync_starvation_checks,
+    process_due_movements, process_due_scouts, process_due_starvation, process_due_trades,
+    process_due_training, process_due_unit_orders, sync_starvation_checks,
 };
 use eperica_domain::{
-    CombatRules, EconomyRules, EventKind, GameSpeed, MerchantRules, Timestamp, UnitRules, WorldMap,
+    CombatRules, EconomyRules, EventKind, GameSpeed, MerchantRules, ScoutRules, Timestamp,
+    UnitRules, WorldMap,
 };
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
@@ -140,6 +141,7 @@ pub struct Scheduler {
     unit_rules: Arc<UnitRules>,
     merchant_rules: Arc<MerchantRules>,
     combat_rules: Arc<CombatRules>,
+    scout_rules: Arc<ScoutRules>,
     map: Arc<WorldMap>,
     speed: GameSpeed,
     world_seed: u64,
@@ -158,6 +160,7 @@ impl Scheduler {
         unit_rules: Arc<UnitRules>,
         merchant_rules: Arc<MerchantRules>,
         combat_rules: Arc<CombatRules>,
+        scout_rules: Arc<ScoutRules>,
         map: Arc<WorldMap>,
         speed: GameSpeed,
         world_seed: u64,
@@ -169,6 +172,7 @@ impl Scheduler {
             unit_rules,
             merchant_rules,
             combat_rules,
+            scout_rules,
             map,
             speed,
             world_seed,
@@ -313,6 +317,7 @@ impl Scheduler {
                 &self.economy_rules,
                 &self.unit_rules,
                 &self.combat_rules,
+                &self.scout_rules,
                 &self.map,
                 self.speed,
                 self.world_seed,
@@ -328,6 +333,24 @@ impl Scheduler {
                 }
                 Ok(_) => {}
                 Err(e) => tracing::error!(error = %e, "scheduler combat tick failed"),
+            }
+            // Standalone scout missions (010): no village garrison changes at resolution, so there is
+            // nothing to re-sync here (surviving scouts re-sync home when their return arrives).
+            if let Err(e) = process_due_scouts(
+                &self.builds,
+                &self.builds,
+                &self.builds,
+                &self.economy_rules,
+                &self.unit_rules,
+                &self.scout_rules,
+                &self.map,
+                self.speed,
+                now(),
+                100,
+            )
+            .await
+            {
+                tracing::error!(error = %e, "scheduler scout tick failed");
             }
             match process_due_starvation(
                 &self.builds,

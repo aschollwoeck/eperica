@@ -6,8 +6,8 @@ use crate::templates::{
     AcademyRow, AcademyTemplate, ActiveView, BuildRow, ForceRow, GarrisonRow, IndexTemplate,
     LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MovementRow, QueueView, RallyTemplate,
     RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate,
-    ShipmentRow, SmithyRow, SmithyTemplate, StyleGuideTemplate, TrainRow, TroopsTemplate,
-    VillageTemplate,
+    ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate,
+    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -17,15 +17,16 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
     AccountRepository, BattleReportView, BuildRepository, CombatRepository, LoginError,
-    MovementRepository, RegisterCommand, RegisterError, TradeRepository, TrainingRepository,
-    UnitOrderKind, UnitRepository, authenticate, load_economy, map_viewport, order_attack,
-    order_build, order_reinforcement, order_research, order_return, order_smithy_upgrade,
-    order_trade, order_train, register, viewport_coords,
+    MovementRepository, RegisterCommand, RegisterError, ScoutIntel, ScoutReportView,
+    ScoutRepository, TradeRepository, TrainingRepository, UnitOrderKind, UnitRepository,
+    authenticate, load_economy, map_viewport, order_attack, order_build, order_reinforcement,
+    order_research, order_return, order_scout, order_smithy_upgrade, order_trade, order_train,
+    register, viewport_coords,
 };
 use eperica_domain::{
     AttackMode, BuildTarget, BuildingKind, Coordinate, MovementKind, OasisBonus, QueueLane,
-    ResearchDenied, ResourceAmounts, ResourceKind, TileKind, TradeKind, Tribe, UnitId, UnitRole,
-    UnitRules, UpgradeDenied, Village, VillageId, can_afford, can_research, can_upgrade,
+    ResearchDenied, ResourceAmounts, ResourceKind, ScoutTarget, TileKind, TradeKind, Tribe, UnitId,
+    UnitRole, UnitRules, UpgradeDenied, Village, VillageId, can_afford, can_research, can_upgrade,
     garrison_upkeep, per_unit_time_secs, queue_lane, scaled_time_secs,
 };
 use eperica_infrastructure::now;
@@ -484,6 +485,9 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
                 }
                 MovementKind::Raid => {
                     format!("Raid on ({}|{})", m.destination.x, m.destination.y)
+                }
+                MovementKind::Scout => {
+                    format!("Scouting ({}|{})", m.destination.x, m.destination.y)
                 }
             },
             troops: troops_summary(unit_rules, &m.troops),
@@ -1301,14 +1305,38 @@ pub async fn rally_send(
         })
         .collect();
     let target = Coordinate::new(x, y);
-    // The mode selects the use-case: reinforce (007) defends; attack/raid (009) fight.
-    let mode = match form.get("mode").map(String::as_str) {
-        Some("attack") => Some(AttackMode::Attack),
-        Some("raid") => Some(AttackMode::Raid),
-        _ => None,
-    };
-    match mode {
-        Some(mode) => {
+    // What attached scouts spy on (010); used by `scout` missions and by attacks carrying scouts.
+    let scout_target = form
+        .get("scout_target")
+        .and_then(|s| ScoutTarget::from_slug(s));
+    // The mode selects the use-case: reinforce (007) defends; attack/raid (009) fight; scout (010) spies.
+    match form.get("mode").map(String::as_str) {
+        Some("scout") => {
+            if let Err(e) = order_scout(
+                state.accounts.as_ref(),
+                state.accounts.as_ref(),
+                state.accounts.as_ref(),
+                state.rules.as_ref(),
+                state.unit_rules.as_ref(),
+                state.map.as_ref(),
+                state.world.speed,
+                now(),
+                player,
+                target,
+                troops,
+                scout_target.unwrap_or(ScoutTarget::Defenses),
+            )
+            .await
+            {
+                tracing::warn!(error = %e, "scout order rejected");
+            }
+        }
+        Some(mode @ ("attack" | "raid")) => {
+            let mode = if mode == "raid" {
+                AttackMode::Raid
+            } else {
+                AttackMode::Attack
+            };
             if let Err(e) = order_attack(
                 state.accounts.as_ref(),
                 state.accounts.as_ref(),
@@ -1322,13 +1350,14 @@ pub async fn rally_send(
                 target,
                 troops,
                 mode,
+                scout_target,
             )
             .await
             {
                 tracing::warn!(error = %e, "attack order rejected");
             }
         }
-        None => {
+        _ => {
             if let Err(e) = order_reinforcement(
                 state.accounts.as_ref(),
                 state.accounts.as_ref(),
@@ -1511,28 +1540,152 @@ fn force_rows(
         .collect()
 }
 
-/// The player's battle-reports inbox (009 AC8; Player only, P4).
+/// One inbox row for a scout report from the viewer's perspective (010 AC12).
+fn scout_report_row(r: &ScoutReportView) -> ReportRow {
+    let (name, coord) = if r.viewer_is_scouter {
+        (&r.target_name, r.target_coord)
+    } else {
+        (&r.scouter_name, r.scouter_coord)
+    };
+    let headline = if r.viewer_is_scouter {
+        format!("Scouted {name} ({}|{})", coord.x, coord.y)
+    } else {
+        format!("Scouted by {name} ({}|{})", coord.x, coord.y)
+    };
+    let lost: u32 = r.scouts_lost.iter().map(|(_, n)| n).sum();
+    let outcome = if r.viewer_is_scouter {
+        if r.intel.is_some() {
+            "Intel gathered".to_owned()
+        } else {
+            "No intel — all scouts lost".to_owned()
+        }
+    } else {
+        format!("Detected — {lost} destroyed")
+    };
+    ReportRow {
+        when_ms: r.occurred_at.0,
+        headline,
+        outcome,
+        href: format!("/reports/scout/{}", r.id),
+    }
+}
+
+/// The player's reports inbox — battle reports (009) and scout reports (010), newest first (P4).
 pub async fn reports(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
-    let reports = match state.accounts.reports_for(player, 50).await {
+    let battle = match state.accounts.reports_for(player, 50).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "reports lookup failed");
             return server_error();
         }
     };
-    let rows = reports
+    let scouts = match state.accounts.scout_reports_for(player, 50).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "scout reports lookup failed");
+            return server_error();
+        }
+    };
+    let mut rows: Vec<ReportRow> = battle
         .iter()
         .map(|r| {
             let i_attacked = r.attacker_player == player;
             ReportRow {
-                id: r.id.to_string(),
                 when_ms: r.occurred_at.0,
                 headline: report_headline(r, i_attacked),
                 outcome: report_outcome(r, i_attacked),
+                href: format!("/reports/{}", r.id),
             }
         })
         .collect();
+    rows.extend(scouts.iter().map(scout_report_row));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.when_ms));
     page(&ReportsTemplate { reports: rows })
+}
+
+/// One scout report's detail — scouter sees the intel, a detected target sees only the notification;
+/// redaction is enforced by the repository (010 AC11, P4).
+pub async fn scout_report_detail(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let Ok(id) = id.parse::<u128>() else {
+        return Redirect::to("/reports").into_response();
+    };
+    let r = match state.accounts.scout_report(id, player).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return Redirect::to("/reports").into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "scout report lookup failed");
+            return server_error();
+        }
+    };
+    let unit_rules = state.unit_rules.as_ref();
+    let target_type = match r.target_type {
+        ScoutTarget::Resources => "Resources",
+        ScoutTarget::Defenses => "Defenses",
+    };
+    let lost: u32 = r.scouts_lost.iter().map(|(_, n)| n).sum();
+    let headline = if r.viewer_is_scouter {
+        format!(
+            "You scouted {} ({}|{})",
+            r.target_name, r.target_coord.x, r.target_coord.y
+        )
+    } else {
+        format!(
+            "{} ({}|{}) scouted your village",
+            r.scouter_name, r.scouter_coord.x, r.scouter_coord.y
+        )
+    };
+    let summary = if r.viewer_is_scouter {
+        let sent: u32 = r.scouts_sent.iter().map(|(_, n)| n).sum();
+        format!("{sent} scouts sent, {lost} lost")
+    } else {
+        format!("{lost} enemy scouts destroyed")
+    };
+    let (intel_kind, resources, troops, wall_level) = match &r.intel {
+        Some(ScoutIntel::Resources(a)) => (
+            "resources",
+            vec![
+                ScoutResourceRow {
+                    name: "Wood".to_owned(),
+                    amount: a.wood,
+                },
+                ScoutResourceRow {
+                    name: "Clay".to_owned(),
+                    amount: a.clay,
+                },
+                ScoutResourceRow {
+                    name: "Iron".to_owned(),
+                    amount: a.iron,
+                },
+                ScoutResourceRow {
+                    name: "Crop".to_owned(),
+                    amount: a.crop,
+                },
+            ],
+            Vec::new(),
+            0u8,
+        ),
+        Some(ScoutIntel::Defenses { troops, wall_level }) => (
+            "defenses",
+            Vec::new(),
+            force_rows(unit_rules, troops, &[]),
+            *wall_level,
+        ),
+        None => ("none", Vec::new(), Vec::new(), 0),
+    };
+    page(&ScoutReportTemplate {
+        headline,
+        summary,
+        is_scouter: r.viewer_is_scouter,
+        target_type,
+        intel_kind,
+        resources,
+        troops,
+        wall_level,
+    })
 }
 
 /// One battle report's detail — only a party to it may view it (009 AC8, P4).
@@ -1554,6 +1707,14 @@ pub async fn report_detail(
     };
     let unit_rules = state.unit_rules.as_ref();
     let i_attacked = report.attacker_player == player;
+    // The defender of a combined attack learns scouting also occurred only when detected (010 AC8).
+    let scouted_note = (report.scouted && !i_attacked).then(|| {
+        let what = match report.scout_target {
+            Some(ScoutTarget::Resources) => "resources",
+            _ => "defenses",
+        };
+        format!("The enemy also scouted your {what}.")
+    });
     page(&ReportTemplate {
         kind: if report.kind == MovementKind::Raid {
             "Raid"
@@ -1570,5 +1731,6 @@ pub async fn report_detail(
         attacker_rows: force_rows(unit_rules, &report.attacker_forces, &report.attacker_losses),
         defender_name: report.defender_name.clone(),
         defender_rows: force_rows(unit_rules, &report.defender_forces, &report.defender_losses),
+        scouted_note,
     })
 }

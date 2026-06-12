@@ -71,6 +71,9 @@ pub struct UnitSpec {
     pub attack: u32,
     pub defense_infantry: u32,
     pub defense_cavalry: u32,
+    /// Espionage **and** counter-espionage strength (010); `0` for every non-Scout unit. A scout uses
+    /// this both when spying (attacking) and when countering enemy scouts (defending).
+    pub scouting: u32,
     /// Map speed in fields per hour (before world speed).
     pub speed: u32,
     /// Loot carried per unit.
@@ -489,6 +492,7 @@ mod tests {
             attack: 40,
             defense_infantry: 35,
             defense_cavalry: 50,
+            scouting: 0,
             speed: 6,
             carry_capacity: 50,
             crop_upkeep: 1,

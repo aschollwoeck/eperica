@@ -13,6 +13,7 @@ pub mod movement;
 pub mod ports;
 pub mod register;
 pub mod scheduler;
+pub mod scouting;
 pub mod starvation;
 pub mod trade;
 pub mod units;
@@ -31,14 +32,16 @@ pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
 pub use movement::{MovementError, order_reinforcement, order_return, process_due_movements};
 pub use ports::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
-    BuildRepository, CombatRepository, DueAttack, DueBuild, DueEvent, DueMovement, DueTrade,
-    DueTraining, DueUnitOrder, EventStore, MovementRepository, MovementView, NewBattleReport,
-    NewBuildOrder, NewTrainingOrder, NewUnitOrder, NewUser, PasswordHasher, RepoError,
+    BuildRepository, CombatRepository, DueAttack, DueBuild, DueEvent, DueMovement, DueScout,
+    DueTrade, DueTraining, DueUnitOrder, EventStore, MovementRepository, MovementView,
+    NewBattleReport, NewBuildOrder, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
+    PasswordHasher, RepoError, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository,
     StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
     UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;
+pub use scouting::{ScoutError, gather_intel, order_scout, process_due_scouts};
 pub use starvation::{process_due_starvation, sync_starvation_check, sync_starvation_checks};
 pub use trade::{TradeError, order_trade, process_due_trades};
 pub use units::{

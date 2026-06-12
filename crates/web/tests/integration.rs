@@ -4,11 +4,14 @@
 //! `DATABASE_URL` is not set, so `cargo test` stays green without a database.
 
 use axum_extra::extract::cookie::Key;
-use eperica_application::{process_due_combat, process_due_movements, process_due_trades};
+use eperica_application::{
+    process_due_combat, process_due_movements, process_due_scouts, process_due_trades,
+};
 use eperica_domain::{GameSpeed, Timestamp, WorldConfig, WorldMap};
 use eperica_infrastructure::{
     Argon2Hasher, PgAccountRepository, build_rules, combat_rules, create_pool, economy_rules,
-    ensure_world, map_rules, merchant_rules, now, run_migrations, starting_village, unit_rules,
+    ensure_world, map_rules, merchant_rules, now, run_migrations, scout_rules, starting_village,
+    unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -1290,6 +1293,7 @@ async fn combat_raid_and_reports_flow() {
     let econ = economy_rules().unwrap();
     let units = unit_rules().unwrap();
     let combat = combat_rules().unwrap();
+    let scout = scout_rules().unwrap();
     let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
     let world = ensure_world(&pool, &config).await.unwrap();
     let map = WorldMap::new(world.seed as u64, config.radius, map_rules().unwrap());
@@ -1302,6 +1306,7 @@ async fn combat_raid_and_reports_flow() {
         &econ,
         &units,
         &combat,
+        &scout,
         &map,
         GameSpeed::new(1.0).unwrap(),
         world.seed as u64,
@@ -1359,4 +1364,145 @@ async fn combat_raid_and_reports_flow() {
         .await
         .unwrap();
     assert_eq!(anon.status().as_u16(), 303);
+}
+
+/// 010 AC1/AC9/AC12: send a standalone scout from the Rally Point, the System resolves it, and the
+/// scouter reads the intel report; an undetected target sees nothing.
+#[tokio::test]
+async fn scout_mission_and_intel_report_flow() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    let _ = dotenvy::dotenv();
+    let url = std::env::var("DATABASE_URL").unwrap();
+    let pool = create_pool(&url).await.unwrap();
+    let repo = movement_repo(&pool).await;
+
+    let scouter = unique("spywho");
+    let target = unique("spymark");
+    let cs = client();
+    let ct = client();
+    for (c, u) in [(&cs, &scouter), (&ct, &target)] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", "gauls"),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+
+    let s_village: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&scouter)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (t_village, tx, ty): (uuid::Uuid, i32, i32) = sqlx::query_as(
+        "SELECT v.id, v.x, v.y FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&target)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Give the scouter pathfinders (Gaul scout). The target stations no scouts (a clean scout).
+    sqlx::query(
+        "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'pathfinder', 5)",
+    )
+    .bind(s_village)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // AC1/AC12: send a scout mission to spy on resources; PRG back to the village in flight.
+    let res = cs
+        .post(format!("{base}/village/rally/send"))
+        .form(&[
+            ("mode", "scout"),
+            ("scout_target", "resources"),
+            ("x", tx.to_string().as_str()),
+            ("y", ty.to_string().as_str()),
+            ("count_pathfinder", "3"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+    let body = cs
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains(&format!("Scouting ({tx}|{ty})")));
+
+    // The System resolves the mission.
+    let econ = economy_rules().unwrap();
+    let units = unit_rules().unwrap();
+    let scout = scout_rules().unwrap();
+    let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+    let world = ensure_world(&pool, &config).await.unwrap();
+    let map = WorldMap::new(world.seed as u64, config.radius, map_rules().unwrap());
+    let future = Timestamp(now().0 + 10_000_000_000);
+    process_due_scouts(
+        &repo,
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        &scout,
+        &map,
+        GameSpeed::new(1.0).unwrap(),
+        future,
+        100,
+    )
+    .await
+    .unwrap();
+
+    // AC12: the scouter's inbox lists the scout report with intel; the detail shows resources.
+    let reports = cs
+        .get(format!("{base}/reports"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(reports.contains(&format!("Scouted {target} ({tx}|{ty})")));
+    assert!(reports.contains("Intel gathered"));
+
+    let report_id: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM scout_reports WHERE scouter_village = $1")
+            .bind(s_village)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let detail = cs
+        .get(format!("{base}/reports/scout/{}", report_id.as_u128()))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(detail.contains("Resources"));
+
+    // AC8: an undetected target (no counter-espionage) sees no report at all.
+    let _ = t_village;
+    let t_reports = ct
+        .get(format!("{base}/reports"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!t_reports.contains("Scouted"));
 }
