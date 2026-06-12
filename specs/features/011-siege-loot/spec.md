@@ -167,6 +167,7 @@ Per [roles.md](../../roles.md).
   **yes** — a single deterministic rule; exact tie-breaking is a Decision, not a slice gate.
 - **Cranny protection symmetry.** One protection capacity applied **per resource type** (proposed,
   faithful T4) vs a single shared pool. Proposed: **per-type**, balance-tunable.
-- **Random-target eligibility.** The fallback pick excludes the **Wall** (rams' domain) and the
-  **Rally Point** (always present, un-razable in T4)? Proposed: exclude **Wall** and **Rally Point**;
-  finalize the exclusion set in the plan.
+- **Random-target eligibility (decided).** The fallback pick **excludes the Wall** (rams' domain) and
+  the **Rally Point** (always present, un-razable in T4); it draws from the target's other existing
+  buildings (level ≥ 1). The *explicitly chosen* target is likewise rejected if it is the Wall or Rally
+  Point (server-enforced, P4).
