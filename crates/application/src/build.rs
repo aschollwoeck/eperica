@@ -77,6 +77,7 @@ pub async fn order_build<A, B, S>(
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
+    selected: Option<eperica_domain::VillageId>,
     target: BuildTarget,
 ) -> Result<(), BuildError>
 where
@@ -84,7 +85,7 @@ where
     B: BuildRepository,
     S: crate::ports::StarvationRepository,
 {
-    let Some(village) = accounts.villages_of(owner).await?.into_iter().next() else {
+    let Some(village) = crate::economy::select_village(accounts, owner, selected).await? else {
         return Err(BuildError::NotFound);
     };
     let current = current_level(&village, target).ok_or(BuildError::NotFound)?;
@@ -499,6 +500,7 @@ mod tests {
             GameSpeed::new(1.0).unwrap(),
             Timestamp(0),
             PlayerId(1),
+            None,
             target,
         )
         .await

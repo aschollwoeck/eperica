@@ -116,6 +116,7 @@ pub async fn order_settle<A, T, C, S>(
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
+    selected: Option<eperica_domain::VillageId>,
     target: Coordinate,
 ) -> Result<(), SettleError>
 where
@@ -125,7 +126,7 @@ where
     S: StarvationRepository,
 {
     let villages = accounts.villages_of(owner).await?;
-    let Some(home) = villages.first().cloned() else {
+    let Some(home) = crate::economy::pick_village(villages.clone(), selected) else {
         return Err(SettleError::NotFound);
     };
     let Some(tribe) = home.tribe else {

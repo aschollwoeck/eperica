@@ -7,7 +7,7 @@ use crate::templates::{
     LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MovementRow, OasisRow, QueueView,
     RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate,
     ReportsTemplate, ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate,
-    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageTemplate,
+    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageSwitchRow, VillageTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -19,10 +19,10 @@ use eperica_application::{
     AccountRepository, BattleReportView, BuildRepository, CombatRepository, LoginError,
     MovementRepository, OasisRepository, RegisterCommand, RegisterError, ScoutIntel,
     ScoutReportView, ScoutRepository, TradeRepository, TrainingRepository, UnitOrderKind,
-    UnitRepository, authenticate, load_economy, map_viewport, order_attack, order_build,
-    order_oasis_attack, order_oasis_recall, order_oasis_reinforce, order_reinforcement,
-    order_research, order_return, order_scout, order_smithy_upgrade, order_trade, order_train,
-    register, viewport_coords,
+    UnitRepository, authenticate, load_culture, load_economy, map_viewport, order_attack,
+    order_build, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
+    order_reinforcement, order_research, order_return, order_scout, order_settle,
+    order_smithy_upgrade, order_trade, order_train, register, viewport_coords,
 };
 use eperica_domain::{
     AttackMode, BuildTarget, BuildingKind, Coordinate, MovementKind, OasisBonus, QueueLane,
@@ -162,6 +162,37 @@ fn server_error() -> Response {
     (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
 }
 
+/// Optional village selector for the multi-village pages (013 AC11): `?village=<id>` chooses which of
+/// the player's villages to act on; absent ⇒ the capital / first village (single-village default).
+/// The id rides as a **string** because the form/query decoder (`serde_urlencoded`) cannot parse the
+/// 128-bit village id.
+#[derive(Deserialize)]
+pub struct VillageQuery {
+    #[serde(default)]
+    village: Option<String>,
+}
+
+/// The selected village as a domain id (server re-validates ownership in the use-case, P4). An
+/// absent or unparseable id ⇒ `None` (the capital / first-village default).
+fn selected_village(village: Option<&str>) -> Option<VillageId> {
+    village
+        .and_then(|s| s.trim().parse::<u128>().ok())
+        .map(VillageId)
+}
+
+/// Redirect to `path`, preserving the selected village (013 AC11) so the user stays on that village.
+fn redirect_with_village(path: &str, village: Option<&str>) -> Response {
+    match village.and_then(|s| s.trim().parse::<u128>().ok()) {
+        Some(id) => Redirect::to(&format!("{path}?village={id}")).into_response(),
+        None => Redirect::to(path).into_response(),
+    }
+}
+
+/// Redirect back to the village page, preserving the selected village so the user stays on it.
+fn redirect_to_village(village: Option<&str>) -> Response {
+    redirect_with_village("/village", village)
+}
+
 /// Public landing page (Visitor).
 pub async fn index() -> Response {
     page(&IndexTemplate)
@@ -281,8 +312,14 @@ pub async fn logout(jar: PrivateCookieJar) -> Response {
     (jar, Redirect::to("/")).into_response()
 }
 
-/// The player's starting village with its live economy (Player only — AC3/AC4/AC7).
-pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+/// A player's village with its live economy, switchable across all their villages (Player only —
+/// AC3/AC4/AC7, 013 AC11). `?village=<id>` selects which to show; absent ⇒ the capital / first.
+pub async fn village(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Query(q): Query<VillageQuery>,
+) -> Response {
+    let selected = selected_village(q.village.as_deref());
     let user = match state.accounts.find_user_by_id(player).await {
         Ok(Some(u)) => u,
         Ok(None) => return Redirect::to("/login").into_response(),
@@ -299,6 +336,7 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         state.world.speed,
         now(),
         player,
+        selected,
     )
     .await
     {
@@ -407,20 +445,28 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         }
     };
 
+    // The capital may raise its resource fields past the normal cap (013 AC10); a non-capital stops
+    // at the normal cap. The cost table extends to the capital cap, so gate the rows on `field_cap`.
+    let field_cap = build_rules.field_max_level(village.is_capital);
     let fields = village
         .fields
         .iter()
         .enumerate()
         .map(|(i, f)| {
             let slot = u8::try_from(i).unwrap_or(0);
-            make_row(
+            let mut row = make_row(
                 "field",
                 slot,
                 "",
                 format!("{} field #{slot}", resource_label(f.kind)),
                 f.level,
                 BuildTarget::Field { slot },
-            )
+            );
+            if f.level >= field_cap {
+                row.at_max = true;
+                row.can_order = false;
+            }
+            row
         })
         .collect();
 
@@ -589,8 +635,53 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
         }
     };
 
+    // The village switcher: every owned village, the capital badged (013 AC11).
+    let owned = match state.accounts.villages_of(player).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "villages lookup failed");
+            return server_error();
+        }
+    };
+    let switcher: Vec<VillageSwitchRow> = owned
+        .iter()
+        .map(|v| VillageSwitchRow {
+            id: v.id.0.to_string(),
+            label: format!("({}|{})", v.coordinate.x, v.coordinate.y),
+            is_capital: v.is_capital,
+            is_current: v.id == village.id,
+        })
+        .collect();
+
+    // The player's pooled culture points + the expansion-slot gate (013 AC1/AC4/AC11).
+    let culture = match load_culture(
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.culture_rules.as_ref(),
+        now(),
+        player,
+    )
+    .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "culture lookup failed");
+            return server_error();
+        }
+    };
+    let has_free_slot = culture.used_slots < culture.allowed_villages;
+
     page(&VillageTemplate {
         username: user.username,
+        village_id: village.id.0.to_string(),
+        is_capital: village.is_capital,
+        villages: switcher,
+        cp: culture.cp,
+        cp_rate: culture.rate,
+        slots_used: culture.used_slots,
+        slots_allowed: culture.allowed_villages,
+        next_threshold: culture.next_threshold,
+        has_free_slot,
         tribe: tribe_label(village.tribe),
         x: village.coordinate.x,
         y: village.coordinate.y,
@@ -629,11 +720,14 @@ pub async fn village(State(state): State<AppState>, AuthUser(player): AuthUser) 
 /// The viewport half-extent: the map view shows a `(2·HALF + 1)`-square grid.
 const MAP_HALF: i32 = 4;
 
-/// Optional map-view center (defaults to the player's village).
+/// Optional map-view center (defaults to the player's village). On the Rally Point, `village` also
+/// selects which of the player's villages the troops are sent from (013 AC11).
 #[derive(Deserialize)]
 pub struct MapQuery {
     x: Option<i32>,
     y: Option<i32>,
+    #[serde(default)]
+    village: Option<String>,
 }
 
 fn oasis_label(b: OasisBonus) -> String {
@@ -688,6 +782,8 @@ pub async fn map(
             return server_error();
         }
     };
+    // The player's capital tile, distinguished on the map (013 AC9/AC11).
+    let capital_coord = villages.iter().find(|v| v.is_capital).map(|v| v.coordinate);
     let radius = state.map.radius();
     // Center on the query (if given) or the player's first village, wrapped into bounds.
     let center = match (q.x, q.y) {
@@ -734,10 +830,18 @@ pub async fn map(
                         if marker.owner_name == user.username {
                             class.push_str(" map-grid__cell--self");
                         }
+                        let is_capital = Some(coord) == capital_coord;
+                        if is_capital {
+                            class.push_str(" map-grid__cell--capital");
+                        }
                         glyph = "★";
                         label = format!(
-                            "{} — {} ({}|{})",
-                            base_label, marker.owner_name, coord.x, coord.y
+                            "{} — {}{} ({}|{})",
+                            base_label,
+                            marker.owner_name,
+                            if is_capital { " (capital)" } else { "" },
+                            coord.x,
+                            coord.y
                         );
                     } else if matches!(cell.tile, TileKind::Oasis(_)) {
                         // An oasis links to the Rally Point pre-filled with the tile (attack, or
@@ -794,9 +898,12 @@ pub struct BuildForm {
     slot: u8,
     #[serde(default)]
     kind: Option<String>,
+    /// Which of the player's villages to build in (013 AC11); absent ⇒ capital / first.
+    #[serde(default)]
+    village: Option<String>,
 }
 
-/// Order an upgrade/construction for the player's village, then return to it (Player only, P4).
+/// Order an upgrade/construction for the selected village, then return to it (Player only, P4).
 pub async fn build_submit(
     State(state): State<AppState>,
     AuthUser(player): AuthUser,
@@ -811,9 +918,9 @@ pub async fn build_submit(
                 slot: building_slot(kind),
                 kind,
             },
-            None => return Redirect::to("/village").into_response(),
+            None => return redirect_to_village(form.village.as_deref()),
         },
-        _ => return Redirect::to("/village").into_response(),
+        _ => return redirect_to_village(form.village.as_deref()),
     };
 
     if let Err(e) = order_build(
@@ -826,13 +933,14 @@ pub async fn build_submit(
         state.world.speed,
         now(),
         player,
+        selected_village(form.village.as_deref()),
         target,
     )
     .await
     {
         tracing::warn!(error = %e, "build order rejected");
     }
-    Redirect::to("/village").into_response()
+    redirect_to_village(form.village.as_deref())
 }
 
 fn role_label(role: UnitRole) -> &'static str {
@@ -899,10 +1007,11 @@ fn building_level(village: &Village, kind: BuildingKind) -> u8 {
         .map_or(0, |b| b.level)
 }
 
-/// The player's village + settled amounts, or an error response.
+/// The selected village + settled amounts, or an error response (013 AC11; `selected` ⇒ that village).
 async fn village_view_data(
     state: &AppState,
     player: eperica_domain::PlayerId,
+    selected: Option<VillageId>,
 ) -> Result<(Village, ResourceAmounts), Response> {
     match load_economy(
         state.accounts.as_ref(),
@@ -911,6 +1020,7 @@ async fn village_view_data(
         state.world.speed,
         now(),
         player,
+        selected,
     )
     .await
     {
@@ -930,11 +1040,16 @@ async fn village_view_data(
 }
 
 /// The Academy: the tribe's roster with research state and actions (004 AC15; Player only, P4).
-pub async fn academy(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
-    let (village, amounts) = match village_view_data(&state, player).await {
-        Ok(v) => v,
-        Err(r) => return r,
-    };
+pub async fn academy(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Query(q): Query<VillageQuery>,
+) -> Response {
+    let (village, amounts) =
+        match village_view_data(&state, player, selected_village(q.village.as_deref())).await {
+            Ok(v) => v,
+            Err(r) => return r,
+        };
     let Some(tribe) = village.tribe else {
         tracing::error!(?player, "village has no tribe");
         return server_error();
@@ -1031,6 +1146,7 @@ pub async fn academy(State(state): State<AppState>, AuthUser(player): AuthUser) 
         .collect();
 
     page(&AcademyTemplate {
+        village_id: village.id.0.to_string(),
         has_academy: building_level(&village, BuildingKind::Academy) > 0,
         rows,
         active,
@@ -1038,11 +1154,16 @@ pub async fn academy(State(state): State<AppState>, AuthUser(player): AuthUser) 
 }
 
 /// The Smithy: researched units with upgrade levels and actions (004 AC15; Player only, P4).
-pub async fn smithy(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
-    let (village, amounts) = match village_view_data(&state, player).await {
-        Ok(v) => v,
-        Err(r) => return r,
-    };
+pub async fn smithy(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Query(q): Query<VillageQuery>,
+) -> Response {
+    let (village, amounts) =
+        match village_view_data(&state, player, selected_village(q.village.as_deref())).await {
+            Ok(v) => v,
+            Err(r) => return r,
+        };
     let Some(tribe) = village.tribe else {
         tracing::error!(?player, "village has no tribe");
         return server_error();
@@ -1127,6 +1248,7 @@ pub async fn smithy(State(state): State<AppState>, AuthUser(player): AuthUser) -
         .collect();
 
     page(&SmithyTemplate {
+        village_id: village.id.0.to_string(),
         has_smithy: building_level(&village, BuildingKind::Smithy) > 0,
         smithy_level: building_level(&village, BuildingKind::Smithy),
         rows,
@@ -1138,6 +1260,9 @@ pub async fn smithy(State(state): State<AppState>, AuthUser(player): AuthUser) -
 #[derive(Deserialize)]
 pub struct UnitForm {
     unit: String,
+    /// Which of the player's villages to act on (013 AC11); absent ⇒ capital / first.
+    #[serde(default)]
+    village: Option<String>,
 }
 
 /// Order a unit research for the player's village, then return to the Academy (Player only, P4).
@@ -1155,13 +1280,14 @@ pub async fn research_submit(
         state.world.speed,
         now(),
         player,
+        selected_village(form.village.as_deref()),
         UnitId(form.unit),
     )
     .await
     {
         tracing::warn!(error = %e, "research order rejected");
     }
-    Redirect::to("/village/academy").into_response()
+    redirect_with_village("/village/academy", form.village.as_deref())
 }
 
 fn parse_troop_building(slug: &str) -> Option<BuildingKind> {
@@ -1179,14 +1305,16 @@ pub async fn troops(
     State(state): State<AppState>,
     AuthUser(player): AuthUser,
     axum::extract::Path(building_slug): axum::extract::Path<String>,
+    Query(q): Query<VillageQuery>,
 ) -> Response {
     let Some(building) = parse_troop_building(&building_slug) else {
         return Redirect::to("/village").into_response();
     };
-    let (village, _amounts) = match village_view_data(&state, player).await {
-        Ok(v) => v,
-        Err(r) => return r,
-    };
+    let (village, _amounts) =
+        match village_view_data(&state, player, selected_village(q.village.as_deref())).await {
+            Ok(v) => v,
+            Err(r) => return r,
+        };
     let Some(tribe) = village.tribe else {
         tracing::error!(?player, "village has no tribe");
         return server_error();
@@ -1252,6 +1380,7 @@ pub async fn troops(
     };
 
     page(&TroopsTemplate {
+        village_id: village.id.0.to_string(),
         building: building_label(building),
         has_building: building_level > 0,
         rows,
@@ -1264,6 +1393,9 @@ pub async fn troops(
 pub struct TrainForm {
     unit: String,
     count: u32,
+    /// Which of the player's villages to train in (013 AC11); absent ⇒ capital / first.
+    #[serde(default)]
+    village: Option<String>,
 }
 
 /// Order a training batch for the player's village, then return to the building page (Player
@@ -1284,6 +1416,7 @@ pub async fn train_submit(
         state.world.speed,
         now(),
         player,
+        selected_village(form.village.as_deref()),
         unit.clone(),
         form.count,
     )
@@ -1291,7 +1424,7 @@ pub async fn train_submit(
     {
         tracing::warn!(error = %e, "training order rejected");
     }
-    // Land back on the unit's building page (the same kind across tribes).
+    // Land back on the unit's building page (the same kind across tribes), keeping the village.
     let building = [Tribe::Romans, Tribe::Teutons, Tribe::Gauls]
         .into_iter()
         .find_map(|t| state.unit_rules.unit(t, &unit))
@@ -1302,7 +1435,7 @@ pub async fn train_submit(
         Some(BuildingKind::Workshop) => "/village/troops/workshop",
         _ => "/village",
     };
-    Redirect::to(target).into_response()
+    redirect_with_village(target, form.village.as_deref())
 }
 
 /// Order a Smithy upgrade for the player's village, then return to the Smithy (Player only, P4).
@@ -1320,13 +1453,14 @@ pub async fn smithy_upgrade_submit(
         state.world.speed,
         now(),
         player,
+        selected_village(form.village.as_deref()),
         UnitId(form.unit),
     )
     .await
     {
         tracing::warn!(error = %e, "smithy upgrade rejected");
     }
-    Redirect::to("/village/smithy").into_response()
+    redirect_with_village("/village/smithy", form.village.as_deref())
 }
 
 /// The Rally Point: the garrison troops that can be sent to reinforce (007 AC7; Player only, P4).
@@ -1335,10 +1469,11 @@ pub async fn rally(
     AuthUser(player): AuthUser,
     Query(q): Query<MapQuery>,
 ) -> Response {
-    let (village, _amounts) = match village_view_data(&state, player).await {
-        Ok(v) => v,
-        Err(r) => return r,
-    };
+    let (village, _amounts) =
+        match village_view_data(&state, player, selected_village(q.village.as_deref())).await {
+            Ok(v) => v,
+            Err(r) => return r,
+        };
     let Some(tribe) = village.tribe else {
         tracing::error!(?player, "village has no tribe");
         return server_error();
@@ -1370,11 +1505,30 @@ pub async fn rally(
         _ => None,
     };
     let target_is_oasis = target.is_some_and(|c| state.map.oasis_bonus_at(c).is_some());
+    // The Settle order is offered only with a free expansion slot (013 AC11).
+    let can_settle = match load_culture(
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.culture_rules.as_ref(),
+        now(),
+        player,
+    )
+    .await
+    {
+        Ok(c) => c.used_slots < c.allowed_villages,
+        Err(e) => {
+            tracing::error!(error = %e, "culture lookup failed");
+            return server_error();
+        }
+    };
     page(&RallyTemplate {
+        village_id: village.id.0.to_string(),
         units,
         target_x: q.x,
         target_y: q.y,
         target_is_oasis,
+        can_settle,
+        settlers_per_village: state.culture_rules.settlers_per_village,
     })
 }
 
@@ -1387,10 +1541,12 @@ pub async fn rally_send(
     AuthUser(player): AuthUser,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
+    let village = form.get("village").map(String::as_str);
+    let selected = selected_village(village);
     let x = form.get("x").and_then(|s| s.trim().parse::<i32>().ok());
     let y = form.get("y").and_then(|s| s.trim().parse::<i32>().ok());
     let (Some(x), Some(y)) = (x, y) else {
-        return Redirect::to("/village/rally").into_response();
+        return redirect_with_village("/village/rally", village);
     };
     let troops: Vec<(UnitId, u32)> = form
         .iter()
@@ -1409,6 +1565,28 @@ pub async fn rally_send(
     let catapult_target = parse_building_kind(form.get("catapult_target").map(String::as_str));
     // The mode selects the use-case: reinforce (007) defends; attack/raid (009) fight; scout (010) spies.
     match form.get("mode").map(String::as_str) {
+        Some("settle") => {
+            // Found a new village: send the settler group to a free valley tile (013 AC6/AC11).
+            if let Err(e) = order_settle(
+                state.accounts.as_ref(),
+                state.accounts.as_ref(),
+                state.accounts.as_ref(),
+                state.accounts.as_ref(),
+                state.rules.as_ref(),
+                state.unit_rules.as_ref(),
+                state.culture_rules.as_ref(),
+                state.map.as_ref(),
+                state.world.speed,
+                now(),
+                player,
+                selected,
+                target,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, "settle order rejected");
+            }
+        }
         Some("scout") => {
             if let Err(e) = order_scout(
                 state.accounts.as_ref(),
@@ -1420,6 +1598,7 @@ pub async fn rally_send(
                 state.world.speed,
                 now(),
                 player,
+                selected,
                 target,
                 troops,
                 scout_target.unwrap_or(ScoutTarget::Defenses),
@@ -1443,6 +1622,7 @@ pub async fn rally_send(
                     state.world.speed,
                     now(),
                     player,
+                    selected,
                     target,
                     troops,
                 )
@@ -1466,6 +1646,7 @@ pub async fn rally_send(
                     state.world.speed,
                     now(),
                     player,
+                    selected,
                     target,
                     troops,
                     mode,
@@ -1491,6 +1672,7 @@ pub async fn rally_send(
                     state.world.speed,
                     now(),
                     player,
+                    selected,
                     target,
                     troops,
                 )
@@ -1508,6 +1690,7 @@ pub async fn rally_send(
                 state.world.speed,
                 now(),
                 player,
+                selected,
                 target,
                 troops,
             )
@@ -1517,13 +1700,16 @@ pub async fn rally_send(
             }
         }
     }
-    Redirect::to("/village").into_response()
+    redirect_to_village(village)
 }
 
 /// Send-back form fields (the host village whose stationed troops to recall).
 #[derive(Deserialize)]
 pub struct RallyReturnForm {
     host: String,
+    /// The village page to return to (013 AC11); absent ⇒ capital / first.
+    #[serde(default)]
+    village: Option<String>,
 }
 
 /// Recall the player's troops stationed at a host, then return to the village (Player only, P4).
@@ -1549,7 +1735,7 @@ pub async fn rally_return(
     {
         tracing::warn!(error = %e, "return order rejected");
     }
-    Redirect::to("/village").into_response()
+    redirect_to_village(form.village.as_deref())
 }
 
 /// Recall form fields (the oasis tile to recall stationed troops from).
@@ -1557,6 +1743,9 @@ pub async fn rally_return(
 pub struct OasisRecallForm {
     x: i32,
     y: i32,
+    /// The village to recall the troops to (013 AC11); absent ⇒ capital / first.
+    #[serde(default)]
+    village: Option<String>,
 }
 
 /// Recall the player's troops stationed at one of their oases, then return to the village (012 AC7;
@@ -1575,22 +1764,29 @@ pub async fn oasis_recall(
         state.world.speed,
         now(),
         player,
+        selected_village(form.village.as_deref()),
         target,
     )
     .await
     {
         tracing::warn!(error = %e, "oasis recall rejected");
     }
-    Redirect::to("/village").into_response()
+    redirect_to_village(form.village.as_deref())
 }
 
 /// The Marketplace: the merchant pool (free/total + capacity) and a send-resources form (008 AC6;
 /// Player only, P4).
-pub async fn market(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
-    let (village, _amounts) = match village_view_data(&state, player).await {
-        Ok(v) => v,
-        Err(r) => return r,
-    };
+pub async fn market(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Query(q): Query<VillageQuery>,
+) -> Response {
+    let (village, _amounts) =
+        match village_view_data(&state, player, selected_village(q.village.as_deref())).await {
+            Ok(v) => v,
+            Err(r) => return r,
+        };
+    let village_id = village.id.0.to_string();
     let Some(tribe) = village.tribe else {
         tracing::error!(?player, "village has no tribe");
         return server_error();
@@ -1598,6 +1794,7 @@ pub async fn market(State(state): State<AppState>, AuthUser(player): AuthUser) -
     let level = building_level(&village, BuildingKind::Marketplace);
     if level == 0 {
         return page(&MarketTemplate {
+            village_id,
             has_marketplace: false,
             capacity: 0,
             free: 0,
@@ -1613,6 +1810,7 @@ pub async fn market(State(state): State<AppState>, AuthUser(player): AuthUser) -
     };
     let total = state.merchant_rules.merchants_total(level);
     page(&MarketTemplate {
+        village_id,
         has_marketplace: true,
         capacity: state.merchant_rules.profile(tribe).capacity,
         free: total.saturating_sub(committed),
@@ -1629,10 +1827,11 @@ pub async fn market_send(
     AuthUser(player): AuthUser,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
+    let village = form.get("village").map(String::as_str);
     let x = form.get("x").and_then(|s| s.trim().parse::<i32>().ok());
     let y = form.get("y").and_then(|s| s.trim().parse::<i32>().ok());
     let (Some(x), Some(y)) = (x, y) else {
-        return Redirect::to("/village/market").into_response();
+        return redirect_with_village("/village/market", village);
     };
     let amount = |k: &str| {
         form.get(k)
@@ -1656,6 +1855,7 @@ pub async fn market_send(
         state.world.speed,
         now(),
         player,
+        selected_village(village),
         Coordinate::new(x, y),
         bundle,
     )
@@ -1663,7 +1863,7 @@ pub async fn market_send(
     {
         tracing::warn!(error = %e, "trade order rejected");
     }
-    Redirect::to("/village").into_response()
+    redirect_to_village(village)
 }
 
 /// A one-line headline for a report from this player's perspective.

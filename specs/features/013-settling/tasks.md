@@ -46,7 +46,7 @@ on its own.
 
 ## Application — read
 
-- [ ] **T6 — Culture read + web.** `load_culture` (settle-on-read: cp, rate, allowed/used slots).
+- [x] **T6 — Culture read + web.** `load_culture` (settle-on-read: cp, rate, allowed/used slots).
   Web: a **village switcher** (every owned village; `?village=` selector defaulting to first/capital),
   the **capital** badge, a **culture panel** (CP + rate + slots used/allowed + next threshold), the
   **Settle** order on the Rally Point (offered with a free slot), Town Hall/Residence/Palace in the

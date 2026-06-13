@@ -30,8 +30,8 @@ pub use eperica_domain as domain;
 pub use auth::{LoginError, authenticate};
 pub use build::{BuildError, order_build, process_due_builds};
 pub use combat::{CombatError, order_attack, process_due_combat};
-pub use culture::reanchor_culture;
-pub use economy::{VillageEconomy, load_economy, settle_amounts};
+pub use culture::{CultureView, load_culture, reanchor_culture};
+pub use economy::{VillageEconomy, load_economy, pick_village, select_village, settle_amounts};
 pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
 pub use movement::{MovementError, order_reinforcement, order_return, process_due_movements};
 pub use oasis::{

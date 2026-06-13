@@ -74,6 +74,7 @@ pub async fn order_trade<A, T>(
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
+    selected: Option<eperica_domain::VillageId>,
     target: Coordinate,
     bundle: ResourceAmounts,
 ) -> Result<(), TradeError>
@@ -81,7 +82,7 @@ where
     A: AccountRepository,
     T: TradeRepository,
 {
-    let Some(home) = accounts.villages_of(owner).await?.into_iter().next() else {
+    let Some(home) = crate::economy::select_village(accounts, owner, selected).await? else {
         return Err(TradeError::NotFound);
     };
     let Some(tribe) = home.tribe else {
@@ -618,6 +619,7 @@ mod tests {
             GameSpeed::new(1.0).unwrap(),
             Timestamp(0),
             PlayerId(1),
+            None,
             Coordinate::new(3, 4), // distance 5 from home
             bundle,
         )

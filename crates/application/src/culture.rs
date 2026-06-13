@@ -6,8 +6,85 @@
 //! `now`, at the rate in effect *up to* that instant) at every rate-changing event: before a Town Hall
 //! completes (013 T4), and when a village is founded/lost (013 T5 / 014).
 
-use crate::ports::{CultureRepository, RepoError};
-use eperica_domain::{CultureRules, PlayerId, Timestamp, culture_rate, settle_value};
+use crate::ports::{AccountRepository, CultureRepository, RepoError};
+use eperica_domain::{
+    BuildingKind, CultureRules, PlayerId, Timestamp, Village, allowed_villages, culture_rate,
+    settle_value,
+};
+
+/// A player's culture-point standing for the village page (013 AC11): the pooled CP settled to now,
+/// its live rate, and the expansion-slot gate (used vs allowed, plus the CP needed for the next
+/// village if one remains in the threshold table).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CultureView {
+    /// Culture points settled to `now` at the live rate.
+    pub cp: i64,
+    /// The live CP/hour the player's villages produce.
+    pub rate: i64,
+    /// How many villages the player may hold now (`min(cpAllows, Residence/Palace capacity)`).
+    pub allowed_villages: u32,
+    /// How many villages the player currently holds.
+    pub used_slots: u32,
+    /// The cumulative CP the **next** village requires, or `None` when the threshold table is
+    /// exhausted (no further village is gated on CP).
+    pub next_threshold: Option<i64>,
+}
+
+/// One Residence/Palace level per village that has one (>0) — the input to the expansion-slot count.
+fn residence_levels(villages: &[Village]) -> Vec<u8> {
+    villages
+        .iter()
+        .filter_map(|v| {
+            let level = building_level(v, BuildingKind::Residence)
+                .max(building_level(v, BuildingKind::Palace));
+            (level > 0).then_some(level)
+        })
+        .collect()
+}
+
+fn building_level(village: &Village, kind: BuildingKind) -> u8 {
+    village
+        .buildings
+        .iter()
+        .find(|b| b.kind == kind)
+        .map_or(0, |b| b.level)
+}
+
+/// Read the player's culture standing on the village page (013 AC11), settling CP on read (P1): the
+/// pooled CP at the live rate, the rate, and the slot gate (used/allowed + the next CP threshold).
+///
+/// # Errors
+/// Propagates [`RepoError`] from the repositories.
+pub async fn load_culture<A, C>(
+    accounts: &A,
+    culture: &C,
+    rules: &CultureRules,
+    now: Timestamp,
+    player: PlayerId,
+) -> Result<CultureView, RepoError>
+where
+    A: AccountRepository,
+    C: CultureRepository,
+{
+    let villages = accounts.villages_of(player).await?;
+    let (value, updated_at) = culture.player_culture(player).await?;
+    let levels = culture.village_town_hall_levels(player).await?;
+    let rate = culture_rate(&levels, rules);
+    let cp = settle_value(value, rate, (now.0 - updated_at.0) / 1000);
+
+    let used_slots = villages.len() as u32;
+    let allowed_villages = allowed_villages(cp, &residence_levels(&villages), rules);
+    // The next village's CP gate (village number = used + 1); `None` once the table is exhausted.
+    let next_threshold = rules.cp_thresholds.get(used_slots as usize + 1).copied();
+
+    Ok(CultureView {
+        cp,
+        rate,
+        allowed_villages,
+        used_slots,
+        next_threshold,
+    })
+}
 
 /// Re-anchor the player's culture accumulator to `now`: settle the value forward at the rate **in
 /// effect up to now** (the live Town Hall levels), then stamp `now` as the new anchor. Idempotent for

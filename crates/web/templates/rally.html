@@ -2,7 +2,7 @@
 {% block content %}
 <section class="panel">
   <h1>Rally Point</h1>
-  <p class="muted"><a href="/village">← Back to the village</a> · send troops to
+  <p class="muted"><a href="/village?village={{ village_id }}">← Back to the village</a> · send troops to
     <strong>reinforce</strong> a friendly village, <strong>attack/raid</strong> an enemy, or
     <strong>scout</strong> to spy. Travel time depends on distance and your slowest unit.
     <a href="/reports">Reports →</a></p>
@@ -11,6 +11,7 @@
   <p class="muted">No troops to send — train some at the Barracks, Stable, or Workshop first.</p>
   {% else %}
   <form method="post" action="/village/rally/send" class="form">
+    <input type="hidden" name="village" value="{{ village_id }}">
     <div class="field">
       <label>Order</label>
       <select name="mode">
@@ -18,7 +19,10 @@
         <option value="attack">Attack (fight to destroy)</option>
         <option value="raid">Raid (fight to plunder)</option>
         <option value="scout">Scout (spy — scouts only)</option>
+        {% if can_settle %}<option value="settle">Settle (found a new village)</option>{% endif %}
       </select>
+      {% if can_settle %}<span class="muted">You have a free expansion slot: a <em>settle</em> order sends
+        {{ settlers_per_village }} settlers to a free valley tile to found a new village (other unit counts are ignored).</span>{% endif %}
     </div>
     <div class="field">
       <label>Target tile</label>

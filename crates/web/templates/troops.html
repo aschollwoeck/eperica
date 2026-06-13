@@ -2,7 +2,7 @@
 {% block content %}
 <section class="panel">
   <h1>{{ building }}</h1>
-  <p class="muted"><a href="/village">← Back to the village</a></p>
+  <p class="muted"><a href="/village?village={{ village_id }}">← Back to the village</a></p>
 
   {% if !has_building %}
   <p>Training here requires a <strong>{{ building }}</strong>. Build one in the village first.</p>
@@ -14,7 +14,7 @@
   {% endif %}
 
   {% if rows.is_empty() %}
-  <p class="muted">No researched units train here yet — visit the <a href="/village/academy">Academy</a>.</p>
+  <p class="muted">No researched units train here yet — visit the <a href="/village/academy?village={{ village_id }}">Academy</a>.</p>
   {% else %}
   <table class="table">
     <thead>
@@ -38,6 +38,7 @@
         <td>
           {% if u.can_order %}
           <form method="post" action="/village/train" class="field" style="display:flex;gap:6px">
+            <input type="hidden" name="village" value="{{ village_id }}">
             <input type="hidden" name="unit" value="{{ u.id }}">
             <input type="number" name="count" value="1" min="1" max="9999" required style="width:5.5em">
             <button class="btn btn--primary" type="submit">Train</button>

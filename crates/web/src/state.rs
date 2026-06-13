@@ -3,7 +3,8 @@
 use axum::extract::FromRef;
 use axum_extra::extract::cookie::Key;
 use eperica_domain::{
-    BuildRules, EconomyRules, MerchantRules, StartingVillage, UnitRules, WorldConfig, WorldMap,
+    BuildRules, CultureRules, EconomyRules, MerchantRules, StartingVillage, UnitRules, WorldConfig,
+    WorldMap,
 };
 use eperica_infrastructure::{Argon2Hasher, PgAccountRepository};
 use std::sync::Arc;
@@ -23,6 +24,8 @@ pub struct AppState {
     pub build_rules: Arc<BuildRules>,
     /// Unit balance rules (per-tribe rosters, research, Smithy upgrades — 004).
     pub unit_rules: Arc<UnitRules>,
+    /// Culture-point + expansion balance rules (CP rate, thresholds, slots, settlers — 013).
+    pub culture_rules: Arc<CultureRules>,
     /// Merchant/trade balance rules (per-tribe capacity + speed, merchants per level — 008).
     pub merchant_rules: Arc<MerchantRules>,
     /// The world's seeded map for the map view and placement (006).

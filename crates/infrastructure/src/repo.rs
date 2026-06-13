@@ -8232,7 +8232,8 @@ mod tests {
 
         // AC6: order a settle at a free valley and resolve it — a new village is founded.
         eperica_application::order_settle(
-            &repo, &repo, &repo, &repo, &econ, &units, &crules, &map, speed, now, user.id, target,
+            &repo, &repo, &repo, &repo, &econ, &units, &crules, &map, speed, now, user.id, None,
+            target,
         )
         .await
         .expect("order settle");
@@ -8286,6 +8287,7 @@ mod tests {
             speed,
             now,
             user.id,
+            None,
             taken_target,
         )
         .await
