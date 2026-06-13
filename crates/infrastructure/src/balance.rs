@@ -156,6 +156,7 @@ fn parse_building(name: &str) -> Result<BuildingKind, BalanceError> {
         "warehouse" => Ok(BuildingKind::Warehouse),
         "granary" => Ok(BuildingKind::Granary),
         "marketplace" => Ok(BuildingKind::Marketplace),
+        "embassy" => Ok(BuildingKind::Embassy),
         "wall" => Ok(BuildingKind::Wall),
         "barracks" => Ok(BuildingKind::Barracks),
         "academy" => Ok(BuildingKind::Academy),
@@ -293,6 +294,7 @@ struct BuildingsDto {
     warehouse: LevelSpecDto,
     granary: LevelSpecDto,
     marketplace: LevelSpecDto,
+    embassy: LevelSpecDto,
     wall: LevelSpecDto,
     barracks: LevelSpecDto,
     academy: LevelSpecDto,
@@ -342,6 +344,7 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
         (BuildingKind::Warehouse, &dto.buildings.warehouse),
         (BuildingKind::Granary, &dto.buildings.granary),
         (BuildingKind::Marketplace, &dto.buildings.marketplace),
+        (BuildingKind::Embassy, &dto.buildings.embassy),
         (BuildingKind::Wall, &dto.buildings.wall),
         (BuildingKind::Barracks, &dto.buildings.barracks),
         (BuildingKind::Academy, &dto.buildings.academy),
@@ -904,6 +907,29 @@ mod tests {
             kind: BuildingKind::Warehouse,
         };
         assert!(r.cost(warehouse, 0).is_some());
+    }
+
+    #[test]
+    fn loads_embassy_building() {
+        // 015 AC1: the Embassy is an ordinary infrastructure building — Main Building L1 prereq, a
+        // 10-level cost/time table, and no exclusivity. It loads into the build catalog like any other.
+        let r = build_rules().expect("build rules");
+        let embassy = BuildTarget::Building {
+            slot: 0,
+            kind: BuildingKind::Embassy,
+        };
+        assert_eq!(
+            r.prerequisites(BuildingKind::Embassy),
+            &[(BuildingKind::MainBuilding, 1)]
+        );
+        assert_eq!(r.max_level(embassy), 10, "Embassy level cap");
+        assert!(r.cost(embassy, 0).is_some(), "level-1 Embassy has a cost");
+        assert!(
+            r.cost(embassy, 9).is_some() && r.cost(embassy, 10).is_none(),
+            "the Embassy cost table ends at the cap"
+        );
+        // Costs rise with level (the table is monotonic in wood).
+        assert!(r.cost(embassy, 1).unwrap().wood > r.cost(embassy, 0).unwrap().wood);
     }
 
     #[test]

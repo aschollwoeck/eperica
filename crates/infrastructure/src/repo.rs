@@ -147,6 +147,7 @@ fn building_str(kind: BuildingKind) -> &'static str {
         BuildingKind::Warehouse => "warehouse",
         BuildingKind::Granary => "granary",
         BuildingKind::Marketplace => "marketplace",
+        BuildingKind::Embassy => "embassy",
         BuildingKind::Wall => "wall",
         BuildingKind::Barracks => "barracks",
         BuildingKind::Academy => "academy",

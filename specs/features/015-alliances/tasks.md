@@ -9,7 +9,7 @@ visibility/defence views.
 
 ## Domain & balance
 
-- [ ] **T1 — The Embassy building.** Add `BuildingKind::Embassy` (handle every exhaustive site the
+- [x] **T1 — The Embassy building.** Add `BuildingKind::Embassy` (handle every exhaustive site the
   compiler flags: `repo::building_str`, `balance::parse_building`, `web::{building_label, building_kind_id,
   order index}`). Add `[buildings.embassy]` to `construction.toml` (time/cost/prereq: Main Building L1) +
   `BuildingsDto.embassy` + the `build_rules()` catalog pair; add the Embassy `population` row to

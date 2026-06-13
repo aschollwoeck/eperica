@@ -58,6 +58,7 @@ fn building_label(kind: BuildingKind) -> &'static str {
         BuildingKind::Warehouse => "Warehouse",
         BuildingKind::Granary => "Granary",
         BuildingKind::Marketplace => "Marketplace",
+        BuildingKind::Embassy => "Embassy",
         BuildingKind::Wall => "Wall",
         BuildingKind::Barracks => "Barracks",
         BuildingKind::Academy => "Academy",
@@ -79,6 +80,7 @@ fn building_kind_id(kind: BuildingKind) -> &'static str {
         BuildingKind::Warehouse => "warehouse",
         BuildingKind::Granary => "granary",
         BuildingKind::Marketplace => "marketplace",
+        BuildingKind::Embassy => "embassy",
         BuildingKind::Wall => "wall",
         BuildingKind::Barracks => "barracks",
         BuildingKind::Academy => "academy",
@@ -112,6 +114,7 @@ fn building_slot(kind: BuildingKind) -> u8 {
         BuildingKind::Outpost => 13,
         BuildingKind::TownHall => 14,
         BuildingKind::Palace => 15,
+        BuildingKind::Embassy => 16,
     }
 }
 
@@ -122,6 +125,7 @@ fn parse_building_kind(s: Option<&str>) -> Option<BuildingKind> {
         Some("warehouse") => Some(BuildingKind::Warehouse),
         Some("granary") => Some(BuildingKind::Granary),
         Some("marketplace") => Some(BuildingKind::Marketplace),
+        Some("embassy") => Some(BuildingKind::Embassy),
         Some("wall") => Some(BuildingKind::Wall),
         Some("barracks") => Some(BuildingKind::Barracks),
         Some("academy") => Some(BuildingKind::Academy),
@@ -476,6 +480,7 @@ pub async fn village(
         BuildingKind::Warehouse,
         BuildingKind::Granary,
         BuildingKind::Marketplace,
+        BuildingKind::Embassy,
         BuildingKind::Wall,
         BuildingKind::Cranny,
         BuildingKind::Outpost,

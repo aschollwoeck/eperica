@@ -14,6 +14,8 @@ pub enum BuildingKind {
     Granary,
     /// Enables trade; its level sets how many merchants the village has (008).
     Marketplace,
+    /// Gates alliance membership (015): level 1 to join an alliance, level 3 to found one.
+    Embassy,
     /// Trains infantry (005); required by the Academy.
     Barracks,
     /// Researches unit types so they can be trained.
