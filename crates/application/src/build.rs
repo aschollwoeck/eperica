@@ -22,6 +22,9 @@ pub enum BuildError {
     /// A building prerequisite is unmet.
     #[error("prerequisites not met")]
     PrereqUnmet,
+    /// A village may hold at most one of {Residence, Palace}; the other is already present (013 AC3).
+    #[error("a Residence or Palace already occupies this village")]
+    Exclusive,
     /// The village or target does not exist.
     #[error("not found")]
     NotFound,
@@ -77,6 +80,7 @@ pub async fn order_build<A, B, S>(
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
+    selected: Option<eperica_domain::VillageId>,
     target: BuildTarget,
 ) -> Result<(), BuildError>
 where
@@ -84,18 +88,38 @@ where
     B: BuildRepository,
     S: crate::ports::StarvationRepository,
 {
-    let Some(village) = accounts.villages_of(owner).await?.into_iter().next() else {
+    let Some(village) = crate::economy::select_village(accounts, owner, selected).await? else {
         return Err(BuildError::NotFound);
     };
     let current = current_level(&village, target).ok_or(BuildError::NotFound)?;
 
-    if current >= build_rules.max_level(target) {
+    // The capital may raise its resource fields past the normal cap (013 AC10); buildings use the
+    // ordinary table cap.
+    let cap = match target {
+        BuildTarget::Field { .. } => build_rules.field_max_level(village.is_capital),
+        BuildTarget::Building { .. } => build_rules.max_level(target),
+    };
+    if current >= cap {
         return Err(BuildError::MaxLevel);
     }
     if let BuildTarget::Building { kind, .. } = target
         && !prerequisites_met(kind, &village.buildings, build_rules)
     {
         return Err(BuildError::PrereqUnmet);
+    }
+    // 013 AC3: a village holds at most one of {Residence, Palace} — reject building one when the other
+    // is already present (upgrading the existing one is unaffected: `current` is this kind's level).
+    if let BuildTarget::Building { kind, .. } = target {
+        let exclusive_other = match kind {
+            BuildingKind::Residence => Some(BuildingKind::Palace),
+            BuildingKind::Palace => Some(BuildingKind::Residence),
+            _ => None,
+        };
+        if let Some(other) = exclusive_other
+            && building_level(&village, other) > 0
+        {
+            return Err(BuildError::Exclusive);
+        }
     }
 
     let cost = build_rules
@@ -166,19 +190,45 @@ where
 /// Claim and apply all builds due at `now` (up to `limit`); returns the villages whose levels
 /// changed (003 AC5; population moved — 005 callers re-sync starvation checks for them).
 ///
+/// A completing **Town Hall** changes the owner's culture rate (013 AC1/AC2), so the player's culture
+/// accumulator is **re-anchored before** the level-up is applied — crediting the elapsed period at the
+/// old rate (P2).
+///
 /// # Errors
 /// Propagates [`RepoError`] from the repository.
-pub async fn process_due_builds<B>(
+#[allow(clippy::too_many_arguments)]
+pub async fn process_due_builds<B, A, C>(
     builds: &B,
+    accounts: &A,
+    culture: &C,
+    culture_rules: &eperica_domain::CultureRules,
     now: Timestamp,
     limit: i64,
 ) -> Result<Vec<eperica_domain::VillageId>, RepoError>
 where
     B: BuildRepository,
+    A: AccountRepository,
+    C: crate::ports::CultureRepository,
 {
     let due = builds.claim_due_builds(now, limit).await?;
     let mut villages = Vec::new();
     for order in due {
+        // A Town Hall completing changes the rate: settle the owner's culture at the old rate first.
+        let is_town_hall = matches!(
+            order.target,
+            BuildTarget::Building {
+                kind: BuildingKind::TownHall,
+                ..
+            }
+        );
+        if is_town_hall
+            && let Ok(Some(v)) = accounts.village_by_id(order.village).await
+            && let Err(e) =
+                crate::culture::reanchor_culture(culture, culture_rules, order.complete_at, v.owner)
+                    .await
+        {
+            tracing::error!(error = %e, "failed to re-anchor culture before a Town Hall");
+        }
         // Log-and-continue: one failed apply must not strand the rest of the claimed batch. Failed
         // (still-`processing`) orders are recovered at scheduler startup; apply_build is idempotent.
         match builds.apply_build(order).await {
@@ -234,6 +284,7 @@ mod tests {
             fields,
             buildings,
             oasis_bonus: Default::default(),
+            is_capital: false,
         }
     }
 
@@ -261,6 +312,17 @@ mod tests {
                 time_secs_per_level: vec![800],
             },
         );
+        // Residence/Palace specs so the exclusivity check (not a max-level/cost short-circuit) is the
+        // tested path (013 AC3).
+        for kind in [BuildingKind::Residence, BuildingKind::Palace] {
+            buildings.insert(
+                kind,
+                LevelSpec {
+                    cost_per_level: vec![amounts(50)],
+                    time_secs_per_level: vec![800],
+                },
+            );
+        }
         let mut prerequisites = HashMap::new();
         prerequisites.insert(
             BuildingKind::Warehouse,
@@ -268,9 +330,11 @@ mod tests {
         );
         BuildRules {
             field: LevelSpec {
-                cost_per_level: vec![amounts(40)],
-                time_secs_per_level: vec![600],
+                cost_per_level: vec![amounts(40), amounts(90)],
+                time_secs_per_level: vec![600, 1200],
             },
+            field_max_level: 1,
+            capital_field_max_level: 2,
             buildings,
             prerequisites,
             main_building_factor_per_level: vec![1.0, 1.0],
@@ -465,6 +529,7 @@ mod tests {
             GameSpeed::new(1.0).unwrap(),
             Timestamp(0),
             PlayerId(1),
+            None,
             target,
         )
         .await
@@ -601,5 +666,30 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err, BuildError::MaxLevel);
+    }
+
+    #[tokio::test]
+    async fn residence_and_palace_are_exclusive() {
+        // 013 AC3: a village holding a Residence cannot also build a Palace (and vice versa).
+        let mut village = make_village(0, true);
+        village.buildings.push(BuildingSlot {
+            kind: BuildingKind::Residence,
+            level: 1,
+        });
+        let accounts = FakeAccounts {
+            village,
+            stored: amounts(1000),
+        };
+        let err = order(
+            &accounts,
+            &FakeBuilds::default(),
+            BuildTarget::Building {
+                slot: 15,
+                kind: BuildingKind::Palace,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, BuildError::Exclusive);
     }
 }

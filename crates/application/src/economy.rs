@@ -3,8 +3,43 @@
 use crate::ports::{AccountRepository, RepoError};
 use eperica_domain::{
     Economy, EconomyRules, GameSpeed, PlayerId, ResourceAmounts, Timestamp, UnitCounts, UnitRules,
-    Village, compute_economy, garrison_upkeep,
+    Village, VillageId, compute_economy, garrison_upkeep,
 };
+
+/// Pick the village a multi-village request is acting on (013 AC11): the `selected` village when the
+/// player owns it, otherwise their **capital** (or, failing that, their first village) — the
+/// single-village default. Single-village play passes `None` and is unchanged. The lookup is one
+/// `villages_of` (already on the page's hot path), so no extra query.
+///
+/// # Errors
+/// Propagates [`RepoError`] from the repository.
+pub async fn select_village<R>(
+    repo: &R,
+    owner: PlayerId,
+    selected: Option<VillageId>,
+) -> Result<Option<Village>, RepoError>
+where
+    R: AccountRepository,
+{
+    let villages = repo.villages_of(owner).await?;
+    Ok(pick_village(villages, selected))
+}
+
+/// The selection rule over an already-fetched village list (kept pure so callers that hold the list
+/// reuse it without a second read): the `selected` one if present, else the capital, else the first.
+#[must_use]
+pub fn pick_village(villages: Vec<Village>, selected: Option<VillageId>) -> Option<Village> {
+    if let Some(id) = selected
+        && let Some(v) = villages.iter().find(|v| v.id == id)
+    {
+        return Some(v.clone());
+    }
+    villages
+        .iter()
+        .find(|v| v.is_capital)
+        .cloned()
+        .or_else(|| villages.into_iter().next())
+}
 
 /// Settle a village's stored resources forward to `now` (compute-on-read, P1), net of the garrison's
 /// crop upkeep — the amounts a caller debits against. Pure given the stored snapshot.
@@ -46,13 +81,15 @@ pub struct VillageEconomy {
     pub economy: Economy,
 }
 
-/// Load the owner's (first) village economy, accruing resources from stored state to `now` (P1/P2).
-/// The garrison's crop upkeep feeds the net rate (005 AC6).
+/// Load a village's economy, accruing resources from stored state to `now` (P1/P2). The garrison's
+/// crop upkeep feeds the net rate (005 AC6). `selected` chooses which of the owner's villages to load
+/// (013 AC11); `None` (or an unowned id) falls back to the capital / first village.
 ///
 /// Returns `None` if the player has no village (or no stored resources).
 ///
 /// # Errors
 /// Propagates [`RepoError`] from the repository.
+#[allow(clippy::too_many_arguments)]
 pub async fn load_economy<R>(
     repo: &R,
     rules: &EconomyRules,
@@ -60,11 +97,12 @@ pub async fn load_economy<R>(
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
+    selected: Option<VillageId>,
 ) -> Result<Option<VillageEconomy>, RepoError>
 where
     R: AccountRepository,
 {
-    let Some(village) = repo.villages_of(owner).await?.into_iter().next() else {
+    let Some(village) = select_village(repo, owner, selected).await? else {
         return Ok(None);
     };
     let Some((stored, updated_at)) = repo.stored_resources(village.id).await? else {

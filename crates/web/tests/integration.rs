@@ -6,15 +6,15 @@
 use axum_extra::extract::cookie::Key;
 use eperica_application::{
     process_due_combat, process_due_movements, process_due_oasis_combat, process_due_scouts,
-    process_due_trades,
+    process_due_settles, process_due_trades,
 };
 use eperica_domain::{
     Coordinate, GameSpeed, TileKind, Timestamp, WorldConfig, WorldMap, coordinates_within,
 };
 use eperica_infrastructure::{
-    Argon2Hasher, PgAccountRepository, build_rules, combat_rules, create_pool, economy_rules,
-    ensure_world, map_rules, merchant_rules, now, oasis_rules, run_migrations, scout_rules,
-    starting_village, unit_rules,
+    Argon2Hasher, PgAccountRepository, build_rules, combat_rules, create_pool, culture_rules,
+    economy_rules, ensure_world, map_rules, merchant_rules, now, oasis_rules, run_migrations,
+    scout_rules, starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -50,6 +50,7 @@ async fn spawn() -> Option<String> {
         rules: Arc::new(rules),
         build_rules: Arc::new(build_rules().expect("build rules")),
         unit_rules: Arc::new(unit_rules().expect("unit rules")),
+        culture_rules: Arc::new(culture_rules().expect("culture rules")),
         merchant_rules: Arc::new(merchant_rules().expect("merchant rules")),
         map,
         world: config,
@@ -1859,5 +1860,300 @@ async fn oasis_attack_occupy_and_bonus_flow() {
     assert!(
         map_html.contains(&format!("held by {user}")),
         "the map shows the oasis owner"
+    );
+}
+
+/// 013 AC11 / roles (P4): a player cannot act on another player's village by forging the `village=`
+/// selector — the action falls back to the caller's own village, never the victim's.
+#[tokio::test]
+async fn forged_village_selector_cannot_act_on_anothers_village() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    let _ = dotenvy::dotenv();
+    let url = std::env::var("DATABASE_URL").unwrap();
+    let pool = create_pool(&url).await.unwrap();
+
+    let attacker = unique("forge_a");
+    let victim = unique("forge_v");
+    let ca = client();
+    let cv = client();
+    for (c, u) in [(&ca, &attacker), (&cv, &victim)] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", "gauls"),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+
+    let a_village: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&attacker)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let v_village: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&victim)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // The attacker orders a build, forging the victim's village id in the form.
+    let res = ca
+        .post(format!("{base}/village/build"))
+        .form(&[
+            ("table", "field"),
+            ("slot", "0"),
+            ("village", v_village.as_u128().to_string().as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+
+    // P4: nothing was queued on the victim's village; the build landed on the attacker's own.
+    let victim_orders: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM build_orders WHERE village_id = $1")
+            .bind(v_village)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(victim_orders, 0, "the victim's village was untouched");
+    let attacker_orders: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM build_orders WHERE village_id = $1")
+            .bind(a_village)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        attacker_orders, 1,
+        "the build fell back to the caller's own village"
+    );
+    let _ = cv;
+}
+
+/// 013 AC11: the village page shows culture points + expansion slots; with a free slot the Rally
+/// Point offers a **Settle** order that founds a new village; the player can then switch between
+/// their villages; the **capital** is badged on the village page and distinguished on the map.
+#[tokio::test]
+async fn settling_culture_panel_switcher_and_capital_flow() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    let _ = dotenvy::dotenv();
+    let url = std::env::var("DATABASE_URL").unwrap();
+    let pool = create_pool(&url).await.unwrap();
+    let repo = movement_repo(&pool).await;
+    let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+    let world = ensure_world(&pool, &config).await.unwrap();
+    let map = WorldMap::new(world.seed as u64, config.radius, map_rules().unwrap());
+    let crules = culture_rules().unwrap();
+    let units = unit_rules().unwrap();
+    let template = starting_village().unwrap();
+
+    let user = unique("settler");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", format!("{user}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    let (user_id, vid, vx, vy): (uuid::Uuid, uuid::Uuid, i32, i32) = sqlx::query_as(
+        "SELECT u.id, v.id, v.x, v.y FROM villages v JOIN users u ON u.id = v.owner_id \
+         WHERE u.username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let village_coord = Coordinate::new(vx, vy);
+
+    // AC1/AC11: a fresh player's village page shows the culture panel — pooled CP at the base rate,
+    // one village of one allowed, and the next village's CP threshold.
+    let body = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("Culture points:"), "culture panel shown");
+    assert!(body.contains("1 / 1"), "slots used/allowed shown");
+    assert!(body.contains("next village at"), "next CP threshold shown");
+
+    // Seed a free slot: a Residence (grants capacity) + enough pooled CP, and the settler group in
+    // the garrison. (Building these via the UI would take game-hours; the flow under test is the
+    // settle order, not construction/training.)
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         VALUES ($1, 9, 'residence', 1)",
+    )
+    .bind(vid)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE player_culture SET value = 1000, updated_at = now() WHERE player_id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, $2, $3)")
+        .bind(vid)
+        .bind(&crules.settler_id)
+        .bind(i32::try_from(crules.settlers_per_village).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // AC4/AC11: with a free slot, the village page invites expansion and the Rally Point offers the
+    // Settle order.
+    let body = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("1 / 2"), "the free slot is reflected");
+    let rally = c
+        .get(format!("{base}/village/rally"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        rally.contains("Settle (found a new village)"),
+        "the Settle order is offered with a free slot"
+    );
+
+    // A free valley to found on (no village there, a different tile).
+    let occupied: std::collections::HashSet<(i32, i32)> =
+        sqlx::query_as::<_, (i32, i32)>("SELECT x, y FROM villages WHERE world_id = $1")
+            .bind(uuid::Uuid::from_u128(world.id.0))
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .collect();
+    let target = coordinates_within(config.radius)
+        .find(|coord| {
+            matches!(map.tile_at(*coord), Some(TileKind::Valley(_)))
+                && *coord != village_coord
+                && !occupied.contains(&(coord.x, coord.y))
+        })
+        .expect("a free valley exists");
+
+    // AC6/AC11: settle — send the settler group to the free valley; PRG back to the village.
+    let res = c
+        .post(format!("{base}/village/rally/send"))
+        .form(&[
+            ("mode", "settle"),
+            ("x", target.x.to_string().as_str()),
+            ("y", target.y.to_string().as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+
+    // The System resolves the due settle: a new village is founded at the target.
+    let future = Timestamp(now().0 + 10_000_000_000);
+    process_due_settles(
+        &repo,
+        &repo,
+        &repo,
+        &crules,
+        &units,
+        &template,
+        &map,
+        GameSpeed::new(1.0).unwrap(),
+        future,
+        100,
+    )
+    .await
+    .unwrap();
+
+    // AC8/AC11: the player now has two villages and can switch between them — the switcher lists
+    // both, defaulting to the first/capital.
+    let body = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("Your villages:"), "the switcher is shown");
+    assert!(
+        body.contains(&format!("({}|{})", target.x, target.y)),
+        "the founded village appears in the switcher"
+    );
+    // Switching to the founded village shows that village's page.
+    let founded_id: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM villages WHERE owner_id = $1 AND x = $2 AND y = $3")
+            .bind(user_id)
+            .bind(target.x)
+            .bind(target.y)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let switched = c
+        .get(format!("{base}/village?village={}", founded_id.as_u128()))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        switched.contains(&format!("Location ({}, {})", target.x, target.y)),
+        "switching shows the founded village's own page"
+    );
+
+    // AC9/AC10/AC11: the capital is badged on the village page and distinguished on the map. (The
+    // Palace→capital mechanism is covered by the 013 DB tests; here we assert the display.)
+    sqlx::query("UPDATE villages SET is_capital = true WHERE id = $1")
+        .bind(vid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let capital_page = c
+        .get(format!("{base}/village?village={}", vid.as_u128()))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(capital_page.contains("Capital"), "the capital is badged");
+    let map_html = c
+        .get(format!("{base}/map?x={vx}&y={vy}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        map_html.contains("(capital)"),
+        "the map distinguishes the capital"
     );
 }

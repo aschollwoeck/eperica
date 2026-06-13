@@ -8,6 +8,7 @@
 pub mod building;
 pub mod combat;
 pub mod construction;
+pub mod culture;
 pub mod economy;
 pub mod error;
 pub mod event;
@@ -30,6 +31,9 @@ pub use combat::{
 pub use construction::{
     BuildRules, BuildTarget, LevelSpec, QueueLane, build_time_secs, building_levels_met,
     can_afford, debit, prerequisites_met, queue_lane,
+};
+pub use culture::{
+    CultureRules, allowed_villages, cp_allows, culture_rate, expansion_slots, settle_value,
 };
 pub use economy::{
     Capacities, Economy, EconomyRules, ProductionRates, ResourceAmounts, accrue, capacities,

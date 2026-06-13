@@ -99,8 +99,9 @@ async fn village_and_amounts<A: AccountRepository>(
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
+    selected: Option<eperica_domain::VillageId>,
 ) -> Result<Option<(Village, Tribe, ResourceAmounts, Timestamp)>, RepoError> {
-    let Some(village) = accounts.villages_of(owner).await?.into_iter().next() else {
+    let Some(village) = crate::economy::select_village(accounts, owner, selected).await? else {
         return Ok(None);
     };
     let Some(tribe) = village.tribe else {
@@ -145,6 +146,7 @@ pub async fn order_research<A, U, S>(
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
+    selected: Option<eperica_domain::VillageId>,
     unit: UnitId,
 ) -> Result<(), ResearchError>
 where
@@ -152,8 +154,16 @@ where
     U: UnitRepository,
     S: crate::ports::StarvationRepository,
 {
-    let Some((village, tribe, amounts, settled_from)) =
-        village_and_amounts(accounts, economy_rules, unit_rules, speed, now, owner).await?
+    let Some((village, tribe, amounts, settled_from)) = village_and_amounts(
+        accounts,
+        economy_rules,
+        unit_rules,
+        speed,
+        now,
+        owner,
+        selected,
+    )
+    .await?
     else {
         return Err(ResearchError::NotFound);
     };
@@ -217,6 +227,7 @@ pub async fn order_smithy_upgrade<A, U, S>(
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
+    selected: Option<eperica_domain::VillageId>,
     unit: UnitId,
 ) -> Result<(), UpgradeError>
 where
@@ -224,8 +235,16 @@ where
     U: UnitRepository,
     S: crate::ports::StarvationRepository,
 {
-    let Some((village, tribe, amounts, settled_from)) =
-        village_and_amounts(accounts, economy_rules, unit_rules, speed, now, owner).await?
+    let Some((village, tribe, amounts, settled_from)) = village_and_amounts(
+        accounts,
+        economy_rules,
+        unit_rules,
+        speed,
+        now,
+        owner,
+        selected,
+    )
+    .await?
     else {
         return Err(UpgradeError::NotFound);
     };
@@ -352,6 +371,7 @@ pub async fn order_train<A, U, T, S>(
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
+    selected: Option<eperica_domain::VillageId>,
     unit: UnitId,
     count: u32,
 ) -> Result<(), TrainError>
@@ -361,8 +381,16 @@ where
     T: TrainingRepository,
     S: crate::ports::StarvationRepository,
 {
-    let Some((village, tribe, amounts, settled_from)) =
-        village_and_amounts(accounts, economy_rules, unit_rules, speed, now, owner).await?
+    let Some((village, tribe, amounts, settled_from)) = village_and_amounts(
+        accounts,
+        economy_rules,
+        unit_rules,
+        speed,
+        now,
+        owner,
+        selected,
+    )
+    .await?
     else {
         return Err(TrainError::NotFound);
     };
@@ -691,6 +719,7 @@ mod tests {
                 .map(|&(kind, level)| BuildingSlot { kind, level })
                 .collect(),
             oasis_bonus: Default::default(),
+            is_capital: false,
         }
     }
 
@@ -911,6 +940,7 @@ mod tests {
             GameSpeed::new(1.0).unwrap(),
             Timestamp(0),
             PlayerId(1),
+            None,
             UnitId(unit.to_owned()),
             count,
         )
@@ -1075,6 +1105,7 @@ mod tests {
             GameSpeed::new(speed).unwrap(),
             Timestamp(0),
             PlayerId(1),
+            None,
             UnitId(unit.to_owned()),
         )
         .await
@@ -1094,6 +1125,7 @@ mod tests {
             GameSpeed::new(1.0).unwrap(),
             Timestamp(0),
             PlayerId(1),
+            None,
             UnitId(unit.to_owned()),
         )
         .await

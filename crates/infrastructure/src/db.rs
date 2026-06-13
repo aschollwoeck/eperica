@@ -6,7 +6,7 @@ use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
 
 /// Migrations embedded at compile time from the workspace `migrations/` directory.
-/// (Re-embed marker: 0014_siege_loot.)
+/// (Re-embed marker: 0021_culture_backfill.)
 pub static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 
 /// Create a connection pool for the given database URL.

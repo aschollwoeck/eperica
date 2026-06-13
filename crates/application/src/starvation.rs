@@ -332,6 +332,7 @@ mod tests {
             }],
             buildings: vec![],
             oasis_bonus: Default::default(),
+            is_capital: false,
         }
     }
 

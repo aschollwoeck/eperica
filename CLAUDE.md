@@ -8,8 +8,9 @@ Eperica is a from-scratch, **faithful Travian-style competitive strategy MMO** (
 built **spec-driven** and **performance-first** (sub-second timing is gameplay). The design is
 complete and implementation proceeds slice by slice from the roadmap; the foundation, economy,
 construction, tribes/units, training/upkeep, world-map, movement, trade, combat, scouting,
-siege/loot, and oases slices (001–012) are built — milestones M1, M2, M3, and into M4 (the PvP
-conflict layer).
+siege/loot, and oases slices (001–012) are built — milestones M1–M4 (the PvP conflict layer) — and
+the **settling** slice (013, the multi-village layer: culture points, settlers, founding villages,
+and the capital) is in progress (M5).
 
 ## Read the specs first — they are the source of truth
 
@@ -23,7 +24,7 @@ conflict layer).
 - **`specs/roadmap.md`** — dependency-ordered build order (slices 001 → end-game).
 - **`specs/social-and-meta-features.md`** — app-layer features (chat, profiles, UX) — not sim rules.
 - **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the active slice. Currently:
-  `012-oases`.
+  `013-settling`.
 
 If behavior must change, **update the spec first**, then the code.
 

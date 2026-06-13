@@ -1104,6 +1104,138 @@ pub enum OasisReinforceOutcome {
     },
 }
 
+/// Persistence for the per-player culture-point accumulator (013, §11.1). CP is pooled across a
+/// player's villages and **lazy** (002 model): the stored `(value, updated_at)` is settled on read at
+/// the **live rate** (derived from the villages' Town Hall levels), and re-anchored whenever that rate
+/// changes.
+#[async_trait]
+pub trait CultureRepository: Send + Sync {
+    /// The player's stored culture-point accumulator: `(value, last-settled instant)`. A freshly
+    /// registered player has `(0, registrationTime)`.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn player_culture(&self, player: PlayerId) -> Result<(i64, Timestamp), RepoError>;
+
+    /// Re-anchor the accumulator: write the settled `value` and set the last-settled instant to `at`
+    /// (an upsert). Called at each rate change so the next read accrues at the new rate from `at`.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn settle_culture(
+        &self,
+        player: PlayerId,
+        value: i64,
+        at: Timestamp,
+    ) -> Result<(), RepoError>;
+
+    /// The Town Hall level of **each** of the player's villages (0 where there is no Town Hall) — the
+    /// input to the live culture rate. One entry per owned village.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn village_town_hall_levels(&self, player: PlayerId) -> Result<Vec<u8>, RepoError>;
+}
+
+/// A claimed, due settle movement ready to resolve (013). Targets a free **valley tile**, not a village.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DueSettle {
+    /// The movement's identity.
+    pub id: u128,
+    /// The settling player.
+    pub owner: PlayerId,
+    /// The source village (the settlers came from here / bounce back here).
+    pub home_village: VillageId,
+    /// The source tile.
+    pub origin: Coordinate,
+    /// The destination valley tile to found on.
+    pub target: Coordinate,
+    /// When the settlers arrive (the resolution instant).
+    pub arrive_at: Timestamp,
+    /// The settler group.
+    pub troops: UnitCounts,
+}
+
+/// What a resolved settle does: **found** a new village on the target tile, or **bounce** the settlers
+/// back home (the tile was taken or the slot was lost in flight).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettleOutcome {
+    /// Found a new village (the repository assigns its id). `culture_value` is the player's culture
+    /// accumulator settled to the resolution instant at the **old** rate (before the new village joins
+    /// it) — written in the same founding transaction (013 AC1/P2).
+    Found { culture_value: i64 },
+    /// Bounce the settlers home as a `return` arriving at this instant.
+    Bounce { return_arrive: Timestamp },
+}
+
+/// The single-transaction application of a resolved settle (013 AC6/AC7/AC12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettleApply {
+    /// The settle movement to mark `done`.
+    pub movement_id: u128,
+    /// The settling player (and owner of a founded village).
+    pub owner: PlayerId,
+    /// The source village (the bounce return is delivered here).
+    pub home_village: VillageId,
+    /// The source tile (the bounce return's destination).
+    pub home_coord: Coordinate,
+    /// The target valley tile.
+    pub target: Coordinate,
+    /// The settler group (consumed on a found; returned on a bounce).
+    pub troops: UnitCounts,
+    /// The new/founding village's tribe (the player's).
+    pub tribe: Tribe,
+    /// The resolution instant (a bounce return departs then; the culture settle stamps it).
+    pub battle_at: Timestamp,
+    /// Found or bounce.
+    pub outcome: SettleOutcome,
+}
+
+/// Persistence for settling (013): dispatch settlers, claim due settles, found-or-bounce.
+#[async_trait]
+pub trait SettleRepository: Send + Sync {
+    /// Atomically debit the settler group from the `home` garrison (guarded) and create a `settle`
+    /// movement to the `target` valley tile (no destination village) arriving at `arrive_at`.
+    ///
+    /// # Errors
+    /// [`RepoError::Conflict`] if the garrison no longer covers the settlers; [`RepoError`] otherwise.
+    #[allow(clippy::too_many_arguments)]
+    async fn start_settle(
+        &self,
+        home: VillageId,
+        owner: PlayerId,
+        origin: Coordinate,
+        target: Coordinate,
+        now: Timestamp,
+        arrive_at: Timestamp,
+        troops: &[(UnitId, u32)],
+    ) -> Result<(), RepoError>;
+
+    /// Atomically claim settle movements whose arrival is due (`in_transit → processing`).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn claim_due_settles(
+        &self,
+        now: Timestamp,
+        limit: i64,
+    ) -> Result<Vec<DueSettle>, RepoError>;
+
+    /// Apply a resolved settle in **one** transaction. **Found**: insert the new village at the target
+    /// (the seeded tile's fields + `template` buildings + starting resources, owned by `owner`) and
+    /// re-anchor the player's culture; the founding is guarded on the tile still being free
+    /// ([`RepoError::Conflict`] if taken in flight). **Bounce**: schedule the settlers' `return` home.
+    /// Either way, mark the movement `done`. Exactly-once with the orphan requeue (AC12).
+    ///
+    /// # Errors
+    /// [`RepoError::Conflict`] if a `Found` target was taken in flight; [`RepoError`] otherwise.
+    async fn apply_settle(
+        &self,
+        apply: SettleApply,
+        template: &StartingVillage,
+    ) -> Result<(), RepoError>;
+}
+
 /// A claimed, due event ready to be processed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DueEvent {
@@ -1174,6 +1306,10 @@ pub struct DueBuild {
     pub target: BuildTarget,
     /// The level to set.
     pub target_level: u8,
+    /// When the order completed (its due instant, Unix-ms UTC) — the deterministic time a rate-changing
+    /// completion (e.g. a Town Hall) re-anchors the player's culture at, independent of when the
+    /// scheduler fires (013 AC1/P2).
+    pub complete_at: Timestamp,
 }
 
 /// Persistence for the build queue (due-timestamped orders, P1).

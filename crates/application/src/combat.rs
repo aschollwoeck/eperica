@@ -178,6 +178,7 @@ pub async fn order_attack<A, C, S>(
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
+    selected: Option<eperica_domain::VillageId>,
     target: Coordinate,
     troops: Vec<(UnitId, u32)>,
     mode: AttackMode,
@@ -196,7 +197,7 @@ where
     ) {
         return Err(CombatError::InvalidCatapultTarget);
     }
-    let Some(home) = accounts.villages_of(owner).await?.into_iter().next() else {
+    let Some(home) = crate::economy::select_village(accounts, owner, selected).await? else {
         return Err(CombatError::NotFound);
     };
     let Some(tribe) = home.tribe else {
@@ -671,6 +672,7 @@ mod tests {
                 level: 1,
             }],
             oasis_bonus: Default::default(),
+            is_capital: false,
         }
     }
 
@@ -1079,6 +1081,7 @@ mod tests {
             GameSpeed::new(1.0).unwrap(),
             Timestamp(0),
             PlayerId(1),
+            None,
             Coordinate::new(3, 4), // distance 5 from home
             troops,
             mode,
@@ -1104,6 +1107,7 @@ mod tests {
             GameSpeed::new(1.0).unwrap(),
             Timestamp(0),
             PlayerId(1),
+            None,
             Coordinate::new(3, 4),
             troops,
             AttackMode::Attack,
@@ -1246,6 +1250,7 @@ mod tests {
                 GameSpeed::new(1.0).unwrap(),
                 Timestamp(0),
                 PlayerId(1),
+                None,
                 Coordinate::new(3, 4),
                 troops,
                 AttackMode::Attack,

@@ -25,6 +25,8 @@ pub enum MovementKind {
     OasisAttack,
     /// Troops travel to reinforce one of the owner's **own** occupied oases (012).
     OasisReinforce,
+    /// Settlers travel to a free valley to **found** a new village (013).
+    Settle,
 }
 
 /// The slowest map speed among the unit types present in `troops` (fields/hour), or `None` if the

@@ -2,7 +2,7 @@
 {% block content %}
 <section class="panel">
   <h1>Academy</h1>
-  <p class="muted"><a href="/village">← Back to the village</a></p>
+  <p class="muted"><a href="/village?village={{ village_id }}">← Back to the village</a></p>
 
   {% if !has_academy %}
   <p>Research requires an <strong>Academy</strong>. Build one in the village first.</p>
@@ -42,6 +42,7 @@
         <td>
           {% if u.can_order %}
           <form method="post" action="/village/academy/research">
+            <input type="hidden" name="village" value="{{ village_id }}">
             <input type="hidden" name="unit" value="{{ u.id }}">
             <button class="btn btn--primary" type="submit">Research</button>
           </form>

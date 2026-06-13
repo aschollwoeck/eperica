@@ -89,6 +89,7 @@ pub async fn order_oasis_attack<A, O, S>(
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
+    selected: Option<eperica_domain::VillageId>,
     target: Coordinate,
     troops: Vec<(UnitId, u32)>,
 ) -> Result<(), OasisError>
@@ -97,7 +98,7 @@ where
     O: OasisRepository,
     S: StarvationRepository,
 {
-    let Some(home) = accounts.villages_of(owner).await?.into_iter().next() else {
+    let Some(home) = crate::economy::select_village(accounts, owner, selected).await? else {
         return Err(OasisError::NotFound);
     };
     let Some(tribe) = home.tribe else {
@@ -235,6 +236,7 @@ pub async fn order_oasis_reinforce<A, O, S>(
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
+    selected: Option<eperica_domain::VillageId>,
     target: Coordinate,
     troops: Vec<(UnitId, u32)>,
 ) -> Result<(), OasisError>
@@ -243,7 +245,7 @@ where
     O: OasisRepository,
     S: StarvationRepository,
 {
-    let Some(home) = accounts.villages_of(owner).await?.into_iter().next() else {
+    let Some(home) = crate::economy::select_village(accounts, owner, selected).await? else {
         return Err(OasisError::NotFound);
     };
     let Some(tribe) = home.tribe else {
@@ -323,13 +325,14 @@ pub async fn order_oasis_recall<A, O>(
     speed: GameSpeed,
     now: Timestamp,
     owner: PlayerId,
+    selected: Option<eperica_domain::VillageId>,
     target: Coordinate,
 ) -> Result<(), OasisError>
 where
     A: AccountRepository,
     O: OasisRepository,
 {
-    let Some(home) = accounts.villages_of(owner).await?.into_iter().next() else {
+    let Some(home) = crate::economy::select_village(accounts, owner, selected).await? else {
         return Err(OasisError::NotFound);
     };
     let Some(tribe) = home.tribe else {
@@ -813,6 +816,7 @@ mod tests {
             fields: Vec::new(),
             buildings,
             oasis_bonus: Default::default(),
+            is_capital: false,
         }
     }
 
@@ -1101,6 +1105,7 @@ mod tests {
             speed,
             now,
             PlayerId(100),
+            None,
             non_oasis,
             vec![(UnitId("phalanx".into()), 10)],
         )
@@ -1120,6 +1125,7 @@ mod tests {
             speed,
             now,
             PlayerId(100),
+            None,
             oasis,
             vec![(UnitId("phalanx".into()), 10)],
         )
@@ -1155,6 +1161,7 @@ mod tests {
             speed,
             now,
             PlayerId(100),
+            None,
             oasis,
             vec![(UnitId("phalanx".into()), 10)],
         )
@@ -1181,6 +1188,7 @@ mod tests {
             speed,
             now,
             PlayerId(100),
+            None,
             oasis,
             vec![(UnitId("phalanx".into()), 10)],
         )
@@ -1280,6 +1288,7 @@ mod tests {
             speed,
             now,
             PlayerId(100),
+            None,
             oasis,
             vec![(UnitId("phalanx".into()), 10)],
         )
@@ -1310,6 +1319,7 @@ mod tests {
             speed,
             now,
             PlayerId(100),
+            None,
             oasis,
             vec![(UnitId("phalanx".into()), 10)],
         )

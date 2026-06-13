@@ -120,6 +120,9 @@ pub struct Village {
     /// Folded into the village read (the repository derives it from the village's owned oases) so it
     /// rides every economy computation; zero for a village holding no oases.
     pub oasis_bonus: OasisBonus,
+    /// Whether this village is the player's **capital** (013, §3.4) — set by building a Palace. The
+    /// capital may raise its resource fields past the normal cap; folded into the village read.
+    pub is_capital: bool,
 }
 
 impl Village {
@@ -143,6 +146,7 @@ impl Village {
             fields: distribution.fields(),
             buildings: template.buildings().to_vec(),
             oasis_bonus: OasisBonus::default(),
+            is_capital: false,
         }
     }
 }

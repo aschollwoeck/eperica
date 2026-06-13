@@ -31,6 +31,15 @@ mod tests {
     fn village(crop_rate: i64) -> VillageTemplate {
         VillageTemplate {
             username: "player".to_owned(),
+            village_id: "1".to_owned(),
+            is_capital: false,
+            villages: Vec::new(),
+            cp: 0,
+            cp_rate: 4,
+            slots_used: 1,
+            slots_allowed: 1,
+            next_threshold: Some(200),
+            has_free_slot: false,
             tribe: "Gauls",
             x: 0,
             y: 0,
@@ -141,6 +150,8 @@ pub struct AcademyRow {
 #[derive(Template)]
 #[template(path = "academy.html")]
 pub struct AcademyTemplate {
+    /// The village this page acts on (carried into the research form + back link, 013 AC11).
+    pub village_id: String,
     /// Whether the village has an Academy (otherwise the page only explains the requirement).
     pub has_academy: bool,
     /// The tribe's roster.
@@ -173,6 +184,8 @@ pub struct SmithyRow {
 #[derive(Template)]
 #[template(path = "smithy.html")]
 pub struct SmithyTemplate {
+    /// The village this page acts on (carried into the upgrade form + back link, 013 AC11).
+    pub village_id: String,
     /// Whether the village has a Smithy (otherwise the page only explains the requirement).
     pub has_smithy: bool,
     /// The Smithy's building level (caps unit levels).
@@ -209,6 +222,8 @@ pub struct TrainRow {
 #[derive(Template)]
 #[template(path = "troops.html")]
 pub struct TroopsTemplate {
+    /// The village this page acts on (carried into the train form + back link, 013 AC11).
+    pub village_id: String,
     /// "Barracks" / "Stable" / "Workshop".
     pub building: &'static str,
     /// Whether the village has this building (otherwise the page explains the requirement).
@@ -272,6 +287,8 @@ pub struct RallyUnitRow {
 #[derive(Template)]
 #[template(path = "rally.html")]
 pub struct RallyTemplate {
+    /// The id of the village these troops are sent from (carried into the form, AC11).
+    pub village_id: String,
     /// The garrison units that can be sent (empty hides the form).
     pub units: Vec<RallyUnitRow>,
     /// Pre-filled target tile from a map link (012 AC12), if any.
@@ -279,6 +296,10 @@ pub struct RallyTemplate {
     pub target_y: Option<i32>,
     /// Whether the pre-filled target is an oasis (hints attack/reinforce over the village modes).
     pub target_is_oasis: bool,
+    /// Whether the player has a free expansion slot — offers the **Settle** order (013 AC11).
+    pub can_settle: bool,
+    /// Settlers a founding consumes (shown in the settle hint).
+    pub settlers_per_village: u32,
 }
 
 /// An in-flight movement line on the village page (007 AC7).
@@ -398,6 +419,8 @@ pub struct ScoutReportTemplate {
 #[derive(Template)]
 #[template(path = "market.html")]
 pub struct MarketTemplate {
+    /// The village this page acts on (carried into the send form + back link, 013 AC11).
+    pub village_id: String,
     /// Whether the village has a Marketplace (otherwise the page only explains the requirement).
     pub has_marketplace: bool,
     /// Total resources one of this tribe's merchants carries.
@@ -420,11 +443,42 @@ pub struct ShipmentRow {
     pub arrive_ms: i64,
 }
 
+/// One entry in the village switcher (013 AC11): an owned village, the page links to it via
+/// `?village=<id>`.
+pub struct VillageSwitchRow {
+    /// The village id (the `?village=` selector value).
+    pub id: String,
+    /// Display label, e.g. "(3|4)".
+    pub label: String,
+    /// Whether this is the player's capital (badged).
+    pub is_capital: bool,
+    /// Whether this is the village currently shown.
+    pub is_current: bool,
+}
+
 #[derive(Template)]
 #[template(path = "village.html")]
 pub struct VillageTemplate {
     /// Owner's username.
     pub username: String,
+    /// The shown village's id (carried into action forms + nav links so they target it, AC11).
+    pub village_id: String,
+    /// Whether the shown village is the player's capital (badged; raises its field cap, AC9/AC10).
+    pub is_capital: bool,
+    /// Every owned village, for the switcher (more than one ⇒ the switcher renders).
+    pub villages: Vec<VillageSwitchRow>,
+    /// Pooled culture points settled to now (013 AC1).
+    pub cp: i64,
+    /// The player's live CP/hour.
+    pub cp_rate: i64,
+    /// Villages currently held.
+    pub slots_used: u32,
+    /// Villages the player may hold (the slot gate, AC4).
+    pub slots_allowed: u32,
+    /// CP the next village requires, or `None` when the threshold table is exhausted.
+    pub next_threshold: Option<i64>,
+    /// Whether a free expansion slot is available (used < allowed) — enables the settle hint.
+    pub has_free_slot: bool,
     /// The village's tribe display name (004).
     pub tribe: &'static str,
     /// Village x coordinate.
