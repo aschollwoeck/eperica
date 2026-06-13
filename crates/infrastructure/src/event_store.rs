@@ -9,8 +9,8 @@ use eperica_application::{
     process_due_trades, process_due_training, process_due_unit_orders, sync_starvation_checks,
 };
 use eperica_domain::{
-    CombatRules, CultureRules, EconomyRules, EventKind, GameSpeed, MerchantRules, OasisRules,
-    ScoutRules, StartingVillage, Timestamp, UnitRules, WorldMap,
+    CombatRules, CultureRules, EconomyRules, EventKind, GameSpeed, LoyaltyRules, MerchantRules,
+    OasisRules, ScoutRules, StartingVillage, Timestamp, UnitRules, WorldMap,
 };
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
@@ -145,6 +145,7 @@ pub struct Scheduler {
     scout_rules: Arc<ScoutRules>,
     oasis_rules: Arc<OasisRules>,
     culture_rules: Arc<CultureRules>,
+    loyalty_rules: Arc<LoyaltyRules>,
     template: Arc<StartingVillage>,
     map: Arc<WorldMap>,
     speed: GameSpeed,
@@ -167,6 +168,7 @@ impl Scheduler {
         scout_rules: Arc<ScoutRules>,
         oasis_rules: Arc<OasisRules>,
         culture_rules: Arc<CultureRules>,
+        loyalty_rules: Arc<LoyaltyRules>,
         template: Arc<StartingVillage>,
         map: Arc<WorldMap>,
         speed: GameSpeed,
@@ -182,6 +184,7 @@ impl Scheduler {
             scout_rules,
             oasis_rules,
             culture_rules,
+            loyalty_rules,
             template,
             map,
             speed,
@@ -347,6 +350,8 @@ impl Scheduler {
                 &self.unit_rules,
                 &self.combat_rules,
                 &self.scout_rules,
+                &self.culture_rules,
+                &self.loyalty_rules,
                 &self.map,
                 self.speed,
                 self.world_seed,

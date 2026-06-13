@@ -48,7 +48,7 @@ math.
 
 ## Application — the resolution step
 
-- [ ] **T5 — Conquest step on the 009 resolver.** `process_due_combat`/`resolve_one`: after the main
+- [x] **T5 — Conquest step on the 009 resolver.** `process_due_combat`/`resolve_one`: after the main
   battle + catapults, if the attack carries administrators and the **attacker won**, read the defender
   village loyalty + `is_capital`, count **surviving administrators**, compute the seeded drop + the
   attacker's free-slot check (013), produce a `conquest_outcome`, and thread it into `BattleApply`
