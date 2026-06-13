@@ -69,7 +69,7 @@ visibility/defence views.
 
 ## Docs & acceptance
 
-- [ ] **T7 — Technical/end-user docs.** No new scheduler tick (Embassy rides the 003 build tick;
+- [x] **T7 — Technical/end-user docs.** No new scheduler tick (Embassy rides the 003 build tick;
   alliance state is request-driven). rustdoc; `docs/architecture/00NN-alliances.md`; `docs/manual/`
   alliances guide; `CLAUDE.md` active slice → 015.
 
