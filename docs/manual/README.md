@@ -20,5 +20,6 @@ manual grows as the game does.
 - [Scouting](scouting.md) — send scouts to reveal an enemy's resources or defenses, and counter enemy spies.
 - [Siege & loot](siege-and-loot.md) — raid for resources, smash buildings with catapults, and protect your stores with a Cranny.
 - [Oases](oases.md) — clear the wild animals, occupy oases through an Outpost, hold them for a production bonus, and lose them to a stronger neighbour.
+- [Settling](settling.md) — build culture points, train settlers, found new villages on free valleys, and designate your capital with a Palace.
 
-*(More chapters — settling, conquest — arrive as those features ship.)*
+*(More chapters — conquest — arrive as those features ship.)*

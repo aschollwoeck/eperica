@@ -54,7 +54,7 @@ on its own.
 
 ## Scheduler & acceptance
 
-- [ ] **T7 — Scheduler + technical/end-user docs.** Tick `process_due_settles`; orphan requeue (existing
+- [x] **T7 — Scheduler + technical/end-user docs.** Tick `process_due_settles`; orphan requeue (existing
   movement requeue covers `settle`). rustdoc; `docs/architecture/00NN-settling.md`; `docs/manual/`
   settling guide; `CLAUDE.md` active slice → 013.
 
