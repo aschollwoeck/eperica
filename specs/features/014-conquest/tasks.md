@@ -67,7 +67,7 @@ math.
 
 ## Scheduler & acceptance
 
-- [ ] **T7 — Technical/end-user docs.** No new scheduler tick (conquest rides the 009 combat tick; the
+- [x] **T7 — Technical/end-user docs.** No new scheduler tick (conquest rides the 009 combat tick; the
   existing movement requeue covers the attack). rustdoc; `docs/architecture/00NN-conquest.md`;
   `docs/manual/` conquest guide; `CLAUDE.md` active slice → 014.
 
