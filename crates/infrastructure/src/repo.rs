@@ -4890,39 +4890,55 @@ impl ScoutRepository for PgAccountRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::World;
     use eperica_application::{ConquestTransfer, NewBattleReport, ReinforcementReturn};
-    use eperica_domain::{GameSpeed, WorldConfig};
+    use eperica_domain::{EconomyRules, GameSpeed, WorldConfig};
 
     /// The resources row's last-settled time — the snapshot orders must be computed from.
     async fn snapshot(repo: &PgAccountRepository, village: VillageId) -> Timestamp {
         repo.stored_resources(village).await.unwrap().unwrap().1
     }
 
-    /// 007 AC1/AC4/AC5: a reinforcement debits the source garrison, arrives once (crash-resume
-    /// safe), stations at the target, and the return rejoins the source garrison.
-    #[tokio::test]
-    async fn movement_reinforce_and_return_lifecycle() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping movement test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
+    /// Per-test fixture: every `#[sqlx::test]` gets its own freshly-migrated, isolated database, so
+    /// the world row, event queue, oases and map tiles are private — no cross-test contention, no
+    /// `--test-threads=1`. All tests use the same world config (speed 1.0, radius 50).
+    struct Setup {
+        config: WorldConfig,
+        world: World,
+        econ: EconomyRules,
+        repo: PgAccountRepository,
+        template: StartingVillage,
+    }
+
+    async fn setup(pool: PgPool) -> Setup {
         let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
         let world = crate::world::ensure_world(&pool, &config)
             .await
             .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
+        let econ = crate::economy_rules().expect("economy rules");
         let repo = PgAccountRepository::new(
             pool.clone(),
             world.id,
             world.seed,
             config.radius,
-            rules.starting_amounts,
+            econ.starting_amounts,
         );
-
         let template = crate::starting_village().unwrap();
+        Setup {
+            config,
+            world,
+            econ,
+            repo,
+            template,
+        }
+    }
+
+    /// 007 AC1/AC4/AC5: a reinforcement debits the source garrison, arrives once (crash-resume
+    /// safe), stations at the target, and the return rejoins the source garrison.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn movement_reinforce_and_return_lifecycle(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+
         let account = async |tag: &str| {
             let uname = format!("{tag}_{}", Uuid::new_v4().simple());
             let user = repo
@@ -5066,28 +5082,9 @@ mod tests {
     /// 007 AC2/P4: when the garrison no longer covers the request (the guarded debit can't take
     /// exactly the asked count), the send is rejected with `Conflict` and **nothing** is removed —
     /// the troops are not partially debited and no movement is created.
-    #[tokio::test]
-    async fn start_reinforcement_over_garrison_removes_nothing() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping guarded-debit test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
-        let template = crate::starting_village().unwrap();
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn start_reinforcement_over_garrison_removes_nothing(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
         let account = async |tag: &str| {
             let uname = format!("{tag}_{}", Uuid::new_v4().simple());
             let user = repo
@@ -5157,28 +5154,9 @@ mod tests {
 
     /// 008 AC1/AC4/AC5: a shipment debits the sender + commits merchants, delivers capped to the
     /// target (crash-resume safe) + schedules a return, and the return frees the merchants.
-    #[tokio::test]
-    async fn trade_send_deliver_and_return_lifecycle() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping trade test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
-        let template = crate::starting_village().unwrap();
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn trade_send_deliver_and_return_lifecycle(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
         let account = async |tag: &str| {
             let uname = format!("{tag}_{}", Uuid::new_v4().simple());
             let user = repo
@@ -5288,20 +5266,15 @@ mod tests {
     /// 008 AC4/AC5 (processor path): the application `process_due_trades` — as the scheduler ticks it
     /// — delivers a due shipment (credits the target through the real economy settle, capped) and a
     /// later tick completes the empty return, freeing the merchants.
-    #[tokio::test]
-    async fn process_due_trades_delivers_and_frees_merchants() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping trade processor test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn process_due_trades_delivers_and_frees_merchants(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            world,
+            config,
+            template,
+        } = setup(pool.clone()).await;
         let units = crate::unit_rules().expect("unit rules");
         let merchants = crate::merchant_rules().expect("merchant rules");
         let map = WorldMap::new(
@@ -5309,14 +5282,6 @@ mod tests {
             config.radius,
             crate::map_rules().unwrap(),
         );
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
-        let template = crate::starting_village().unwrap();
         let account = async |tag: &str| {
             let uname = format!("{tag}_{}", Uuid::new_v4().simple());
             let user = repo
@@ -5395,20 +5360,15 @@ mod tests {
     /// 008 AC4 (P2 reproducibility): a delivery that fires after the target was already settled past
     /// the arrival instant must **not** move the target's resource clock backwards — otherwise the
     /// next read would re-accrue production already in `stored` (a free-resource double-count).
-    #[tokio::test]
-    async fn late_delivery_does_not_regress_the_resource_clock() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping late-delivery test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn late_delivery_does_not_regress_the_resource_clock(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            world,
+            config,
+            template,
+        } = setup(pool.clone()).await;
         let units = crate::unit_rules().expect("unit rules");
         let merchants = crate::merchant_rules().expect("merchant rules");
         let map = WorldMap::new(
@@ -5416,14 +5376,6 @@ mod tests {
             config.radius,
             crate::map_rules().unwrap(),
         );
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
-        let template = crate::starting_village().unwrap();
         let account = async |tag: &str| {
             let uname = format!("{tag}_{}", Uuid::new_v4().simple());
             let user = repo
@@ -5522,28 +5474,9 @@ mod tests {
     /// 009 AC6/AC7: a raid debits the attacker, claims as due, and `apply_battle` (one tx) reduces
     /// the defender garrison + reinforcements, schedules the survivor return, marks the attack done,
     /// and persists a report readable by both parties but not a third.
-    #[tokio::test]
-    async fn combat_apply_battle_and_reports() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping combat test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
-        let template = crate::starting_village().unwrap();
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn combat_apply_battle_and_reports(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
         let account = async |tag: &str| {
             let uname = format!("{tag}_{}", Uuid::new_v4().simple());
             let user = repo
@@ -5710,29 +5643,15 @@ mod tests {
     /// 011 AC2/AC6/AC9: `apply_battle` debits the target's resources, razes the targeted building,
     /// attaches the loot to the survivor return, and records it on the report; the return then
     /// credits the loot (capped) to the attacker on arrival.
-    #[tokio::test]
-    async fn siege_loot_persistence_and_credit() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping siege/loot test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn siege_loot_persistence_and_credit(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
         let units = crate::unit_rules().expect("unit rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
-        let template = crate::starting_village().unwrap();
         let account = async |tag: &str| {
             let uname = format!("{tag}_{}", Uuid::new_v4().simple());
             let user = repo
@@ -5932,20 +5851,15 @@ mod tests {
 
     /// 011 AC4/AC5/AC10: a Cranny-defended village reads back (regresses the building parser) and
     /// shields its per-level capacity from loot; a **Teuton** attacker digs past part of it.
-    #[tokio::test]
-    async fn cranny_protects_loot_and_teuton_bypasses() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping cranny test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn cranny_protects_loot_and_teuton_bypasses(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            world,
+            config,
+            template,
+        } = setup(pool.clone()).await;
         let units = crate::unit_rules().expect("unit rules");
         let combat = crate::combat_rules().expect("combat rules");
         let scout = crate::scout_rules().expect("scout rules");
@@ -5954,14 +5868,6 @@ mod tests {
             config.radius,
             crate::map_rules().unwrap(),
         );
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
-        let template = crate::starting_village().unwrap();
         let account = async |tag: &str, tribe: Tribe| {
             let uname = format!("{tag}_{}", Uuid::new_v4().simple());
             let user = repo
@@ -6099,20 +6005,15 @@ mod tests {
     /// 009 AC3/AC6 (processor path): `process_due_combat` resolves a due raid end-to-end — the
     /// overwhelming attacker wins, the defender garrison is wiped, a report is written, and the
     /// survivors are sent home.
-    #[tokio::test]
-    async fn process_due_combat_resolves_a_raid() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping combat processor test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn process_due_combat_resolves_a_raid(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            world,
+            config,
+            template,
+        } = setup(pool.clone()).await;
         let units = crate::unit_rules().expect("unit rules");
         let combat = crate::combat_rules().expect("combat rules");
         let scout = crate::scout_rules().expect("scout rules");
@@ -6121,14 +6022,6 @@ mod tests {
             config.radius,
             crate::map_rules().unwrap(),
         );
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
-        let template = crate::starting_village().unwrap();
         let account = async |tag: &str| {
             let uname = format!("{tag}_{}", Uuid::new_v4().simple());
             let user = repo
@@ -6218,20 +6111,15 @@ mod tests {
     /// 010 AC6/AC7/AC8/AC9: scouts riding an attack scout the village in addition to the battle —
     /// the espionage step runs first, the (surviving) scouts return with the army carrying intel,
     /// and the defender's battle report is flagged because their counter-espionage killed a scout.
-    #[tokio::test]
-    async fn process_due_combat_with_scouts() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping combined-scout test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn process_due_combat_with_scouts(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            world,
+            config,
+            template,
+        } = setup(pool.clone()).await;
         let units = crate::unit_rules().expect("unit rules");
         let combat = crate::combat_rules().expect("combat rules");
         let scout = crate::scout_rules().expect("scout rules");
@@ -6240,14 +6128,6 @@ mod tests {
             config.radius,
             crate::map_rules().unwrap(),
         );
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
-        let template = crate::starting_village().unwrap();
         let account = async |tag: &str| {
             let uname = format!("{tag}_{}", Uuid::new_v4().simple());
             let user = repo
@@ -6350,28 +6230,9 @@ mod tests {
     /// 010 AC1/AC8/AC9/AC10/AC11: a standalone scout debits scouts, claims with its target type,
     /// applies an intel report + a survivor return once (crash-resume safe), and the report redacts
     /// for the target while the scouter reads the intel; an undetected mission stays hidden.
-    #[tokio::test]
-    async fn scout_apply_and_reports() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping scout test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
-        let template = crate::starting_village().unwrap();
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn scout_apply_and_reports(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
         let account = async |tag: &str| {
             let uname = format!("{tag}_{}", Uuid::new_v4().simple());
             let user = repo
@@ -6538,20 +6399,15 @@ mod tests {
     /// 010 AC6/AC9/AC10 (processor + restart path): `process_due_scouts` resolves a due mission
     /// end-to-end — a clean scout (no counter) returns its survivors with Resources intel, stays
     /// undetected, and a crash before applying is recovered to resolve **exactly once**.
-    #[tokio::test]
-    async fn process_due_scouts_resolves_a_mission() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping scout processor test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn process_due_scouts_resolves_a_mission(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            world,
+            config,
+            template,
+        } = setup(pool.clone()).await;
         let units = crate::unit_rules().expect("unit rules");
         let scout = crate::scout_rules().expect("scout rules");
         let map = WorldMap::new(
@@ -6559,14 +6415,6 @@ mod tests {
             config.radius,
             crate::map_rules().unwrap(),
         );
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
-        let template = crate::starting_village().unwrap();
         let account = async |tag: &str| {
             let uname = format!("{tag}_{}", Uuid::new_v4().simple());
             let user = repo
@@ -6651,20 +6499,15 @@ mod tests {
 
     /// 009 AC6 (restart path): a battle claimed but not applied (a crash) is recovered by the shared
     /// orphan requeue and resolved **exactly once** — one report, the defender reduced a single time.
-    #[tokio::test]
-    async fn combat_crash_resume_resolves_once() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping combat crash-resume test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn combat_crash_resume_resolves_once(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            world,
+            config,
+            template,
+        } = setup(pool.clone()).await;
         let units = crate::unit_rules().expect("unit rules");
         let combat = crate::combat_rules().expect("combat rules");
         let scout = crate::scout_rules().expect("scout rules");
@@ -6673,14 +6516,6 @@ mod tests {
             config.radius,
             crate::map_rules().unwrap(),
         );
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
-        let template = crate::starting_village().unwrap();
         let account = async |tag: &str| {
             let uname = format!("{tag}_{}", Uuid::new_v4().simple());
             let user = repo
@@ -6770,28 +6605,9 @@ mod tests {
         assert!(repo.garrison(d.id).await.unwrap().is_empty());
     }
 
-    #[tokio::test]
-    async fn create_account_persists_user_and_one_village() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping create_account test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn create_account_persists_user_and_one_village(pool: PgPool) {
+        let Setup { repo, .. } = setup(pool.clone()).await;
         let template = crate::starting_village().expect("template");
 
         let uname = format!("user_{}", Uuid::new_v4().simple());
@@ -6848,20 +6664,9 @@ mod tests {
     /// its fields. (The NOT NULL is guaranteed by 0009's own `SET NOT NULL`, which aborts on any
     /// row left NULL — like the 0005 tribe backfill — so only the determinism + village-stability
     /// halves need a data-level test.)
-    #[tokio::test]
-    async fn world_seed_is_backfilled_and_villages_are_unmoved() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping world-seed test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn world_seed_is_backfilled_and_villages_are_unmoved(pool: PgPool) {
+        let Setup { repo, world, .. } = setup(pool.clone()).await;
         // The seed is non-null and equals the deterministic per-world backfill value.
         let expected: i64 =
             sqlx::query_scalar("SELECT hashtextextended(id::text, 0) FROM worlds WHERE id = $1")
@@ -6871,14 +6676,6 @@ mod tests {
                 .unwrap();
         assert_eq!(world.seed, expected);
 
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
         let uname = format!("seedstab_{}", Uuid::new_v4().simple());
         let user = repo
             .create_account(
@@ -6905,28 +6702,14 @@ mod tests {
 
     /// 006 AC5: a founded village sits on a valley (oases/Natar are skipped) and its 18 fields
     /// match that valley tile's distribution; `villages_at` surfaces it as a map marker.
-    #[tokio::test]
-    async fn villages_are_placed_on_valleys_with_tile_fields() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping placement test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn villages_are_placed_on_valleys_with_tile_fields(pool: PgPool) {
+        let Setup {
+            repo,
+            world,
+            config,
+            ..
+        } = setup(pool.clone()).await;
         // The same map the repo placed with.
         let map = WorldMap::new(
             world.seed as u64,
@@ -6983,28 +6766,9 @@ mod tests {
     /// Regression for the migration-boundary bug: a village that predates `village_resources`
     /// (no resources row) must be repairable by the backfill. We reproduce the legacy state by
     /// deleting the seeded row, then apply the same backfill as migration 0003.
-    #[tokio::test]
-    async fn backfill_repairs_legacy_village_without_resources() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping backfill test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn backfill_repairs_legacy_village_without_resources(pool: PgPool) {
+        let Setup { repo, .. } = setup(pool.clone()).await;
 
         let uname = format!("legacy_{}", Uuid::new_v4().simple());
         let user = repo
@@ -7049,28 +6813,9 @@ mod tests {
     /// The *users* half of the backfill cannot be reproduced post-hoc (the column is NOT NULL
     /// after 0005); it is guaranteed by the migration itself — its `SET NOT NULL` aborts if any
     /// row were left without a tribe — so only the villages half needs a data-level test.
-    #[tokio::test]
-    async fn tribe_backfill_repairs_pre_004_village() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping tribe backfill test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn tribe_backfill_repairs_pre_004_village(pool: PgPool) {
+        let Setup { repo, .. } = setup(pool.clone()).await;
 
         let uname = format!("pretribe_{}", Uuid::new_v4().simple());
         let user = repo
@@ -7110,27 +6855,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn build_order_lifecycle() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping build lifecycle test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn build_order_lifecycle(pool: PgPool) {
+        let Setup { repo, .. } = setup(pool.clone()).await;
 
         let uname = format!("build_{}", Uuid::new_v4().simple());
         let user = repo
@@ -7208,27 +6935,9 @@ mod tests {
     /// 004 AC13: a Roman village holds one field and one building order concurrently (separate
     /// lanes), but never two of the same lane; a non-Roman village is limited to one in total
     /// (single 'all' lane) — both DB-enforced under races by the partial unique index.
-    #[tokio::test]
-    async fn roman_lanes_allow_field_and_building_in_parallel() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping lane test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn roman_lanes_allow_field_and_building_in_parallel(pool: PgPool) {
+        let Setup { repo, .. } = setup(pool.clone()).await;
 
         let now = Timestamp(1_700_000_000_000);
         let settled = ResourceAmounts {
@@ -7318,27 +7027,9 @@ mod tests {
     /// 004 AC6/AC8/AC10/AC12: unit-order lifecycle — one active order per kind (DB-enforced),
     /// settle+debit on start, apply-exactly-once (idempotent), pending orders survive a restart
     /// (orphan requeue reproduces crash recovery).
-    #[tokio::test]
-    async fn unit_order_lifecycle() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping unit order test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn unit_order_lifecycle(pool: PgPool) {
+        let Setup { repo, .. } = setup(pool.clone()).await;
 
         let uname = format!("unit_{}", Uuid::new_v4().simple());
         let user = repo
@@ -7504,27 +7195,11 @@ mod tests {
     /// 005 AC2/AC5: training-batch lifecycle — settle+debit on start, one batch per building
     /// (DB-enforced), partial completions delivered exactly (k units after k × perUnit), crash
     /// recovery via orphan requeue, and no unit lost or duplicated.
-    #[tokio::test]
-    async fn training_batch_lifecycle() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping training test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn training_batch_lifecycle(pool: PgPool) {
+        let Setup {
+            repo, econ: rules, ..
+        } = setup(pool.clone()).await;
 
         let uname = format!("train_{}", Uuid::new_v4().simple());
         let user = repo
@@ -7662,27 +7337,9 @@ mod tests {
     /// 005 AC7 (persistence side): the depletion check is claimable once, the cull replaces the
     /// garrison and settles in one snapshot-guarded transaction, a stale snapshot conflicts
     /// without side effects, and resolve can reschedule or finish a claimed check.
-    #[tokio::test]
-    async fn starvation_check_lifecycle() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping starvation test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn starvation_check_lifecycle(pool: PgPool) {
+        let Setup { repo, .. } = setup(pool.clone()).await;
 
         let uname = format!("starve_{}", Uuid::new_v4().simple());
         let user = repo
@@ -7829,27 +7486,9 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test]
-    async fn process_due_builds_applies_due_orders() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping process_due_builds test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn process_due_builds_applies_due_orders(pool: PgPool) {
+        let Setup { repo, .. } = setup(pool.clone()).await;
 
         let uname = format!("proc_{}", Uuid::new_v4().simple());
         let user = repo
@@ -7910,27 +7549,9 @@ mod tests {
     /// `apply_build` Building arm — the `INSERT ... ON CONFLICT` upsert taking its INSERT branch.
     /// The starting village has only Main Building (slot 0) + Rally Point (slot 1), so building a
     /// Warehouse at slot 2 creates a brand-new row (vs. the Field path, which only ever UPDATEs).
-    #[tokio::test]
-    async fn build_constructs_new_building_in_empty_slot() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping building construction test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn build_constructs_new_building_in_empty_slot(pool: PgPool) {
+        let Setup { repo, .. } = setup(pool.clone()).await;
 
         let uname = format!("warehouse_{}", Uuid::new_v4().simple());
         let user = repo
@@ -8003,29 +7624,16 @@ mod tests {
     // 012 AC1/AC3/AC4/AC10: an un-fought oasis reads back its seeded wild animals; a winning clear
     // attack debits the garrison, resolves once, occupies the oasis, replaces its garrison with the
     // post-battle defenders, and sends survivors home — all in one transaction.
-    #[tokio::test]
-    async fn oasis_clear_and_occupy_lifecycle() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping oasis test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn oasis_clear_and_occupy_lifecycle(pool: PgPool) {
+        let Setup {
+            repo,
+            world,
+            config,
+            template,
+            ..
+        } = setup(pool.clone()).await;
 
-        let template = crate::starting_village().unwrap();
         let uname = format!("oasis_{}", Uuid::new_v4().simple());
         let attacker = repo
             .create_account(
@@ -8197,29 +7805,16 @@ mod tests {
 
     // 012 AC4: a winning clear with no free Outpost capacity clears the animals but leaves the oasis
     // unoccupied (materialised, owner NULL); its defenders read back empty until it regrows.
-    #[tokio::test]
-    async fn oasis_clear_without_capacity_stays_unoccupied() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping oasis no-capacity test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn oasis_clear_without_capacity_stays_unoccupied(pool: PgPool) {
+        let Setup {
+            repo,
+            world,
+            config,
+            template,
+            ..
+        } = setup(pool.clone()).await;
 
-        let template = crate::starting_village().unwrap();
         let uname = format!("oasisnc_{}", Uuid::new_v4().simple());
         let attacker = repo
             .create_account(
@@ -8305,29 +7900,16 @@ mod tests {
 
     // 012 AC8: the bonus of the oases a village occupies is folded into its read and stacks across
     // multiple oases, lifting its production.
-    #[tokio::test]
-    async fn occupied_oasis_bonus_stacks_into_village_read() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping oasis-bonus test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let rules = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            rules.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn occupied_oasis_bonus_stacks_into_village_read(pool: PgPool) {
+        let Setup {
+            repo,
+            econ: rules,
+            world,
+            config,
+            template,
+        } = setup(pool.clone()).await;
 
-        let template = crate::starting_village().unwrap();
         let uname = format!("oasisbonus_{}", Uuid::new_v4().simple());
         let user = repo
             .create_account(
@@ -8429,28 +8011,15 @@ mod tests {
 
     // 012 AC7/AC5: reinforcing an owned oasis stations defenders that read back and can be recalled;
     // a stronger attacker then beats the stationed defenders and (with Outpost capacity) takes it.
-    #[tokio::test]
-    async fn oasis_reinforce_defend_recall_and_take() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping oasis reinforce test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
-        let template = crate::starting_village().unwrap();
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn oasis_reinforce_defend_recall_and_take(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            world,
+            config,
+            template,
+        } = setup(pool.clone()).await;
         let account = async |tag: &str| {
             let uname = format!("{tag}_{}", Uuid::new_v4().simple());
             let user = repo
@@ -8672,27 +8241,14 @@ mod tests {
 
     // 012 AC9: a cleared, unoccupied oasis regrows its animals toward the seeded strength over due
     // ticks, then stops (the regrow is cleared once full).
-    #[tokio::test]
-    async fn oasis_regrows_when_cleared() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping oasis regrow test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn oasis_regrows_when_cleared(pool: PgPool) {
+        let Setup {
+            repo,
+            world,
+            config,
+            ..
+        } = setup(pool.clone()).await;
         let map = WorldMap::new(
             world.seed as u64,
             config.radius,
@@ -8792,28 +8348,14 @@ mod tests {
 
     // 013 AC9: completing a Palace makes the village the player's capital; building another Palace
     // elsewhere relocates it (exactly one capital per player).
-    #[tokio::test]
-    async fn palace_sets_and_relocates_capital() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping capital test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
-        let template = crate::starting_village().unwrap();
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn palace_sets_and_relocates_capital(pool: PgPool) {
+        let Setup {
+            repo,
+            world,
+            template,
+            ..
+        } = setup(pool.clone()).await;
         let uname = format!("capital_{}", Uuid::new_v4().simple());
         let user = repo
             .create_account(
@@ -8924,29 +8466,10 @@ mod tests {
 
     // 013 AC1/AC2: the per-player culture accumulator is seeded at registration, accrues at the live
     // rate (base per village), and a Town Hall raises that rate (re-anchored exactly).
-    #[tokio::test]
-    async fn culture_accrues_and_a_town_hall_raises_the_rate() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping culture test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn culture_accrues_and_a_town_hall_raises_the_rate(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
         let crules = crate::culture_rules().expect("culture rules");
-        let template = crate::starting_village().unwrap();
         let uname = format!("culture_{}", Uuid::new_v4().simple());
         let user = repo
             .create_account(
@@ -9014,29 +8537,10 @@ mod tests {
     // `player_culture` row) must NOT be handed a CP windfall. The read anchors a missing row at *now*
     // (zero CP), never the epoch — anchoring at the epoch would settle rate x decades of culture on the
     // first read and vault the player past the expansion thresholds. The 0021 backfill seeds the row.
-    #[tokio::test]
-    async fn pre_013_account_without_a_culture_row_gets_no_windfall() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping culture-backfill test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn pre_013_account_without_a_culture_row_gets_no_windfall(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
         let crules = crate::culture_rules().expect("culture rules");
-        let template = crate::starting_village().unwrap();
         let uname = format!("legacy_{}", Uuid::new_v4().simple());
         let user = repo
             .create_account(
@@ -9094,29 +8598,10 @@ mod tests {
 
     // 014 AC1/AC9: a village's loyalty starts at the maximum, reads back, re-anchors on a strike, and
     // regenerates toward the maximum (clamping there) over time.
-    #[tokio::test]
-    async fn loyalty_reads_back_and_regenerates() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping loyalty test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn loyalty_reads_back_and_regenerates(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
         let rules = crate::loyalty_rules().expect("loyalty rules");
-        let template = crate::starting_village().unwrap();
         let uname = format!("loyal_{}", Uuid::new_v4().simple());
         let user = repo
             .create_account(
@@ -9156,30 +8641,11 @@ mod tests {
 
     // 015 AC2/AC3/AC4/AC5/AC12: the alliance membership lifecycle over the real repository — found,
     // invite/accept, the one-alliance-per-player + cap guards, expel, and the disband cascade.
-    #[tokio::test]
-    async fn alliance_membership_lifecycle() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping alliance test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn alliance_membership_lifecycle(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
         let rules = crate::alliance_rules().expect("alliance rules");
 
-        let template = crate::starting_village().unwrap();
         let make = |label: &'static str| {
             let repo = &repo;
             let template = &template;
@@ -9330,29 +8796,10 @@ mod tests {
     // 015 AC7/AC12: diplomacy over the real repository — war is unilateral + mutual, a confederation is
     // propose→accept, declaring war clears the confederation, and the normalised pair (lo<hi PK) makes
     // a single canonical row regardless of who acts.
-    #[tokio::test]
-    async fn alliance_diplomacy_lifecycle() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping diplomacy test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn alliance_diplomacy_lifecycle(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
         let rules = crate::alliance_rules().expect("alliance rules");
-        let template = crate::starting_village().unwrap();
 
         let make = |label: &'static str| {
             let repo = &repo;
@@ -9451,29 +8898,10 @@ mod tests {
     // 015 AC8/AC9: the alliance view spans members + one-hop confederates, the incoming-defence list
     // surfaces hostile movements against any allied village (target + ETA only, never troops), and a
     // non-allied target is excluded; a non-member has no alliance view.
-    #[tokio::test]
-    async fn alliance_shared_visibility_and_incoming() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping alliance visibility test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn alliance_shared_visibility_and_incoming(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
         let rules = crate::alliance_rules().expect("alliance rules");
-        let template = crate::starting_village().unwrap();
         let make = |label: &'static str, embassy: i16| {
             let repo = &repo;
             let pool = &pool;
@@ -9627,28 +9055,9 @@ mod tests {
     // resources, its garrison is emptied, a third-party reinforcement is sent home, the loser's pending
     // orders are cancelled, both cultures are re-anchored, and the capital flag is cleared; re-applying
     // is rejected (the ownership guard prevents a double-transfer).
-    #[tokio::test]
-    async fn conquest_transfers_ownership_and_re_anchors() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping conquest test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
-        let template = crate::starting_village().unwrap();
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn conquest_transfers_ownership_and_re_anchors(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
         let account = |p: &str| {
             let repo = &repo;
             let template = &template;
@@ -9910,30 +9319,17 @@ mod tests {
 
     // 013 AC4/AC6/AC7/AC8/AC12: a settle founds a new, independent village on a free valley with a free
     // slot; a settle whose target is taken in flight bounces the settlers home.
-    #[tokio::test]
-    async fn settle_founds_a_village_then_bounces_when_taken() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping settle test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world(&pool, &config)
-            .await
-            .expect("ensure world");
-        let econ = crate::economy_rules().expect("economy rules");
-        let repo = PgAccountRepository::new(
-            pool.clone(),
-            world.id,
-            world.seed,
-            config.radius,
-            econ.starting_amounts,
-        );
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn settle_founds_a_village_then_bounces_when_taken(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            world,
+            config,
+            template,
+        } = setup(pool.clone()).await;
         let units = crate::unit_rules().expect("unit rules");
         let crules = crate::culture_rules().expect("culture rules");
-        let template = crate::starting_village().unwrap();
         let speed = GameSpeed::new(1.0).unwrap();
 
         let uname = format!("settle_{}", Uuid::new_v4().simple());

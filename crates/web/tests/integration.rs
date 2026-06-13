@@ -12,9 +12,9 @@ use eperica_domain::{
     Coordinate, GameSpeed, TileKind, Timestamp, WorldConfig, WorldMap, coordinates_within,
 };
 use eperica_infrastructure::{
-    Argon2Hasher, PgAccountRepository, alliance_rules, build_rules, combat_rules, create_pool,
-    culture_rules, economy_rules, ensure_world, loyalty_rules, map_rules, merchant_rules, now,
-    oasis_rules, run_migrations, scout_rules, starting_village, unit_rules,
+    Argon2Hasher, PgAccountRepository, alliance_rules, build_rules, combat_rules, culture_rules,
+    economy_rules, ensure_world, loyalty_rules, map_rules, merchant_rules, now, oasis_rules,
+    scout_rules, starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -22,13 +22,12 @@ use reqwest::header::LOCATION;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Spawn an app instance over the live DB; returns its base URL, or `None` to skip without a DB.
-async fn spawn() -> Option<String> {
-    let _ = dotenvy::dotenv();
-    let url = std::env::var("DATABASE_URL").ok()?;
-    let pool = create_pool(&url).await.expect("connect");
-    run_migrations(&pool).await.expect("migrate");
-
+/// Spawn an app instance over the given (per-test, isolated) pool; returns its base URL.
+///
+/// Each `#[sqlx::test]` hands us a freshly-migrated, private database, so app instances are fully
+/// isolated and the suite runs in parallel. `account_persists_across_restart` calls this twice with
+/// the same pool to model a restart against the same persistent storage.
+async fn spawn(pool: sqlx::PgPool) -> String {
     let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
     let world = ensure_world(&pool, &config).await.expect("ensure world");
     let rules = economy_rules().expect("economy rules");
@@ -65,7 +64,7 @@ async fn spawn() -> Option<String> {
     tokio::spawn(async move {
         axum::serve(listener, router(state)).await.unwrap();
     });
-    Some(format!("http://{addr}"))
+    format!("http://{addr}")
 }
 
 fn client() -> reqwest::Client {
@@ -86,11 +85,9 @@ fn unique(prefix: &str) -> String {
     format!("{prefix}_{t}_{n}")
 }
 
-#[tokio::test]
-async fn register_creates_village_and_view_is_fast() {
-    let Some(base) = spawn().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn register_creates_village_and_view_is_fast(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     let c = client();
     let user = unique("reg");
     let email = format!("{user}@example.com");
@@ -139,11 +136,9 @@ async fn register_creates_village_and_view_is_fast() {
     );
 }
 
-#[tokio::test]
-async fn login_succeeds_and_rejects_bad_password() {
-    let Some(base) = spawn().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn login_succeeds_and_rejects_bad_password(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     let user = unique("log");
     let email = format!("{user}@example.com");
 
@@ -179,11 +174,9 @@ async fn login_succeeds_and_rejects_bad_password() {
     assert_eq!(ok.status().as_u16(), 303);
 }
 
-#[tokio::test]
-async fn village_requires_login() {
-    let Some(base) = spawn().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn village_requires_login(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     // AC7: an unauthenticated visitor cannot view a village; they are redirected to login.
     let res = client()
         .get(format!("{base}/village"))
@@ -197,11 +190,9 @@ async fn village_requires_login() {
     );
 }
 
-#[tokio::test]
-async fn register_offers_tribes_and_village_shows_choice() {
-    let Some(base) = spawn().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn register_offers_tribes_and_village_shows_choice(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     // 004 AC15: the registration form offers the three tribes with descriptions.
     let form = client()
         .get(format!("{base}/register"))
@@ -241,14 +232,9 @@ async fn register_offers_tribes_and_village_shows_choice() {
     assert!(body.contains("Tribe: Teutons"));
 }
 
-#[tokio::test]
-async fn academy_and_smithy_flow() {
-    let Some(base) = spawn().await else {
-        return;
-    };
-    let _ = dotenvy::dotenv();
-    let url = std::env::var("DATABASE_URL").unwrap();
-    let pool = create_pool(&url).await.unwrap();
+#[sqlx::test(migrations = "../../migrations")]
+async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
 
     let user = unique("acad");
     let email = format!("{user}@example.com");
@@ -384,14 +370,9 @@ async fn academy_and_smithy_flow() {
     assert_eq!(anon.status().as_u16(), 303);
 }
 
-#[tokio::test]
-async fn training_flow_and_garrison() {
-    let Some(base) = spawn().await else {
-        return;
-    };
-    let _ = dotenvy::dotenv();
-    let url = std::env::var("DATABASE_URL").unwrap();
-    let pool = create_pool(&url).await.unwrap();
+#[sqlx::test(migrations = "../../migrations")]
+async fn training_flow_and_garrison(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
 
     let user = unique("troop");
     let email = format!("{user}@example.com");
@@ -536,11 +517,9 @@ async fn training_flow_and_garrison() {
     assert_eq!(anon.status().as_u16(), 303);
 }
 
-#[tokio::test]
-async fn map_view_shows_terrain_and_own_village() {
-    let Some(base) = spawn().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     let user = unique("mapper");
     let email = format!("{user}@example.com");
     let c = client();
@@ -603,11 +582,9 @@ async fn map_view_shows_terrain_and_own_village() {
     );
 }
 
-#[tokio::test]
-async fn duplicate_username_is_rejected() {
-    let Some(base) = spawn().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn duplicate_username_is_rejected(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     let user = unique("dup");
     let email = format!("{user}@example.com");
     let email2 = format!("{user}-2@example.com");
@@ -640,11 +617,9 @@ async fn duplicate_username_is_rejected() {
     assert!(second.text().await.unwrap().contains("already taken"));
 }
 
-#[tokio::test]
-async fn register_rejects_invalid_input() {
-    let Some(base) = spawn().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn register_rejects_invalid_input(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     // AC1: server-side rejection (a too-short password) — no redirect, error shown, no account.
     let res = client()
         .post(format!("{base}/register"))
@@ -676,11 +651,9 @@ async fn register_rejects_invalid_input() {
     assert!(res.text().await.unwrap().contains("choose a tribe"));
 }
 
-#[tokio::test]
-async fn logout_ends_session() {
-    let Some(base) = spawn().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn logout_ends_session(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     let user = unique("out");
     let email = format!("{user}@example.com");
     let c = client();
@@ -720,11 +693,9 @@ async fn logout_ends_session() {
     );
 }
 
-#[tokio::test]
-async fn village_shows_economy() {
-    let Some(base) = spawn().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn village_shows_economy(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     let user = unique("econ");
     let email = format!("{user}@example.com");
     let c = client();
@@ -753,11 +724,9 @@ async fn village_shows_economy() {
     assert!(body.contains("/h")); // production rate
 }
 
-#[tokio::test]
-async fn build_order_flow() {
-    let Some(base) = spawn().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn build_order_flow(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     let user = unique("bld");
     let email = format!("{user}@example.com");
     let c = client();
@@ -806,11 +775,9 @@ async fn build_order_flow() {
     assert!(after.contains("data-deadline"));
 }
 
-#[tokio::test]
-async fn build_requires_login() {
-    let Some(base) = spawn().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn build_requires_login(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     // P4/roles: an unauthenticated visitor cannot order a build.
     let res = client()
         .post(format!("{base}/village/build"))
@@ -825,11 +792,9 @@ async fn build_requires_login() {
     );
 }
 
-#[tokio::test]
-async fn account_persists_across_restart() {
-    let Some(base1) = spawn().await else {
-        return;
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn account_persists_across_restart(pool: sqlx::PgPool) {
+    let base1 = spawn(pool.clone()).await;
     let user = unique("persist");
     let email = format!("{user}@example.com");
 
@@ -846,9 +811,7 @@ async fn account_persists_across_restart() {
         .unwrap();
 
     // AC8: a fresh app instance over the same DB ("restart") sees the same account & village.
-    let Some(base2) = spawn().await else {
-        return;
-    };
+    let base2 = spawn(pool.clone()).await;
     let c = client();
     let login = c
         .post(format!("{base2}/login"))
@@ -878,14 +841,9 @@ async fn movement_repo(pool: &sqlx::PgPool) -> PgAccountRepository {
     )
 }
 
-#[tokio::test]
-async fn rally_send_station_and_return_flow() {
-    let Some(base) = spawn().await else {
-        return;
-    };
-    let _ = dotenvy::dotenv();
-    let url = std::env::var("DATABASE_URL").unwrap();
-    let pool = create_pool(&url).await.unwrap();
+#[sqlx::test(migrations = "../../migrations")]
+async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     let repo = movement_repo(&pool).await;
 
     // A sender and a target on different tiles (the world places each registrant on a free tile).
@@ -1067,14 +1025,9 @@ async fn rally_send_station_and_return_flow() {
 
 /// 008 AC6: build a Marketplace, send a resource shipment to another village, and see it in transit;
 /// the System delivers it (crediting the target). Also: no-Marketplace explains; visitor → login.
-#[tokio::test]
-async fn marketplace_send_and_deliver_flow() {
-    let Some(base) = spawn().await else {
-        return;
-    };
-    let _ = dotenvy::dotenv();
-    let url = std::env::var("DATABASE_URL").unwrap();
-    let pool = create_pool(&url).await.unwrap();
+#[sqlx::test(migrations = "../../migrations")]
+async fn marketplace_send_and_deliver_flow(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     let repo = movement_repo(&pool).await;
 
     let sender = unique("msend");
@@ -1236,14 +1189,9 @@ async fn marketplace_send_and_deliver_flow() {
 
 /// 009 AC8: launch a raid from the Rally Point; the System resolves it and a battle report appears
 /// in both the attacker's and the defender's inbox. Visitors cannot read reports.
-#[tokio::test]
-async fn combat_raid_and_reports_flow() {
-    let Some(base) = spawn().await else {
-        return;
-    };
-    let _ = dotenvy::dotenv();
-    let url = std::env::var("DATABASE_URL").unwrap();
-    let pool = create_pool(&url).await.unwrap();
+#[sqlx::test(migrations = "../../migrations")]
+async fn combat_raid_and_reports_flow(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     let repo = movement_repo(&pool).await;
 
     let attacker = unique("raidatk");
@@ -1396,14 +1344,9 @@ async fn combat_raid_and_reports_flow() {
 
 /// 010 AC1/AC9/AC12: send a standalone scout from the Rally Point, the System resolves it, and the
 /// scouter reads the intel report; an undetected target sees nothing.
-#[tokio::test]
-async fn scout_mission_and_intel_report_flow() {
-    let Some(base) = spawn().await else {
-        return;
-    };
-    let _ = dotenvy::dotenv();
-    let url = std::env::var("DATABASE_URL").unwrap();
-    let pool = create_pool(&url).await.unwrap();
+#[sqlx::test(migrations = "../../migrations")]
+async fn scout_mission_and_intel_report_flow(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     let repo = movement_repo(&pool).await;
 
     let scouter = unique("spywho");
@@ -1537,14 +1480,9 @@ async fn scout_mission_and_intel_report_flow() {
 
 /// 011 AC11: a raid with catapults aimed at a building loots resources and razes the building; the
 /// battle report shows both. The Cranny appears in the build menu.
-#[tokio::test]
-async fn siege_loot_and_cranny_flow() {
-    let Some(base) = spawn().await else {
-        return;
-    };
-    let _ = dotenvy::dotenv();
-    let url = std::env::var("DATABASE_URL").unwrap();
-    let pool = create_pool(&url).await.unwrap();
+#[sqlx::test(migrations = "../../migrations")]
+async fn siege_loot_and_cranny_flow(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     let repo = movement_repo(&pool).await;
 
     let attacker = unique("slweb_a");
@@ -1690,14 +1628,9 @@ async fn siege_loot_and_cranny_flow() {
 // 012 AC12: the map shows oasis tiles with a Rally Point link; an oasis attack from the Rally Point
 // clears + occupies the oasis (Outpost gives capacity); the village page then shows the held oasis +
 // its bonus; the map shows it held by the player. The Outpost is buildable.
-#[tokio::test]
-async fn oasis_attack_occupy_and_bonus_flow() {
-    let Some(base) = spawn().await else {
-        return;
-    };
-    let _ = dotenvy::dotenv();
-    let url = std::env::var("DATABASE_URL").unwrap();
-    let pool = create_pool(&url).await.unwrap();
+#[sqlx::test(migrations = "../../migrations")]
+async fn oasis_attack_occupy_and_bonus_flow(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     let repo = movement_repo(&pool).await;
     let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
     let world = ensure_world(&pool, &config).await.unwrap();
@@ -1871,14 +1804,9 @@ async fn oasis_attack_occupy_and_bonus_flow() {
 
 /// 013 AC11 / roles (P4): a player cannot act on another player's village by forging the `village=`
 /// selector — the action falls back to the caller's own village, never the victim's.
-#[tokio::test]
-async fn forged_village_selector_cannot_act_on_anothers_village() {
-    let Some(base) = spawn().await else {
-        return;
-    };
-    let _ = dotenvy::dotenv();
-    let url = std::env::var("DATABASE_URL").unwrap();
-    let pool = create_pool(&url).await.unwrap();
+#[sqlx::test(migrations = "../../migrations")]
+async fn forged_village_selector_cannot_act_on_anothers_village(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
 
     let attacker = unique("forge_a");
     let victim = unique("forge_v");
@@ -1949,14 +1877,9 @@ async fn forged_village_selector_cannot_act_on_anothers_village() {
 /// 013 AC11: the village page shows culture points + expansion slots; with a free slot the Rally
 /// Point offers a **Settle** order that founds a new village; the player can then switch between
 /// their villages; the **capital** is badged on the village page and distinguished on the map.
-#[tokio::test]
-async fn settling_culture_panel_switcher_and_capital_flow() {
-    let Some(base) = spawn().await else {
-        return;
-    };
-    let _ = dotenvy::dotenv();
-    let url = std::env::var("DATABASE_URL").unwrap();
-    let pool = create_pool(&url).await.unwrap();
+#[sqlx::test(migrations = "../../migrations")]
+async fn settling_culture_panel_switcher_and_capital_flow(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     let repo = movement_repo(&pool).await;
     let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
     let world = ensure_world(&pool, &config).await.unwrap();
@@ -2169,14 +2092,9 @@ async fn settling_culture_panel_switcher_and_capital_flow() {
 /// defender's own village loyalty is shown on their village page. (The capital exception, AC5, is
 /// covered server-side by `admin_attack_on_a_capital_changes_nothing` and the `conquest_outcome`
 /// domain test.)
-#[tokio::test]
-async fn conquest_with_administrators_flow() {
-    let Some(base) = spawn().await else {
-        return;
-    };
-    let _ = dotenvy::dotenv();
-    let url = std::env::var("DATABASE_URL").unwrap();
-    let pool = create_pool(&url).await.unwrap();
+#[sqlx::test(migrations = "../../migrations")]
+async fn conquest_with_administrators_flow(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
     let repo = movement_repo(&pool).await;
     let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
     let world = ensure_world(&pool, &config).await.unwrap();
@@ -2361,13 +2279,9 @@ async fn conquest_with_administrators_flow() {
 /// and the roster + alliance tag (on the map) are visible. Drives the real HTTP stack; embassy levels
 /// are seeded directly (building to level 3 over the slow 003 path is out of scope for the test). The
 /// alliance name/tag are unique per run because the test DB is shared and not reset between runs.
-#[tokio::test]
-async fn alliance_found_invite_accept_flow() {
-    let Some(base) = spawn().await else {
-        return;
-    };
-    let url = std::env::var("DATABASE_URL").unwrap();
-    let pool = create_pool(&url).await.unwrap();
+#[sqlx::test(migrations = "../../migrations")]
+async fn alliance_found_invite_accept_flow(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
 
     // Register a founder and a member (registration logs each in via its own cookie client).
     let cf = client();
