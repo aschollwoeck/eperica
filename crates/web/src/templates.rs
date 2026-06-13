@@ -33,6 +33,7 @@ mod tests {
             username: "player".to_owned(),
             village_id: "1".to_owned(),
             is_capital: false,
+            loyalty: 100,
             villages: Vec::new(),
             cp: 0,
             cp_rate: 4,
@@ -386,6 +387,10 @@ pub struct ReportTemplate {
     pub loot: Option<String>,
     /// The razed building, e.g. "Warehouse 3 → 1" (011); `None` when none.
     pub razed: Option<String>,
+    /// The loyalty change from an administrator strike, e.g. "60 → 30" (014); `None` when none.
+    pub loyalty: Option<String>,
+    /// Whether the village changed hands (014 AC10).
+    pub conquered: bool,
 }
 
 /// One revealed resource line in a scout report's intel (010 AC9).
@@ -465,6 +470,8 @@ pub struct VillageTemplate {
     pub village_id: String,
     /// Whether the shown village is the player's capital (badged; raises its field cap, AC9/AC10).
     pub is_capital: bool,
+    /// The shown village's loyalty, regenerated to now (014); a capital can never be conquered.
+    pub loyalty: i64,
     /// Every owned village, for the switcher (more than one ⇒ the switcher renders).
     pub villages: Vec<VillageSwitchRow>,
     /// Pooled culture points settled to now (013 AC1).

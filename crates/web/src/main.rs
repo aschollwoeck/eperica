@@ -73,6 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         build_rules: Arc::new(build_rules()?),
         unit_rules: units,
         culture_rules: culture,
+        loyalty_rules: loyalty,
         merchant_rules: merchants,
         map,
         world: config.world,

@@ -15,6 +15,9 @@
   {% match razed %}{% when Some with (r) %}
   <p><strong>Building razed:</strong> {{ r }}</p>
   {% when None %}{% endmatch %}
+  {% match loyalty %}{% when Some with (l) %}
+  <p><strong>Loyalty:</strong> {{ l }}{% if conquered %} — <strong style="color:var(--c-warning)">Village captured!</strong>{% endif %}</p>
+  {% when None %}{% endmatch %}
 </section>
 
 <section class="panel">
