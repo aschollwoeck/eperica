@@ -9,7 +9,7 @@ small rewards via existing credit paths).
 
 ## Domain & balance
 
-- [ ] **T1 — Pure medal + achievement rules + balance (`domain`, P3/P7).** `domain/medals.rs`
+- [x] **T1 — Pure medal + achievement rules + balance (`domain`, P3/P7).** `domain/medals.rs`
   (`MedalCategory`, `MedalRules`, `period_index`/`boundary` real-time arithmetic, deterministic `rank_top`)
   and `domain/achievements.rs` (`PlayerProgress`, `Reward`, `AchievementKind`/`AchievementDef`, `met`,
   `newly_earned`). `medals.toml` + `achievements.toml` + fail-fast `medal_rules()` /
@@ -18,7 +18,7 @@ small rewards via existing credit paths).
 
 ## Persistence — snapshots, medals, achievements
 
-- [ ] **T2 — Migration + persistence (`infrastructure`).** Migration `0027_medals.sql`:
+- [x] **T2 — Migration + persistence (`infrastructure`).** Migration `0027_medals.sql`:
   `population_snapshots` (PK `(world,player,period)`), `medals` (UNIQUE `(period,category,rank)`),
   `player_achievements` (PK `(player,achievement_id)`). `EventKind::WeeklyMedalSettlement` +
   `kind_str`/`parse_kind`. `MedalRepository` skeleton + the write/read methods: `snapshot_population`,
@@ -28,7 +28,7 @@ small rewards via existing credit paths).
 
 ## Application — the recurring settlement
 
-- [ ] **T3 — Weekly settlement processor (`application` + Scheduler).** `process_due_medal_settlement`:
+- [x] **T3 — Weekly settlement processor (`application` + Scheduler).** `process_due_medal_settlement`:
   `ensure_settlement_scheduled`; claim a due settlement; in one tx snapshot period `P`, award each
   category's top-N (attacker/defender/raider period-windowed; climber = snapshot delta P vs P−1; alliances
   via alliance boards), schedule `P+1`, mark done. Add the conflict board **upper** time bound. Wire it
@@ -38,12 +38,12 @@ small rewards via existing credit paths).
 
 ## Application — achievements
 
-- [ ] **T4 — Achievement evaluation + rewards (`application`).** `evaluate_achievements(player)` — gather
+- [x] **T4 — Achievement evaluation + rewards (`application`).** `evaluate_achievements(player)` — gather
   `PlayerProgress`, grant newly-earned (idempotent) with reward to the capital (capped) / CP. **DB tests:**
   each seed achievement (2nd village, N defensive wins, first oasis, population N, research-all) grants at
   the crossing and not before; reward applied once; re-evaluation grants nothing new (AC8, AC9, AC10).
 
-- [ ] **T5 — Hook wiring.** Call `evaluate_achievements` for the affected player(s) after
+- [x] **T5 — Hook wiring.** Call `evaluate_achievements` for the affected player(s) after
   `process_due_combat` (defenders + attacker), `process_due_settles` (founder), `process_due_oasis_combat`
   (occupier), and unit-research completion; plus lazily on a player's own stats view. **Tests:** an
   end-to-end resolve/settle/occupy/research triggers the matching grant (AC8/AC10); existing processor
@@ -51,12 +51,12 @@ small rewards via existing credit paths).
 
 ## Application + interface — climbers, history, web
 
-- [ ] **T6 — Climbers board + population history reads.** `climber_board`/`population_history` repo reads
+- [x] **T6 — Climbers board + population history reads.** `climber_board`/`population_history` repo reads
   and the `climbers_leaderboard` / `population_history` use-cases (latest settled period delta;
   quadrant-filtered, bounded). **DB tests:** climbers rank by latest-period delta; history returns the
   player's snapshots (AC11).
 
-- [ ] **T7 — Web (climbers category + medals/achievements/history on stat pages).** Add the **Climbers**
+- [x] **T7 — Web (climbers category + medals/achievements/history on stat pages).** Add the **Climbers**
   leaderboard category; render **medals** + **achievements** + **population-over-time** on the player stat
   page and **medals** on the alliance stat page — public, no private state. **Integration tests:** climbers
   board renders for a visitor; a stat page shows a granted medal/achievement; no troops/resources leak
@@ -64,7 +64,7 @@ small rewards via existing credit paths).
 
 ## Docs & acceptance
 
-- [ ] **T8 — Technical/end-user docs.** rustdoc on new public items; `docs/architecture/0019-medals.md`
+- [x] **T8 — Technical/end-user docs.** rustdoc on new public items; `docs/architecture/0019-medals.md`
   (the recurring settlement pattern, snapshots, idempotent grants); `docs/manual/` medals & achievements
   guide; `CLAUDE.md` active slice → 017.
 
