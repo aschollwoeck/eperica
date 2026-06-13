@@ -40,11 +40,11 @@ pub use oasis::{
 };
 pub use ports::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
-    BuildRepository, CombatRepository, CultureRepository, DueAttack, DueBuild, DueEvent,
-    DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade,
-    DueTraining, DueUnitOrder, EventStore, MovementRepository, MovementView, NewBattleReport,
-    NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
-    OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
+    BuildRepository, CombatRepository, ConquestRepository, CultureRepository, DueAttack, DueBuild,
+    DueEvent, DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle,
+    DueTrade, DueTraining, DueUnitOrder, EventStore, MovementRepository, MovementView,
+    NewBattleReport, NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder,
+    NewUser, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
     PasswordHasher, RazedBuilding, RepoError, ResourceWrite, ScoutApply, ScoutIntel,
     ScoutReportView, ScoutRepository, SettleApply, SettleOutcome, SettleRepository,
     StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,

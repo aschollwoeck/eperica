@@ -3,10 +3,10 @@
 use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
-    BuildRepository, CombatRepository, CultureRepository, DueAttack, DueBuild, DueMovement,
-    DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining,
-    DueUnitOrder, MovementRepository, MovementView, NewBuildOrder, NewOasisReport, NewScoutReport,
-    NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
+    BuildRepository, CombatRepository, ConquestRepository, CultureRepository, DueAttack, DueBuild,
+    DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade,
+    DueTraining, DueUnitOrder, MovementRepository, MovementView, NewBuildOrder, NewOasisReport,
+    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
     OasisReinforceOutcome, OasisRepository, OasisState, RazedBuilding, RepoError, ResourceWrite,
     ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply, SettleOutcome,
     SettleRepository, StarvationRepository, StationedGroup, TradeRepository, TradeView,
@@ -3543,6 +3543,54 @@ impl CultureRepository for PgAccountRepository {
                 Ok(u8::try_from(level).unwrap_or(0))
             })
             .collect()
+    }
+}
+
+// ---------------------------------------------------------------- loyalty / conquest (014)
+
+#[async_trait]
+impl ConquestRepository for PgAccountRepository {
+    async fn village_loyalty(
+        &self,
+        village: VillageId,
+    ) -> Result<Option<(i64, Timestamp)>, RepoError> {
+        let row = sqlx::query(
+            "SELECT loyalty, (EXTRACT(EPOCH FROM loyalty_updated_at) * 1000)::bigint AS updated_ms \
+             FROM villages WHERE id = $1",
+        )
+        .bind(Uuid::from_u128(village.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        match row {
+            Some(r) => {
+                let loyalty: i16 = r.try_get("loyalty").map_err(backend)?;
+                Ok(Some((
+                    i64::from(loyalty),
+                    Timestamp(r.try_get("updated_ms").map_err(backend)?),
+                )))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn set_loyalty(
+        &self,
+        village: VillageId,
+        value: i64,
+        at: Timestamp,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            "UPDATE villages SET loyalty = $2, \
+                 loyalty_updated_at = to_timestamp($3::double precision / 1000.0) WHERE id = $1",
+        )
+        .bind(Uuid::from_u128(village.0))
+        .bind(i16::try_from(value.clamp(0, eperica_domain::MAX_LOYALTY)).unwrap_or(0))
+        .bind(at.0 as f64)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
     }
 }
 
@@ -8270,6 +8318,68 @@ mod tests {
             anchor.0 > 1_500_000_000_000,
             "backfilled row anchored at now"
         );
+    }
+
+    // 014 AC1/AC9: a village's loyalty starts at the maximum, reads back, re-anchors on a strike, and
+    // regenerates toward the maximum (clamping there) over time.
+    #[tokio::test]
+    async fn loyalty_reads_back_and_regenerates() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping loyalty test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let rules = crate::loyalty_rules().expect("loyalty rules");
+        let template = crate::starting_village().unwrap();
+        let uname = format!("loyal_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &template,
+            )
+            .await
+            .expect("create account");
+        let v = repo.villages_of(user.id).await.unwrap()[0].id;
+
+        // AC1: a fresh village starts fully loyal.
+        let (loyalty, _) = repo.village_loyalty(v).await.unwrap().unwrap();
+        assert_eq!(loyalty, eperica_domain::MAX_LOYALTY);
+
+        // A strike lowers loyalty, anchored at a controlled instant; it reads back exactly.
+        let t0 = Timestamp(3_000_000_000_000);
+        repo.set_loyalty(v, 40, t0).await.unwrap();
+        let (loyalty, at) = repo.village_loyalty(v).await.unwrap().unwrap();
+        assert_eq!((loyalty, at), (40, t0));
+
+        // AC9: it regenerates toward the maximum and clamps there.
+        let speed = GameSpeed::new(1.0).unwrap();
+        let one_hour = eperica_domain::regenerate_loyalty(loyalty, 3600, &rules, speed);
+        assert!(
+            one_hour > 40 && one_hour <= eperica_domain::MAX_LOYALTY,
+            "regenerates upward (got {one_hour})"
+        );
+        let far = eperica_domain::regenerate_loyalty(loyalty, 10_000_000, &rules, speed);
+        assert_eq!(far, eperica_domain::MAX_LOYALTY, "clamps at the max");
     }
 
     // 013 AC4/AC6/AC7/AC8/AC12: a settle founds a new, independent village on a free valley with a free

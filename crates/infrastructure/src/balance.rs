@@ -6,10 +6,10 @@
 
 use eperica_domain::{
     BuildRules, BuildingKind, BuildingSlot, CombatRules, CultureRules, DomainError, EconomyRules,
-    FieldDistribution, LevelSpec, MapRules, MerchantProfile, MerchantRules, OasisBonus, OasisRules,
-    ResearchSpec, ResourceAmounts, ResourceField, ResourceKind, ScoutRules, SiegeKind, SmithyRules,
-    StartingVillage, TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec, WallProfile,
-    Weighted,
+    FieldDistribution, LevelSpec, LoyaltyRules, MapRules, MerchantProfile, MerchantRules,
+    OasisBonus, OasisRules, ResearchSpec, ResourceAmounts, ResourceField, ResourceKind, ScoutRules,
+    SiegeKind, SmithyRules, StartingVillage, TrainingRules, Tribe, UnitId, UnitRole, UnitRules,
+    UnitSpec, WallProfile, Weighted,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -60,6 +60,10 @@ const COMBAT_TOML: &str = include_str!(concat!(
 const CULTURE_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../specs/balance/culture.toml"
+));
+const CONQUEST_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/conquest.toml"
 ));
 
 /// Errors that can occur while loading balance data.
@@ -517,6 +521,30 @@ pub fn culture_rules() -> Result<CultureRules, BalanceError> {
         expansion_slots_per_level: dto.expansion_slots_per_level,
         settlers_per_village: dto.settlers_per_village,
         settler_id: dto.settler_id,
+    })
+}
+
+#[derive(Deserialize)]
+struct ConquestDto {
+    starting_loyalty: i64,
+    post_conquest_loyalty: i64,
+    loyalty_regen_per_hour: i64,
+    loyalty_drop_min: i64,
+    loyalty_drop_max: i64,
+}
+
+/// Load the loyalty / conquest rules (014) from the embedded balance data.
+///
+/// # Errors
+/// Returns [`BalanceError`] if the data cannot be parsed.
+pub fn loyalty_rules() -> Result<LoyaltyRules, BalanceError> {
+    let dto: ConquestDto = toml::from_str(CONQUEST_TOML)?;
+    Ok(LoyaltyRules {
+        starting_loyalty: dto.starting_loyalty,
+        post_conquest_loyalty: dto.post_conquest_loyalty,
+        regen_per_hour: dto.loyalty_regen_per_hour,
+        drop_min: dto.loyalty_drop_min,
+        drop_max: dto.loyalty_drop_max,
     })
 }
 
@@ -987,6 +1015,22 @@ mod tests {
         // 013 AC3: a Residence/Palace grants expansion slots, rising with level.
         assert_eq!(r.slots_at(0), 0);
         assert!(r.slots_at(10) > r.slots_at(1));
+    }
+
+    #[test]
+    fn loads_loyalty_rules() {
+        // 014 AC1/AC3: loyalty balance loads and is well-formed — a fresh village starts at the max,
+        // a conquered one resets lower, loyalty regenerates, and the administrator drop range is sane.
+        use eperica_domain::{MAX_LOYALTY, regenerate_loyalty};
+        let r = loyalty_rules().expect("loyalty rules");
+        assert_eq!(r.starting_loyalty, MAX_LOYALTY);
+        assert!(r.post_conquest_loyalty < r.starting_loyalty);
+        assert!(r.regen_per_hour > 0);
+        assert!(r.drop_min > 0 && r.drop_min <= r.drop_max);
+        // Regeneration accrues toward the maximum and clamps there.
+        let speed = eperica_domain::GameSpeed::new(1.0).unwrap();
+        assert!(regenerate_loyalty(50, 3600, &r, speed) > 50);
+        assert_eq!(regenerate_loyalty(100, 36_000, &r, speed), MAX_LOYALTY);
     }
 
     #[test]

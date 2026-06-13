@@ -1137,6 +1137,36 @@ pub trait CultureRepository: Send + Sync {
     async fn village_town_hall_levels(&self, player: PlayerId) -> Result<Vec<u8>, RepoError>;
 }
 
+/// Persistence for per-village **loyalty** (014, §3.4). Loyalty is **lazy** (002 model): the stored
+/// `(value, updated_at)` is **regenerated on read** toward `MAX_LOYALTY` and re-anchored when an
+/// administrator strike changes it. (The ownership transfer itself rides the 009 [`CombatRepository`]
+/// battle apply — this port covers the loyalty read/anchor.)
+#[async_trait]
+pub trait ConquestRepository: Send + Sync {
+    /// The village's stored loyalty accumulator: `(value, last-settled instant)`. `None` if the
+    /// village does not exist.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn village_loyalty(
+        &self,
+        village: VillageId,
+    ) -> Result<Option<(i64, Timestamp)>, RepoError>;
+
+    /// Re-anchor the village's loyalty: write the settled `value` and set the last-settled instant to
+    /// `at` (an upsert on the village row). Called when an administrator strike lowers loyalty without
+    /// taking the village, so the next read regenerates from `at`.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn set_loyalty(
+        &self,
+        village: VillageId,
+        value: i64,
+        at: Timestamp,
+    ) -> Result<(), RepoError>;
+}
+
 /// A claimed, due settle movement ready to resolve (013). Targets a free **valley tile**, not a village.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DueSettle {
