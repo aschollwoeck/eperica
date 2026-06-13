@@ -199,6 +199,11 @@ role/rights.
 - **Rights are a small bitset on the membership row.** invite / expel / diplomacy / announce /
   manage-roles. Founder is a role flag implying all bits; Member implies none. Checks are pure functions
   over `(role, rights)` in the domain (P3), enforced in the application layer (P4).
+- **No privilege escalation in role changes.** A `manage-roles` holder may only set a target to a role
+  **strictly below their own rank**, and only on a target they **already outrank** — so creating or
+  demoting a **Leader** is effectively **Founder-only** (a `manage-roles` Leader can adjust ranks/rights
+  only among **Members**, which they outrank). This is stricter than the GDD's loose "leaders manage
+  leaders" wording and is deliberate: it makes lateral/upward escalation structurally impossible (AC6).
 - **Balance (P7) extends `buildings` (Embassy) + a new `alliance.toml`** (`maxAllianceMembers`, the
   join/found Embassy levels) loaded fail-fast by `infrastructure::balance`.
 

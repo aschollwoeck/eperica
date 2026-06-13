@@ -936,6 +936,29 @@ mod tests {
             .await,
             Err(AllianceError::MissingRight)
         );
+        // Even *with* manage-roles, a Leader cannot mint another Leader (no privilege escalation — they
+        // do not outrank the Leader role); minting Leaders is effectively Founder-only.
+        let manage = RightSet::empty().with(AllianceRight::ManageRoles);
+        set_member_role(
+            &repo,
+            PlayerId(1),
+            PlayerId(2),
+            AllianceRole::Leader,
+            manage,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            set_member_role(
+                &repo,
+                PlayerId(2),
+                PlayerId(3),
+                AllianceRole::Leader,
+                manage
+            )
+            .await,
+            Err(AllianceError::RankTooLow)
+        );
         // Cannot set a Founder via role change.
         assert_eq!(
             set_member_role(

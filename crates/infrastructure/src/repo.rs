@@ -9577,6 +9577,24 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        // A *resolved* attack on the allied village must NOT show (only in-transit force is incoming).
+        sqlx::query(
+            "INSERT INTO troop_movements \
+             (id, owner_id, kind, home_village, deliver_village, origin_x, origin_y, dest_x, dest_y, \
+              depart_at, arrive_at, status) \
+             VALUES ($1, $2, 'attack', $3, $4, 0, 0, $5, $6, now(), \
+                     to_timestamp($7::double precision / 1000.0), 'done')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(Uuid::from_u128(enemy.0))
+        .bind(Uuid::from_u128(ev.id.0))
+        .bind(Uuid::from_u128(v2.id.0))
+        .bind(v2.coordinate.x)
+        .bind(v2.coordinate.y)
+        .bind(4_000_000_000_000_f64)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         // The founder's alliance view spans members + the confederate's villages, and the incoming list
         // holds exactly the attack on the confederate village (target + ETA only).
