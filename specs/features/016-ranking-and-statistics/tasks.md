@@ -10,7 +10,7 @@ per-defender row; **no ranking tick** (points are written inside the existing 00
 
 ## Domain & balance
 
-- [ ] **T1 — Pure ranking rules + quadrant + balance (`domain`, P3/P7).** Add `domain::world::{Quadrant,
+- [x] **T1 — Pure ranking rules + quadrant + balance (`domain`, P3/P7).** Add `domain::world::{Quadrant,
   quadrant(Coordinate)}` (sign rule incl. axis/origin ties). New `domain/ranking.rs`: `RankingRules
   { point_value, windows, page_size }`, `battle_value(losses, rules)` (Σ count × point_value),
   `apportion(total, weights) -> Vec<i64>` (deterministic **largest-remainder** split, sum-preserving).
@@ -22,7 +22,7 @@ per-defender row; **no ranking tick** (points are written inside the existing 00
 
 ## Persistence — battle facts
 
-- [ ] **T2 — Migration + per-defender persistence (`infrastructure`).** Migration `0026_ranking.sql`:
+- [x] **T2 — Migration + per-defender persistence (`infrastructure`).** Migration `0026_ranking.sql`:
   `battle_reports.attack_points bigint not null default 0` and the new `battle_defenders` table
   (`battle_id`→`battle_reports` cascade, `player_id`, `village_id`, `is_owner`, `forces`, `losses`,
   `defense_value`, `defense_points`, `occurred_at`) with indexes `(player_id, occurred_at desc)` and
@@ -33,7 +33,7 @@ per-defender row; **no ranking tick** (points are written inside the existing 00
 
 ## Application — combat amendment
 
-- [ ] **T3 — Per-defender contributions + points in `resolve_one` (`application/combat.rs`).** Build
+- [x] **T3 — Per-defender contributions + points in `resolve_one` (`application/combat.rs`).** Build
   `defender_contributions`: the owner (garrison forces/losses, `is_owner=true`) + one per reinforcement
   group (forces from `reinforcements`, losses from the existing `reinforcement_losses`, owner from the
   group's home village, `defense_value` from a per-group `add_defense`). Compute `attack_points =
@@ -45,7 +45,7 @@ per-defender row; **no ranking tick** (points are written inside the existing 00
 
 ## Application — leaderboards & stats
 
-- [ ] **T4 — Ranking reads: population + attacker/defender/raider boards (`RankingRepository`).** New
+- [x] **T4 — Ranking reads: population + attacker/defender/raider boards (`RankingRepository`).** New
   port + `PgRankingRepository`: `population_board`, `attack_board`, `defense_board`, `raider_board`
   (window + quadrant scope, bounded page). Population summed from each player's villages via
   `population()` (quadrant by capital coord); points/loot via indexed `SUM … WHERE occurred_at ≥ $win …
@@ -54,7 +54,7 @@ per-defender row; **no ranking tick** (points are written inside the existing 00
   attacker/defender/raider rank by summed window facts; zero-activity players omitted; quadrant scoping
   filters correctly; all-time vs windowed (**AC1**, **AC2**, **AC5**, **AC6**, **AC7**).
 
-- [ ] **T5 — Alliance boards, stat pages & reinforcer inbox.** `alliance_boards` (aggregate current
+- [x] **T5 — Alliance boards, stat pages & reinforcer inbox.** `alliance_boards` (aggregate current
   members' population / attack / defense points), `player_stats`, `alliance_stats`, and
   `defender_reports_for(player)` (the reinforcer inbox over `battle_defenders`). **DB tests:** alliance
   aggregates over current membership; memberless player contributes to none; disbanded alliance absent;
@@ -64,7 +64,7 @@ per-defender row; **no ranking tick** (points are written inside the existing 00
 
 ## Interface — web
 
-- [ ] **T6 — Leaderboard + statistics pages + inbox surfacing (`web`).** Public **leaderboard** page
+- [x] **T6 — Leaderboard + statistics pages + inbox surfacing (`web`).** Public **leaderboard** page
   (category tabs: Population / Attackers / Defenders / Raiders / Alliances; quadrant + window selectors;
   ranked paged table), public **player/alliance statistics** pages, and the reinforcer's `battle_defenders`
   reports surfaced in the existing reports inbox — all obeying the ui-style-guide; scope/window/page
@@ -74,7 +74,7 @@ per-defender row; **no ranking tick** (points are written inside the existing 00
 
 ## Docs & acceptance
 
-- [ ] **T7 — Technical/end-user docs.** rustdoc on the new public items; `docs/architecture/0018-ranking.md`
+- [x] **T7 — Technical/end-user docs.** rustdoc on the new public items; `docs/architecture/0018-ranking.md`
   (the read-side derivation + the points-as-persisted-fact decision + the per-defender report amendment);
   `docs/manual/` ranking & statistics guide; `CLAUDE.md` active slice → 016.
 
