@@ -27,7 +27,7 @@ math.
 
 ## Domain — the conquest decision
 
-- [ ] **T3 — Loyalty drop + conquest outcome (pure).** `administrator_drop(surviving_admins, seed,
+- [x] **T3 — Loyalty drop + conquest outcome (pure).** `administrator_drop(surviving_admins, seed,
   rules)` (Σ seeded per-admin draws in `[drop_min, drop_max]`, the 009 luck RNG; `0` with no survivor);
   `conquest_outcome(loyalty_now, drop, is_capital, attacker_has_slot) -> { new_loyalty, transferred }`
   (capital drops nothing/never transfers; `new = max(0, loyalty − drop)`; `transferred = new==0 &&
