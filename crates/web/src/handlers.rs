@@ -16,8 +16,8 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
-    AccountRepository, BattleReportView, BuildRepository, CombatRepository, LoginError,
-    MovementRepository, OasisRepository, RegisterCommand, RegisterError, ScoutIntel,
+    AccountRepository, BattleReportView, BuildRepository, CombatRepository, ConquestRepository,
+    LoginError, MovementRepository, OasisRepository, RegisterCommand, RegisterError, ScoutIntel,
     ScoutReportView, ScoutRepository, TradeRepository, TrainingRepository, UnitOrderKind,
     UnitRepository, authenticate, load_culture, load_economy, map_viewport, order_attack,
     order_build, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
@@ -28,7 +28,7 @@ use eperica_domain::{
     AttackMode, BuildTarget, BuildingKind, Coordinate, MovementKind, OasisBonus, QueueLane,
     ResearchDenied, ResourceAmounts, ResourceKind, ScoutTarget, TileKind, TradeKind, Tribe, UnitId,
     UnitRole, UnitRules, UpgradeDenied, Village, VillageId, can_afford, can_research, can_upgrade,
-    garrison_upkeep, per_unit_time_secs, queue_lane, scaled_time_secs,
+    garrison_upkeep, per_unit_time_secs, queue_lane, regenerate_loyalty, scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
@@ -671,10 +671,26 @@ pub async fn village(
     };
     let has_free_slot = culture.used_slots < culture.allowed_villages;
 
+    // The shown village's loyalty, regenerated to now (014 AC1).
+    let loyalty = match state.accounts.village_loyalty(village.id).await {
+        Ok(Some((value, updated))) => regenerate_loyalty(
+            value,
+            (now().0 - updated.0) / 1000,
+            state.loyalty_rules.as_ref(),
+            state.world.speed,
+        ),
+        Ok(None) => state.loyalty_rules.starting_loyalty,
+        Err(e) => {
+            tracing::error!(error = %e, "loyalty lookup failed");
+            return server_error();
+        }
+    };
+
     page(&VillageTemplate {
         username: user.username,
         village_id: village.id.0.to_string(),
         is_capital: village.is_capital,
+        loyalty,
         villages: switcher,
         cp: culture.cp,
         cp_rate: culture.rate,
@@ -2098,6 +2114,11 @@ pub async fn report_detail(
     let razed = report
         .razed
         .map(|d| format!("{} {} → {}", building_label(d.kind), d.before, d.after));
+    // The loyalty change from an administrator strike (014 AC10), shown when present.
+    let loyalty = match (report.loyalty_before, report.loyalty_after) {
+        (Some(before), Some(after)) => Some(format!("{before} → {after}")),
+        _ => None,
+    };
     page(&ReportTemplate {
         kind: if report.kind == MovementKind::Raid {
             "Raid"
@@ -2117,5 +2138,7 @@ pub async fn report_detail(
         scouted_note,
         loot,
         razed,
+        loyalty,
+        conquered: report.conquered,
     })
 }

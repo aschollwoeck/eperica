@@ -23,6 +23,8 @@
   <p>Culture points: <strong class="num">{{ cp }}</strong> (+{{ cp_rate }}/h pooled across your villages) ·
     Villages: <strong>{{ slots_used }} / {{ slots_allowed }}</strong>
     {% match next_threshold %}{% when Some with (t) %}· next village at <span class="num">{{ t }}</span> CP{% when None %}{% endmatch %}</p>
+  <p>Loyalty: <strong class="num">{{ loyalty }}</strong> / 100
+    {% if is_capital %}· <span class="badge">★ Capital — cannot be conquered</span>{% else %}<span class="muted">— an enemy administrator that wins here lowers it; at 0 (with a free slot) they take the village</span>{% endif %}</p>
   {% if has_free_slot %}
   <p class="muted">You have a free expansion slot — train settlers, then <a href="/village/rally?village={{ village_id }}">send them to a free valley</a> to found a new village.</p>
   {% else %}

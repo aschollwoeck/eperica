@@ -13,8 +13,8 @@ use eperica_domain::{
 };
 use eperica_infrastructure::{
     Argon2Hasher, PgAccountRepository, build_rules, combat_rules, create_pool, culture_rules,
-    economy_rules, ensure_world, map_rules, merchant_rules, now, oasis_rules, run_migrations,
-    scout_rules, starting_village, unit_rules,
+    economy_rules, ensure_world, loyalty_rules, map_rules, merchant_rules, now, oasis_rules,
+    run_migrations, scout_rules, starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -51,6 +51,7 @@ async fn spawn() -> Option<String> {
         build_rules: Arc::new(build_rules().expect("build rules")),
         unit_rules: Arc::new(unit_rules().expect("unit rules")),
         culture_rules: Arc::new(culture_rules().expect("culture rules")),
+        loyalty_rules: Arc::new(loyalty_rules().expect("loyalty rules")),
         merchant_rules: Arc::new(merchant_rules().expect("merchant rules")),
         map,
         world: config,
@@ -1331,6 +1332,8 @@ async fn combat_raid_and_reports_flow() {
         &units,
         &combat,
         &scout,
+        &culture_rules().unwrap(),
+        &loyalty_rules().unwrap(),
         &map,
         GameSpeed::new(1.0).unwrap(),
         world.seed as u64,
@@ -1639,6 +1642,8 @@ async fn siege_loot_and_cranny_flow() {
         &units,
         &combat,
         &scout,
+        &culture_rules().unwrap(),
+        &loyalty_rules().unwrap(),
         &map,
         GameSpeed::new(1.0).unwrap(),
         world.seed as u64,
@@ -2155,5 +2160,198 @@ async fn settling_culture_panel_switcher_and_capital_flow() {
     assert!(
         map_html.contains("(capital)"),
         "the map distinguishes the capital"
+    );
+}
+
+/// 014 AC4/AC10/AC11: sending administrators with a winning attack against a low-loyalty enemy village
+/// conquers it — the report shows the capture, and the village joins the conqueror's switcher. The
+/// defender's own village loyalty is shown on their village page. (The capital exception, AC5, is
+/// covered server-side by `admin_attack_on_a_capital_changes_nothing` and the `conquest_outcome`
+/// domain test.)
+#[tokio::test]
+async fn conquest_with_administrators_flow() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    let _ = dotenvy::dotenv();
+    let url = std::env::var("DATABASE_URL").unwrap();
+    let pool = create_pool(&url).await.unwrap();
+    let repo = movement_repo(&pool).await;
+    let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+    let world = ensure_world(&pool, &config).await.unwrap();
+    let map = WorldMap::new(world.seed as u64, config.radius, map_rules().unwrap());
+
+    let attacker = unique("conq_a");
+    let defender = unique("conq_d");
+    let ca = client();
+    let cd = client();
+    for (c, u) in [(&ca, &attacker), (&cd, &defender)] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", "gauls"),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+
+    let (a_vid, a_uid): (uuid::Uuid, uuid::Uuid) = sqlx::query_as(
+        "SELECT v.id, u.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&attacker)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (d_vid, dx, dy): (uuid::Uuid, i32, i32) = sqlx::query_as(
+        "SELECT v.id, v.x, v.y FROM villages v JOIN users u ON u.id = v.owner_id \
+         WHERE u.username = $1",
+    )
+    .bind(&defender)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // The attacker: a Residence + ample culture (a free expansion slot to hold a 2nd village), and a
+    // garrison of administrators + swordsmen. The defender: a token garrison and **low loyalty**.
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         VALUES ($1, 9, 'residence', 1)",
+    )
+    .bind(a_vid)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE player_culture SET value = 5000, updated_at = now() WHERE player_id = $1")
+        .bind(a_uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (unit, n) in [("senator", 3), ("swordsman", 80)] {
+        sqlx::query("INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, $2, $3)")
+            .bind(a_vid)
+            .bind(unit)
+            .bind(n)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 1)")
+        .bind(d_vid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE villages SET loyalty = 10, loyalty_updated_at = now() WHERE id = $1")
+        .bind(d_vid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // AC11: the defender sees their village's loyalty on the village page.
+    let def_view = cd
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        def_view.contains("Loyalty:"),
+        "loyalty shown on the village page"
+    );
+
+    // AC4/AC11: send the attack carrying administrators; PRG back to the village.
+    let res = ca
+        .post(format!("{base}/village/rally/send"))
+        .form(&[
+            ("mode", "attack"),
+            ("x", dx.to_string().as_str()),
+            ("y", dy.to_string().as_str()),
+            ("count_senator", "3"),
+            ("count_swordsman", "60"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+
+    // The System resolves the battle — the conquest step transfers the village.
+    let econ = economy_rules().unwrap();
+    let units = unit_rules().unwrap();
+    let combat = combat_rules().unwrap();
+    let scout = scout_rules().unwrap();
+    let future = Timestamp(now().0 + 10_000_000_000);
+    process_due_combat(
+        &repo,
+        &repo,
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        &combat,
+        &scout,
+        &culture_rules().unwrap(),
+        &loyalty_rules().unwrap(),
+        &map,
+        GameSpeed::new(1.0).unwrap(),
+        world.seed as u64,
+        future,
+        100,
+    )
+    .await
+    .unwrap();
+
+    // AC4/AC8: the village changed hands — it's now the attacker's, gone from the defender.
+    let owner: uuid::Uuid = sqlx::query_scalar("SELECT owner_id FROM villages WHERE id = $1")
+        .bind(d_vid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(owner, a_uid, "the village was conquered");
+
+    // AC11: the conquered village appears in the conqueror's switcher.
+    let a_view = ca
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        a_view.contains("Your villages:"),
+        "switcher lists both villages"
+    );
+    assert!(
+        a_view.contains(&format!("({dx}|{dy})")),
+        "the conquered village is in the switcher"
+    );
+
+    // AC10: the attacker's report shows the loyalty change + the capture.
+    let report_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM battle_reports WHERE attacker_village = $1 AND conquered = true",
+    )
+    .bind(a_vid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let detail = ca
+        .get(format!("{base}/reports/{}", report_id.as_u128()))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        detail.contains("Village captured"),
+        "the report shows the capture"
+    );
+    assert!(
+        detail.contains("Loyalty:"),
+        "the report shows the loyalty change"
     );
 }

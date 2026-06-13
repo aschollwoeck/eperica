@@ -131,7 +131,7 @@ pub struct BattleOutcome {
     pub morale: f64,
 }
 
-fn splitmix64(mut z: u64) -> u64 {
+pub(crate) fn splitmix64(mut z: u64) -> u64 {
     z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
@@ -686,6 +686,21 @@ mod tests {
         assert_eq!(p.infantry, 50.0 * 10.0 + 75.0 * 4.0); // swords + catapults
         assert_eq!(p.cavalry, 120.0 * 5.0);
         assert_eq!(p.ram, 60.0 * 2.0);
+    }
+
+    // 014 AC2: an administrator (the Expansion-role conqueror) **fights** — it contributes attack and
+    // defence in the main battle, unlike a Scout (reconnaissance, resolved separately).
+    #[test]
+    fn administrators_are_combatants() {
+        let roster = vec![unit("senator", UnitRole::Expansion, 50, 40, 30, None)];
+        let troops = vec![(UnitId("senator".into()), 3)];
+        // Attack: the administrator adds to infantry power.
+        let p = attack_power(&troops, &roster, &[], &rules());
+        assert_eq!(p.infantry, 50.0 * 3.0);
+        // Defence: the administrator defends (both infantry and cavalry defence accumulate).
+        let mut totals = (0.0, 0.0);
+        add_defense(&mut totals, &troops, &roster, &[], &rules());
+        assert_eq!(totals, (40.0 * 3.0, 30.0 * 3.0));
     }
 
     #[test]

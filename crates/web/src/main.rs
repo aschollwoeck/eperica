@@ -6,8 +6,9 @@ use axum_extra::extract::cookie::Key;
 use eperica_domain::WorldMap;
 use eperica_infrastructure::{
     AppConfig, Argon2Hasher, PgAccountRepository, PgEventStore, Scheduler, build_rules,
-    combat_rules, create_pool, culture_rules, economy_rules, ensure_world, map_rules,
-    merchant_rules, oasis_rules, run_migrations, scout_rules, starting_village, unit_rules,
+    combat_rules, create_pool, culture_rules, economy_rules, ensure_world, loyalty_rules,
+    map_rules, merchant_rules, oasis_rules, run_migrations, scout_rules, starting_village,
+    unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -29,6 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scout = Arc::new(scout_rules()?);
     let oases = Arc::new(oasis_rules()?);
     let culture = Arc::new(culture_rules()?);
+    let loyalty = Arc::new(loyalty_rules()?);
     let template = Arc::new(starting_village()?);
     let map = Arc::new(WorldMap::new(
         world.seed as u64,
@@ -55,6 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&scout),
         Arc::clone(&oases),
         Arc::clone(&culture),
+        Arc::clone(&loyalty),
         Arc::clone(&template),
         Arc::clone(&map),
         config.world.speed,
@@ -70,6 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         build_rules: Arc::new(build_rules()?),
         unit_rules: units,
         culture_rules: culture,
+        loyalty_rules: loyalty,
         merchant_rules: merchants,
         map,
         world: config.world,

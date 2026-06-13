@@ -3,14 +3,14 @@
 use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
-    BuildRepository, CombatRepository, CultureRepository, DueAttack, DueBuild, DueMovement,
-    DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining,
-    DueUnitOrder, MovementRepository, MovementView, NewBuildOrder, NewOasisReport, NewScoutReport,
-    NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
-    OasisReinforceOutcome, OasisRepository, OasisState, RazedBuilding, RepoError, ResourceWrite,
-    ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply, SettleOutcome,
-    SettleRepository, StarvationRepository, StationedGroup, TradeRepository, TradeView,
-    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    BuildRepository, CombatRepository, ConquestRepository, CultureRepository, DueAttack, DueBuild,
+    DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade,
+    DueTraining, DueUnitOrder, LoyaltyApply, MovementRepository, MovementView, NewBuildOrder,
+    NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply,
+    OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState, RazedBuilding, RepoError,
+    ResourceWrite, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply,
+    SettleOutcome, SettleRepository, StarvationRepository, StationedGroup, TradeRepository,
+    TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 use eperica_domain::{
     BuildTarget, BuildingKind, BuildingSlot, Coordinate, MovementKind, OasisBonus, OasisRules,
@@ -2437,6 +2437,15 @@ fn report_from_row(r: &PgRow) -> Result<BattleReportView, RepoError> {
             }),
             None => None,
         },
+        loyalty_before: r
+            .try_get::<Option<i16>, _>("loyalty_before")
+            .map_err(backend)?
+            .map(i64::from),
+        loyalty_after: r
+            .try_get::<Option<i16>, _>("loyalty_after")
+            .map_err(backend)?
+            .map(i64::from),
+        conquered: r.try_get("conquered").map_err(backend)?,
     })
 }
 
@@ -2450,7 +2459,8 @@ const REPORT_SELECT: &str = "SELECT br.id, \
     br.wall_before, br.wall_after, br.attacker_forces, br.attacker_losses, \
     br.defender_forces, br.defender_losses, br.scouted, br.scout_target, \
     br.loot_wood, br.loot_clay, br.loot_iron, br.loot_crop, \
-    br.razed_building, br.razed_before, br.razed_after \
+    br.razed_building, br.razed_before, br.razed_after, \
+    br.loyalty_before, br.loyalty_after, br.conquered \
     FROM battle_reports br \
     JOIN users au ON au.id = br.attacker_player \
     JOIN villages av ON av.id = br.attacker_village \
@@ -2621,9 +2631,10 @@ impl CombatRepository for PgAccountRepository {
               attacker_won, luck, morale, wall_before, wall_after, \
               attacker_forces, attacker_losses, defender_forces, defender_losses, \
               scouted, scout_target, loot_wood, loot_clay, loot_iron, loot_crop, \
-              razed_building, razed_before, razed_after) \
+              razed_building, razed_before, razed_after, \
+              loyalty_before, loyalty_after, conquered) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, \
-                     $18, $19, $20, $21, $22, $23, $24)",
+                     $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)",
         )
         .bind(Uuid::new_v4())
         .bind(movement_kind_str(r.kind))
@@ -2649,6 +2660,9 @@ impl CombatRepository for PgAccountRepository {
         .bind(r.razed.map(|d| building_str(d.kind)))
         .bind(r.razed.map(|d| i16::from(d.before)))
         .bind(r.razed.map(|d| i16::from(d.after)))
+        .bind(r.loyalty_before.and_then(|v| i16::try_from(v).ok()))
+        .bind(r.loyalty_after.and_then(|v| i16::try_from(v).ok()))
+        .bind(r.conquered)
         .execute(&mut *tx)
         .await
         .map_err(backend)?;
@@ -2690,6 +2704,150 @@ impl CombatRepository for PgAccountRepository {
                 .execute(&mut *tx)
                 .await
                 .map_err(backend)?;
+            }
+        }
+
+        // 014: the post-battle loyalty step — lower loyalty, or transfer ownership (a conquest).
+        match &apply.loyalty {
+            None => {}
+            Some(LoyaltyApply::Reduced { new_loyalty }) => {
+                let clamped = i16::try_from((*new_loyalty).clamp(0, eperica_domain::MAX_LOYALTY))
+                    .unwrap_or(0);
+                sqlx::query(
+                    "UPDATE villages SET loyalty = $2, \
+                         loyalty_updated_at = to_timestamp($3::double precision / 1000.0) \
+                     WHERE id = $1",
+                )
+                .bind(target)
+                .bind(clamped)
+                .bind(apply.battle_at.0 as f64)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+            }
+            Some(LoyaltyApply::Conquered(t)) => {
+                // Re-point ownership, **guarded** on the loser still owning the village (a concurrent
+                // conquest wins the race ⇒ Conflict ⇒ the whole apply rolls back and re-resolves).
+                // Reset loyalty and clear the capital flag — a conquered village is never a capital.
+                let post = i16::try_from(
+                    t.post_conquest_loyalty
+                        .clamp(0, eperica_domain::MAX_LOYALTY),
+                )
+                .unwrap_or(0);
+                let moved = sqlx::query(
+                    "UPDATE villages SET owner_id = $2, loyalty = $3, \
+                         loyalty_updated_at = to_timestamp($4::double precision / 1000.0), \
+                         is_capital = false \
+                     WHERE id = $1 AND owner_id = $5",
+                )
+                .bind(target)
+                .bind(Uuid::from_u128(t.new_owner.0))
+                .bind(post)
+                .bind(apply.battle_at.0 as f64)
+                .bind(Uuid::from_u128(t.loser.0))
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+                if moved.rows_affected() == 0 {
+                    return Err(RepoError::Conflict);
+                }
+
+                // Empty the garrison (the defenders lost the battle that enabled the conquest).
+                sqlx::query("DELETE FROM village_units WHERE village_id = $1")
+                    .bind(target)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+
+                // Send surviving third-party reinforcements home (007), then clear any stationed here.
+                for ret in &t.reinforcement_returns {
+                    insert_movement(
+                        &mut tx,
+                        Uuid::new_v4(),
+                        ret.owner,
+                        MovementKind::Return,
+                        ret.home_village,
+                        ret.home_village,
+                        apply.target_coord,
+                        ret.home_coord,
+                        apply.battle_at,
+                        ret.arrive_at,
+                        &ret.troops,
+                    )
+                    .await?;
+                }
+                sqlx::query("DELETE FROM reinforcements WHERE host_village = $1")
+                    .bind(target)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+
+                // Every remaining `village_id`-keyed dependency is resolved here so the transfer is
+                // complete (AC7) and nothing is left dangling under the old owner. The full
+                // enumeration and the disposition of each:
+                //   • village_units (garrison)                  — emptied above (the defenders fell).
+                //   • reinforcements host_village = target       — third parties stationed here; sent
+                //                                                  home (007) + cleared above.
+                //   • build / unit / training orders             — cancelled below (the new owner
+                //     (village_id = target)                        starts every queue fresh).
+                //   • troop_movements (home_village = target)    — completed below: the loser's
+                //     OUTGOING movements from the village are cancelled (AC7, "outgoing movements"),
+                //     and any troops still RETURNING to it are forfeited — the village is no longer
+                //     theirs, so there is no loyal home to arrive at (leaving them would land the
+                //     loser's army inside what is now an enemy village).
+                //   • reinforcements home_village = target       — the village's OWN troops stationed
+                //     at other villages: left in place. Stationed-troop ownership is derived from the
+                //     home village's owner, so they pass to the new owner with the village (its
+                //     standing army follows it) — no row change is needed or wanted.
+                //   • trades (home_village = target)             — in-flight merchants/shipments are
+                //     likewise bound to the village and follow it to the new owner.
+                //   • oases (owner = village_id)                 — occupied oases are owned by the
+                //     village, so they transfer with it implicitly.
+                //   • starvation_checks (PK village_id)          — left to self-resolve: the garrison
+                //     is emptied above, so when the pending check fires it finds no troops and
+                //     finishes as a no-op (`starve_village`); no need to cancel it in this tx.
+                //   • player_culture (both players)              — re-anchored below (013 AC1).
+                // The principle (AC7): assets located in or owned by the village pass with it; troops
+                // and shipments in transit that can no longer reach a loyal village are forfeited.
+                for sql in [
+                    "DELETE FROM build_orders WHERE village_id = $1",
+                    "DELETE FROM unit_orders WHERE village_id = $1",
+                    "DELETE FROM training_orders WHERE village_id = $1",
+                ] {
+                    sqlx::query(sql)
+                        .bind(target)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(backend)?;
+                }
+                sqlx::query(
+                    "UPDATE troop_movements SET status = 'done' \
+                     WHERE home_village = $1 AND status = 'in_transit'",
+                )
+                .bind(target)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+
+                // Re-anchor both players' culture at the battle instant (013 AC1): settle each at the
+                // OLD rate before the village count/rate moves between them.
+                for (player, value) in [
+                    (t.loser, t.loser_culture_value),
+                    (t.new_owner, t.gainer_culture_value),
+                ] {
+                    sqlx::query(
+                        "INSERT INTO player_culture (player_id, value, updated_at) \
+                         VALUES ($1, $2, to_timestamp($3::double precision / 1000.0)) \
+                         ON CONFLICT (player_id) DO UPDATE \
+                           SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at",
+                    )
+                    .bind(Uuid::from_u128(player.0))
+                    .bind(value)
+                    .bind(apply.battle_at.0 as f64)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                }
             }
         }
 
@@ -3546,6 +3704,54 @@ impl CultureRepository for PgAccountRepository {
     }
 }
 
+// ---------------------------------------------------------------- loyalty / conquest (014)
+
+#[async_trait]
+impl ConquestRepository for PgAccountRepository {
+    async fn village_loyalty(
+        &self,
+        village: VillageId,
+    ) -> Result<Option<(i64, Timestamp)>, RepoError> {
+        let row = sqlx::query(
+            "SELECT loyalty, (EXTRACT(EPOCH FROM loyalty_updated_at) * 1000)::bigint AS updated_ms \
+             FROM villages WHERE id = $1",
+        )
+        .bind(Uuid::from_u128(village.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        match row {
+            Some(r) => {
+                let loyalty: i16 = r.try_get("loyalty").map_err(backend)?;
+                Ok(Some((
+                    i64::from(loyalty),
+                    Timestamp(r.try_get("updated_ms").map_err(backend)?),
+                )))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn set_loyalty(
+        &self,
+        village: VillageId,
+        value: i64,
+        at: Timestamp,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            "UPDATE villages SET loyalty = $2, \
+                 loyalty_updated_at = to_timestamp($3::double precision / 1000.0) WHERE id = $1",
+        )
+        .bind(Uuid::from_u128(village.0))
+        .bind(i16::try_from(value.clamp(0, eperica_domain::MAX_LOYALTY)).unwrap_or(0))
+        .bind(at.0 as f64)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------- settling (013)
 
 #[async_trait]
@@ -4086,7 +4292,7 @@ impl ScoutRepository for PgAccountRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eperica_application::NewBattleReport;
+    use eperica_application::{ConquestTransfer, NewBattleReport, ReinforcementReturn};
     use eperica_domain::{GameSpeed, WorldConfig};
 
     /// The resources row's last-settled time — the snapshot orders must be computed from.
@@ -4849,6 +5055,9 @@ mod tests {
                 defender_losses: vec![(UnitId("phalanx".into()), 6)],
                 loot: ResourceAmounts::default(),
                 razed: None,
+                loyalty_before: None,
+                loyalty_after: None,
+                conquered: false,
             },
             scouted: false,
             scout_target: None,
@@ -4856,6 +5065,7 @@ mod tests {
             loot: ResourceAmounts::default(),
             target_debit: None,
             razed: None,
+            loyalty: None,
         })
         .await
         .expect("apply battle");
@@ -5052,6 +5262,9 @@ mod tests {
                     before: 3,
                     after: 1,
                 }),
+                loyalty_before: None,
+                loyalty_after: None,
+                conquered: false,
             },
             scouted: false,
             scout_target: None,
@@ -5067,6 +5280,7 @@ mod tests {
                 before: 3,
                 after: 1,
             }),
+            loyalty: None,
         })
         .await
         .expect("apply battle");
@@ -5252,6 +5466,8 @@ mod tests {
                     &units,
                     &combat,
                     &scout,
+                    &crate::culture_rules().unwrap(),
+                    &crate::loyalty_rules().unwrap(),
                     &map,
                     GameSpeed::new(1.0).unwrap(),
                     world.seed as u64,
@@ -5378,6 +5594,8 @@ mod tests {
             &units,
             &combat,
             &scout,
+            &crate::culture_rules().unwrap(),
+            &crate::loyalty_rules().unwrap(),
             &map,
             GameSpeed::new(1.0).unwrap(),
             world.seed as u64,
@@ -5500,6 +5718,8 @@ mod tests {
             &units,
             &combat,
             &scout,
+            &crate::culture_rules().unwrap(),
+            &crate::loyalty_rules().unwrap(),
             &map,
             GameSpeed::new(1.0).unwrap(),
             world.seed as u64,
@@ -5931,6 +6151,8 @@ mod tests {
                 &units,
                 &combat,
                 &scout,
+                &crate::culture_rules().unwrap(),
+                &crate::loyalty_rules().unwrap(),
                 &map,
                 GameSpeed::new(1.0).unwrap(),
                 world.seed as u64,
@@ -8269,6 +8491,353 @@ mod tests {
         assert!(
             anchor.0 > 1_500_000_000_000,
             "backfilled row anchored at now"
+        );
+    }
+
+    // 014 AC1/AC9: a village's loyalty starts at the maximum, reads back, re-anchors on a strike, and
+    // regenerates toward the maximum (clamping there) over time.
+    #[tokio::test]
+    async fn loyalty_reads_back_and_regenerates() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping loyalty test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let rules = crate::loyalty_rules().expect("loyalty rules");
+        let template = crate::starting_village().unwrap();
+        let uname = format!("loyal_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &template,
+            )
+            .await
+            .expect("create account");
+        let v = repo.villages_of(user.id).await.unwrap()[0].id;
+
+        // AC1: a fresh village starts fully loyal.
+        let (loyalty, _) = repo.village_loyalty(v).await.unwrap().unwrap();
+        assert_eq!(loyalty, eperica_domain::MAX_LOYALTY);
+
+        // A strike lowers loyalty, anchored at a controlled instant; it reads back exactly.
+        let t0 = Timestamp(3_000_000_000_000);
+        repo.set_loyalty(v, 40, t0).await.unwrap();
+        let (loyalty, at) = repo.village_loyalty(v).await.unwrap().unwrap();
+        assert_eq!((loyalty, at), (40, t0));
+
+        // AC9: it regenerates toward the maximum and clamps there.
+        let speed = GameSpeed::new(1.0).unwrap();
+        let one_hour = eperica_domain::regenerate_loyalty(loyalty, 3600, &rules, speed);
+        assert!(
+            one_hour > 40 && one_hour <= eperica_domain::MAX_LOYALTY,
+            "regenerates upward (got {one_hour})"
+        );
+        let far = eperica_domain::regenerate_loyalty(loyalty, 10_000_000, &rules, speed);
+        assert_eq!(far, eperica_domain::MAX_LOYALTY, "clamps at the max");
+    }
+
+    // 014 AC7/AC8/AC12: a conquest transfers ownership in the battle transaction — the village keeps its
+    // resources, its garrison is emptied, a third-party reinforcement is sent home, the loser's pending
+    // orders are cancelled, both cultures are re-anchored, and the capital flag is cleared; re-applying
+    // is rejected (the ownership guard prevents a double-transfer).
+    #[tokio::test]
+    async fn conquest_transfers_ownership_and_re_anchors() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping conquest test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let template = crate::starting_village().unwrap();
+        let account = |p: &str| {
+            let repo = &repo;
+            let template = &template;
+            let p = p.to_owned();
+            async move {
+                let uname = format!("{p}_{}", Uuid::new_v4().simple());
+                let user = repo
+                    .create_account(
+                        NewUser {
+                            username: uname.clone(),
+                            email: format!("{uname}@example.com"),
+                            password_hash: "h".to_owned(),
+                            email_confirmed: true,
+                            tribe: Tribe::Gauls,
+                        },
+                        template,
+                    )
+                    .await
+                    .expect("create account");
+                (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+            }
+        };
+        let (attacker, a) = account("conq_atk").await;
+        let (defender, d) = account("conq_def").await;
+        let (ally, al) = account("conq_ally").await;
+
+        // The defender's village holds a garrison, a pending build, and a third-party reinforcement.
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 9)",
+        )
+        .bind(Uuid::from_u128(d.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO reinforcements (host_village, home_village, unit_id, count) \
+             VALUES ($1, $2, 'phalanx', 3)",
+        )
+        .bind(Uuid::from_u128(d.id.0))
+        .bind(Uuid::from_u128(al.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        // The defender's OWN troops are stationed abroad (home = the soon-conquered village, hosted at
+        // the ally's village) and a column of the defender's troops is RETURNING to the village.
+        sqlx::query(
+            "INSERT INTO reinforcements (host_village, home_village, unit_id, count) \
+             VALUES ($1, $2, 'phalanx', 5)",
+        )
+        .bind(Uuid::from_u128(al.id.0))
+        .bind(Uuid::from_u128(d.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let inbound_return = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO troop_movements \
+             (id, owner_id, kind, home_village, deliver_village, origin_x, origin_y, dest_x, dest_y, \
+              depart_at, arrive_at, status) \
+             VALUES ($1, $2, 'return', $3, $3, $4, $5, $6, $7, now(), now() + interval '1 hour', \
+                     'in_transit')",
+        )
+        .bind(inbound_return)
+        .bind(Uuid::from_u128(defender.0))
+        .bind(Uuid::from_u128(d.id.0))
+        .bind(a.coordinate.x)
+        .bind(a.coordinate.y)
+        .bind(d.coordinate.x)
+        .bind(d.coordinate.y)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO build_orders \
+             (id, village_id, target_table, slot, building_type, target_level, complete_at, status, lane) \
+             VALUES ($1, $2, 'building', 2, 'warehouse', 2, now() + interval '1 hour', 'pending', 'all')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(Uuid::from_u128(d.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let wood_before: i64 =
+            sqlx::query_scalar("SELECT wood FROM village_resources WHERE village_id = $1")
+                .bind(Uuid::from_u128(d.id.0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        // Apply a winning admin-attack that conquers the village.
+        let battle_at = Timestamp(3_000_000_000_000);
+        let return_arrive = Timestamp(battle_at.0 + 100_000);
+        let transfer = ConquestTransfer {
+            new_owner: attacker,
+            loser: defender,
+            post_conquest_loyalty: 25,
+            loser_culture_value: 111,
+            gainer_culture_value: 222,
+            reinforcement_returns: vec![ReinforcementReturn {
+                home_village: al.id,
+                owner: ally,
+                home_coord: al.coordinate,
+                troops: vec![(UnitId("phalanx".into()), 3)],
+                arrive_at: return_arrive,
+            }],
+        };
+        let apply = BattleApply {
+            movement_id: Uuid::new_v4().as_u128(),
+            owner: attacker,
+            attacker_home: a.id,
+            attacker_origin: a.coordinate,
+            target: d.id,
+            target_coord: d.coordinate,
+            defender_losses: vec![(UnitId("phalanx".into()), 9)],
+            reinforcement_losses: Vec::new(),
+            survivors: vec![(UnitId("senator".into()), 1)],
+            battle_at,
+            return_arrive,
+            report: NewBattleReport {
+                kind: MovementKind::Attack,
+                attacker_player: attacker,
+                attacker_village: a.id,
+                defender_player: defender,
+                defender_village: d.id,
+                attacker_won: true,
+                luck: 1.0,
+                morale: 1.0,
+                wall_before: 0,
+                wall_after: 0,
+                attacker_forces: vec![(UnitId("senator".into()), 1)],
+                attacker_losses: Vec::new(),
+                defender_forces: vec![(UnitId("phalanx".into()), 9)],
+                defender_losses: vec![(UnitId("phalanx".into()), 9)],
+                loot: ResourceAmounts::default(),
+                razed: None,
+                loyalty_before: Some(20),
+                loyalty_after: Some(0),
+                conquered: true,
+            },
+            scouted: false,
+            scout_target: None,
+            scout_report: None,
+            loot: ResourceAmounts::default(),
+            target_debit: None,
+            razed: None,
+            loyalty: Some(LoyaltyApply::Conquered(transfer.clone())),
+        };
+        repo.apply_battle(apply.clone()).await.expect("conquest");
+
+        // AC7/AC8: ownership transferred, loyalty reset, capital flag cleared, resources kept.
+        let taken = repo.village_by_id(d.id).await.unwrap().unwrap();
+        assert_eq!(taken.owner, attacker, "ownership transferred");
+        assert!(!taken.is_capital, "a conquered village is not a capital");
+        let (loy, at) = repo.village_loyalty(d.id).await.unwrap().unwrap();
+        assert_eq!(
+            (loy, at),
+            (25, battle_at),
+            "loyalty reset, anchored at the battle"
+        );
+        assert_eq!(taken.coordinate, d.coordinate, "the tile is unchanged");
+        let wood_after: i64 =
+            sqlx::query_scalar("SELECT wood FROM village_resources WHERE village_id = $1")
+                .bind(Uuid::from_u128(d.id.0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(wood_after, wood_before, "the village keeps its resources");
+        // The village now appears under the new owner, and no longer under the loser.
+        assert!(
+            repo.villages_of(attacker)
+                .await
+                .unwrap()
+                .iter()
+                .any(|v| v.id == d.id)
+        );
+        assert!(
+            !repo
+                .villages_of(defender)
+                .await
+                .unwrap()
+                .iter()
+                .any(|v| v.id == d.id)
+        );
+
+        // Garrison emptied; the pending build cancelled.
+        assert!(
+            repo.garrison(d.id).await.unwrap().is_empty(),
+            "garrison emptied"
+        );
+        let builds: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM build_orders WHERE village_id = $1")
+                .bind(Uuid::from_u128(d.id.0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(builds, 0, "the loser's pending build was cancelled");
+
+        // The third-party reinforcement was sent home (a return movement to the ally) and cleared.
+        assert!(repo.reinforcements_at(d.id).await.unwrap().is_empty());
+        let returning = repo.active_movements(ally).await.unwrap();
+        assert!(
+            returning.iter().any(|m| m.kind == MovementKind::Return),
+            "the ally's reinforcement returns home"
+        );
+
+        // AC7 enumeration: the village's OWN troops stationed abroad pass to the new owner with the
+        // village (their home is now the attacker's), and off the loser's books.
+        assert!(
+            repo.reinforcements_of(attacker)
+                .await
+                .unwrap()
+                .iter()
+                .any(|g| g.home_village == d.id),
+            "the conquered village's stationed army follows it to the new owner"
+        );
+        assert!(
+            repo.reinforcements_of(defender)
+                .await
+                .unwrap()
+                .iter()
+                .all(|g| g.home_village != d.id),
+            "the loser no longer owns the conquered village's stationed army"
+        );
+        // AC7: a column returning to the now-lost village is forfeited (no loyal home to arrive at).
+        let inbound_status: String =
+            sqlx::query_scalar("SELECT status FROM troop_movements WHERE id = $1")
+                .bind(inbound_return)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            inbound_status, "done",
+            "a return inbound to the conquered village is forfeited"
+        );
+
+        // AC1/AC7: both players' culture was re-anchored at the battle instant.
+        assert_eq!(
+            repo.player_culture(defender).await.unwrap(),
+            (111, battle_at)
+        );
+        assert_eq!(
+            repo.player_culture(attacker).await.unwrap(),
+            (222, battle_at)
+        );
+
+        // AC10: the report records the loyalty change + the capture, visible to both.
+        let reports = repo.reports_for(attacker, 10).await.unwrap();
+        let r = reports.first().expect("a report");
+        assert!(r.conquered);
+        assert_eq!((r.loyalty_before, r.loyalty_after), (Some(20), Some(0)));
+
+        // AC12: re-applying the same conquest is rejected — the ownership guard prevents a double take.
+        let err = repo.apply_battle(apply).await;
+        assert!(
+            matches!(err, Err(RepoError::Conflict)),
+            "guarded once: {err:?}"
         );
     }
 

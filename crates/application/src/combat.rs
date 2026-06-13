@@ -2,18 +2,21 @@
 //! pure domain (`combat`); this layer validates and debits the attacker, gathers the defender's
 //! state, runs `resolve_battle`, applies the casualties + survivor return, and writes the report.
 
+use crate::culture::load_culture;
 use crate::economy::settle_amounts;
 use crate::ports::{
-    AccountRepository, BattleApply, CombatRepository, MovementRepository, NewBattleReport,
-    NewScoutReport, RazedBuilding, RepoError, ResourceWrite, UnitRepository,
+    AccountRepository, BattleApply, CombatRepository, ConquestRepository, ConquestTransfer,
+    CultureRepository, LoyaltyApply, MovementRepository, NewBattleReport, NewScoutReport,
+    RazedBuilding, ReinforcementReturn, RepoError, ResourceWrite, UnitRepository,
 };
 use crate::scouting::gather_intel;
 use eperica_domain::{
-    AttackMode, BattleInput, BuildingKind, CombatRules, Coordinate, EconomyRules, GameSpeed,
-    MovementKind, PlayerId, ResourceAmounts, ScoutRules, ScoutTarget, SiegeKind, Timestamp, Tribe,
-    UnitCounts, UnitId, UnitRole, UnitRules, Village, VillageId, WorldMap, add_defense,
-    apply_losses, attack_power, carry_capacity_total, catapult_power, cranny_protection,
-    loot_split, luck_factor, population, razed_levels, resolve_battle, resolve_scouting,
+    AttackMode, BattleInput, BuildingKind, CombatRules, Coordinate, CultureRules, EconomyRules,
+    GameSpeed, LoyaltyRules, MovementKind, PlayerId, ResourceAmounts, ScoutRules, ScoutTarget,
+    SiegeKind, Timestamp, Tribe, UnitCounts, UnitId, UnitRole, UnitRules, Village, VillageId,
+    WorldMap, add_defense, administrator_count, administrator_drop, apply_losses, attack_power,
+    carry_capacity_total, catapult_power, conquest_outcome, cranny_protection, loot_split,
+    luck_factor, population, razed_levels, regenerate_loyalty, resolve_battle, resolve_scouting,
     scouting_power, slowest_speed, travel_time_secs_floored,
 };
 
@@ -29,7 +32,8 @@ pub enum CombatError {
     /// No village occupies the target tile.
     #[error("no village at the target")]
     NoTargetThere,
-    /// The target is the attacker's own village tile.
+    /// The target village belongs to the attacker — you cannot attack, raid, or (014) conquer your
+    /// own village, whether it is the selected home tile or another of your villages (013).
     #[error("cannot attack your own village")]
     SameTile,
     /// The chosen catapult target is the Wall or Rally Point (not catapultable, 011).
@@ -224,7 +228,11 @@ where
     let Some(dest) = accounts.village_at(target).await? else {
         return Err(CombatError::NoTargetThere);
     };
-    if dest.id == home.id || dest.coordinate == home.coordinate {
+    // P4 / roles: you cannot attack, raid, or conquer a village you own — not the selected home tile,
+    // and (013 multi-village) not any other of your villages either. Guarding on ownership here keeps a
+    // self-attack from ever becoming a movement, so the 014 conquest step can never transfer a village
+    // to its own owner.
+    if dest.owner == owner {
         return Err(CombatError::SameTile);
     }
 
@@ -320,6 +328,8 @@ pub async fn process_due_combat<A, M, U, C>(
     unit_rules: &UnitRules,
     combat_rules: &CombatRules,
     scout_rules: &ScoutRules,
+    culture_rules: &CultureRules,
+    loyalty_rules: &LoyaltyRules,
     map: &WorldMap,
     speed: GameSpeed,
     world_seed: u64,
@@ -327,7 +337,7 @@ pub async fn process_due_combat<A, M, U, C>(
     limit: i64,
 ) -> Result<Vec<VillageId>, RepoError>
 where
-    A: AccountRepository,
+    A: AccountRepository + CultureRepository + ConquestRepository,
     M: MovementRepository,
     U: UnitRepository,
     C: CombatRepository,
@@ -344,6 +354,8 @@ where
             unit_rules,
             combat_rules,
             scout_rules,
+            culture_rules,
+            loyalty_rules,
             map,
             speed,
             world_seed,
@@ -370,13 +382,15 @@ async fn resolve_one<A, M, U, C>(
     unit_rules: &UnitRules,
     combat_rules: &CombatRules,
     scout_rules: &ScoutRules,
+    culture_rules: &CultureRules,
+    loyalty_rules: &LoyaltyRules,
     map: &WorldMap,
     speed: GameSpeed,
     world_seed: u64,
     attack: &crate::ports::DueAttack,
 ) -> Result<Option<VillageId>, RepoError>
 where
-    A: AccountRepository,
+    A: AccountRepository + CultureRepository + ConquestRepository,
     M: MovementRepository,
     U: UnitRepository,
     C: CombatRepository,
@@ -594,6 +608,102 @@ where
         None => (false, None, None),
     };
 
+    // 014 (GDD §9.4 step 5): the conquest step. A WON attack that keeps a surviving administrator
+    // lowers the target's loyalty; at zero — a non-capital target with the attacker holding a free
+    // expansion slot (013) — the village is conquered (ownership transfers in `apply_battle`).
+    let surviving_admins = administrator_count(&survivors, loyalty_rules);
+    let (loyalty_before, loyalty_after, conquered, loyalty_apply) =
+        if outcome.attacker_won && surviving_admins > 0 {
+            let (stored, anchored) = accounts
+                .village_loyalty(target.id)
+                .await?
+                .unwrap_or((loyalty_rules.starting_loyalty, attack.arrive_at));
+            let loyalty_now = regenerate_loyalty(
+                stored,
+                (attack.arrive_at.0 - anchored.0) / 1000,
+                loyalty_rules,
+                speed,
+            );
+            let drop = administrator_drop(surviving_admins, world_seed, attack.id, loyalty_rules);
+            // The attacker's free-slot gate + both players' culture re-anchor values, at the battle
+            // instant (013): `load_culture` gives `used/allowed` and the settled `cp`.
+            let attacker_view = load_culture(
+                accounts,
+                accounts,
+                culture_rules,
+                attack.arrive_at,
+                attack.owner,
+            )
+            .await?;
+            let has_slot = attacker_view.used_slots < attacker_view.allowed_villages;
+            let oc = conquest_outcome(loyalty_now, drop, target.is_capital, has_slot);
+            let apply: Option<LoyaltyApply> = if oc.transferred {
+                let loser_view = load_culture(
+                    accounts,
+                    accounts,
+                    culture_rules,
+                    attack.arrive_at,
+                    target.owner,
+                )
+                .await?;
+                // Surviving third-party reinforcements (rare — a winning Attack wipes them) return home.
+                let mut reinforcement_returns = Vec::new();
+                for g in &reinforcements {
+                    let (group_survivors, _) = apply_losses(&g.troops, outcome.defender_loss_frac);
+                    if group_survivors.is_empty() {
+                        continue;
+                    }
+                    let Some(group_home) = accounts.village_by_id(g.home_village).await? else {
+                        continue;
+                    };
+                    let group_roster = group_home.tribe.map_or(&[][..], |t| unit_rules.roster(t));
+                    let arrive_at = match slowest_speed(&group_survivors, group_roster) {
+                        Some(slow) => {
+                            let distance = map.distance(attack.dest, group_home.coordinate);
+                            Timestamp(
+                                attack.arrive_at.0
+                                    + travel_time_secs_floored(distance, slow, speed) * 1000,
+                            )
+                        }
+                        None => attack.arrive_at,
+                    };
+                    reinforcement_returns.push(ReinforcementReturn {
+                        home_village: g.home_village,
+                        owner: group_home.owner,
+                        home_coord: group_home.coordinate,
+                        troops: group_survivors,
+                        arrive_at,
+                    });
+                }
+                Some(LoyaltyApply::Conquered(ConquestTransfer {
+                    new_owner: attack.owner,
+                    loser: target.owner,
+                    post_conquest_loyalty: loyalty_rules.post_conquest_loyalty,
+                    loser_culture_value: loser_view.cp,
+                    gainer_culture_value: attacker_view.cp,
+                    reinforcement_returns,
+                }))
+            } else if target.is_capital {
+                // AC5: a capital's loyalty is pinned — the strike "reduces nothing". `conquest_outcome`
+                // already left `new_loyalty == loyalty_now`, so there is nothing to persist: skip the
+                // write entirely (no re-anchor). The report below still records before == after so the
+                // attacker learns the capital is untouchable.
+                None
+            } else {
+                Some(LoyaltyApply::Reduced {
+                    new_loyalty: oc.new_loyalty,
+                })
+            };
+            (
+                Some(loyalty_now),
+                Some(oc.new_loyalty),
+                oc.transferred,
+                apply,
+            )
+        } else {
+            (None, None, false, None)
+        };
+
     combat
         .apply_battle(BattleApply {
             movement_id: attack.id,
@@ -624,6 +734,9 @@ where
                 defender_losses: defender_losses_total,
                 loot,
                 razed,
+                loyalty_before,
+                loyalty_after,
+                conquered,
             },
             scouted,
             scout_target,
@@ -631,6 +744,7 @@ where
             loot,
             target_debit,
             razed,
+            loyalty: loyalty_apply,
         })
         .await?;
     Ok(Some(target.id))
@@ -728,6 +842,44 @@ mod tests {
         }
         async fn village_at(&self, _c: Coordinate) -> Result<Option<Village>, RepoError> {
             Ok(self.target.clone())
+        }
+    }
+
+    // The conquest step (014) only fires when the attack carries a surviving administrator; the 009
+    // tests carry none, so these are never exercised — trivial impls satisfy the bounds.
+    #[async_trait]
+    impl CultureRepository for FakeAccounts {
+        async fn player_culture(&self, _p: PlayerId) -> Result<(i64, Timestamp), RepoError> {
+            Ok((0, Timestamp(0)))
+        }
+        async fn settle_culture(
+            &self,
+            _p: PlayerId,
+            _value: i64,
+            _at: Timestamp,
+        ) -> Result<(), RepoError> {
+            Ok(())
+        }
+        async fn village_town_hall_levels(&self, _p: PlayerId) -> Result<Vec<u8>, RepoError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[async_trait]
+    impl ConquestRepository for FakeAccounts {
+        async fn village_loyalty(
+            &self,
+            _v: VillageId,
+        ) -> Result<Option<(i64, Timestamp)>, RepoError> {
+            Ok(Some((100, Timestamp(0))))
+        }
+        async fn set_loyalty(
+            &self,
+            _v: VillageId,
+            _value: i64,
+            _at: Timestamp,
+        ) -> Result<(), RepoError> {
+            Ok(())
         }
     }
 
@@ -960,6 +1112,30 @@ mod tests {
                 (Tribe::Teutons, wall()),
                 (Tribe::Gauls, wall()),
             ]),
+        }
+    }
+
+    // Culture/loyalty balance for the combat resolver's conquest step (unexercised by the 009 tests,
+    // which carry no administrators).
+    fn culture_rules() -> CultureRules {
+        CultureRules {
+            base_cp_per_village: 2,
+            town_hall_cp_per_level: vec![0, 5],
+            cp_thresholds: vec![0, 0, 200],
+            expansion_slots_per_level: vec![0, 1],
+            settlers_per_village: 3,
+            settler_id: "settler".to_owned(),
+        }
+    }
+
+    fn loyalty_rules() -> LoyaltyRules {
+        LoyaltyRules {
+            starting_loyalty: 100,
+            post_conquest_loyalty: 25,
+            regen_per_hour: 2,
+            drop_min: 20,
+            drop_max: 30,
+            administrator_ids: vec!["senator".to_owned()],
         }
     }
 
@@ -1205,6 +1381,8 @@ mod tests {
             &unit_rules(),
             &combat_rules(),
             &ScoutRules { loss_exponent: 1.5 },
+            &culture_rules(),
+            &loyalty_rules(),
             &map(),
             GameSpeed::new(1.0).unwrap(),
             42,
@@ -1227,6 +1405,140 @@ mod tests {
         assert_eq!(applied.loot, ResourceAmounts::default());
         assert!(applied.target_debit.is_none());
         assert!(applied.razed.is_none());
+    }
+
+    // 014 AC3/AC4/AC10: a won attack carrying a surviving administrator lowers the target's loyalty;
+    // with loyalty staying above zero the village is **not** taken, and the report records the change.
+    #[tokio::test]
+    async fn admin_attack_lowers_loyalty_without_conquest() {
+        // An empty-defended, non-capital target; the attacker overwhelms it and the administrator
+        // (here `u1`) survives to strike loyalty.
+        let acc = accounts(Vec::new(), Some(village(2, 2, Coordinate::new(3, 4))));
+        let cb = FakeCombat::default();
+        *cb.due.lock().unwrap() = vec![DueAttack {
+            id: 7,
+            kind: MovementKind::Attack,
+            owner: PlayerId(1),
+            home_village: VillageId(1),
+            target_village: VillageId(2),
+            origin: Coordinate::new(0, 0),
+            dest: Coordinate::new(3, 4),
+            arrive_at: Timestamp(1_000_000),
+            troops: vec![(UnitId("u0".into()), 50), (UnitId("u1".into()), 2)],
+            scout_target: None,
+            catapult_target: None,
+        }];
+        let mv = FakeMovements {
+            reinforcements: Vec::new(),
+        };
+        let loyalty = LoyaltyRules {
+            starting_loyalty: 100,
+            post_conquest_loyalty: 25,
+            regen_per_hour: 2,
+            drop_min: 20,
+            drop_max: 30,
+            administrator_ids: vec!["u1".to_owned()],
+        };
+        process_due_combat(
+            &acc,
+            &mv,
+            &FakeUnits,
+            &cb,
+            &economy_rules(),
+            &unit_rules(),
+            &combat_rules(),
+            &ScoutRules { loss_exponent: 1.5 },
+            &culture_rules(),
+            &loyalty,
+            &map(),
+            GameSpeed::new(1.0).unwrap(),
+            42,
+            Timestamp(1_000_000),
+            100,
+        )
+        .await
+        .unwrap();
+
+        let applied = cb.applied.lock().unwrap().clone().expect("applied");
+        match applied.loyalty {
+            Some(LoyaltyApply::Reduced { new_loyalty }) => {
+                // Two surviving administrators each drop 20–30 from a regenerated-to-max 100.
+                assert!(
+                    (40..=60).contains(&new_loyalty),
+                    "loyalty after two admin strikes: {new_loyalty}"
+                );
+            }
+            other => panic!("expected a loyalty drop without conquest, got {other:?}"),
+        }
+        assert!(!applied.report.conquered);
+        assert_eq!(applied.report.loyalty_before, Some(100));
+    }
+
+    // 014 AC5: a capital is unconquerable — even a crushing win with surviving administrators and a
+    // free slot leaves its loyalty untouched, never transfers, and (being a no-op) writes nothing,
+    // while the report still records before == after so the attacker learns it is immune.
+    #[tokio::test]
+    async fn admin_attack_on_a_capital_changes_nothing() {
+        let mut capital = village(2, 2, Coordinate::new(3, 4));
+        capital.is_capital = true;
+        let acc = accounts(Vec::new(), Some(capital));
+        let cb = FakeCombat::default();
+        *cb.due.lock().unwrap() = vec![DueAttack {
+            id: 7,
+            kind: MovementKind::Attack,
+            owner: PlayerId(1),
+            home_village: VillageId(1),
+            target_village: VillageId(2),
+            origin: Coordinate::new(0, 0),
+            dest: Coordinate::new(3, 4),
+            arrive_at: Timestamp(1_000_000),
+            troops: vec![(UnitId("u0".into()), 50), (UnitId("u1".into()), 2)],
+            scout_target: None,
+            catapult_target: None,
+        }];
+        let mv = FakeMovements {
+            reinforcements: Vec::new(),
+        };
+        let loyalty = LoyaltyRules {
+            starting_loyalty: 100,
+            post_conquest_loyalty: 25,
+            regen_per_hour: 2,
+            drop_min: 20,
+            drop_max: 30,
+            administrator_ids: vec!["u1".to_owned()],
+        };
+        process_due_combat(
+            &acc,
+            &mv,
+            &FakeUnits,
+            &cb,
+            &economy_rules(),
+            &unit_rules(),
+            &combat_rules(),
+            &ScoutRules { loss_exponent: 1.5 },
+            &culture_rules(),
+            &loyalty,
+            &map(),
+            GameSpeed::new(1.0).unwrap(),
+            42,
+            Timestamp(1_000_000),
+            100,
+        )
+        .await
+        .unwrap();
+
+        let applied = cb.applied.lock().unwrap().clone().expect("applied");
+        assert!(
+            applied.loyalty.is_none(),
+            "a capital strike persists nothing, got {:?}",
+            applied.loyalty
+        );
+        assert!(!applied.report.conquered, "a capital never transfers");
+        assert_eq!(
+            (applied.report.loyalty_before, applied.report.loyalty_after),
+            (Some(100), Some(100)),
+            "the capital's loyalty is unchanged before == after"
+        );
     }
 
     /// 011 AC1: an attack carrying catapults persists a valid target; the Wall/Rally Point is
@@ -1339,6 +1651,8 @@ mod tests {
             &unit_rules(),
             &combat_rules(),
             &ScoutRules { loss_exponent: 1.5 },
+            &culture_rules(),
+            &loyalty_rules(),
             &map(),
             GameSpeed::new(1.0).unwrap(),
             42,
@@ -1478,6 +1792,23 @@ mod tests {
             vec![(UnitId("u0".into()), 10)],
             Some(village(1, 1, Coordinate::new(3, 4))),
         );
+        assert_eq!(
+            send(
+                &acc,
+                &cb,
+                vec![(UnitId("u0".into()), 1)],
+                AttackMode::Attack
+            )
+            .await,
+            Err(CombatError::SameTile)
+        );
+        assert!(cb.sent.lock().unwrap().is_none());
+
+        // Roles (P4): you cannot attack — and so cannot conquer — *another* village you own (013
+        // multi-village). The target is a distinct village id at a distinct tile but the same owner as
+        // the attacker; ownership alone must reject it, never reaching a movement.
+        let own_second = village(7, 1, Coordinate::new(3, 4)); // id 7, owner 1 (== attacker), other tile
+        let acc = accounts(vec![(UnitId("u0".into()), 10)], Some(own_second));
         assert_eq!(
             send(
                 &acc,

@@ -12,6 +12,7 @@ pub mod culture;
 pub mod economy;
 pub mod error;
 pub mod event;
+pub mod loyalty;
 pub mod map;
 pub mod movement;
 pub mod oasis;
@@ -41,6 +42,10 @@ pub use economy::{
 };
 pub use error::DomainError;
 pub use event::{EventKind, ScheduledEvent, Timestamp};
+pub use loyalty::{
+    ConquestOutcome, LoyaltyRules, MAX_LOYALTY, administrator_count, administrator_drop,
+    conquest_outcome, regenerate_loyalty,
+};
 pub use map::{FieldDistribution, MapRules, OasisBonus, TileKind, Weighted, WorldMap};
 pub use movement::{MovementKind, slowest_speed, travel_time_secs, travel_time_secs_floored};
 pub use oasis::{OasisRules, oasis_garrison, regrow_step};

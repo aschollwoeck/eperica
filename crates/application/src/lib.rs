@@ -40,15 +40,16 @@ pub use oasis::{
 };
 pub use ports::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
-    BuildRepository, CombatRepository, CultureRepository, DueAttack, DueBuild, DueEvent,
-    DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade,
-    DueTraining, DueUnitOrder, EventStore, MovementRepository, MovementView, NewBattleReport,
-    NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
-    OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
-    PasswordHasher, RazedBuilding, RepoError, ResourceWrite, ScoutApply, ScoutIntel,
-    ScoutReportView, ScoutRepository, SettleApply, SettleOutcome, SettleRepository,
-    StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
-    UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    BuildRepository, CombatRepository, ConquestRepository, ConquestTransfer, CultureRepository,
+    DueAttack, DueBuild, DueEvent, DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce,
+    DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, EventStore, LoyaltyApply,
+    MovementRepository, MovementView, NewBattleReport, NewBuildOrder, NewOasisReport,
+    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
+    OasisReinforceOutcome, OasisRepository, OasisState, PasswordHasher, RazedBuilding,
+    ReinforcementReturn, RepoError, ResourceWrite, ScoutApply, ScoutIntel, ScoutReportView,
+    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, StarvationRepository,
+    StationedGroup, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
+    UserRecord, VillageMarker,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;

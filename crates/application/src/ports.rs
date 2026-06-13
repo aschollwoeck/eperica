@@ -489,6 +489,58 @@ pub struct NewBattleReport {
     pub loot: ResourceAmounts,
     /// The building catapults razed (011), or `None`.
     pub razed: Option<RazedBuilding>,
+    /// The target's loyalty **before** the administrator strike (014 AC10); `None` for a battle that
+    /// carried no administrator / did not win (no loyalty change).
+    pub loyalty_before: Option<i64>,
+    /// The target's loyalty **after** the strike; `None` as above.
+    pub loyalty_after: Option<i64>,
+    /// Whether the village **changed hands** (014 AC4).
+    pub conquered: bool,
+}
+
+/// A surviving third-party reinforcement group sent **home** when its host village is conquered (014
+/// AC7) — the 007 return, computed by the application (it holds the map/speed).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReinforcementReturn {
+    /// The group's home village (the return's destination; also the reinforcements key to clear).
+    pub home_village: VillageId,
+    /// The group's owner.
+    pub owner: PlayerId,
+    /// The home village's tile (the return's destination).
+    pub home_coord: Coordinate,
+    /// The surviving composition to send back.
+    pub troops: UnitCounts,
+    /// When the returning troops arrive home.
+    pub arrive_at: Timestamp,
+}
+
+/// The ownership transfer of a conquered village (014 AC4/AC7), applied in the battle transaction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConquestTransfer {
+    /// The conqueror (the village's new owner).
+    pub new_owner: PlayerId,
+    /// The losing previous owner.
+    pub loser: PlayerId,
+    /// Loyalty the conquered village resets to (so it cannot be re-taken immediately).
+    pub post_conquest_loyalty: i64,
+    /// The **loser's** culture settled to the battle instant at the OLD rate (the village still counted
+    /// toward their rate) — written before ownership moves (013 AC1/P2).
+    pub loser_culture_value: i64,
+    /// The **conqueror's** culture settled to the battle instant at the OLD rate (before the new village
+    /// joins their rate).
+    pub gainer_culture_value: i64,
+    /// Surviving third-party reinforcements to send home (usually empty — a winning attack wipes them).
+    pub reinforcement_returns: Vec<ReinforcementReturn>,
+}
+
+/// The post-battle loyalty/conquest result (014), attached to a **won** attack that carried
+/// administrators; `None` for an ordinary battle (no loyalty change).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoyaltyApply {
+    /// Loyalty dropped but the village **held** — persist `new_loyalty`, anchored at the battle instant.
+    Reduced { new_loyalty: i64 },
+    /// The village was **conquered** — transfer ownership in the battle transaction.
+    Conquered(ConquestTransfer),
 }
 
 /// The single-transaction application of a resolved battle (009 AC6/AC7).
@@ -531,6 +583,9 @@ pub struct BattleApply {
     pub target_debit: Option<ResourceWrite>,
     /// The building catapults razed (011) — decremented on the target; `None` = none.
     pub razed: Option<RazedBuilding>,
+    /// The post-battle loyalty result (014): `Reduced` writes the new loyalty; `Conquered` transfers
+    /// ownership in this transaction. `None` for an ordinary battle (no administrators / a loss).
+    pub loyalty: Option<LoyaltyApply>,
 }
 
 /// A persisted battle report for the inbox/detail view (009 AC8).
@@ -564,6 +619,12 @@ pub struct BattleReportView {
     pub loot: ResourceAmounts,
     /// The building catapults razed (011), or `None`.
     pub razed: Option<RazedBuilding>,
+    /// The target's loyalty before → after the administrator strike (014 AC10); `None` for a battle
+    /// with no loyalty change.
+    pub loyalty_before: Option<i64>,
+    pub loyalty_after: Option<i64>,
+    /// Whether the village changed hands (014 AC4).
+    pub conquered: bool,
 }
 
 /// Persistence for combat (009): launch attacks, claim due battles, apply resolutions, read reports.
@@ -1135,6 +1196,36 @@ pub trait CultureRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn village_town_hall_levels(&self, player: PlayerId) -> Result<Vec<u8>, RepoError>;
+}
+
+/// Persistence for per-village **loyalty** (014, §3.4). Loyalty is **lazy** (002 model): the stored
+/// `(value, updated_at)` is **regenerated on read** toward `MAX_LOYALTY` and re-anchored when an
+/// administrator strike changes it. (The ownership transfer itself rides the 009 [`CombatRepository`]
+/// battle apply — this port covers the loyalty read/anchor.)
+#[async_trait]
+pub trait ConquestRepository: Send + Sync {
+    /// The village's stored loyalty accumulator: `(value, last-settled instant)`. `None` if the
+    /// village does not exist.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn village_loyalty(
+        &self,
+        village: VillageId,
+    ) -> Result<Option<(i64, Timestamp)>, RepoError>;
+
+    /// Re-anchor the village's loyalty: write the settled `value` and set the last-settled instant to
+    /// `at` (an upsert on the village row). Called when an administrator strike lowers loyalty without
+    /// taking the village, so the next read regenerates from `at`.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn set_loyalty(
+        &self,
+        village: VillageId,
+        value: i64,
+        at: Timestamp,
+    ) -> Result<(), RepoError>;
 }
 
 /// A claimed, due settle movement ready to resolve (013). Targets a free **valley tile**, not a village.
