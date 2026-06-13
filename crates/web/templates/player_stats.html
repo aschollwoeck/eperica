@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>{{ name }}</h1>
+  <p class="muted"><a href="/leaderboard">← Leaderboards</a></p>
+  <ul class="stats">
+    <li>Population: <strong>{{ population }}</strong></li>
+    <li>Attack points: <strong>{{ attack_points }}</strong></li>
+    <li>Defense points: <strong>{{ defense_points }}</strong></li>
+    <li>Resources looted: <strong>{{ loot_total }}</strong></li>
+  </ul>
+
+  <h2>Villages</h2>
+  {% if villages.is_empty() %}
+  <p class="muted">No villages.</p>
+  {% else %}
+  <table class="table">
+    <thead><tr><th>Coordinates</th><th>Population</th></tr></thead>
+    <tbody>
+      {% for v in villages %}
+      <tr><td>({{ v.x }}|{{ v.y }})</td><td>{{ v.population }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endblock %}
