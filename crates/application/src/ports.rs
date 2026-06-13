@@ -5,9 +5,9 @@
 
 use async_trait::async_trait;
 use eperica_domain::{
-    BuildTarget, BuildingKind, Coordinate, EventKind, MovementKind, OasisBonus, OasisRules,
-    PlayerId, QueueLane, ResourceAmounts, ScoutTarget, StartingVillage, Timestamp, TradeKind,
-    Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
+    AllianceId, AllianceRole, BuildTarget, BuildingKind, Coordinate, EventKind, MovementKind,
+    OasisBonus, OasisRules, PlayerId, QueueLane, ResourceAmounts, RightSet, ScoutTarget,
+    StartingVillage, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
 };
 
 /// A village's public presence on the map: its tile and its owner's name (GDD §7.3 — layout and
@@ -1226,6 +1226,180 @@ pub trait ConquestRepository: Send + Sync {
         value: i64,
         at: Timestamp,
     ) -> Result<(), RepoError>;
+}
+
+/// A player's alliance membership (015): which alliance, their role, and (for leaders) their rights.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Membership {
+    /// The alliance the player belongs to.
+    pub alliance: AllianceId,
+    /// The player's rank.
+    pub role: AllianceRole,
+    /// The leader's granted rights (empty for a plain member; the founder implicitly holds all).
+    pub rights: RightSet,
+}
+
+/// One row of an alliance's roster (015 AC8/AC11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RosterEntry {
+    /// The member.
+    pub player: PlayerId,
+    /// Their login name.
+    pub name: String,
+    /// Their rank.
+    pub role: AllianceRole,
+    /// Their granted rights.
+    pub rights: RightSet,
+}
+
+/// A pending invitation as seen by the **invited player** (015 AC3/AC11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingInvite {
+    /// The inviting alliance.
+    pub alliance: AllianceId,
+    /// Its name.
+    pub alliance_name: String,
+    /// Its tag.
+    pub alliance_tag: String,
+}
+
+/// A pending invitation as seen from **inside the alliance** (the management view, 015 AC11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutgoingInvite {
+    /// The invited player.
+    pub invitee: PlayerId,
+    /// Their login name.
+    pub invitee_name: String,
+}
+
+/// Persistence for alliances & membership (015). Diplomacy and the visibility/defence reads are added
+/// in later tasks. Identity (alliance id, the founder's membership) is assigned by the repository.
+#[async_trait]
+pub trait AllianceRepository: Send + Sync {
+    /// The player's **highest** Embassy level across their villages (0 if none) — the join/found gate
+    /// (AC1). Computed on read from the building rows (P1).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn max_embassy_level(&self, player: PlayerId) -> Result<u8, RepoError>;
+
+    /// The player's membership, or `None` if they are in no alliance.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn alliance_of(&self, player: PlayerId) -> Result<Option<Membership>, RepoError>;
+
+    /// How many members the alliance holds (the cap input, AC4).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn member_count(&self, alliance: AllianceId) -> Result<u32, RepoError>;
+
+    /// The alliance's roster, ordered by rank then name (AC8/AC11).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn roster(&self, alliance: AllianceId) -> Result<Vec<RosterEntry>, RepoError>;
+
+    /// Create an alliance with `name`/`tag`, inserting `founder` as its sole **Founder** member, in one
+    /// transaction; returns the new alliance's id (AC2). The repository assigns the id.
+    ///
+    /// # Errors
+    /// [`RepoError::Duplicate`] if the name or tag is taken (or the founder is somehow already a
+    /// member); [`RepoError::Backend`] otherwise.
+    async fn create_alliance(
+        &self,
+        name: &str,
+        tag: &str,
+        founder: PlayerId,
+    ) -> Result<AllianceId, RepoError>;
+
+    /// Insert a pending invitation `(alliance, invitee)`.
+    ///
+    /// # Errors
+    /// [`RepoError::Duplicate`] if the invitee is already invited to this alliance; [`RepoError`]
+    /// otherwise.
+    async fn insert_invite(&self, alliance: AllianceId, invitee: PlayerId)
+    -> Result<(), RepoError>;
+
+    /// Delete a pending invitation `(alliance, invitee)` (decline / revoke / consumed-on-accept). A
+    /// no-op if it does not exist.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn delete_invite(&self, alliance: AllianceId, invitee: PlayerId)
+    -> Result<(), RepoError>;
+
+    /// Whether `(alliance, invitee)` has a pending invitation (the accept guard).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn has_invite(&self, alliance: AllianceId, invitee: PlayerId) -> Result<bool, RepoError>;
+
+    /// Pending invitations addressed to `player` (their inbox view, AC3/AC11).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn pending_invites_for(&self, player: PlayerId) -> Result<Vec<PendingInvite>, RepoError>;
+
+    /// Pending invitations the alliance has sent out (the management view, AC11).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn invites_of(&self, alliance: AllianceId) -> Result<Vec<OutgoingInvite>, RepoError>;
+
+    /// Add `player` to `alliance` as `role`/`rights`, **guarded** on the alliance still being below
+    /// `cap` (a single conditional insert, AC4). The `player_id` primary key rejects a player already in
+    /// an alliance. Also deletes the consumed invitation in the same transaction.
+    ///
+    /// # Errors
+    /// [`RepoError::Conflict`] if the alliance is at the cap; [`RepoError::Duplicate`] if the player is
+    /// already in an alliance; [`RepoError`] otherwise.
+    async fn add_member(
+        &self,
+        alliance: AllianceId,
+        player: PlayerId,
+        role: AllianceRole,
+        rights: RightSet,
+        cap: u32,
+    ) -> Result<(), RepoError>;
+
+    /// Remove `player` from their alliance (leave / expel).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn remove_member(&self, player: PlayerId) -> Result<(), RepoError>;
+
+    /// Set `player`'s role + rights within `alliance` (promote/demote, grant/revoke — AC6).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn set_member_role(
+        &self,
+        alliance: AllianceId,
+        player: PlayerId,
+        role: AllianceRole,
+        rights: RightSet,
+    ) -> Result<(), RepoError>;
+
+    /// Transfer the founder role in `alliance`: `to` becomes the **Founder**; the old founder `from`
+    /// becomes an ordinary **Member**, in one transaction (AC5/AC6).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn transfer_founder(
+        &self,
+        alliance: AllianceId,
+        from: PlayerId,
+        to: PlayerId,
+    ) -> Result<(), RepoError>;
+
+    /// Disband `alliance`: delete it, cascading to its members, invitations, and diplomacy, in one
+    /// transaction (AC5/AC12).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn disband(&self, alliance: AllianceId) -> Result<(), RepoError>;
 }
 
 /// A claimed, due settle movement ready to resolve (013). Targets a free **valley tile**, not a village.

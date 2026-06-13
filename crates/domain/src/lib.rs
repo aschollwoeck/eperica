@@ -25,8 +25,8 @@ pub mod village;
 pub mod world;
 
 pub use alliance::{
-    AllianceRight, AllianceRole, AllianceRules, DiplomacyAction, DiplomacyError, DiplomacyStance,
-    DiplomacyState, DiplomacyStatus, RightSet, can_expel, has_right, next_stance,
+    AllianceId, AllianceRight, AllianceRole, AllianceRules, DiplomacyAction, DiplomacyError,
+    DiplomacyStance, DiplomacyState, DiplomacyStatus, RightSet, can_expel, has_right, next_stance,
 };
 pub use building::BuildingKind;
 pub use combat::{

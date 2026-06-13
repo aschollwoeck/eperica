@@ -26,7 +26,7 @@ visibility/defence views.
 
 ## Persistence — membership
 
-- [ ] **T3 — Membership persistence + lifecycle.** Migration `00NN_alliances.sql` (`alliances`,
+- [x] **T3 — Membership persistence + lifecycle.** Migration `00NN_alliances.sql` (`alliances`,
   `alliance_members` with `player_id` PK ⇒ one-per-player, `alliance_invitations`). `AllianceRepository`
   (port + `PgAllianceRepository`): `max_embassy_level`, `alliance_of`, `member_count`, `roster`, invites
   read/write, and the guarded mutations. Application use-cases: `found_alliance`, `invite_player`,

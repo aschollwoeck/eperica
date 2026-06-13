@@ -8,6 +8,10 @@
 //! alliance, the normalised diplomacy pair) lives in infrastructure; authority is enforced in the
 //! application from these predicates (P4).
 
+/// Stable identity of an alliance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AllianceId(pub u128);
+
 /// A member's rank within an alliance. Higher rank outranks lower (`Founder > Leader > Member`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AllianceRole {
