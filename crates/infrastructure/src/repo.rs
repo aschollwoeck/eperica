@@ -5041,19 +5041,22 @@ impl RankingRepository for PgAccountRepository {
         metric: ConflictMetric,
         scope: BoardScope,
         since: Option<Timestamp>,
+        until: Option<Timestamp>,
         limit: i64,
     ) -> Result<Vec<LeaderboardRow>, RepoError> {
         let (table, val, pid, occ) = conflict_source(metric);
-        let qf = quadrant_filter(pid, "$2");
+        let qf = quadrant_filter(pid, "$3");
         let sql = format!(
             "SELECT u.id, u.username, COALESCE(SUM({val}), 0)::bigint AS total \
              FROM {table} JOIN users u ON u.id = {pid} \
-             WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) AND {qf} \
+             WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
+               AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) AND {qf} \
              GROUP BY u.id, u.username HAVING COALESCE(SUM({val}), 0) > 0 \
-             ORDER BY total DESC, u.id ASC LIMIT $3"
+             ORDER BY total DESC, u.id ASC LIMIT $4"
         );
         let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(&sql)
             .bind(since.map(|t| t.0 as f64))
+            .bind(until.map(|t| t.0 as f64))
             .bind(scope_code(scope))
             .bind(limit)
             .fetch_all(&self.pool)
@@ -5099,23 +5102,26 @@ impl RankingRepository for PgAccountRepository {
         metric: ConflictMetric,
         scope: BoardScope,
         since: Option<Timestamp>,
+        until: Option<Timestamp>,
         limit: i64,
     ) -> Result<Vec<AllianceLeaderboardRow>, RepoError> {
         let (table, val, pid, occ) = conflict_source(metric);
-        let qf = quadrant_filter("am.player_id", "$2");
+        let qf = quadrant_filter("am.player_id", "$3");
         let sql = format!(
             "SELECT a.id, a.name, a.tag, COALESCE(SUM(pv.val), 0)::bigint AS total \
              FROM alliances a \
              JOIN alliance_members am ON am.alliance_id = a.id \
              JOIN (SELECT {pid} AS pid, SUM({val}) AS val FROM {table} \
                    WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
+                     AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) \
                    GROUP BY {pid}) pv ON pv.pid = am.player_id \
              WHERE {qf} \
              GROUP BY a.id, a.name, a.tag HAVING COALESCE(SUM(pv.val), 0) > 0 \
-             ORDER BY total DESC, a.id ASC LIMIT $3"
+             ORDER BY total DESC, a.id ASC LIMIT $4"
         );
         let rows: Vec<(Uuid, String, String, i64)> = sqlx::query_as(&sql)
             .bind(since.map(|t| t.0 as f64))
+            .bind(until.map(|t| t.0 as f64))
             .bind(scope_code(scope))
             .bind(limit)
             .fetch_all(&self.pool)
@@ -10248,7 +10254,7 @@ mod tests {
 
         // AC5: attack board — the attacker has 50; the defender (zero) is omitted.
         let atk = repo
-            .conflict_board(ConflictMetric::Attack, BoardScope::World, None, 100)
+            .conflict_board(ConflictMetric::Attack, BoardScope::World, None, None, 100)
             .await
             .unwrap();
         assert_eq!(
@@ -10259,7 +10265,7 @@ mod tests {
 
         // AC5: defense board — defender 30, ally 20 (the split).
         let def = repo
-            .conflict_board(ConflictMetric::Defense, BoardScope::World, None, 100)
+            .conflict_board(ConflictMetric::Defense, BoardScope::World, None, None, 100)
             .await
             .unwrap();
         assert_eq!(
@@ -10273,7 +10279,7 @@ mod tests {
 
         // AC6: raider board — the attacker's looted 150 (100 + 50).
         let raid = repo
-            .conflict_board(ConflictMetric::Raided, BoardScope::World, None, 100)
+            .conflict_board(ConflictMetric::Raided, BoardScope::World, None, None, 100)
             .await
             .unwrap();
         assert_eq!(
@@ -10328,7 +10334,7 @@ mod tests {
             .unwrap();
         assert!(apop.iter().any(|r| r.tag == "RK" && r.value > 0));
         let aatk = repo
-            .alliance_conflict_board(ConflictMetric::Attack, BoardScope::World, None, 100)
+            .alliance_conflict_board(ConflictMetric::Attack, BoardScope::World, None, None, 100)
             .await
             .unwrap();
         assert_eq!(
@@ -10389,7 +10395,13 @@ mod tests {
         }
         let since_30d = Some(Timestamp(crate::now().0 - 30 * 86_400 * 1000));
         let recent = repo
-            .conflict_board(ConflictMetric::Attack, BoardScope::World, since_30d, 100)
+            .conflict_board(
+                ConflictMetric::Attack,
+                BoardScope::World,
+                since_30d,
+                None,
+                100,
+            )
             .await
             .unwrap();
         assert!(
@@ -10397,7 +10409,7 @@ mod tests {
             "a 40-day-old battle is outside the 30-day window"
         );
         let all_time = repo
-            .conflict_board(ConflictMetric::Attack, BoardScope::World, None, 100)
+            .conflict_board(ConflictMetric::Attack, BoardScope::World, None, None, 100)
             .await
             .unwrap();
         assert_eq!(
@@ -10623,5 +10635,148 @@ mod tests {
         assert_eq!(climbers.len(), 1, "only the grower is a positive climber");
         assert_eq!(climbers[0].player, a);
         assert_eq!(climbers[0].value, 500);
+    }
+
+    /// 017 AC1/AC3/AC6: the weekly settlement settles each complete period (snapshot + award the
+    /// period's attacker medal from battles in that window) and is idempotent.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn weekly_settlement_snapshots_and_awards(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (attacker, a) = account("wsatk").await;
+        let (defender, d) = account("wsdef").await;
+
+        // Seed a battle giving the attacker 50 attack points, then date it into period 0's window.
+        let battle_at = Timestamp(4_000_000_000_000);
+        repo.apply_battle(BattleApply {
+            movement_id: Uuid::new_v4().as_u128(),
+            owner: attacker,
+            attacker_home: a.id,
+            attacker_origin: a.coordinate,
+            target: d.id,
+            target_coord: d.coordinate,
+            defender_losses: Vec::new(),
+            reinforcement_losses: Vec::new(),
+            survivors: Vec::new(),
+            battle_at,
+            return_arrive: battle_at,
+            report: NewBattleReport {
+                kind: MovementKind::Raid,
+                attacker_player: attacker,
+                attacker_village: a.id,
+                defender_player: defender,
+                defender_village: d.id,
+                attacker_won: true,
+                luck: 1.0,
+                morale: 1.0,
+                wall_before: 0,
+                wall_after: 0,
+                attacker_forces: Vec::new(),
+                attacker_losses: Vec::new(),
+                defender_forces: Vec::new(),
+                defender_losses: Vec::new(),
+                loot: ResourceAmounts::default(),
+                razed: None,
+                loyalty_before: None,
+                loyalty_after: None,
+                conquered: false,
+            },
+            scouted: false,
+            scout_target: None,
+            scout_report: None,
+            loot: ResourceAmounts::default(),
+            target_debit: None,
+            razed: None,
+            loyalty: None,
+            attack_points: 50,
+            defender_contributions: Vec::new(),
+        })
+        .await
+        .expect("seed battle");
+
+        // A short real-time period; the battle sits inside period 0; `now` is in period 2 → settle 0 and 1.
+        let world_start = Timestamp(4_000_000_000_000 - 50_000); // period 0 starts 50s before the battle
+        let rules = eperica_domain::MedalRules {
+            period_secs: 100,
+            per_category: 3,
+            categories: vec![
+                eperica_domain::MedalCategory::Attacker,
+                eperica_domain::MedalCategory::Climber,
+            ],
+        };
+        sqlx::query(
+            "UPDATE battle_reports SET occurred_at = to_timestamp($1::double precision / 1000.0)",
+        )
+        .bind(battle_at.0 as f64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let now = Timestamp(world_start.0 + 250_000); // 2.5 periods elapsed
+
+        let settled = eperica_application::process_due_medal_settlement(
+            &repo,
+            &econ,
+            &rules,
+            world_start,
+            now,
+        )
+        .await
+        .expect("settle");
+        assert_eq!(settled, vec![0, 1], "periods 0 and 1 are complete");
+
+        // AC2: a snapshot per player per settled period (2 players × 2 periods).
+        let snaps: i64 = sqlx::query_scalar("SELECT count(*) FROM population_snapshots")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(snaps, 4);
+
+        // AC3: the attacker wins period 0's attacker medal (rank 1); period 1 has no battles → none.
+        let medals = repo
+            .medals_for(MedalSubjectKind::Player, attacker.0)
+            .await
+            .unwrap();
+        assert_eq!(medals.len(), 1);
+        assert_eq!(medals[0].category, MedalCategory::Attacker);
+        assert_eq!(medals[0].period, 0);
+        assert_eq!(medals[0].rank, 1);
+
+        // AC6: re-running settles nothing more and adds no duplicate medals/snapshots.
+        let again = eperica_application::process_due_medal_settlement(
+            &repo,
+            &econ,
+            &rules,
+            world_start,
+            now,
+        )
+        .await
+        .expect("settle again");
+        assert!(again.is_empty());
+        let medals2: i64 = sqlx::query_scalar("SELECT count(*) FROM medals")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(medals2, 1);
     }
 }

@@ -69,7 +69,7 @@ pub async fn conflict_leaderboard(
 ) -> Result<Vec<LeaderboardRow>, RankingError> {
     let since = window_since(rules, now, window)?;
     Ok(repo
-        .conflict_board(metric, scope, since, rules.page_size as i64)
+        .conflict_board(metric, scope, since, None, rules.page_size as i64)
         .await?)
 }
 
@@ -96,7 +96,7 @@ pub async fn alliance_conflict_leaderboard(
 ) -> Result<Vec<AllianceLeaderboardRow>, RankingError> {
     let since = window_since(rules, now, window)?;
     Ok(repo
-        .alliance_conflict_board(metric, scope, since, rules.page_size as i64)
+        .alliance_conflict_board(metric, scope, since, None, rules.page_size as i64)
         .await?)
 }
 

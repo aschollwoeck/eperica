@@ -11,6 +11,7 @@ pub mod combat;
 pub mod culture;
 pub mod economy;
 pub mod map;
+pub mod medals;
 pub mod movement;
 pub mod oasis;
 pub mod ports;
@@ -40,6 +41,7 @@ pub use combat::{CombatError, order_attack, process_due_combat};
 pub use culture::{CultureView, load_culture, reanchor_culture};
 pub use economy::{VillageEconomy, load_economy, pick_village, select_village, settle_amounts};
 pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
+pub use medals::process_due_medal_settlement;
 pub use movement::{MovementError, order_reinforcement, order_return, process_due_movements};
 pub use oasis::{
     OasisError, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,

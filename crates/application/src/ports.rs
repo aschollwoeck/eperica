@@ -2163,12 +2163,15 @@ pub trait RankingRepository: Send + Sync {
         limit: i64,
     ) -> Result<Vec<LeaderboardRow>, RepoError>;
 
-    /// Players ranked by a conflict metric over the window (AC5/AC6); zero-activity players omitted.
+    /// Players ranked by a conflict metric over `[since, until)` (AC5/AC6; either bound `None` is
+    /// open); zero-activity players omitted. `until` bounds the period for a reproducible settlement
+    /// (017) even when catching up late.
     async fn conflict_board(
         &self,
         metric: ConflictMetric,
         scope: BoardScope,
         since: Option<Timestamp>,
+        until: Option<Timestamp>,
         limit: i64,
     ) -> Result<Vec<LeaderboardRow>, RepoError>;
 
@@ -2180,12 +2183,13 @@ pub trait RankingRepository: Send + Sync {
         limit: i64,
     ) -> Result<Vec<AllianceLeaderboardRow>, RepoError>;
 
-    /// Alliances ranked by aggregate member attack/defense points over the window (AC8).
+    /// Alliances ranked by aggregate member attack/defense points over `[since, until)` (AC8).
     async fn alliance_conflict_board(
         &self,
         metric: ConflictMetric,
         scope: BoardScope,
         since: Option<Timestamp>,
+        until: Option<Timestamp>,
         limit: i64,
     ) -> Result<Vec<AllianceLeaderboardRow>, RepoError>;
 
