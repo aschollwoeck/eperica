@@ -445,6 +445,7 @@ mod tests {
                     speed: 1,
                     carry_capacity: 0,
                     crop_upkeep: 1,
+                    point_value: 1,
                     cost: amounts(1),
                     train_secs: 1,
                     trained_in: BuildingKind::Barracks,

@@ -7,9 +7,9 @@
 use eperica_domain::{
     AllianceRules, BuildRules, BuildingKind, BuildingSlot, CombatRules, CultureRules, DomainError,
     EconomyRules, FieldDistribution, LevelSpec, LoyaltyRules, MapRules, MerchantProfile,
-    MerchantRules, OasisBonus, OasisRules, ResearchSpec, ResourceAmounts, ResourceField,
-    ResourceKind, ScoutRules, SiegeKind, SmithyRules, StartingVillage, TrainingRules, Tribe,
-    UnitId, UnitRole, UnitRules, UnitSpec, WallProfile, Weighted,
+    MerchantRules, OasisBonus, OasisRules, RankingRules, ResearchSpec, ResourceAmounts,
+    ResourceField, ResourceKind, ScoutRules, SiegeKind, SmithyRules, StartingVillage,
+    TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec, WallProfile, Weighted,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -68,6 +68,10 @@ const CONQUEST_TOML: &str = include_str!(concat!(
 const ALLIANCE_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../specs/balance/alliance.toml"
+));
+const RANKING_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/ranking.toml"
 ));
 
 /// Errors that can occur while loading balance data.
@@ -578,6 +582,38 @@ pub fn alliance_rules() -> Result<AllianceRules, BalanceError> {
 }
 
 #[derive(Deserialize)]
+struct RankingDto {
+    /// Rolling leaderboard windows, in days (besides the implicit all-time window).
+    windows_days: Vec<i64>,
+    /// Maximum rows any leaderboard returns (P11).
+    leaderboard_page_size: usize,
+}
+
+/// Load the ranking & statistics rules (016) from the embedded balance data: the leaderboard windows
+/// and page bound (`ranking.toml`) combined with each unit's kill **point value** (from `units.toml`,
+/// defaulting to crop upkeep — GDD §11.2).
+///
+/// # Errors
+/// Returns [`BalanceError`] if either dataset cannot be parsed.
+pub fn ranking_rules() -> Result<RankingRules, BalanceError> {
+    let dto: RankingDto = toml::from_str(RANKING_TOML)?;
+    let units = unit_rules()?;
+    // Point values keyed by unit id (shared ids across tribes carry the same value, so the map
+    // collapses them harmlessly — combat losses are keyed by id too).
+    let mut point_value = HashMap::new();
+    for tribe in [Tribe::Romans, Tribe::Teutons, Tribe::Gauls] {
+        for spec in units.roster(tribe) {
+            point_value.insert(spec.id.clone(), spec.point_value);
+        }
+    }
+    Ok(RankingRules {
+        point_value,
+        windows_secs: dto.windows_days.iter().map(|d| d * 86_400).collect(),
+        page_size: dto.leaderboard_page_size,
+    })
+}
+
+#[derive(Deserialize)]
 struct UnitsDto {
     training: TrainingDto,
     smithy: SmithyDto,
@@ -640,6 +676,9 @@ struct UnitDto {
     speed: u32,
     carry_capacity: u32,
     crop_upkeep: u32,
+    /// Ranking kill value (016, P7). Absent ⇒ defaults to `crop_upkeep` (faithful population value).
+    #[serde(default)]
+    point_value: Option<i64>,
     train_secs: i64,
     trained_in: String,
     cost: AmountsDto,
@@ -700,6 +739,7 @@ fn unit_spec(dto: &UnitDto) -> Result<UnitSpec, BalanceError> {
         speed: dto.speed,
         carry_capacity: dto.carry_capacity,
         crop_upkeep: dto.crop_upkeep,
+        point_value: dto.point_value.unwrap_or(i64::from(dto.crop_upkeep)),
         cost: amounts(&dto.cost),
         train_secs: dto.train_secs,
         trained_in: parse_building(&dto.trained_in)?,
@@ -731,6 +771,7 @@ fn wild_animal_spec(dto: &WildAnimalDto) -> UnitSpec {
         speed: 0,
         carry_capacity: 0,
         crop_upkeep: 0,
+        point_value: 0,
         cost: ResourceAmounts::default(),
         train_secs: 0,
         trained_in: BuildingKind::Barracks,
@@ -1179,6 +1220,29 @@ mod tests {
         assert!(r.unit(Tribe::Gauls, &UnitId("phalanx".into())).is_some());
         // Smithy tables cover 20 levels.
         assert_eq!(r.smithy.max_level(), 20);
+    }
+
+    #[test]
+    fn loads_ranking_rules_with_point_values_defaulting_to_upkeep() {
+        // 016: windows + page bound load, and each unit's kill point value defaults to its crop
+        // upkeep (the faithful population value) when no explicit `point_value` is given.
+        let r = ranking_rules().expect("ranking rules load");
+        assert_eq!(r.windows_secs, vec![7 * 86_400, 30 * 86_400]);
+        assert_eq!(r.page_size, 100);
+        let units = unit_rules().expect("unit rules");
+        for tribe in [Tribe::Romans, Tribe::Teutons, Tribe::Gauls] {
+            for spec in units.roster(tribe) {
+                assert_eq!(
+                    r.unit_value(&spec.id),
+                    i64::from(spec.crop_upkeep),
+                    "{:?}/{}",
+                    tribe,
+                    spec.id.0
+                );
+            }
+        }
+        // An unknown unit (e.g. a wild animal) carries no point value.
+        assert_eq!(r.unit_value(&UnitId("elephant".into())), 0);
     }
 
     #[test]

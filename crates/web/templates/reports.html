@@ -15,7 +15,7 @@
         <td class="muted"><span class="when" data-ms="{{ r.when_ms }}">…</span></td>
         <td>{{ r.headline }}</td>
         <td>{{ r.outcome }}</td>
-        <td><a href="{{ r.href }}">View</a></td>
+        <td>{% if r.href != "" %}<a href="{{ r.href }}">View</a>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

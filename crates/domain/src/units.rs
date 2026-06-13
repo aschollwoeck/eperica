@@ -82,6 +82,9 @@ pub struct UnitSpec {
     pub carry_capacity: u32,
     /// Crop consumed per hour while alive (GDD §2.2).
     pub crop_upkeep: u32,
+    /// Ranking **point value** of destroying one of this unit (016, GDD §11.2) — the military value
+    /// a kill is worth. Balance data (P7); defaults to `crop_upkeep` (the troop's population value).
+    pub point_value: i64,
     /// Training cost per unit.
     pub cost: ResourceAmounts,
     /// Base training duration in seconds (before world speed; used from 005).
@@ -524,6 +527,7 @@ mod tests {
             speed: 6,
             carry_capacity: 50,
             crop_upkeep: 1,
+            point_value: 1,
             cost: amounts(100),
             train_secs: 1600,
             trained_in: BuildingKind::Barracks,

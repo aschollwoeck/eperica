@@ -638,6 +638,7 @@ mod tests {
             speed: 6,
             carry_capacity: 50,
             crop_upkeep: 1,
+            point_value: 1,
             cost: amounts(100),
             train_secs: 1600,
             trained_in: BuildingKind::Barracks,

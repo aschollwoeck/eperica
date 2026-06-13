@@ -338,6 +338,7 @@ mod tests {
                 speed: 6 + i as u32, // u0 slowest (6)
                 carry_capacity: 0,
                 crop_upkeep: 1,
+                point_value: 1,
                 cost: amounts(1),
                 train_secs: 1,
                 trained_in: BuildingKind::Barracks,

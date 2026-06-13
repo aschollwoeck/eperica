@@ -3,13 +3,15 @@
 use crate::auth::{AuthUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
 use crate::templates::{
-    AcademyRow, AcademyTemplate, ActiveView, AllianceTemplate, AlliedVillageView, BuildRow,
-    DiploRowView, ForceRow, GarrisonRow, IncomingView, IndexTemplate, LoginTemplate, MapCellView,
-    MapTemplate, MarketTemplate, MovementRow, OasisRow, OutgoingInviteView, PendingInviteView,
-    QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow,
-    ReportTemplate, ReportsTemplate, RosterRowView, ScoutReportTemplate, ScoutResourceRow,
-    ShipmentRow, SmithyRow, SmithyTemplate, StyleGuideTemplate, TrainRow, TroopsTemplate,
-    VillageSwitchRow, VillageTemplate,
+    AcademyRow, AcademyTemplate, ActiveView, AllianceStatsTemplate, AllianceTemplate,
+    AlliedVillageView, BuildRow, DiploRowView, ForceRow, GarrisonRow, IncomingView, IndexTemplate,
+    LeaderboardRowView, LeaderboardTemplate, LoginTemplate, MapCellView, MapTemplate,
+    MarketTemplate, MemberStatRow, MovementRow, OasisRow, OutgoingInviteView, PendingInviteView,
+    PlayerStatsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate,
+    ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, RosterRowView,
+    ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate,
+    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
+    VillageTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -18,19 +20,23 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
-    AccountRepository, AllianceRepository, BattleReportView, BuildRepository, CombatRepository,
-    ConquestRepository, DiplomacyCommand, LoginError, MovementRepository, OasisRepository,
-    RegisterCommand, RegisterError, ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository,
-    TrainingRepository, UnitOrderKind, UnitRepository, alliance_view, authenticate,
-    disband_alliance, expel_member, found_alliance, invite_player, leave_alliance, load_culture,
-    load_economy, map_viewport, order_attack, order_build, order_oasis_attack, order_oasis_recall,
-    order_oasis_reinforce, order_reinforcement, order_research, order_return, order_scout,
-    order_settle, order_smithy_upgrade, order_trade, order_train, register, respond_invite,
-    revoke_invite, set_diplomacy, set_member_role, transfer_founder, viewport_coords,
+    AccountRepository, AllianceLeaderboardRow, AllianceRepository, BattleReportView, BoardScope,
+    BuildRepository, CombatRepository, ConflictMetric, ConquestRepository, DiplomacyCommand,
+    LeaderboardRow, LoginError, MovementRepository, OasisRepository, RegisterCommand,
+    RegisterError, ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository,
+    TrainingRepository, UnitOrderKind, UnitRepository, Window, alliance_conflict_leaderboard,
+    alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
+    conflict_leaderboard, disband_alliance, expel_member, found_alliance, invite_player,
+    leave_alliance, load_culture, load_economy, map_viewport, order_attack, order_build,
+    order_oasis_attack, order_oasis_recall, order_oasis_reinforce, order_reinforcement,
+    order_research, order_return, order_scout, order_settle, order_smithy_upgrade, order_trade,
+    order_train, player_statistics, population_leaderboard, register, reinforcement_reports,
+    respond_invite, revoke_invite, set_diplomacy, set_member_role, transfer_founder,
+    viewport_coords,
 };
 use eperica_domain::{
-    AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, Coordinate,
-    DiplomacyStance, DiplomacyStatus, MovementKind, OasisBonus, PlayerId, QueueLane,
+    AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, Coordinate,
+    DiplomacyStance, DiplomacyStatus, MovementKind, OasisBonus, PlayerId, Quadrant, QueueLane,
     ResearchDenied, ResourceAmounts, ResourceKind, RightSet, ScoutTarget, TileKind, TradeKind,
     Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, VillageId, can_afford,
     can_research, can_upgrade, garrison_upkeep, per_unit_time_secs, queue_lane, regenerate_loyalty,
@@ -170,6 +176,10 @@ fn page<T: Template>(template: &T) -> Response {
 
 fn server_error() -> Response {
     (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
+}
+
+fn not_found() -> Response {
+    (StatusCode::NOT_FOUND, "not found").into_response()
 }
 
 /// Optional village selector for the multi-village pages (013 AC11): `?village=<id>` chooses which of
@@ -2005,8 +2015,312 @@ pub async fn reports(State(state): State<AppState>, AuthUser(player): AuthUser) 
         })
         .collect();
     rows.extend(scouts.iter().map(scout_report_row));
+    // 016 AC3/AC12: battles where the player **reinforced** an ally — their own report (the owner's
+    // own defenses are already above as `defender_player`). Informational rows (no separate detail).
+    let defended =
+        match reinforcement_reports(state.accounts.as_ref(), &state.ranking_rules, player).await {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::error!(error = %e, "defender reports lookup failed");
+                return server_error();
+            }
+        };
+    rows.extend(defended.iter().filter(|d| !d.is_owner).map(|d| {
+        let lost: u32 = d.losses.iter().map(|(_, n)| n).sum();
+        ReportRow {
+            when_ms: d.occurred_at.0,
+            headline: format!(
+                "Reinforced an allied defense (+{} defense points)",
+                d.defense_points
+            ),
+            outcome: if lost == 0 {
+                "No losses".to_owned()
+            } else {
+                format!("Lost {lost} troops")
+            },
+            href: String::new(),
+        }
+    }));
     rows.sort_by_key(|r| std::cmp::Reverse(r.when_ms));
     page(&ReportsTemplate { reports: rows })
+}
+
+/// Query for the public leaderboard page (016): category, region scope, time window.
+#[derive(Deserialize)]
+pub struct LeaderboardQuery {
+    cat: Option<String>,
+    scope: Option<String>,
+    window: Option<String>,
+}
+
+/// The map-quadrant scope for a leaderboard query string.
+fn parse_scope(s: &str) -> BoardScope {
+    match s {
+        "ne" => BoardScope::Quadrant(Quadrant::Ne),
+        "nw" => BoardScope::Quadrant(Quadrant::Nw),
+        "sw" => BoardScope::Quadrant(Quadrant::Sw),
+        "se" => BoardScope::Quadrant(Quadrant::Se),
+        _ => BoardScope::World,
+    }
+}
+
+/// The time window for a leaderboard query string, validated against config (P7): an `"<n>d"` key is
+/// honored only if `<n>` days is a configured window; anything else (incl. "all") is all-time. This
+/// keeps the selector and the use-case in agreement, so a config change can never 500 the page.
+fn parse_window(s: &str, rules: &eperica_domain::RankingRules) -> Window {
+    let secs = s
+        .strip_suffix('d')
+        .and_then(|n| n.parse::<i64>().ok())
+        .map(|days| days * 86_400);
+    match secs {
+        Some(secs) if rules.windows_secs.contains(&secs) => Window::Last(secs),
+        _ => Window::AllTime,
+    }
+}
+
+/// The window selector options, built from config (P7): "All-time" plus each configured window.
+fn window_options(rules: &eperica_domain::RankingRules) -> Vec<(String, String)> {
+    let mut out = vec![("all".to_owned(), "All-time".to_owned())];
+    for secs in &rules.windows_secs {
+        let days = secs / 86_400;
+        out.push((format!("{days}d"), format!("{days} days")));
+    }
+    out
+}
+
+/// Map player leaderboard rows to view rows (rank + stat-page link).
+fn player_rows(rows: Vec<LeaderboardRow>) -> Vec<LeaderboardRowView> {
+    rows.into_iter()
+        .enumerate()
+        .map(|(i, r)| LeaderboardRowView {
+            rank: i + 1,
+            name: r.name,
+            tag: String::new(),
+            href: format!("/stats/player/{}", r.player.0),
+            value: r.value,
+        })
+        .collect()
+}
+
+/// Map alliance leaderboard rows to view rows (rank + tag + stat-page link).
+fn alliance_rows(rows: Vec<AllianceLeaderboardRow>) -> Vec<LeaderboardRowView> {
+    rows.into_iter()
+        .enumerate()
+        .map(|(i, r)| LeaderboardRowView {
+            rank: i + 1,
+            name: r.name,
+            tag: r.tag,
+            href: format!("/stats/alliance/{}", r.alliance.0),
+            value: r.value,
+        })
+        .collect()
+}
+
+/// Public leaderboards (016 AC2/AC5/AC6/AC8): population / attackers / defenders / raiders + the
+/// alliance aggregates, filterable by quadrant and (for conflict boards) time window.
+pub async fn leaderboard(
+    State(state): State<AppState>,
+    Query(q): Query<LeaderboardQuery>,
+) -> Response {
+    let scope_key = q.scope.unwrap_or_else(|| "world".to_owned());
+    let window_key = q.window.unwrap_or_else(|| "all".to_owned());
+    let scope = parse_scope(&scope_key);
+    let repo = state.accounts.as_ref();
+    let econ = state.rules.as_ref();
+    let rules = state.ranking_rules.as_ref();
+    let window = parse_window(&window_key, rules);
+    let now_ts = now();
+
+    let categories = vec![
+        ("population", "Population"),
+        ("attackers", "Top attackers"),
+        ("defenders", "Top defenders"),
+        ("raiders", "Top raiders"),
+        ("alliances", "Alliances"),
+        ("alliance-atk", "Alliance attack"),
+        ("alliance-def", "Alliance defense"),
+    ];
+    let cat = q.cat.unwrap_or_else(|| "population".to_owned());
+    let category = if categories.iter().any(|(k, _)| *k == cat) {
+        cat
+    } else {
+        "population".to_owned()
+    };
+
+    let (result, value_label, is_alliance, windowed): (Result<_, _>, &str, bool, bool) =
+        match category.as_str() {
+            "attackers" => (
+                conflict_leaderboard(repo, rules, ConflictMetric::Attack, scope, window, now_ts)
+                    .await
+                    .map(player_rows),
+                "Attack points",
+                false,
+                true,
+            ),
+            "defenders" => (
+                conflict_leaderboard(repo, rules, ConflictMetric::Defense, scope, window, now_ts)
+                    .await
+                    .map(player_rows),
+                "Defense points",
+                false,
+                true,
+            ),
+            "raiders" => (
+                conflict_leaderboard(repo, rules, ConflictMetric::Raided, scope, window, now_ts)
+                    .await
+                    .map(player_rows),
+                "Resources looted",
+                false,
+                true,
+            ),
+            "alliances" => (
+                alliance_population_leaderboard(repo, econ, rules, scope)
+                    .await
+                    .map(alliance_rows),
+                "Population",
+                true,
+                false,
+            ),
+            "alliance-atk" => (
+                alliance_conflict_leaderboard(
+                    repo,
+                    rules,
+                    ConflictMetric::Attack,
+                    scope,
+                    window,
+                    now_ts,
+                )
+                .await
+                .map(alliance_rows),
+                "Attack points",
+                true,
+                true,
+            ),
+            "alliance-def" => (
+                alliance_conflict_leaderboard(
+                    repo,
+                    rules,
+                    ConflictMetric::Defense,
+                    scope,
+                    window,
+                    now_ts,
+                )
+                .await
+                .map(alliance_rows),
+                "Defense points",
+                true,
+                true,
+            ),
+            _ => (
+                population_leaderboard(repo, econ, rules, scope)
+                    .await
+                    .map(player_rows),
+                "Population",
+                false,
+                false,
+            ),
+        };
+    let rows = match result {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "leaderboard query failed");
+            return server_error();
+        }
+    };
+    page(&LeaderboardTemplate {
+        category,
+        categories,
+        scope: scope_key,
+        scopes: vec![
+            ("world", "World"),
+            ("ne", "NE"),
+            ("nw", "NW"),
+            ("sw", "SW"),
+            ("se", "SE"),
+        ],
+        window: window_key,
+        windows: window_options(rules),
+        is_alliance,
+        windowed,
+        value_label,
+        rows,
+    })
+}
+
+/// Public player statistics page (016 AC9).
+pub async fn player_stats_page(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let Ok(pid) = id.parse::<u128>() else {
+        return not_found();
+    };
+    match player_statistics(state.accounts.as_ref(), state.rules.as_ref(), PlayerId(pid)).await {
+        Ok(Some(s)) => page(&PlayerStatsTemplate {
+            name: s.name,
+            population: s.population,
+            attack_points: s.attack_points,
+            defense_points: s.defense_points,
+            loot_total: s.loot_total,
+            villages: s
+                .villages
+                .into_iter()
+                .map(|(_, c, population)| VillageStatRow {
+                    x: c.x,
+                    y: c.y,
+                    population,
+                })
+                .collect(),
+        }),
+        Ok(None) => not_found(),
+        Err(e) => {
+            tracing::error!(error = %e, "player stats failed");
+            server_error()
+        }
+    }
+}
+
+/// Public alliance statistics page (016 AC10).
+pub async fn alliance_stats_page(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let Ok(aid) = id.parse::<u128>() else {
+        return not_found();
+    };
+    match alliance_statistics(
+        state.accounts.as_ref(),
+        state.rules.as_ref(),
+        AllianceId(aid),
+    )
+    .await
+    {
+        Ok(Some(s)) => page(&AllianceStatsTemplate {
+            name: s.name,
+            tag: s.tag,
+            population: s.population,
+            attack_points: s.attack_points,
+            defense_points: s.defense_points,
+            members: s
+                .members
+                .into_iter()
+                .map(
+                    |(player, name, population, attack_points, defense_points)| MemberStatRow {
+                        name,
+                        href: format!("/stats/player/{}", player.0),
+                        population,
+                        attack_points,
+                        defense_points,
+                    },
+                )
+                .collect(),
+        }),
+        Ok(None) => not_found(),
+        Err(e) => {
+            tracing::error!(error = %e, "alliance stats failed");
+            server_error()
+        }
+    }
 }
 
 /// One scout report's detail — scouter sees the intel, a detected target sees only the notification;

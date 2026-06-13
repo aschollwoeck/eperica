@@ -70,6 +70,7 @@ mod tests {
             speed,
             carry_capacity: 0,
             crop_upkeep: 1,
+            point_value: 1,
             cost: ResourceAmounts {
                 wood: 1,
                 clay: 1,

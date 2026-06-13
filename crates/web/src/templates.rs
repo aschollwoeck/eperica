@@ -624,3 +624,77 @@ pub struct AllianceTemplate {
     pub incoming: Vec<IncomingView>,
     pub outgoing_invites: Vec<OutgoingInviteView>,
 }
+
+// ---------------------------------------------------------------- 016: ranking & statistics
+
+/// One row of a leaderboard (016): rank, the entity's name (+ tag for alliances), its stat-page
+/// link, and the metric value.
+pub struct LeaderboardRowView {
+    pub rank: usize,
+    pub name: String,
+    /// The alliance tag (empty for player rows).
+    pub tag: String,
+    /// Link to the entity's statistics page.
+    pub href: String,
+    pub value: i64,
+}
+
+#[derive(Template)]
+#[template(path = "leaderboard.html")]
+pub struct LeaderboardTemplate {
+    /// The selected category key (e.g. "population", "attackers", "alliances").
+    pub category: String,
+    /// All category options as (key, label).
+    pub categories: Vec<(&'static str, &'static str)>,
+    /// The selected scope key ("world" / "ne" / "nw" / "sw" / "se").
+    pub scope: String,
+    pub scopes: Vec<(&'static str, &'static str)>,
+    /// The selected window key ("all" / "7d" / "30d"); options are built from config (P7).
+    pub window: String,
+    pub windows: Vec<(String, String)>,
+    /// Whether the selected category ranks alliances (shows the tag column).
+    pub is_alliance: bool,
+    /// Whether the selected category is windowed (shows the window selector).
+    pub windowed: bool,
+    /// The metric column header (e.g. "Population", "Attack points").
+    pub value_label: &'static str,
+    pub rows: Vec<LeaderboardRowView>,
+}
+
+/// One village line on a player's statistics page (016 AC9): its tile and population.
+pub struct VillageStatRow {
+    pub x: i32,
+    pub y: i32,
+    pub population: i64,
+}
+
+#[derive(Template)]
+#[template(path = "player_stats.html")]
+pub struct PlayerStatsTemplate {
+    pub name: String,
+    pub population: i64,
+    pub attack_points: i64,
+    pub defense_points: i64,
+    pub loot_total: i64,
+    pub villages: Vec<VillageStatRow>,
+}
+
+/// One member line on an alliance's statistics page (016 AC10).
+pub struct MemberStatRow {
+    pub name: String,
+    pub href: String,
+    pub population: i64,
+    pub attack_points: i64,
+    pub defense_points: i64,
+}
+
+#[derive(Template)]
+#[template(path = "alliance_stats.html")]
+pub struct AllianceStatsTemplate {
+    pub name: String,
+    pub tag: String,
+    pub population: i64,
+    pub attack_points: i64,
+    pub defense_points: i64,
+    pub members: Vec<MemberStatRow>,
+}

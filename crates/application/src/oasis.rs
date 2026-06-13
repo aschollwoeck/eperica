@@ -660,6 +660,7 @@ mod tests {
                 speed: 7,
                 carry_capacity: 35,
                 crop_upkeep: 1,
+                point_value: 1,
                 cost: ResourceAmounts {
                     wood: 1,
                     clay: 1,
@@ -695,6 +696,7 @@ mod tests {
             speed: 0,
             carry_capacity: 0,
             crop_upkeep: 0,
+            point_value: 0,
             cost: ResourceAmounts::default(),
             train_secs: 0,
             trained_in: BuildingKind::Barracks,

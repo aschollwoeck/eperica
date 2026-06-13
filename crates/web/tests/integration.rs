@@ -14,7 +14,7 @@ use eperica_domain::{
 use eperica_infrastructure::{
     Argon2Hasher, PgAccountRepository, alliance_rules, build_rules, combat_rules, culture_rules,
     economy_rules, ensure_world, loyalty_rules, map_rules, merchant_rules, now, oasis_rules,
-    scout_rules, starting_village, unit_rules,
+    ranking_rules, scout_rules, starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -52,6 +52,7 @@ async fn spawn(pool: sqlx::PgPool) -> String {
         culture_rules: Arc::new(culture_rules().expect("culture rules")),
         loyalty_rules: Arc::new(loyalty_rules().expect("loyalty rules")),
         alliance_rules: Arc::new(alliance_rules().expect("alliance rules")),
+        ranking_rules: Arc::new(ranking_rules().expect("ranking rules")),
         merchant_rules: Arc::new(merchant_rules().expect("merchant rules")),
         map,
         world: config,
@@ -1283,6 +1284,7 @@ async fn combat_raid_and_reports_flow(pool: sqlx::PgPool) {
         &scout,
         &culture_rules().unwrap(),
         &loyalty_rules().unwrap(),
+        &ranking_rules().unwrap(),
         &map,
         GameSpeed::new(1.0).unwrap(),
         world.seed as u64,
@@ -1583,6 +1585,7 @@ async fn siege_loot_and_cranny_flow(pool: sqlx::PgPool) {
         &scout,
         &culture_rules().unwrap(),
         &loyalty_rules().unwrap(),
+        &ranking_rules().unwrap(),
         &map,
         GameSpeed::new(1.0).unwrap(),
         world.seed as u64,
@@ -2214,6 +2217,7 @@ async fn conquest_with_administrators_flow(pool: sqlx::PgPool) {
         &scout,
         &culture_rules().unwrap(),
         &loyalty_rules().unwrap(),
+        &ranking_rules().unwrap(),
         &map,
         GameSpeed::new(1.0).unwrap(),
         world.seed as u64,
@@ -2431,5 +2435,105 @@ async fn alliance_found_invite_accept_flow(pool: sqlx::PgPool) {
     assert!(
         !outsider_view.contains(&aname),
         "a non-member does not see the alliance roster"
+    );
+}
+
+/// 016 AC2/AC9: the leaderboard and player statistics page are **public** (a visitor with no session
+/// reaches them) and surface the registered player by population.
+#[sqlx::test(migrations = "../../migrations")]
+async fn leaderboard_and_stats_are_public(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let player = unique("lb");
+    client()
+        .post(format!("{base}/register"))
+        .form(&[
+            ("username", player.as_str()),
+            ("email", format!("{player}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // A fresh, cookie-less client (a visitor) can read the leaderboard, and the player shows on the
+    // population board (their starting village has population).
+    let visitor = client();
+    let res = visitor
+        .get(format!("{base}/leaderboard"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 200);
+    let body = res.text().await.unwrap();
+    assert!(body.contains("Leaderboards"));
+    assert!(
+        body.contains(&player),
+        "the population board lists the player"
+    );
+
+    // The conflict board variants render too.
+    for cat in ["attackers", "defenders", "raiders", "alliances"] {
+        let r = visitor
+            .get(format!("{base}/leaderboard?cat={cat}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 200, "category {cat}");
+    }
+
+    // The player's public stats page (AC9): look up their id, then read it as a visitor.
+    let pid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind(&player)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let stats = visitor
+        .get(format!("{base}/stats/player/{}", pid.as_u128()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stats.status().as_u16(), 200);
+    let stats_body = stats.text().await.unwrap();
+    assert!(stats_body.contains(&player));
+    assert!(stats_body.contains("Population"));
+    // A malformed id is a clean 404, not a 500.
+    let bad = visitor
+        .get(format!("{base}/stats/player/not-a-number"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status().as_u16(), 404);
+
+    // P11: with the world populated by more players, the board read stays within budget (best of 3 —
+    // the population board computes population in SQL bounded by the page size, not per-village in Rust).
+    for _ in 0..8 {
+        let p = unique("lbp");
+        client()
+            .post(format!("{base}/register"))
+            .form(&[
+                ("username", p.as_str()),
+                ("email", format!("{p}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", "gauls"),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+    let mut best = std::time::Duration::MAX;
+    for _ in 0..3 {
+        let started = std::time::Instant::now();
+        let r = visitor
+            .get(format!("{base}/leaderboard?cat=population"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 200);
+        best = best.min(started.elapsed());
+    }
+    assert!(
+        best.as_millis() < 250,
+        "leaderboard read too slow: {best:?}"
     );
 }

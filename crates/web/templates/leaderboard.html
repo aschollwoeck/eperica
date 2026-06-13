@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Leaderboards</h1>
+  <p class="muted"><a href="/village">← Back to the village</a></p>
+
+  <nav class="tabs">
+    {% for c in categories %}
+    <a class="tab {% if c.0 == category %}tab--active{% endif %}"
+       href="/leaderboard?cat={{ c.0 }}&scope={{ scope }}&window={{ window }}">{{ c.1 }}</a>
+    {% endfor %}
+  </nav>
+
+  <form method="get" action="/leaderboard" class="filters">
+    <input type="hidden" name="cat" value="{{ category }}">
+    <label>Region
+      <select name="scope" onchange="this.form.submit()">
+        {% for s in scopes %}
+        <option value="{{ s.0 }}" {% if s.0 == scope %}selected{% endif %}>{{ s.1 }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {% if windowed %}
+    <label>Window
+      <select name="window" onchange="this.form.submit()">
+        {% for w in windows %}
+        <option value="{{ w.0 }}" {% if w.0 == window %}selected{% endif %}>{{ w.1 }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {% else %}
+    <input type="hidden" name="window" value="{{ window }}">
+    {% endif %}
+  </form>
+
+  {% if rows.is_empty() %}
+  <p class="muted">No entries yet.</p>
+  {% else %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Name</th>
+        {% if is_alliance %}<th>Tag</th>{% endif %}
+        <th>{{ value_label }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="muted">{{ r.rank }}</td>
+        <td><a href="{{ r.href }}">{{ r.name }}</a></td>
+        {% if is_alliance %}<td class="muted">{{ r.tag }}</td>{% endif %}
+        <td>{{ r.value }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endblock %}
