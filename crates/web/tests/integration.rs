@@ -14,7 +14,7 @@ use eperica_domain::{
 use eperica_infrastructure::{
     Argon2Hasher, PgAccountRepository, alliance_rules, build_rules, combat_rules, culture_rules,
     economy_rules, ensure_world, loyalty_rules, map_rules, merchant_rules, now, oasis_rules,
-    scout_rules, starting_village, unit_rules,
+    ranking_rules, scout_rules, starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -1283,6 +1283,7 @@ async fn combat_raid_and_reports_flow(pool: sqlx::PgPool) {
         &scout,
         &culture_rules().unwrap(),
         &loyalty_rules().unwrap(),
+        &ranking_rules().unwrap(),
         &map,
         GameSpeed::new(1.0).unwrap(),
         world.seed as u64,
@@ -1583,6 +1584,7 @@ async fn siege_loot_and_cranny_flow(pool: sqlx::PgPool) {
         &scout,
         &culture_rules().unwrap(),
         &loyalty_rules().unwrap(),
+        &ranking_rules().unwrap(),
         &map,
         GameSpeed::new(1.0).unwrap(),
         world.seed as u64,
@@ -2214,6 +2216,7 @@ async fn conquest_with_administrators_flow(pool: sqlx::PgPool) {
         &scout,
         &culture_rules().unwrap(),
         &loyalty_rules().unwrap(),
+        &ranking_rules().unwrap(),
         &map,
         GameSpeed::new(1.0).unwrap(),
         world.seed as u64,

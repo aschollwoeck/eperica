@@ -6055,6 +6055,7 @@ mod tests {
                     &scout,
                     &crate::culture_rules().unwrap(),
                     &crate::loyalty_rules().unwrap(),
+                    &crate::ranking_rules().unwrap(),
                     &map,
                     GameSpeed::new(1.0).unwrap(),
                     world.seed as u64,
@@ -6123,7 +6124,19 @@ mod tests {
             (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
         };
         let (attacker, a) = account("pcatk").await;
-        let (_defender, d) = account("pcdef").await;
+        let (defender, d) = account("pcdef").await;
+        let (ally, al) = account("pcally").await;
+
+        // 016 AC3: the ally reinforces the defender — resolve_one must build a contribution for both.
+        sqlx::query(
+            "INSERT INTO reinforcements (host_village, home_village, unit_id, count) \
+             VALUES ($1, $2, 'phalanx', 2)",
+        )
+        .bind(Uuid::from_u128(d.id.0))
+        .bind(Uuid::from_u128(al.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
 
         // Overwhelming attacker: 100 swordsmen vs a token 2-phalanx defence.
         sqlx::query(
@@ -6170,6 +6183,7 @@ mod tests {
             &scout,
             &crate::culture_rules().unwrap(),
             &crate::loyalty_rules().unwrap(),
+            &crate::ranking_rules().unwrap(),
             &map,
             GameSpeed::new(1.0).unwrap(),
             world.seed as u64,
@@ -6189,6 +6203,29 @@ mod tests {
         // Survivors are heading home.
         let returning = repo.active_movements(attacker).await.unwrap();
         assert!(returning.iter().any(|m| m.kind == MovementKind::Return));
+
+        // 016 AC3/AC4: resolve_one built a per-defender contribution for the **owner** and the **ally
+        // reinforcer** (2 rows), and valued the battle's attack points = the 4 phalanx destroyed
+        // (point_value 1 each).
+        let rid = Uuid::from_u128(reports[0].id);
+        let attack_points: i64 =
+            sqlx::query_scalar("SELECT attack_points FROM battle_reports WHERE id = $1")
+                .bind(rid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(attack_points, 4);
+        let defs: Vec<(Uuid, bool)> = sqlx::query_as(
+            "SELECT player_id, is_owner FROM battle_defenders WHERE battle_id = $1 \
+             ORDER BY is_owner DESC",
+        )
+        .bind(rid)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(defs.len(), 2);
+        assert_eq!(defs[0], (Uuid::from_u128(defender.0), true)); // garrison owner
+        assert_eq!(defs[1], (Uuid::from_u128(ally.0), false)); // reinforcer
     }
 
     /// 010 AC6/AC7/AC8/AC9: scouts riding an attack scout the village in addition to the battle —
@@ -6281,6 +6318,7 @@ mod tests {
             &scout,
             &crate::culture_rules().unwrap(),
             &crate::loyalty_rules().unwrap(),
+            &crate::ranking_rules().unwrap(),
             &map,
             GameSpeed::new(1.0).unwrap(),
             world.seed as u64,
@@ -6669,6 +6707,7 @@ mod tests {
                 &scout,
                 &crate::culture_rules().unwrap(),
                 &crate::loyalty_rules().unwrap(),
+                &crate::ranking_rules().unwrap(),
                 &map,
                 GameSpeed::new(1.0).unwrap(),
                 world.seed as u64,

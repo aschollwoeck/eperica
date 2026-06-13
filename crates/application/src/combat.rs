@@ -6,18 +6,18 @@ use crate::culture::load_culture;
 use crate::economy::settle_amounts;
 use crate::ports::{
     AccountRepository, BattleApply, CombatRepository, ConquestRepository, ConquestTransfer,
-    CultureRepository, LoyaltyApply, MovementRepository, NewBattleReport, NewScoutReport,
-    RazedBuilding, ReinforcementReturn, RepoError, ResourceWrite, UnitRepository,
+    CultureRepository, DefenderContribution, LoyaltyApply, MovementRepository, NewBattleReport,
+    NewScoutReport, RazedBuilding, ReinforcementReturn, RepoError, ResourceWrite, UnitRepository,
 };
 use crate::scouting::gather_intel;
 use eperica_domain::{
     AttackMode, BattleInput, BuildingKind, CombatRules, Coordinate, CultureRules, EconomyRules,
-    GameSpeed, LoyaltyRules, MovementKind, PlayerId, ResourceAmounts, ScoutRules, ScoutTarget,
-    SiegeKind, Timestamp, Tribe, UnitCounts, UnitId, UnitRole, UnitRules, Village, VillageId,
-    WorldMap, add_defense, administrator_count, administrator_drop, apply_losses, attack_power,
-    carry_capacity_total, catapult_power, conquest_outcome, cranny_protection, loot_split,
-    luck_factor, population, razed_levels, regenerate_loyalty, resolve_battle, resolve_scouting,
-    scouting_power, slowest_speed, travel_time_secs_floored,
+    GameSpeed, LoyaltyRules, MovementKind, PlayerId, RankingRules, ResourceAmounts, ScoutRules,
+    ScoutTarget, SiegeKind, Timestamp, Tribe, UnitCounts, UnitId, UnitRole, UnitRules, UnitSpec,
+    Village, VillageId, WorldMap, add_defense, administrator_count, administrator_drop,
+    apply_losses, apportion, attack_power, carry_capacity_total, catapult_power, conquest_outcome,
+    cranny_protection, loot_split, luck_factor, population, razed_levels, regenerate_loyalty,
+    resolve_battle, resolve_scouting, scouting_power, slowest_speed, travel_time_secs_floored,
 };
 
 /// Why launching an attack/raid failed (009 AC2).
@@ -330,6 +330,7 @@ pub async fn process_due_combat<A, M, U, C>(
     scout_rules: &ScoutRules,
     culture_rules: &CultureRules,
     loyalty_rules: &LoyaltyRules,
+    ranking_rules: &RankingRules,
     map: &WorldMap,
     speed: GameSpeed,
     world_seed: u64,
@@ -356,6 +357,7 @@ where
             scout_rules,
             culture_rules,
             loyalty_rules,
+            ranking_rules,
             map,
             speed,
             world_seed,
@@ -384,6 +386,7 @@ async fn resolve_one<A, M, U, C>(
     scout_rules: &ScoutRules,
     culture_rules: &CultureRules,
     loyalty_rules: &LoyaltyRules,
+    ranking_rules: &RankingRules,
     map: &WorldMap,
     speed: GameSpeed,
     world_seed: u64,
@@ -568,6 +571,55 @@ where
     defender_loss_parts.extend(reinf_loss_force);
     let defender_losses_total = merge_counts(&defender_loss_parts);
 
+    // 016 AC3/AC4: per-defender contributions — the target's garrison owner and each reinforcing
+    // player — each tagged with the defensive value it brought (reusing `add_defense`, the same power
+    // the battle math used) and, below, its share of the battle's defense points. The battle's
+    // attack points value the defender troops the attacker destroyed. This records who held/killed
+    // what; it changes **no** outcome.
+    let defense_value =
+        |troops: &UnitCounts, roster: &[UnitSpec], levels: &[(UnitId, u8)]| -> i64 {
+            let mut t = (0.0, 0.0);
+            add_defense(&mut t, troops, roster, levels, combat_rules);
+            (t.0 + t.1).round() as i64
+        };
+    let mut defender_contributions = vec![DefenderContribution {
+        player: target.owner,
+        village: target.id,
+        is_owner: true,
+        forces: garrison.clone(),
+        losses: defender_losses.clone(),
+        defense_value: defense_value(&garrison, def_roster, &def_levels),
+        defense_points: 0,
+    }];
+    for group in &reinforcements {
+        let group_roster = group.home_tribe.map_or(&[][..], |t| unit_rules.roster(t));
+        let Some(group_home) = accounts.village_by_id(group.home_village).await? else {
+            continue;
+        };
+        defender_contributions.push(DefenderContribution {
+            player: group_home.owner,
+            village: group.home_village,
+            is_owner: false,
+            forces: group.troops.clone(),
+            losses: apply_losses(&group.troops, outcome.defender_loss_frac).1,
+            defense_value: defense_value(&group.troops, group_roster, &[]),
+            defense_points: 0,
+        });
+    }
+    // Attack points = the value the attacker destroyed; defense points = the value the defenders
+    // destroyed, split by each defender's contributed defensive value (sum-preserving, AC4).
+    let attack_points = ranking_rules.battle_value(&defender_losses_total);
+    let defense_weights: Vec<i64> = defender_contributions
+        .iter()
+        .map(|c| c.defense_value)
+        .collect();
+    for (c, share) in defender_contributions.iter_mut().zip(apportion(
+        ranking_rules.battle_value(&attacker_losses),
+        &defense_weights,
+    )) {
+        c.defense_points = share;
+    }
+
     // Scouts that rode along: gather intel (only if one survives to return) and a scouter-facing
     // report; the defender's battle report flags scouting only when detected (AC8).
     let (scouted, scout_target, scout_report) = match scout_info {
@@ -745,10 +797,8 @@ where
             target_debit,
             razed,
             loyalty: loyalty_apply,
-            // 016: per-defender reports + battle points are populated in T3; until then the write
-            // path persists nothing extra (attack_points 0, no contributions).
-            attack_points: 0,
-            defender_contributions: Vec::new(),
+            attack_points,
+            defender_contributions,
         })
         .await?;
     Ok(Some(target.id))
@@ -1144,6 +1194,15 @@ mod tests {
         }
     }
 
+    fn ranking_rules() -> RankingRules {
+        // Points are asserted in infra DB tests; these resolve tests only need a valid value.
+        RankingRules {
+            point_value: std::collections::HashMap::new(),
+            windows_secs: Vec::new(),
+            page_size: 100,
+        }
+    }
+
     struct FakeUnits;
     #[async_trait]
     impl UnitRepository for FakeUnits {
@@ -1388,6 +1447,7 @@ mod tests {
             &ScoutRules { loss_exponent: 1.5 },
             &culture_rules(),
             &loyalty_rules(),
+            &ranking_rules(),
             &map(),
             GameSpeed::new(1.0).unwrap(),
             42,
@@ -1455,6 +1515,7 @@ mod tests {
             &ScoutRules { loss_exponent: 1.5 },
             &culture_rules(),
             &loyalty,
+            &ranking_rules(),
             &map(),
             GameSpeed::new(1.0).unwrap(),
             42,
@@ -1523,6 +1584,7 @@ mod tests {
             &ScoutRules { loss_exponent: 1.5 },
             &culture_rules(),
             &loyalty,
+            &ranking_rules(),
             &map(),
             GameSpeed::new(1.0).unwrap(),
             42,
@@ -1658,6 +1720,7 @@ mod tests {
             &ScoutRules { loss_exponent: 1.5 },
             &culture_rules(),
             &loyalty_rules(),
+            &ranking_rules(),
             &map(),
             GameSpeed::new(1.0).unwrap(),
             42,
