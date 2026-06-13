@@ -78,7 +78,7 @@ per-defender row; **no ranking tick** (points are written inside the existing 00
   (the read-side derivation + the points-as-persisted-fact decision + the per-defender report amendment);
   `docs/manual/` ranking & statistics guide; `CLAUDE.md` active slice → 016.
 
-- [ ] **T8 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
+- [x] **T8 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
   **APPROVE**; PR.
 
 ## Done when

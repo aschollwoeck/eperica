@@ -1,6 +1,6 @@
 # Feature 016 — Ranking, leaderboards & statistics — Technical Plan
 
-**Status:** Reviewed
+**Status:** Verified
 **Spec:** ./spec.md
 
 Ranking is the **competitive scoreboard**: public, filterable leaderboards (players by population; top

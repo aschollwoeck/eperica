@@ -1,6 +1,6 @@
 # Feature 016 — Ranking, leaderboards & statistics
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 009 (combat — `battle_reports` are the source of attack/defense kills; **016 amends 009** to emit a report per defending player), 007 (troop movement — the reinforcement groups whose per-owner forces/losses become per-defender reports), 011 (siege & loot — the per-battle `loot_*` that powers top-raiders), 014 (conquest — ownership transfer; rankings follow current ownership), 015 (alliances — `alliance_members`, the grouping the alliance boards aggregate over), 013 (settling — a player's population is summed across **all** their villages; the capital pins their quadrant), 006 (world map — the `Coordinate` whose sign gives the quadrant filter), 002/003 (resource fields + buildings — the built levels population derives from)
 **Roadmap:** M6 · slice 016 · GDD §11.2, §9.6 — the **competitive scoreboard**: a public, filterable view of who is winning, on what axis, where, and over what window. Population is the headline metric; battle points and loot are the conflict metrics; alliances aggregate their members. The ranking views are **derived on read** (P1/P2) — no ranking tick. To make **defense points faithful** (GDD §11.2: "shared among all defenders present, including reinforcements"), 016 also **amends combat (009)** so that **every defending player** — the village owner *and* each reinforcer — receives their **own battle report**, and defense points are split by each defender's contribution.
 
