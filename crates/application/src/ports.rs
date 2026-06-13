@@ -2260,6 +2260,11 @@ pub trait MedalRepository: Send + Sync {
 
     /// Write a population snapshot for **every** player for `period` (idempotent — re-running writes
     /// none). Population is computed from current build state using `econ`'s per-level tables.
+    ///
+    /// **Note:** the production settlement uses [`MedalRepository::settle_period`], which snapshots and
+    /// awards medals in one transaction. This standalone snapshot advances the `MAX(period)` watermark
+    /// by itself, so it must not drive a settlement (that would reintroduce the non-atomic bug) — it is
+    /// for tests/diagnostics.
     async fn snapshot_population(&self, econ: &EconomyRules, period: i64) -> Result<(), RepoError>;
 
     /// Award the given medals for `period` (idempotent via the per-period (category, rank) uniqueness).

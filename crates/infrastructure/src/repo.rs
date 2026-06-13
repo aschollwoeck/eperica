@@ -5311,6 +5311,11 @@ fn alliance_row((id, name, tag, value): (Uuid, String, String, i64)) -> Alliance
 
 // ---------------------------------------------------------------- 017: medals & population snapshots
 
+/// The climber metric — population gained from the previous snapshot — as a SQL expression over a
+/// `cur`/`prev` snapshot join. Shared by the climbers board and the settlement so the delta + filter +
+/// tie-break never drift (P6/AC13).
+const CLIMBER_DELTA: &str = "(cur.population - COALESCE(prev.population, 0))";
+
 /// Insert one medal row inside an open transaction, idempotent per `(period, category, rank)`.
 async fn insert_medal(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -5419,23 +5424,23 @@ impl MedalRepository for PgAccountRepository {
         // 2. Climber medals — top population gainers `period` vs `period-1`, read from the snapshot
         //    just written (within this transaction). World-scoped (medals are world-wide).
         if let Some(limit) = climber_limit {
-            let rows: Vec<(Uuid,)> = sqlx::query_as(
+            let delta = CLIMBER_DELTA;
+            let climber_sql = format!(
                 "SELECT cur.player_id FROM population_snapshots cur \
                  LEFT JOIN population_snapshots prev \
                    ON prev.world_id = cur.world_id AND prev.player_id = cur.player_id \
                       AND prev.period = $2 \
-                 WHERE cur.world_id = $1 AND cur.period = $3 \
-                   AND (cur.population - COALESCE(prev.population, 0)) > 0 \
-                 ORDER BY (cur.population - COALESCE(prev.population, 0)) DESC, cur.player_id ASC \
-                 LIMIT $4",
-            )
-            .bind(world)
-            .bind(period - 1)
-            .bind(period)
-            .bind(limit)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(backend)?;
+                 WHERE cur.world_id = $1 AND cur.period = $3 AND {delta} > 0 \
+                 ORDER BY {delta} DESC, cur.player_id ASC LIMIT $4"
+            );
+            let rows: Vec<(Uuid,)> = sqlx::query_as(&climber_sql)
+                .bind(world)
+                .bind(period - 1)
+                .bind(period)
+                .bind(limit)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(backend)?;
             for (i, (player,)) in rows.iter().enumerate() {
                 insert_medal(
                     &mut tx,
@@ -5500,15 +5505,15 @@ impl MedalRepository for PgAccountRepository {
         limit: i64,
     ) -> Result<Vec<LeaderboardRow>, RepoError> {
         let qf = quadrant_filter("cur.player_id", "$4");
+        let delta = CLIMBER_DELTA;
         let sql = format!(
-            "SELECT u.id, u.username, (cur.population - COALESCE(prev.population, 0))::bigint AS delta \
+            "SELECT u.id, u.username, {delta}::bigint AS delta \
              FROM population_snapshots cur \
              JOIN users u ON u.id = cur.player_id \
              LEFT JOIN population_snapshots prev \
                ON prev.world_id = cur.world_id AND prev.player_id = cur.player_id AND prev.period = $2 \
-             WHERE cur.world_id = $1 AND cur.period = $3 \
-               AND (cur.population - COALESCE(prev.population, 0)) > 0 AND {qf} \
-             ORDER BY delta DESC, u.id ASC LIMIT $5"
+             WHERE cur.world_id = $1 AND cur.period = $3 AND {delta} > 0 AND {qf} \
+             ORDER BY {delta} DESC, cur.player_id ASC LIMIT $5"
         );
         let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(&sql)
             .bind(Uuid::from_u128(self.world_id.0))
@@ -11289,5 +11294,82 @@ mod tests {
             granted.iter().any(|id| id.0 == "research_all_units"),
             "all researchable units granted research_all_units"
         );
+    }
+
+    /// 017 AC4: the settlement awards a **climber** medal — a player whose population grows between two
+    /// periods tops the climber category (exercises the in-transaction climber computation).
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn settlement_awards_climber_medal(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let uname = format!("clm_{}", Uuid::new_v4().simple());
+        let player = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &template,
+            )
+            .await
+            .expect("create account")
+            .id;
+        let v = repo.villages_of(player).await.unwrap()[0].clone();
+        let rules = eperica_domain::MedalRules {
+            period_secs: 100,
+            per_category: 3,
+            categories: vec![eperica_domain::MedalCategory::Climber],
+        };
+        let world_start = Timestamp(5_000_000_000_000);
+
+        // Settle period 0 (baseline snapshot) — no climber medal (no prior snapshot).
+        let s0 = eperica_application::process_due_medal_settlement(
+            &repo,
+            &econ,
+            &rules,
+            world_start,
+            Timestamp(world_start.0 + 150_000),
+        )
+        .await
+        .unwrap();
+        assert_eq!(s0, vec![0]);
+        assert!(
+            repo.medals_for(MedalSubjectKind::Player, player.0)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Grow the player's population, then settle period 1 → they top the climber category.
+        sqlx::query("UPDATE village_fields SET level = level + 1 WHERE village_id = $1")
+            .bind(Uuid::from_u128(v.id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let s1 = eperica_application::process_due_medal_settlement(
+            &repo,
+            &econ,
+            &rules,
+            world_start,
+            Timestamp(world_start.0 + 250_000),
+        )
+        .await
+        .unwrap();
+        assert_eq!(s1, vec![1]);
+        let medals = repo
+            .medals_for(MedalSubjectKind::Player, player.0)
+            .await
+            .unwrap();
+        assert_eq!(medals.len(), 1);
+        assert_eq!(medals[0].category, MedalCategory::Climber);
+        assert_eq!(medals[0].period, 1);
+        assert_eq!(medals[0].rank, 1);
     }
 }
