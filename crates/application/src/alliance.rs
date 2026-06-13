@@ -3,11 +3,15 @@
 //! **pure** domain role/rights/eligibility/diplomacy checks ([`eperica_domain::alliance`]), then calls
 //! the [`AllianceRepository`]. Authority is enforced here, server-side (P4).
 
-use crate::ports::{AllianceRepository, RepoError};
+use crate::ports::{
+    AllianceRepository, AlliedVillage, DiplomacyEntry, IncomingAttack, Membership, RepoError,
+    RosterEntry,
+};
 use eperica_domain::AllianceRight;
 use eperica_domain::{
     AllianceId, AllianceRole, AllianceRules, DiplomacyAction, DiplomacyError, DiplomacyStance,
-    DiplomacyState, DiplomacyStatus, PlayerId, RightSet, can_expel, has_right, next_stance,
+    DiplomacyState, DiplomacyStatus, PlayerId, RightSet, VillageId, can_expel, has_right,
+    next_stance,
 };
 
 /// Why an alliance command is rejected (server-enforced, P4).
@@ -407,10 +411,54 @@ pub async fn set_diplomacy<R: AllianceRepository>(
     Ok(())
 }
 
+/// The viewer's full alliance page (015 AC8/AC9/AC11), all scoped to **their** alliance + its one-hop
+/// confederates — the visibility gate is structural (a viewer only ever sees their own set).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AllianceOverview {
+    /// The viewer's own membership (alliance + role + rights).
+    pub membership: Membership,
+    /// The viewer's alliance roster (members + roles/rights).
+    pub roster: Vec<RosterEntry>,
+    /// The viewer's alliance's diplomacy relationships.
+    pub diplomacy: Vec<DiplomacyEntry>,
+    /// Villages of fellow members **and** confederates — the shared village list (coords + names).
+    pub allied_villages: Vec<AlliedVillage>,
+    /// Incoming hostile movements against any allied village (target + ETA only).
+    pub incoming: Vec<IncomingAttack>,
+}
+
+/// Assemble the viewer's alliance page (AC8/AC9/AC11), or `None` if they are in no alliance. Visibility
+/// is gated structurally: only the viewer's alliance + its **active, one-hop** confederations are read.
+///
+/// # Errors
+/// A backend error.
+pub async fn alliance_view<R: AllianceRepository>(
+    repo: &R,
+    viewer: PlayerId,
+) -> Result<Option<AllianceOverview>, AllianceError> {
+    let Some(membership) = repo.alliance_of(viewer).await? else {
+        return Ok(None);
+    };
+    let mut allied = vec![membership.alliance];
+    allied.extend(repo.confederate_alliances(membership.alliance).await?);
+    let roster = repo.roster(membership.alliance).await?;
+    let diplomacy = repo.diplomacy_of(membership.alliance).await?;
+    let allied_villages = repo.alliance_member_villages(&allied).await?;
+    let village_ids: Vec<VillageId> = allied_villages.iter().map(|v| v.village).collect();
+    let incoming = repo.incoming_against(&village_ids).await?;
+    Ok(Some(AllianceOverview {
+        membership,
+        roster,
+        diplomacy,
+        allied_villages,
+        incoming,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ports::{DiplomacyEntry, Membership, OutgoingInvite, PendingInvite, RosterEntry};
+    use crate::ports::{OutgoingInvite, PendingInvite};
     use async_trait::async_trait;
     use std::collections::{HashMap, HashSet};
     use std::sync::Mutex;
@@ -690,6 +738,18 @@ mod tests {
                 })
                 .map(|((lo, hi), _)| AllianceId(if *lo == alliance.0 { *hi } else { *lo }))
                 .collect())
+        }
+        async fn alliance_member_villages(
+            &self,
+            _alliances: &[AllianceId],
+        ) -> Result<Vec<AlliedVillage>, RepoError> {
+            Ok(Vec::new())
+        }
+        async fn incoming_against(
+            &self,
+            _villages: &[VillageId],
+        ) -> Result<Vec<IncomingAttack>, RepoError> {
+            Ok(Vec::new())
         }
     }
 

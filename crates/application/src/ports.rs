@@ -1292,6 +1292,32 @@ pub struct DiplomacyEntry {
     pub proposed_by: Option<AllianceId>,
 }
 
+/// A village belonging to an allied player (a fellow member or a confederate), for the shared village
+/// list (015 AC8). Coordinates + names only — never troops or resources (P4/§7.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlliedVillage {
+    /// The owning (allied) player.
+    pub player: PlayerId,
+    /// Their login name.
+    pub owner_name: String,
+    /// The village identity.
+    pub village: VillageId,
+    /// Its tile.
+    pub coordinate: Coordinate,
+}
+
+/// An incoming hostile movement against an allied village (015 AC9): the target and arrival time only —
+/// never the attacker's composition (hidden, P4/§7.3, until scouted/resolved).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncomingAttack {
+    /// The village under threat.
+    pub target: VillageId,
+    /// Its tile.
+    pub coordinate: Coordinate,
+    /// When the attack lands.
+    pub arrive_at: Timestamp,
+}
+
 /// Persistence for alliances & membership (015). Identity (alliance id, the founder's membership) is
 /// assigned by the repository.
 #[async_trait]
@@ -1467,6 +1493,27 @@ pub trait AllianceRepository: Send + Sync {
         &self,
         alliance: AllianceId,
     ) -> Result<Vec<AllianceId>, RepoError>;
+
+    /// Every village owned by a member of any of `alliances` — the shared village list (AC8). Ordered
+    /// by owner then village. Coordinates + names only.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn alliance_member_villages(
+        &self,
+        alliances: &[AllianceId],
+    ) -> Result<Vec<AlliedVillage>, RepoError>;
+
+    /// In-transit **hostile** movements (attack / raid) whose target is one of `villages` — the
+    /// incoming-defence view (AC9). Target + arrival time only; the attacker's troops are never joined
+    /// (P4/§7.3). Ordered by arrival time.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn incoming_against(
+        &self,
+        villages: &[VillageId],
+    ) -> Result<Vec<IncomingAttack>, RepoError>;
 }
 
 /// A claimed, due settle movement ready to resolve (013). Targets a free **valley tile**, not a village.

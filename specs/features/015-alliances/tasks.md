@@ -49,7 +49,7 @@ visibility/defence views.
 
 ## Application — visibility & defence
 
-- [ ] **T5 — Shared visibility + incoming-defence reads (P1/P4).** `members_villages` /
+- [x] **T5 — Shared visibility + incoming-defence reads (P1/P4).** `members_villages` /
   `visible_villages(viewer, target)` gated on fellow-member-or-one-hop-confederate (else `Denied`);
   `incoming_against(village_ids)` selecting in-transit `attack`/`raid` toward allied villages —
   `{ target, coordinate, arrive_at }` only, **no** `movement_troops` join. `alliance_view(viewer)`

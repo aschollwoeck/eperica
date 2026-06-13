@@ -3,16 +3,16 @@
 use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, AllianceRepository,
-    BattleApply, BattleReportView, BuildRepository, CombatRepository, ConquestRepository,
-    CultureRepository, DiplomacyEntry, DueAttack, DueBuild, DueMovement, DueOasisAttack,
-    DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder,
-    LoyaltyApply, Membership, MovementRepository, MovementView, NewBuildOrder, NewOasisReport,
-    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
-    OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PendingInvite,
-    RazedBuilding, RepoError, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
-    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, StarvationRepository,
-    StationedGroup, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
-    UserRecord, VillageMarker,
+    AlliedVillage, BattleApply, BattleReportView, BuildRepository, CombatRepository,
+    ConquestRepository, CultureRepository, DiplomacyEntry, DueAttack, DueBuild, DueMovement,
+    DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining,
+    DueUnitOrder, IncomingAttack, LoyaltyApply, Membership, MovementRepository, MovementView,
+    NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
+    OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
+    OutgoingInvite, PendingInvite, RazedBuilding, RepoError, ResourceWrite, RosterEntry,
+    ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply, SettleOutcome,
+    SettleRepository, StarvationRepository, StationedGroup, TradeRepository, TradeView,
+    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 use eperica_domain::{
     AllianceId, AllianceRole, BuildTarget, BuildingKind, BuildingSlot, Coordinate, DiplomacyStance,
@@ -4249,6 +4249,80 @@ impl AllianceRepository for PgAccountRepository {
         for r in &rows {
             let other: Uuid = r.try_get("other").map_err(backend)?;
             out.push(AllianceId(other.as_u128()));
+        }
+        Ok(out)
+    }
+
+    async fn alliance_member_villages(
+        &self,
+        alliances: &[AllianceId],
+    ) -> Result<Vec<AlliedVillage>, RepoError> {
+        if alliances.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids: Vec<Uuid> = alliances.iter().map(|a| Uuid::from_u128(a.0)).collect();
+        let rows = sqlx::query(
+            "SELECT m.player_id, u.username, v.id, v.x, v.y \
+             FROM alliance_members m \
+             JOIN users u ON u.id = m.player_id \
+             JOIN villages v ON v.owner_id = m.player_id \
+             WHERE m.alliance_id = ANY($1) \
+             ORDER BY u.username, v.id",
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let pid: Uuid = r.try_get("player_id").map_err(backend)?;
+            let vid: Uuid = r.try_get("id").map_err(backend)?;
+            let x: i32 = r.try_get("x").map_err(backend)?;
+            let y: i32 = r.try_get("y").map_err(backend)?;
+            out.push(AlliedVillage {
+                player: PlayerId(pid.as_u128()),
+                owner_name: r.try_get("username").map_err(backend)?,
+                village: VillageId(vid.as_u128()),
+                coordinate: Coordinate::new(x, y),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn incoming_against(
+        &self,
+        villages: &[VillageId],
+    ) -> Result<Vec<IncomingAttack>, RepoError> {
+        if villages.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids: Vec<Uuid> = villages.iter().map(|v| Uuid::from_u128(v.0)).collect();
+        // Only attack/raid (force that lands), only in-transit, and **no** movement_troops join — the
+        // composition stays hidden (P4/§7.3). Combat movements key the attacked village on
+        // `deliver_village` (the troop-movement model, 009/010).
+        let rows = sqlx::query(
+            "SELECT deliver_village, dest_x, dest_y, \
+                    (EXTRACT(EPOCH FROM arrive_at) * 1000)::bigint AS arrive_ms \
+             FROM troop_movements \
+             WHERE kind IN ('attack', 'raid') AND status = 'in_transit' \
+               AND deliver_village = ANY($1) \
+             ORDER BY arrive_at, id",
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let tv: Uuid = r.try_get("deliver_village").map_err(backend)?;
+            let x: i32 = r.try_get("dest_x").map_err(backend)?;
+            let y: i32 = r.try_get("dest_y").map_err(backend)?;
+            let arrive_ms: i64 = r.try_get("arrive_ms").map_err(backend)?;
+            out.push(IncomingAttack {
+                target: VillageId(tv.as_u128()),
+                coordinate: Coordinate::new(x, y),
+                arrive_at: Timestamp(arrive_ms),
+            });
         }
         Ok(out)
     }
@@ -9350,6 +9424,163 @@ mod tests {
             .await
             .unwrap();
         assert!(repo.diplomacy_state(a, b).await.unwrap().is_none());
+    }
+
+    // 015 AC8/AC9: the alliance view spans members + one-hop confederates, the incoming-defence list
+    // surfaces hostile movements against any allied village (target + ETA only, never troops), and a
+    // non-allied target is excluded; a non-member has no alliance view.
+    #[tokio::test]
+    async fn alliance_shared_visibility_and_incoming() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping alliance visibility test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let rules = crate::alliance_rules().expect("alliance rules");
+        let template = crate::starting_village().unwrap();
+        let make = |label: &'static str, embassy: i16| {
+            let repo = &repo;
+            let pool = &pool;
+            let template = &template;
+            async move {
+                let uname = format!("{label}_{}", Uuid::new_v4().simple());
+                let user = repo
+                    .create_account(
+                        NewUser {
+                            username: uname.clone(),
+                            email: format!("{uname}@example.com"),
+                            password_hash: "h".to_owned(),
+                            email_confirmed: true,
+                            tribe: Tribe::Gauls,
+                        },
+                        template,
+                    )
+                    .await
+                    .expect("create account");
+                let v = repo.villages_of(user.id).await.unwrap()[0].clone();
+                if embassy > 0 {
+                    sqlx::query(
+                        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+                         VALUES ($1, 16, 'embassy', $2) \
+                         ON CONFLICT (village_id, slot) DO UPDATE SET level = EXCLUDED.level",
+                    )
+                    .bind(Uuid::from_u128(v.id.0))
+                    .bind(embassy)
+                    .execute(pool)
+                    .await
+                    .unwrap();
+                }
+                (user.id, v)
+            }
+        };
+        let (f1, _v1) = make("vis_a", 3).await;
+        let (mem, _vm) = make("vis_m", 1).await;
+        let (f2, v2) = make("vis_b", 3).await; // confederate village (the threatened one)
+        let (enemy, ev) = make("vis_e", 0).await;
+
+        let suffix = Uuid::new_v4().simple().to_string();
+        let a = eperica_application::found_alliance(
+            &repo,
+            &rules,
+            f1,
+            &format!("VA_{suffix}"),
+            &format!("VA{}", &suffix[..4]),
+        )
+        .await
+        .unwrap();
+        let b = eperica_application::found_alliance(
+            &repo,
+            &rules,
+            f2,
+            &format!("VB_{suffix}"),
+            &format!("VB{}", &suffix[..4]),
+        )
+        .await
+        .unwrap();
+        eperica_application::invite_player(&repo, f1, mem)
+            .await
+            .unwrap();
+        eperica_application::respond_invite(&repo, &rules, mem, a, true)
+            .await
+            .unwrap();
+        // Confederate A and B.
+        use eperica_application::DiplomacyCommand;
+        eperica_application::set_diplomacy(&repo, f1, b, DiplomacyCommand::ProposeConfederation)
+            .await
+            .unwrap();
+        eperica_application::set_diplomacy(&repo, f2, a, DiplomacyCommand::AcceptConfederation)
+            .await
+            .unwrap();
+
+        // Two attacks: the enemy hits the confederate's village (visible to A); f2 attacks the enemy's
+        // village (NOT allied to A — excluded from A's incoming).
+        let insert_attack = "INSERT INTO troop_movements \
+             (id, owner_id, kind, home_village, deliver_village, origin_x, origin_y, dest_x, dest_y, \
+              depart_at, arrive_at, status) \
+             VALUES ($1, $2, 'attack', $3, $4, 0, 0, $5, $6, now(), \
+                     to_timestamp($7::double precision / 1000.0), 'in_transit')";
+        sqlx::query(insert_attack)
+            .bind(Uuid::new_v4())
+            .bind(Uuid::from_u128(enemy.0))
+            .bind(Uuid::from_u128(ev.id.0))
+            .bind(Uuid::from_u128(v2.id.0))
+            .bind(v2.coordinate.x)
+            .bind(v2.coordinate.y)
+            .bind(5_000_000_000_000_f64)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(insert_attack)
+            .bind(Uuid::new_v4())
+            .bind(Uuid::from_u128(f2.0))
+            .bind(Uuid::from_u128(v2.id.0))
+            .bind(Uuid::from_u128(ev.id.0))
+            .bind(ev.coordinate.x)
+            .bind(ev.coordinate.y)
+            .bind(6_000_000_000_000_f64)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // The founder's alliance view spans members + the confederate's villages, and the incoming list
+        // holds exactly the attack on the confederate village (target + ETA only).
+        let view = eperica_application::alliance_view(&repo, f1)
+            .await
+            .unwrap()
+            .expect("founder has a view");
+        assert!(
+            view.allied_villages.iter().any(|av| av.player == mem),
+            "fellow member's village is visible"
+        );
+        assert!(
+            view.allied_villages.iter().any(|av| av.village == v2.id),
+            "confederate's village is visible"
+        );
+        assert_eq!(view.incoming.len(), 1, "only the allied-target attack");
+        assert_eq!(view.incoming[0].target, v2.id);
+        assert_eq!(view.incoming[0].arrive_at, Timestamp(5_000_000_000_000));
+
+        // A non-member (the enemy) has no alliance view.
+        assert!(
+            eperica_application::alliance_view(&repo, enemy)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     // 014 AC7/AC8/AC12: a conquest transfers ownership in the battle transaction — the village keeps its
