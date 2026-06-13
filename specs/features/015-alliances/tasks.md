@@ -73,7 +73,7 @@ visibility/defence views.
   alliance state is request-driven). rustdoc; `docs/architecture/00NN-alliances.md`; `docs/manual/`
   alliances guide; `CLAUDE.md` active slice → 015.
 
-- [ ] **T8 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
+- [x] **T8 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
   **APPROVE**; PR.
 
 ## Done when

@@ -1,6 +1,6 @@
 # Feature 015 — Alliances & diplomacy
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 003 (construction — the Embassy is a normal infrastructure building, built as a 003 due-event), 001 (accounts/players, the actor an alliance groups), 007 (troop movement — the reinforcement + incoming-movement data the shared-defence views ride), 009 (combat — the hostile movements the incoming view surfaces), 013 (the per-player village list the shared-visibility views expose), 006 (the seeded map whose alliance tags are public)
 **Roadmap:** M5 · slice 015 · GDD §10, §4.2, §7.3 — the **group layer**: players band into **alliances** via the **Embassy**, hold **roles & granular rights**, and set pairwise **diplomacy** (confederation / war / neutral). Confederation/alliance unlocks **shared visibility** and **coordinated defence** (incoming-attack awareness + reinforcement).
 

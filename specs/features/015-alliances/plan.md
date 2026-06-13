@@ -1,6 +1,6 @@
 # Feature 015 — Alliances & diplomacy — Technical Plan
 
-**Status:** Draft
+**Status:** Verified
 **Spec:** ./spec.md
 
 Alliances are the **group layer**: players join via the **Embassy** (a new infrastructure building, built
