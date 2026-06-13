@@ -3,8 +3,8 @@
 use axum::extract::FromRef;
 use axum_extra::extract::cookie::Key;
 use eperica_domain::{
-    AllianceRules, BuildRules, CultureRules, EconomyRules, LoyaltyRules, MerchantRules,
-    RankingRules, StartingVillage, UnitRules, WorldConfig, WorldMap,
+    AchievementDef, AllianceRules, BuildRules, CultureRules, EconomyRules, LoyaltyRules,
+    MerchantRules, RankingRules, StartingVillage, UnitRules, WorldConfig, WorldMap,
 };
 use eperica_infrastructure::{Argon2Hasher, PgAccountRepository};
 use std::sync::Arc;
@@ -32,6 +32,8 @@ pub struct AppState {
     pub alliance_rules: Arc<AllianceRules>,
     /// Ranking balance rules (per-unit kill point values, leaderboard windows + page size — 016).
     pub ranking_rules: Arc<RankingRules>,
+    /// The achievement catalogue (milestone predicates + rewards — 017), evaluated lazily on view.
+    pub achievement_catalogue: Arc<Vec<AchievementDef>>,
     /// Merchant/trade balance rules (per-tribe capacity + speed, merchants per level — 008).
     pub merchant_rules: Arc<MerchantRules>,
     /// The world's seeded map for the map view and placement (006).

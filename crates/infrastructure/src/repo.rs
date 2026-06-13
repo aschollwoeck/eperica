@@ -2,28 +2,31 @@
 
 use async_trait::async_trait;
 use eperica_application::{
-    AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, AllianceLeaderboardRow,
-    AllianceRepository, AllianceStats, AlliedVillage, BattleApply, BattleReportView, BoardScope,
-    BuildRepository, CombatRepository, ConflictMetric, ConquestRepository, CultureRepository,
-    DefenderReport, DiplomacyEntry, DueAttack, DueBuild, DueMovement, DueOasisAttack,
-    DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder,
-    IncomingAttack, LeaderboardRow, LoyaltyApply, MedalAward, MedalRepository, MedalSubjectKind,
-    MedalView, Membership, MovementRepository, MovementView, NewBuildOrder, NewOasisReport,
-    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
-    OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PendingInvite, PlayerStats,
-    RankingRepository, RazedBuilding, RepoError, ResourceWrite, RosterEntry, ScoutApply,
-    ScoutIntel, ScoutReportView, ScoutRepository, SettleApply, SettleOutcome, SettleRepository,
-    StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
-    UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    AccountRepository, AchievementRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder,
+    AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage, BattleApply,
+    BattleReportView, BoardScope, BuildRepository, CombatRepository, ConflictMetric,
+    ConquestRepository, CultureRepository, DefenderReport, DiplomacyEntry, DueAttack, DueBuild,
+    DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade,
+    DueTraining, DueUnitOrder, IncomingAttack, LeaderboardRow, LoyaltyApply, MedalAward,
+    MedalRepository, MedalSubjectKind, MedalView, Membership, MovementRepository, MovementView,
+    NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
+    OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
+    OutgoingInvite, PendingInvite, PlayerStats, RankingRepository, RazedBuilding, RepoError,
+    ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository,
+    SettleApply, SettleOutcome, SettleRepository, StarvationRepository, StationedGroup,
+    TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
+    VillageMarker,
 };
 use eperica_domain::{
-    AllianceId, AllianceRole, BuildTarget, BuildingKind, BuildingSlot, Coordinate, DiplomacyStance,
-    DiplomacyStatus, EconomyRules, MedalCategory, MovementKind, OasisBonus, OasisRules, PlayerId,
-    Quadrant, QueueLane, ResourceAmounts, ResourceField, ResourceKind, RightSet, ScoutTarget,
-    StartingVillage, TileKind, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village,
-    VillageId, WorldId, WorldMap, coordinates_within, oasis_garrison,
+    AchievementDef, AchievementId, AllianceId, AllianceRole, BuildTarget, BuildingKind,
+    BuildingSlot, Coordinate, DiplomacyStance, DiplomacyStatus, EconomyRules, MedalCategory,
+    MovementKind, OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant, QueueLane,
+    ResourceAmounts, ResourceField, ResourceKind, Reward, RightSet, ScoutTarget, StartingVillage,
+    TileKind, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
+    WorldId, WorldMap, capacities, coordinates_within, deposit_capped, oasis_garrison,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 /// SQLx-backed account repository bound to a single world.
@@ -5431,6 +5434,194 @@ impl MedalRepository for PgAccountRepository {
     }
 }
 
+// ---------------------------------------------------------------- 017: achievements
+
+#[async_trait]
+impl AchievementRepository for PgAccountRepository {
+    async fn held_achievements(
+        &self,
+        player: PlayerId,
+    ) -> Result<HashSet<AchievementId>, RepoError> {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT achievement_id FROM player_achievements WHERE player_id = $1")
+                .bind(Uuid::from_u128(player.0))
+                .fetch_all(&self.pool)
+                .await
+                .map_err(backend)?;
+        Ok(rows.into_iter().map(|(id,)| AchievementId(id)).collect())
+    }
+
+    async fn player_progress(
+        &self,
+        econ: &EconomyRules,
+        player: PlayerId,
+    ) -> Result<PlayerProgress, RepoError> {
+        let pid = Uuid::from_u128(player.0);
+        let world = Uuid::from_u128(self.world_id.0);
+        let village_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM villages WHERE owner_id = $1 AND world_id = $2",
+        )
+        .bind(pid)
+        .bind(world)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        let defensive_wins: i64 = sqlx::query_scalar(
+            "SELECT count(DISTINCT bd.battle_id) FROM battle_defenders bd \
+             JOIN battle_reports br ON br.id = bd.battle_id \
+             WHERE bd.player_id = $1 AND br.attacker_won = false",
+        )
+        .bind(pid)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        let oases_held: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM oases o JOIN villages v ON v.id = o.owner_village \
+             WHERE v.owner_id = $1 AND o.world_id = $2",
+        )
+        .bind(pid)
+        .bind(world)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        let units_researched: i64 = sqlx::query_scalar(
+            "SELECT count(DISTINCT r.unit_id) FROM village_research r \
+             JOIN villages v ON v.id = r.village_id WHERE v.owner_id = $1",
+        )
+        .bind(pid)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        let (fields, kinds, levels, pops) = population_arrays(econ);
+        let pop_expr = village_pop_expr("v.id", "$3", "$4", "$5", "$6");
+        let population: i64 = sqlx::query_scalar(&format!(
+            "SELECT COALESCE(SUM({pop_expr}), 0)::bigint FROM villages v \
+             WHERE v.owner_id = $1 AND v.world_id = $2"
+        ))
+        .bind(pid)
+        .bind(world)
+        .bind(&fields)
+        .bind(&kinds)
+        .bind(&levels)
+        .bind(&pops)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(PlayerProgress {
+            village_count,
+            defensive_wins,
+            oases_held,
+            population,
+            units_researched,
+            tribe_unit_count: 0, // filled by the caller from the unit roster
+        })
+    }
+
+    async fn grant_achievement(
+        &self,
+        econ: &EconomyRules,
+        player: PlayerId,
+        def: &AchievementDef,
+    ) -> Result<bool, RepoError> {
+        let pid = Uuid::from_u128(player.0);
+        let world = Uuid::from_u128(self.world_id.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        let inserted = sqlx::query(
+            "INSERT INTO player_achievements (player_id, achievement_id) VALUES ($1, $2) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(pid)
+        .bind(&def.id.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if inserted.rows_affected() == 0 {
+            tx.commit().await.map_err(backend)?;
+            return Ok(false); // already held — no double grant or reward
+        }
+        match def.reward {
+            Reward::None => {}
+            Reward::Culture(cp) => {
+                sqlx::query(
+                    "INSERT INTO player_culture (player_id, value, updated_at) \
+                     VALUES ($1, $2, now()) \
+                     ON CONFLICT (player_id) DO UPDATE SET value = player_culture.value + $2",
+                )
+                .bind(pid)
+                .bind(cp)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+            }
+            Reward::Resources(amount) => {
+                // Credit the player's capital (or oldest village), capped at its storage.
+                if let Some(row) = sqlx::query(
+                    "SELECT id FROM villages WHERE owner_id = $1 AND world_id = $2 \
+                     ORDER BY is_capital DESC, created_at ASC LIMIT 1",
+                )
+                .bind(pid)
+                .bind(world)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(backend)?
+                {
+                    let cap_id: Uuid = row.try_get("id").map_err(backend)?;
+                    let brows = sqlx::query(
+                        "SELECT building_type, level FROM village_buildings WHERE village_id = $1",
+                    )
+                    .bind(cap_id)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                    let mut buildings = Vec::with_capacity(brows.len());
+                    for br in &brows {
+                        let kind = parse_building(
+                            &br.try_get::<String, _>("building_type").map_err(backend)?,
+                        )?;
+                        let level: i16 = br.try_get("level").map_err(backend)?;
+                        buildings.push(BuildingSlot {
+                            kind,
+                            level: u8::try_from(level).unwrap_or(0),
+                        });
+                    }
+                    let caps = capacities(&buildings, econ);
+                    let (w, c, i, cr): (i64, i64, i64, i64) = sqlx::query_as(
+                        "SELECT wood, clay, iron, crop FROM village_resources WHERE village_id = $1",
+                    )
+                    .bind(cap_id)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                    let after = deposit_capped(
+                        ResourceAmounts {
+                            wood: w,
+                            clay: c,
+                            iron: i,
+                            crop: cr,
+                        },
+                        amount,
+                        caps,
+                    );
+                    sqlx::query(
+                        "UPDATE village_resources SET wood = $2, clay = $3, iron = $4, crop = $5 \
+                         WHERE village_id = $1",
+                    )
+                    .bind(cap_id)
+                    .bind(after.wood)
+                    .bind(after.clay)
+                    .bind(after.iron)
+                    .bind(after.crop)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                }
+            }
+        }
+        tx.commit().await.map_err(backend)?;
+        Ok(true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -10778,5 +10969,129 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(medals2, 1);
+    }
+
+    /// 017 AC8/AC9/AC10: achievements grant once at the milestone with their reward; re-evaluation is a
+    /// no-op; the resource reward credits the capital (capped) exactly once.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn achievement_grant_and_rewards(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            world,
+            ..
+        } = setup(pool.clone()).await;
+        let units = crate::unit_rules().expect("unit rules");
+        let catalogue = crate::achievement_catalogue().expect("catalogue");
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (player, v) = account("ach").await;
+
+        // AC10: a 2nd village ⇒ the `second_village` achievement, with its 50 CP reward (AC9).
+        sqlx::query("INSERT INTO villages (id, world_id, owner_id, x, y, tribe) VALUES ($1, $2, $3, 99, 99, 'gauls')")
+            .bind(Uuid::new_v4())
+            .bind(Uuid::from_u128(world.id.0))
+            .bind(Uuid::from_u128(player.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let granted =
+            eperica_application::evaluate_achievements(&repo, &econ, &units, &catalogue, player)
+                .await
+                .unwrap();
+        assert!(granted.iter().any(|id| id.0 == "second_village"));
+        let cp: i64 = sqlx::query_scalar("SELECT value FROM player_culture WHERE player_id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cp, 50, "the second-village CP reward applied once");
+
+        // AC8: re-evaluation grants nothing new and does not re-apply the reward.
+        let again =
+            eperica_application::evaluate_achievements(&repo, &econ, &units, &catalogue, player)
+                .await
+                .unwrap();
+        assert!(!again.iter().any(|id| id.0 == "second_village"));
+        let cp2: i64 = sqlx::query_scalar("SELECT value FROM player_culture WHERE player_id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cp2, 50);
+
+        // AC10: occupying an oasis ⇒ `first_oasis`.
+        sqlx::query("INSERT INTO oases (world_id, x, y, owner_village) VALUES ($1, 5, 5, $2)")
+            .bind(Uuid::from_u128(world.id.0))
+            .bind(Uuid::from_u128(v.id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let g2 =
+            eperica_application::evaluate_achievements(&repo, &econ, &units, &catalogue, player)
+                .await
+                .unwrap();
+        assert!(g2.iter().any(|id| id.0 == "first_oasis"));
+
+        // AC9: a resource reward credits the capital (capped), exactly once.
+        let before: i64 =
+            sqlx::query_scalar("SELECT wood FROM village_resources WHERE village_id = $1")
+                .bind(Uuid::from_u128(v.id.0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let res_def = AchievementDef {
+            id: AchievementId("res_test".into()),
+            kind: eperica_domain::AchievementKind::Population,
+            threshold: 0,
+            reward: Reward::Resources(ResourceAmounts {
+                wood: 100,
+                clay: 0,
+                iron: 0,
+                crop: 0,
+            }),
+        };
+        assert!(
+            repo.grant_achievement(&econ, player, &res_def)
+                .await
+                .unwrap()
+        );
+        let after: i64 =
+            sqlx::query_scalar("SELECT wood FROM village_resources WHERE village_id = $1")
+                .bind(Uuid::from_u128(v.id.0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(after > before, "the resource reward credited the capital");
+        // Re-granting is a no-op (already held) — no further credit.
+        assert!(
+            !repo
+                .grant_achievement(&econ, player, &res_def)
+                .await
+                .unwrap()
+        );
+        let after2: i64 =
+            sqlx::query_scalar("SELECT wood FROM village_resources WHERE village_id = $1")
+                .bind(Uuid::from_u128(v.id.0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(after2, after, "no double reward");
     }
 }

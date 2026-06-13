@@ -4,6 +4,7 @@
 //! are written against the ports so they can be tested with fakes, with no I/O.
 #![forbid(unsafe_code)]
 
+pub mod achievements;
 pub mod alliance;
 pub mod auth;
 pub mod build;
@@ -30,6 +31,7 @@ mod tests;
 /// Re-export of the domain crate, the layer this one builds upon.
 pub use eperica_domain as domain;
 
+pub use achievements::evaluate_achievements;
 pub use alliance::{
     AllianceError, AllianceOverview, DiplomacyCommand, alliance_view, disband_alliance,
     expel_member, found_alliance, invite_player, leave_alliance, respond_invite, revoke_invite,

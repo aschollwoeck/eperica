@@ -2295,13 +2295,20 @@ pub trait AchievementRepository: Send + Sync {
         player: PlayerId,
     ) -> Result<HashSet<AchievementId>, RepoError>;
 
-    /// A player's current persisted progress (counts) for the achievement predicates.
-    async fn player_progress(&self, player: PlayerId) -> Result<PlayerProgress, RepoError>;
+    /// A player's current persisted progress (counts) for the achievement predicates. `tribe_unit_count`
+    /// is left 0 — the caller fills it from the unit roster (the DB doesn't know roster sizes).
+    async fn player_progress(
+        &self,
+        econ: &EconomyRules,
+        player: PlayerId,
+    ) -> Result<PlayerProgress, RepoError>;
 
-    /// Grant `def` to `player` and apply its reward in **one transaction**, exactly once (the
-    /// `(player, achievement)` PK guards against double grant/reward). Returns `true` if newly granted.
+    /// Grant `def` to `player` and apply its reward (resources to the capital, capped; or culture
+    /// points) in **one transaction**, exactly once (the `(player, achievement)` PK guards against
+    /// double grant/reward). Returns `true` if newly granted.
     async fn grant_achievement(
         &self,
+        econ: &EconomyRules,
         player: PlayerId,
         def: &AchievementDef,
     ) -> Result<bool, RepoError>;

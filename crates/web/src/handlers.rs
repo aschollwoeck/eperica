@@ -26,13 +26,13 @@ use eperica_application::{
     RegisterError, ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository,
     TrainingRepository, UnitOrderKind, UnitRepository, Window, alliance_conflict_leaderboard,
     alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
-    conflict_leaderboard, disband_alliance, expel_member, found_alliance, invite_player,
-    leave_alliance, load_culture, load_economy, map_viewport, order_attack, order_build,
-    order_oasis_attack, order_oasis_recall, order_oasis_reinforce, order_reinforcement,
-    order_research, order_return, order_scout, order_settle, order_smithy_upgrade, order_trade,
-    order_train, player_statistics, population_leaderboard, register, reinforcement_reports,
-    respond_invite, revoke_invite, set_diplomacy, set_member_role, transfer_founder,
-    viewport_coords,
+    conflict_leaderboard, disband_alliance, evaluate_achievements, expel_member, found_alliance,
+    invite_player, leave_alliance, load_culture, load_economy, map_viewport, order_attack,
+    order_build, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
+    order_reinforcement, order_research, order_return, order_scout, order_settle,
+    order_smithy_upgrade, order_trade, order_train, player_statistics, population_leaderboard,
+    register, reinforcement_reports, respond_invite, revoke_invite, set_diplomacy, set_member_role,
+    transfer_founder, viewport_coords,
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, Coordinate,
@@ -348,6 +348,20 @@ pub async fn village(
             return server_error();
         }
     };
+
+    // 017: lazily grant any achievements this player has newly earned (server-authoritative,
+    // idempotent). Best-effort — a failure here must not break the village view.
+    if let Err(e) = evaluate_achievements(
+        state.accounts.as_ref(),
+        state.rules.as_ref(),
+        state.unit_rules.as_ref(),
+        state.achievement_catalogue.as_ref(),
+        player,
+    )
+    .await
+    {
+        tracing::error!(error = %e, "achievement evaluation failed");
+    }
 
     let economy = match load_economy(
         state.accounts.as_ref(),
