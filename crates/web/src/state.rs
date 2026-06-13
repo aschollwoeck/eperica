@@ -3,8 +3,8 @@
 use axum::extract::FromRef;
 use axum_extra::extract::cookie::Key;
 use eperica_domain::{
-    BuildRules, CultureRules, EconomyRules, LoyaltyRules, MerchantRules, StartingVillage,
-    UnitRules, WorldConfig, WorldMap,
+    AllianceRules, BuildRules, CultureRules, EconomyRules, LoyaltyRules, MerchantRules,
+    StartingVillage, UnitRules, WorldConfig, WorldMap,
 };
 use eperica_infrastructure::{Argon2Hasher, PgAccountRepository};
 use std::sync::Arc;
@@ -28,6 +28,8 @@ pub struct AppState {
     pub culture_rules: Arc<CultureRules>,
     /// Loyalty + conquest balance rules (regen, drop, post-conquest loyalty — 014).
     pub loyalty_rules: Arc<LoyaltyRules>,
+    /// Alliance + diplomacy balance rules (membership cap, Embassy gates — 015).
+    pub alliance_rules: Arc<AllianceRules>,
     /// Merchant/trade balance rules (per-tribe capacity + speed, merchants per level — 008).
     pub merchant_rules: Arc<MerchantRules>,
     /// The world's seeded map for the map view and placement (006).

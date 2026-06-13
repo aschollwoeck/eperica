@@ -15,6 +15,7 @@
     · <a href="/village/rally?village={{ village_id }}">Rally Point</a>
     · <a href="/village/market?village={{ village_id }}">Marketplace</a>
     · <a href="/reports">Reports</a>
+    · <a href="/alliance">Alliance</a>
     {% if has_academy %} · <a href="/village/academy?village={{ village_id }}">Academy</a>{% endif %}
     {% if has_smithy %} · <a href="/village/smithy?village={{ village_id }}">Smithy</a>{% endif %}
     {% for link in troop_links %} · <a href="{{ link.1 }}?village={{ village_id }}">{{ link.0 }}</a>{% endfor %}</p>

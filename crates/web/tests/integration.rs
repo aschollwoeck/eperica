@@ -12,9 +12,9 @@ use eperica_domain::{
     Coordinate, GameSpeed, TileKind, Timestamp, WorldConfig, WorldMap, coordinates_within,
 };
 use eperica_infrastructure::{
-    Argon2Hasher, PgAccountRepository, build_rules, combat_rules, create_pool, culture_rules,
-    economy_rules, ensure_world, loyalty_rules, map_rules, merchant_rules, now, oasis_rules,
-    run_migrations, scout_rules, starting_village, unit_rules,
+    Argon2Hasher, PgAccountRepository, alliance_rules, build_rules, combat_rules, create_pool,
+    culture_rules, economy_rules, ensure_world, loyalty_rules, map_rules, merchant_rules, now,
+    oasis_rules, run_migrations, scout_rules, starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -52,6 +52,7 @@ async fn spawn() -> Option<String> {
         unit_rules: Arc::new(unit_rules().expect("unit rules")),
         culture_rules: Arc::new(culture_rules().expect("culture rules")),
         loyalty_rules: Arc::new(loyalty_rules().expect("loyalty rules")),
+        alliance_rules: Arc::new(alliance_rules().expect("alliance rules")),
         merchant_rules: Arc::new(merchant_rules().expect("merchant rules")),
         map,
         world: config,
@@ -2353,5 +2354,168 @@ async fn conquest_with_administrators_flow() {
     assert!(
         detail.contains("Loyalty:"),
         "the report shows the loyalty change"
+    );
+}
+
+/// 015 AC8/AC11: a player builds an Embassy, founds an alliance, invites another player who accepts,
+/// and the roster + alliance tag (on the map) are visible. Drives the real HTTP stack; embassy levels
+/// are seeded directly (building to level 3 over the slow 003 path is out of scope for the test). The
+/// alliance name/tag are unique per run because the test DB is shared and not reset between runs.
+#[tokio::test]
+async fn alliance_found_invite_accept_flow() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    let url = std::env::var("DATABASE_URL").unwrap();
+    let pool = create_pool(&url).await.unwrap();
+
+    // Register a founder and a member (registration logs each in via its own cookie client).
+    let cf = client();
+    let founder = unique("ally_f");
+    cf.post(format!("{base}/register"))
+        .form(&[
+            ("username", founder.as_str()),
+            ("email", format!("{founder}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let cm = client();
+    let member = unique("ally_m");
+    cm.post(format!("{base}/register"))
+        .form(&[
+            ("username", member.as_str()),
+            ("email", format!("{member}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // Seed Embassy levels: founder ≥ 3 (to found), member ≥ 1 (to join).
+    let set_embassy = |name: String, level: i16| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+                 SELECT v.id, 16, 'embassy', $2 FROM villages v JOIN users u ON u.id = v.owner_id \
+                 WHERE u.username = $1 \
+                 ON CONFLICT (village_id, slot) DO UPDATE SET level = EXCLUDED.level",
+            )
+            .bind(&name)
+            .bind(level)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    set_embassy(founder.clone(), 3).await;
+    set_embassy(member.clone(), 1).await;
+
+    // Found an alliance over HTTP (unique name/tag per run).
+    let aname = unique("Templars");
+    let tag = format!("T{}", &aname[aname.len() - 6..]);
+    let res = cf
+        .post(format!("{base}/alliance/found"))
+        .form(&[("name", aname.as_str()), ("tag", tag.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+    let page = cf
+        .get(format!("{base}/alliance"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(page.contains(&aname), "founder sees the alliance");
+    assert!(page.contains("Founder"), "founder role shown");
+
+    // Invite the member by name; the member accepts (the alliance id from the pending invite).
+    cf.post(format!("{base}/alliance/invite"))
+        .form(&[("username", member.as_str())])
+        .send()
+        .await
+        .unwrap();
+    let alliance_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM alliances WHERE name = $1")
+        .bind(&aname)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let res = cm
+        .post(format!("{base}/alliance/respond"))
+        .form(&[
+            ("alliance", alliance_id.as_u128().to_string().as_str()),
+            ("accept", "true"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+
+    // The founder's roster now lists the member.
+    let roster = cf
+        .get(format!("{base}/alliance"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        roster.contains(member.as_str()),
+        "the member is on the roster"
+    );
+
+    // AC11: the founder's village shows the alliance tag on the map.
+    let (vx, vy): (i32, i32) = sqlx::query_as(
+        "SELECT v.x, v.y FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&founder)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let map = cf
+        .get(format!("{base}/map?x={vx}&y={vy}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        map.contains(&format!("[{tag}]")),
+        "the map shows the alliance tag"
+    );
+
+    // A non-member cannot see the roster (their view has no alliance).
+    let co = client();
+    let outsider = unique("ally_o");
+    co.post(format!("{base}/register"))
+        .form(&[
+            ("username", outsider.as_str()),
+            ("email", format!("{outsider}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let outsider_view = co
+        .get(format!("{base}/alliance"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !outsider_view.contains(&aname),
+        "a non-member does not see the alliance roster"
     );
 }

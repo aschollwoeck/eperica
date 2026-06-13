@@ -22,5 +22,6 @@ manual grows as the game does.
 - [Oases](oases.md) — clear the wild animals, occupy oases through an Outpost, hold them for a production bonus, and lose them to a stronger neighbour.
 - [Settling](settling.md) — build culture points, train settlers, found new villages on free valleys, and designate your capital with a Palace.
 - [Conquest](conquest.md) — lower an enemy village's loyalty with administrators and take it for your own; keep your capital safe.
+- [Alliances & diplomacy](alliances.md) — build an Embassy, found or join an alliance, hold roles & rights, set diplomacy, and defend together with shared visibility and incoming-attack warnings.
 
-*(More chapters — alliances — arrive as those features ship.)*
+*(More chapters arrive as those features ship.)*

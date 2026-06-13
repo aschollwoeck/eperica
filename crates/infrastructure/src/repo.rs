@@ -2,21 +2,24 @@
 
 use async_trait::async_trait;
 use eperica_application::{
-    AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, BattleApply, BattleReportView,
-    BuildRepository, CombatRepository, ConquestRepository, CultureRepository, DueAttack, DueBuild,
-    DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade,
-    DueTraining, DueUnitOrder, LoyaltyApply, MovementRepository, MovementView, NewBuildOrder,
-    NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply,
-    OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState, RazedBuilding, RepoError,
-    ResourceWrite, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply,
-    SettleOutcome, SettleRepository, StarvationRepository, StationedGroup, TradeRepository,
-    TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, AllianceRepository,
+    AlliedVillage, BattleApply, BattleReportView, BuildRepository, CombatRepository,
+    ConquestRepository, CultureRepository, DiplomacyEntry, DueAttack, DueBuild, DueMovement,
+    DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining,
+    DueUnitOrder, IncomingAttack, LoyaltyApply, Membership, MovementRepository, MovementView,
+    NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
+    OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
+    OutgoingInvite, PendingInvite, RazedBuilding, RepoError, ResourceWrite, RosterEntry,
+    ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply, SettleOutcome,
+    SettleRepository, StarvationRepository, StationedGroup, TradeRepository, TradeView,
+    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 use eperica_domain::{
-    BuildTarget, BuildingKind, BuildingSlot, Coordinate, MovementKind, OasisBonus, OasisRules,
-    PlayerId, QueueLane, ResourceAmounts, ResourceField, ResourceKind, ScoutTarget,
-    StartingVillage, TileKind, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village,
-    VillageId, WorldId, WorldMap, coordinates_within, oasis_garrison,
+    AllianceId, AllianceRole, BuildTarget, BuildingKind, BuildingSlot, Coordinate, DiplomacyStance,
+    DiplomacyStatus, MovementKind, OasisBonus, OasisRules, PlayerId, QueueLane, ResourceAmounts,
+    ResourceField, ResourceKind, RightSet, ScoutTarget, StartingVillage, TileKind, Timestamp,
+    TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId, WorldId, WorldMap,
+    coordinates_within, oasis_garrison,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use uuid::Uuid;
@@ -131,6 +134,67 @@ fn is_unique_violation(e: &sqlx::Error) -> bool {
     matches!(e, sqlx::Error::Database(db) if db.code().as_deref() == Some("23505"))
 }
 
+fn alliance_role_str(role: AllianceRole) -> &'static str {
+    match role {
+        AllianceRole::Founder => "founder",
+        AllianceRole::Leader => "leader",
+        AllianceRole::Member => "member",
+    }
+}
+
+fn parse_alliance_role(s: &str) -> Result<AllianceRole, RepoError> {
+    match s {
+        "founder" => Ok(AllianceRole::Founder),
+        "leader" => Ok(AllianceRole::Leader),
+        "member" => Ok(AllianceRole::Member),
+        other => Err(RepoError::Backend(format!(
+            "unknown alliance role: {other}"
+        ))),
+    }
+}
+
+fn stance_str(s: DiplomacyStance) -> &'static str {
+    match s {
+        DiplomacyStance::War => "war",
+        DiplomacyStance::Confederation => "confederation",
+    }
+}
+
+fn parse_stance(s: &str) -> Result<DiplomacyStance, RepoError> {
+    match s {
+        "war" => Ok(DiplomacyStance::War),
+        "confederation" => Ok(DiplomacyStance::Confederation),
+        other => Err(RepoError::Backend(format!("unknown stance: {other}"))),
+    }
+}
+
+fn status_str(s: DiplomacyStatus) -> &'static str {
+    match s {
+        DiplomacyStatus::Proposed => "proposed",
+        DiplomacyStatus::Active => "active",
+    }
+}
+
+fn parse_status(s: &str) -> Result<DiplomacyStatus, RepoError> {
+    match s {
+        "proposed" => Ok(DiplomacyStatus::Proposed),
+        "active" => Ok(DiplomacyStatus::Active),
+        other => Err(RepoError::Backend(format!(
+            "unknown diplomacy status: {other}"
+        ))),
+    }
+}
+
+/// Normalise an alliance pair to `(lo, hi)` with `lo < hi` (matching the DB CHECK + composite PK), so
+/// the pair has a single canonical row regardless of argument order.
+fn normalise_pair(a: AllianceId, b: AllianceId) -> (Uuid, Uuid) {
+    if a.0 <= b.0 {
+        (Uuid::from_u128(a.0), Uuid::from_u128(b.0))
+    } else {
+        (Uuid::from_u128(b.0), Uuid::from_u128(a.0))
+    }
+}
+
 fn resource_str(kind: ResourceKind) -> &'static str {
     match kind {
         ResourceKind::Wood => "wood",
@@ -147,6 +211,7 @@ fn building_str(kind: BuildingKind) -> &'static str {
         BuildingKind::Warehouse => "warehouse",
         BuildingKind::Granary => "granary",
         BuildingKind::Marketplace => "marketplace",
+        BuildingKind::Embassy => "embassy",
         BuildingKind::Wall => "wall",
         BuildingKind::Barracks => "barracks",
         BuildingKind::Academy => "academy",
@@ -180,6 +245,7 @@ fn parse_building(s: &str) -> Result<BuildingKind, RepoError> {
         "warehouse" => Ok(BuildingKind::Warehouse),
         "granary" => Ok(BuildingKind::Granary),
         "marketplace" => Ok(BuildingKind::Marketplace),
+        "embassy" => Ok(BuildingKind::Embassy),
         "wall" => Ok(BuildingKind::Wall),
         "barracks" => Ok(BuildingKind::Barracks),
         "academy" => Ok(BuildingKind::Academy),
@@ -571,7 +637,10 @@ impl AccountRepository for PgAccountRepository {
         let ys: Vec<i32> = coords.iter().map(|c| c.y).collect();
         // Exact match on the requested tiles via the (world_id, x, y) unique index.
         let rows = sqlx::query(
-            "SELECT v.x, v.y, u.username FROM villages v JOIN users u ON u.id = v.owner_id \
+            "SELECT v.x, v.y, u.username, al.tag AS alliance_tag \
+             FROM villages v JOIN users u ON u.id = v.owner_id \
+             LEFT JOIN alliance_members am ON am.player_id = v.owner_id \
+             LEFT JOIN alliances al ON al.id = am.alliance_id \
              WHERE v.world_id = $1 AND (v.x, v.y) IN (SELECT * FROM unnest($2::int[], $3::int[]))",
         )
         .bind(Uuid::from_u128(self.world_id.0))
@@ -585,9 +654,11 @@ impl AccountRepository for PgAccountRepository {
                 let x: i32 = r.try_get("x").map_err(backend)?;
                 let y: i32 = r.try_get("y").map_err(backend)?;
                 let owner_name: String = r.try_get("username").map_err(backend)?;
+                let alliance_tag: Option<String> = r.try_get("alliance_tag").map_err(backend)?;
                 Ok(VillageMarker {
                     coordinate: Coordinate::new(x, y),
                     owner_name,
+                    alliance_tag,
                 })
             })
             .collect()
@@ -3749,6 +3820,533 @@ impl ConquestRepository for PgAccountRepository {
         .await
         .map_err(backend)?;
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------- alliances (015)
+
+#[async_trait]
+impl AllianceRepository for PgAccountRepository {
+    async fn max_embassy_level(&self, player: PlayerId) -> Result<u8, RepoError> {
+        let level: Option<i32> = sqlx::query_scalar(
+            "SELECT MAX(vb.level)::int FROM village_buildings vb \
+             JOIN villages v ON v.id = vb.village_id \
+             WHERE v.owner_id = $1 AND vb.building_type = 'embassy'",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(u8::try_from(level.unwrap_or(0)).unwrap_or(u8::MAX))
+    }
+
+    async fn alliance_of(&self, player: PlayerId) -> Result<Option<Membership>, RepoError> {
+        let row = sqlx::query(
+            "SELECT alliance_id, role, rights FROM alliance_members WHERE player_id = $1",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        let Some(r) = row else { return Ok(None) };
+        let aid: Uuid = r.try_get("alliance_id").map_err(backend)?;
+        let role = parse_alliance_role(&r.try_get::<String, _>("role").map_err(backend)?)?;
+        let rights: i32 = r.try_get("rights").map_err(backend)?;
+        Ok(Some(Membership {
+            alliance: AllianceId(aid.as_u128()),
+            role,
+            rights: RightSet::from_bits(rights as u8),
+        }))
+    }
+
+    async fn member_count(&self, alliance: AllianceId) -> Result<u32, RepoError> {
+        let n: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM alliance_members WHERE alliance_id = $1")
+                .bind(Uuid::from_u128(alliance.0))
+                .fetch_one(&self.pool)
+                .await
+                .map_err(backend)?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
+    async fn alliance_summary(
+        &self,
+        alliance: AllianceId,
+    ) -> Result<Option<(String, String)>, RepoError> {
+        let row = sqlx::query("SELECT name, tag FROM alliances WHERE id = $1")
+            .bind(Uuid::from_u128(alliance.0))
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(backend)?;
+        let Some(r) = row else { return Ok(None) };
+        Ok(Some((
+            r.try_get("name").map_err(backend)?,
+            r.try_get("tag").map_err(backend)?,
+        )))
+    }
+
+    async fn roster(&self, alliance: AllianceId) -> Result<Vec<RosterEntry>, RepoError> {
+        // Order by rank (founder, leader, member) then name for a stable roster.
+        let rows = sqlx::query(
+            "SELECT m.player_id, u.username, m.role, m.rights FROM alliance_members m \
+             JOIN users u ON u.id = m.player_id \
+             WHERE m.alliance_id = $1 \
+             ORDER BY CASE m.role WHEN 'founder' THEN 0 WHEN 'leader' THEN 1 ELSE 2 END, u.username",
+        )
+        .bind(Uuid::from_u128(alliance.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let pid: Uuid = r.try_get("player_id").map_err(backend)?;
+            let rights: i32 = r.try_get("rights").map_err(backend)?;
+            out.push(RosterEntry {
+                player: PlayerId(pid.as_u128()),
+                name: r.try_get("username").map_err(backend)?,
+                role: parse_alliance_role(&r.try_get::<String, _>("role").map_err(backend)?)?,
+                rights: RightSet::from_bits(rights as u8),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn create_alliance(
+        &self,
+        name: &str,
+        tag: &str,
+        founder: PlayerId,
+    ) -> Result<AllianceId, RepoError> {
+        let id = Uuid::new_v4();
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        sqlx::query("INSERT INTO alliances (id, name, tag, founder_id) VALUES ($1, $2, $3, $4)")
+            .bind(id)
+            .bind(name)
+            .bind(tag)
+            .bind(Uuid::from_u128(founder.0))
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| {
+                if is_unique_violation(&e) {
+                    RepoError::Duplicate
+                } else {
+                    backend(e)
+                }
+            })?;
+        sqlx::query(
+            "INSERT INTO alliance_members (player_id, alliance_id, role, rights) \
+             VALUES ($1, $2, 'founder', $3)",
+        )
+        .bind(Uuid::from_u128(founder.0))
+        .bind(id)
+        .bind(i32::from(RightSet::all().bits()))
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            if is_unique_violation(&e) {
+                RepoError::Duplicate
+            } else {
+                backend(e)
+            }
+        })?;
+        tx.commit().await.map_err(backend)?;
+        Ok(AllianceId(id.as_u128()))
+    }
+
+    async fn insert_invite(
+        &self,
+        alliance: AllianceId,
+        invitee: PlayerId,
+    ) -> Result<(), RepoError> {
+        sqlx::query("INSERT INTO alliance_invitations (alliance_id, invitee_id) VALUES ($1, $2)")
+            .bind(Uuid::from_u128(alliance.0))
+            .bind(Uuid::from_u128(invitee.0))
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                if is_unique_violation(&e) {
+                    RepoError::Duplicate
+                } else {
+                    backend(e)
+                }
+            })?;
+        Ok(())
+    }
+
+    async fn delete_invite(
+        &self,
+        alliance: AllianceId,
+        invitee: PlayerId,
+    ) -> Result<(), RepoError> {
+        sqlx::query("DELETE FROM alliance_invitations WHERE alliance_id = $1 AND invitee_id = $2")
+            .bind(Uuid::from_u128(alliance.0))
+            .bind(Uuid::from_u128(invitee.0))
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn has_invite(&self, alliance: AllianceId, invitee: PlayerId) -> Result<bool, RepoError> {
+        let found: Option<i32> = sqlx::query_scalar(
+            "SELECT 1 FROM alliance_invitations WHERE alliance_id = $1 AND invitee_id = $2",
+        )
+        .bind(Uuid::from_u128(alliance.0))
+        .bind(Uuid::from_u128(invitee.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(found.is_some())
+    }
+
+    async fn pending_invites_for(&self, player: PlayerId) -> Result<Vec<PendingInvite>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT a.id, a.name, a.tag FROM alliance_invitations i \
+             JOIN alliances a ON a.id = i.alliance_id \
+             WHERE i.invitee_id = $1 ORDER BY i.created_at",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let aid: Uuid = r.try_get("id").map_err(backend)?;
+            out.push(PendingInvite {
+                alliance: AllianceId(aid.as_u128()),
+                alliance_name: r.try_get("name").map_err(backend)?,
+                alliance_tag: r.try_get("tag").map_err(backend)?,
+            });
+        }
+        Ok(out)
+    }
+
+    async fn invites_of(&self, alliance: AllianceId) -> Result<Vec<OutgoingInvite>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT i.invitee_id, u.username FROM alliance_invitations i \
+             JOIN users u ON u.id = i.invitee_id \
+             WHERE i.alliance_id = $1 ORDER BY u.username",
+        )
+        .bind(Uuid::from_u128(alliance.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let pid: Uuid = r.try_get("invitee_id").map_err(backend)?;
+            out.push(OutgoingInvite {
+                invitee: PlayerId(pid.as_u128()),
+                invitee_name: r.try_get("username").map_err(backend)?,
+            });
+        }
+        Ok(out)
+    }
+
+    async fn add_member(
+        &self,
+        alliance: AllianceId,
+        player: PlayerId,
+        role: AllianceRole,
+        rights: RightSet,
+        cap: u32,
+    ) -> Result<(), RepoError> {
+        // A single guarded insert: only when the alliance is still below the cap (AC4). The player_id
+        // PK rejects a player already in an alliance (→ Duplicate).
+        let inserted = sqlx::query(
+            "INSERT INTO alliance_members (player_id, alliance_id, role, rights) \
+             SELECT $1, $2, $3, $4 \
+             WHERE (SELECT count(*) FROM alliance_members WHERE alliance_id = $2) < $5",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .bind(Uuid::from_u128(alliance.0))
+        .bind(alliance_role_str(role))
+        .bind(i32::from(rights.bits()))
+        .bind(i64::from(cap))
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            if is_unique_violation(&e) {
+                RepoError::Duplicate
+            } else {
+                backend(e)
+            }
+        })?;
+        if inserted.rows_affected() == 0 {
+            return Err(RepoError::Conflict);
+        }
+        Ok(())
+    }
+
+    async fn remove_member(&self, player: PlayerId) -> Result<(), RepoError> {
+        sqlx::query("DELETE FROM alliance_members WHERE player_id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn set_member_role(
+        &self,
+        alliance: AllianceId,
+        player: PlayerId,
+        role: AllianceRole,
+        rights: RightSet,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            "UPDATE alliance_members SET role = $3, rights = $4 \
+             WHERE player_id = $1 AND alliance_id = $2",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .bind(Uuid::from_u128(alliance.0))
+        .bind(alliance_role_str(role))
+        .bind(i32::from(rights.bits()))
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn transfer_founder(
+        &self,
+        alliance: AllianceId,
+        from: PlayerId,
+        to: PlayerId,
+    ) -> Result<(), RepoError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        // The old founder becomes a plain member; the target becomes founder. Guarded on the alliance.
+        sqlx::query(
+            "UPDATE alliance_members SET role = 'member', rights = 0 \
+             WHERE player_id = $1 AND alliance_id = $2",
+        )
+        .bind(Uuid::from_u128(from.0))
+        .bind(Uuid::from_u128(alliance.0))
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        sqlx::query(
+            "UPDATE alliance_members SET role = 'founder', rights = $3 \
+             WHERE player_id = $1 AND alliance_id = $2",
+        )
+        .bind(Uuid::from_u128(to.0))
+        .bind(Uuid::from_u128(alliance.0))
+        .bind(i32::from(RightSet::all().bits()))
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        sqlx::query("UPDATE alliances SET founder_id = $2 WHERE id = $1")
+            .bind(Uuid::from_u128(alliance.0))
+            .bind(Uuid::from_u128(to.0))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn disband(&self, alliance: AllianceId) -> Result<(), RepoError> {
+        // Deleting the alliance cascades to members, invitations, and diplomacy (the FKs are
+        // ON DELETE CASCADE), so the whole group is cleared in one statement.
+        sqlx::query("DELETE FROM alliances WHERE id = $1")
+            .bind(Uuid::from_u128(alliance.0))
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn diplomacy_state(
+        &self,
+        a: AllianceId,
+        b: AllianceId,
+    ) -> Result<Option<(DiplomacyStance, DiplomacyStatus, Option<AllianceId>)>, RepoError> {
+        let (lo, hi) = normalise_pair(a, b);
+        let row = sqlx::query(
+            "SELECT stance, status, proposed_by FROM alliance_diplomacy \
+             WHERE alliance_lo = $1 AND alliance_hi = $2",
+        )
+        .bind(lo)
+        .bind(hi)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        let Some(r) = row else { return Ok(None) };
+        let stance = parse_stance(&r.try_get::<String, _>("stance").map_err(backend)?)?;
+        let status = parse_status(&r.try_get::<String, _>("status").map_err(backend)?)?;
+        let proposed_by: Option<Uuid> = r.try_get("proposed_by").map_err(backend)?;
+        Ok(Some((
+            stance,
+            status,
+            proposed_by.map(|u| AllianceId(u.as_u128())),
+        )))
+    }
+
+    async fn set_diplomacy_state(
+        &self,
+        a: AllianceId,
+        b: AllianceId,
+        stance: DiplomacyStance,
+        status: DiplomacyStatus,
+        proposed_by: Option<AllianceId>,
+    ) -> Result<(), RepoError> {
+        let (lo, hi) = normalise_pair(a, b);
+        sqlx::query(
+            "INSERT INTO alliance_diplomacy (alliance_lo, alliance_hi, stance, status, proposed_by) \
+             VALUES ($1, $2, $3, $4, $5) \
+             ON CONFLICT (alliance_lo, alliance_hi) \
+             DO UPDATE SET stance = EXCLUDED.stance, status = EXCLUDED.status, \
+                           proposed_by = EXCLUDED.proposed_by",
+        )
+        .bind(lo)
+        .bind(hi)
+        .bind(stance_str(stance))
+        .bind(status_str(status))
+        .bind(proposed_by.map(|p| Uuid::from_u128(p.0)))
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn clear_diplomacy(&self, a: AllianceId, b: AllianceId) -> Result<(), RepoError> {
+        let (lo, hi) = normalise_pair(a, b);
+        sqlx::query("DELETE FROM alliance_diplomacy WHERE alliance_lo = $1 AND alliance_hi = $2")
+            .bind(lo)
+            .bind(hi)
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn diplomacy_of(&self, alliance: AllianceId) -> Result<Vec<DiplomacyEntry>, RepoError> {
+        // The alliance is either side of the normalised pair; join the *other* side for its name/tag.
+        let me = Uuid::from_u128(alliance.0);
+        let rows = sqlx::query(
+            "SELECT d.stance, d.status, d.proposed_by, \
+                    CASE WHEN d.alliance_lo = $1 THEN d.alliance_hi ELSE d.alliance_lo END AS other, \
+                    o.name AS other_name, o.tag AS other_tag \
+             FROM alliance_diplomacy d \
+             JOIN alliances o ON o.id = CASE WHEN d.alliance_lo = $1 THEN d.alliance_hi \
+                                                                     ELSE d.alliance_lo END \
+             WHERE d.alliance_lo = $1 OR d.alliance_hi = $1 \
+             ORDER BY o.name",
+        )
+        .bind(me)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let other: Uuid = r.try_get("other").map_err(backend)?;
+            let proposed_by: Option<Uuid> = r.try_get("proposed_by").map_err(backend)?;
+            out.push(DiplomacyEntry {
+                other: AllianceId(other.as_u128()),
+                other_name: r.try_get("other_name").map_err(backend)?,
+                other_tag: r.try_get("other_tag").map_err(backend)?,
+                stance: parse_stance(&r.try_get::<String, _>("stance").map_err(backend)?)?,
+                status: parse_status(&r.try_get::<String, _>("status").map_err(backend)?)?,
+                proposed_by: proposed_by.map(|u| AllianceId(u.as_u128())),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn confederate_alliances(
+        &self,
+        alliance: AllianceId,
+    ) -> Result<Vec<AllianceId>, RepoError> {
+        let me = Uuid::from_u128(alliance.0);
+        let rows = sqlx::query(
+            "SELECT CASE WHEN alliance_lo = $1 THEN alliance_hi ELSE alliance_lo END AS other \
+             FROM alliance_diplomacy \
+             WHERE (alliance_lo = $1 OR alliance_hi = $1) \
+               AND stance = 'confederation' AND status = 'active'",
+        )
+        .bind(me)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let other: Uuid = r.try_get("other").map_err(backend)?;
+            out.push(AllianceId(other.as_u128()));
+        }
+        Ok(out)
+    }
+
+    async fn alliance_member_villages(
+        &self,
+        alliances: &[AllianceId],
+    ) -> Result<Vec<AlliedVillage>, RepoError> {
+        if alliances.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids: Vec<Uuid> = alliances.iter().map(|a| Uuid::from_u128(a.0)).collect();
+        let rows = sqlx::query(
+            "SELECT m.player_id, u.username, v.id, v.x, v.y \
+             FROM alliance_members m \
+             JOIN users u ON u.id = m.player_id \
+             JOIN villages v ON v.owner_id = m.player_id \
+             WHERE m.alliance_id = ANY($1) \
+             ORDER BY u.username, v.id",
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let pid: Uuid = r.try_get("player_id").map_err(backend)?;
+            let vid: Uuid = r.try_get("id").map_err(backend)?;
+            let x: i32 = r.try_get("x").map_err(backend)?;
+            let y: i32 = r.try_get("y").map_err(backend)?;
+            out.push(AlliedVillage {
+                player: PlayerId(pid.as_u128()),
+                owner_name: r.try_get("username").map_err(backend)?,
+                village: VillageId(vid.as_u128()),
+                coordinate: Coordinate::new(x, y),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn incoming_against(
+        &self,
+        villages: &[VillageId],
+    ) -> Result<Vec<IncomingAttack>, RepoError> {
+        if villages.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids: Vec<Uuid> = villages.iter().map(|v| Uuid::from_u128(v.0)).collect();
+        // Only attack/raid (force that lands), only in-transit, and **no** movement_troops join — the
+        // composition stays hidden (P4/§7.3). Combat movements key the attacked village on
+        // `deliver_village` (the troop-movement model, 009/010).
+        let rows = sqlx::query(
+            "SELECT deliver_village, dest_x, dest_y, \
+                    (EXTRACT(EPOCH FROM arrive_at) * 1000)::bigint AS arrive_ms \
+             FROM troop_movements \
+             WHERE kind IN ('attack', 'raid') AND status = 'in_transit' \
+               AND deliver_village = ANY($1) \
+             ORDER BY arrive_at, id",
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let tv: Uuid = r.try_get("deliver_village").map_err(backend)?;
+            let x: i32 = r.try_get("dest_x").map_err(backend)?;
+            let y: i32 = r.try_get("dest_y").map_err(backend)?;
+            let arrive_ms: i64 = r.try_get("arrive_ms").map_err(backend)?;
+            out.push(IncomingAttack {
+                target: VillageId(tv.as_u128()),
+                coordinate: Coordinate::new(x, y),
+                arrive_at: Timestamp(arrive_ms),
+            });
+        }
+        Ok(out)
     }
 }
 
@@ -8554,6 +9152,475 @@ mod tests {
         );
         let far = eperica_domain::regenerate_loyalty(loyalty, 10_000_000, &rules, speed);
         assert_eq!(far, eperica_domain::MAX_LOYALTY, "clamps at the max");
+    }
+
+    // 015 AC2/AC3/AC4/AC5/AC12: the alliance membership lifecycle over the real repository — found,
+    // invite/accept, the one-alliance-per-player + cap guards, expel, and the disband cascade.
+    #[tokio::test]
+    async fn alliance_membership_lifecycle() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping alliance test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let rules = crate::alliance_rules().expect("alliance rules");
+
+        let template = crate::starting_village().unwrap();
+        let make = |label: &'static str| {
+            let repo = &repo;
+            let template = &template;
+            async move {
+                let uname = format!("{label}_{}", Uuid::new_v4().simple());
+                let user = repo
+                    .create_account(
+                        NewUser {
+                            username: uname.clone(),
+                            email: format!("{uname}@example.com"),
+                            password_hash: "h".to_owned(),
+                            email_confirmed: true,
+                            tribe: Tribe::Gauls,
+                        },
+                        template,
+                    )
+                    .await
+                    .expect("create account");
+                let v = repo.villages_of(user.id).await.unwrap()[0].id;
+                (user.id, v)
+            }
+        };
+        let (founder, fv) = make("ally_f").await;
+        let (m2, _) = make("ally_2").await;
+        let (m3, _) = make("ally_3").await;
+        let (m4, _) = make("ally_4").await;
+
+        // Give the founder an Embassy ≥ 3 and the others ≥ 1 (insert the building rows directly).
+        let set_embassy = |village: VillageId, level: i16| {
+            let pool = &pool;
+            async move {
+                sqlx::query(
+                    "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+                     VALUES ($1, 16, 'embassy', $2) \
+                     ON CONFLICT (village_id, slot) DO UPDATE SET level = EXCLUDED.level",
+                )
+                .bind(Uuid::from_u128(village.0))
+                .bind(level)
+                .execute(pool)
+                .await
+                .unwrap();
+            }
+        };
+        set_embassy(fv, 3).await;
+        for (_, v) in [(m2, repo.villages_of(m2).await.unwrap()[0].id)] {
+            set_embassy(v, 1).await;
+        }
+        {
+            let v = repo.villages_of(m3).await.unwrap()[0].id;
+            set_embassy(v, 1).await;
+        }
+        {
+            // m4 is Embassy ≥ 3 so it can attempt a (rejected, duplicate-name) founding.
+            let v = repo.villages_of(m4).await.unwrap()[0].id;
+            set_embassy(v, 3).await;
+        }
+
+        // AC1/AC2: found needs Embassy ≥ 3; the highest-Embassy read sees it. (Unique name/tag per run
+        // — the test DB is shared and not reset between runs.)
+        assert_eq!(repo.max_embassy_level(founder).await.unwrap(), 3);
+        let suffix = Uuid::new_v4().simple().to_string();
+        let aname = format!("Templars_{suffix}");
+        let atag = format!("T{}", &suffix[..6]);
+        let aid = eperica_application::found_alliance(&repo, &rules, founder, &aname, &atag)
+            .await
+            .expect("found");
+        assert_eq!(
+            repo.alliance_of(founder).await.unwrap().unwrap().role,
+            AllianceRole::Founder
+        );
+        // AC2: a duplicate name is rejected (m4 is eligible but the name is taken).
+        assert!(matches!(
+            eperica_application::found_alliance(
+                &repo,
+                &rules,
+                m4,
+                &aname,
+                &format!("Z{}", &suffix[..6])
+            )
+            .await,
+            Err(eperica_application::AllianceError::NameOrTagTaken)
+        ));
+
+        // AC3: invite + accept; the roster now lists two.
+        eperica_application::invite_player(&repo, founder, m2)
+            .await
+            .unwrap();
+        eperica_application::respond_invite(&repo, &rules, m2, aid, true)
+            .await
+            .unwrap();
+        assert_eq!(repo.member_count(aid).await.unwrap(), 2);
+        assert!(
+            repo.roster(aid)
+                .await
+                .unwrap()
+                .iter()
+                .any(|e| e.player == m2)
+        );
+
+        // AC12: one alliance per player — adding the founder again is a Duplicate; the cap guard rejects
+        // a join once the alliance is full (cap forced to 2 here).
+        assert!(matches!(
+            repo.add_member(aid, founder, AllianceRole::Member, RightSet::empty(), 60)
+                .await,
+            Err(RepoError::Duplicate)
+        ));
+        assert!(matches!(
+            repo.add_member(aid, m3, AllianceRole::Member, RightSet::empty(), 2)
+                .await,
+            Err(RepoError::Conflict)
+        ));
+
+        // AC5: the founder expels m2; the roster is back to one.
+        eperica_application::expel_member(&repo, founder, m2)
+            .await
+            .unwrap();
+        assert_eq!(repo.member_count(aid).await.unwrap(), 1);
+        assert!(repo.alliance_of(m2).await.unwrap().is_none());
+
+        // AC5/AC12: disband cascades — invite m3, then disband; the alliance, members, and invitations
+        // are all gone.
+        eperica_application::invite_player(&repo, founder, m3)
+            .await
+            .unwrap();
+        eperica_application::respond_invite(&repo, &rules, m3, aid, true)
+            .await
+            .unwrap();
+        eperica_application::disband_alliance(&repo, founder)
+            .await
+            .unwrap();
+        assert!(repo.alliance_of(founder).await.unwrap().is_none());
+        assert!(repo.alliance_of(m3).await.unwrap().is_none());
+        let invites: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM alliance_invitations WHERE alliance_id = $1")
+                .bind(Uuid::from_u128(aid.0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(invites, 0, "disband cascades to invitations");
+        let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM alliances WHERE id = $1")
+            .bind(Uuid::from_u128(aid.0))
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(exists.is_none(), "the alliance row is gone");
+    }
+
+    // 015 AC7/AC12: diplomacy over the real repository — war is unilateral + mutual, a confederation is
+    // propose→accept, declaring war clears the confederation, and the normalised pair (lo<hi PK) makes
+    // a single canonical row regardless of who acts.
+    #[tokio::test]
+    async fn alliance_diplomacy_lifecycle() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping diplomacy test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let rules = crate::alliance_rules().expect("alliance rules");
+        let template = crate::starting_village().unwrap();
+
+        let make = |label: &'static str| {
+            let repo = &repo;
+            let pool = &pool;
+            let template = &template;
+            async move {
+                let uname = format!("{label}_{}", Uuid::new_v4().simple());
+                let user = repo
+                    .create_account(
+                        NewUser {
+                            username: uname.clone(),
+                            email: format!("{uname}@example.com"),
+                            password_hash: "h".to_owned(),
+                            email_confirmed: true,
+                            tribe: Tribe::Gauls,
+                        },
+                        template,
+                    )
+                    .await
+                    .expect("create account");
+                let v = repo.villages_of(user.id).await.unwrap()[0].id;
+                sqlx::query(
+                    "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+                     VALUES ($1, 16, 'embassy', 3) \
+                     ON CONFLICT (village_id, slot) DO UPDATE SET level = EXCLUDED.level",
+                )
+                .bind(Uuid::from_u128(v.0))
+                .execute(pool)
+                .await
+                .unwrap();
+                user.id
+            }
+        };
+        let f1 = make("dip_a").await;
+        let f2 = make("dip_b").await;
+        let suffix = Uuid::new_v4().simple().to_string();
+        let a = eperica_application::found_alliance(
+            &repo,
+            &rules,
+            f1,
+            &format!("A_{suffix}"),
+            &format!("A{}", &suffix[..5]),
+        )
+        .await
+        .unwrap();
+        let b = eperica_application::found_alliance(
+            &repo,
+            &rules,
+            f2,
+            &format!("B_{suffix}"),
+            &format!("B{}", &suffix[..5]),
+        )
+        .await
+        .unwrap();
+
+        use eperica_application::DiplomacyCommand;
+        // Propose → accept builds a single canonical row, active both ways.
+        eperica_application::set_diplomacy(&repo, f1, b, DiplomacyCommand::ProposeConfederation)
+            .await
+            .unwrap();
+        eperica_application::set_diplomacy(&repo, f2, a, DiplomacyCommand::AcceptConfederation)
+            .await
+            .unwrap();
+        assert_eq!(repo.confederate_alliances(a).await.unwrap(), vec![b]);
+        assert_eq!(repo.confederate_alliances(b).await.unwrap(), vec![a]);
+        // Exactly one diplomacy row for the pair, regardless of action order.
+        let rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM alliance_diplomacy \
+             WHERE (alliance_lo = $1 AND alliance_hi = $2) OR (alliance_lo = $2 AND alliance_hi = $1)",
+        )
+        .bind(Uuid::from_u128(a.0))
+        .bind(Uuid::from_u128(b.0))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows, 1, "the normalised pair has a single row");
+
+        // Declaring war (from the other side) overrides the confederation and is mutual.
+        eperica_application::set_diplomacy(&repo, f2, a, DiplomacyCommand::DeclareWar)
+            .await
+            .unwrap();
+        assert!(repo.confederate_alliances(a).await.unwrap().is_empty());
+        let (stance, status, _) = repo.diplomacy_state(a, b).await.unwrap().unwrap();
+        assert_eq!(
+            (stance, status),
+            (DiplomacyStance::War, DiplomacyStatus::Active)
+        );
+
+        // Cancel ⇒ neutral.
+        eperica_application::set_diplomacy(&repo, f1, b, DiplomacyCommand::Cancel)
+            .await
+            .unwrap();
+        assert!(repo.diplomacy_state(a, b).await.unwrap().is_none());
+    }
+
+    // 015 AC8/AC9: the alliance view spans members + one-hop confederates, the incoming-defence list
+    // surfaces hostile movements against any allied village (target + ETA only, never troops), and a
+    // non-allied target is excluded; a non-member has no alliance view.
+    #[tokio::test]
+    async fn alliance_shared_visibility_and_incoming() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping alliance visibility test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let rules = crate::alliance_rules().expect("alliance rules");
+        let template = crate::starting_village().unwrap();
+        let make = |label: &'static str, embassy: i16| {
+            let repo = &repo;
+            let pool = &pool;
+            let template = &template;
+            async move {
+                let uname = format!("{label}_{}", Uuid::new_v4().simple());
+                let user = repo
+                    .create_account(
+                        NewUser {
+                            username: uname.clone(),
+                            email: format!("{uname}@example.com"),
+                            password_hash: "h".to_owned(),
+                            email_confirmed: true,
+                            tribe: Tribe::Gauls,
+                        },
+                        template,
+                    )
+                    .await
+                    .expect("create account");
+                let v = repo.villages_of(user.id).await.unwrap()[0].clone();
+                if embassy > 0 {
+                    sqlx::query(
+                        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+                         VALUES ($1, 16, 'embassy', $2) \
+                         ON CONFLICT (village_id, slot) DO UPDATE SET level = EXCLUDED.level",
+                    )
+                    .bind(Uuid::from_u128(v.id.0))
+                    .bind(embassy)
+                    .execute(pool)
+                    .await
+                    .unwrap();
+                }
+                (user.id, v)
+            }
+        };
+        let (f1, _v1) = make("vis_a", 3).await;
+        let (mem, _vm) = make("vis_m", 1).await;
+        let (f2, v2) = make("vis_b", 3).await; // confederate village (the threatened one)
+        let (enemy, ev) = make("vis_e", 0).await;
+
+        let suffix = Uuid::new_v4().simple().to_string();
+        let a = eperica_application::found_alliance(
+            &repo,
+            &rules,
+            f1,
+            &format!("VA_{suffix}"),
+            &format!("VA{}", &suffix[..4]),
+        )
+        .await
+        .unwrap();
+        let b = eperica_application::found_alliance(
+            &repo,
+            &rules,
+            f2,
+            &format!("VB_{suffix}"),
+            &format!("VB{}", &suffix[..4]),
+        )
+        .await
+        .unwrap();
+        eperica_application::invite_player(&repo, f1, mem)
+            .await
+            .unwrap();
+        eperica_application::respond_invite(&repo, &rules, mem, a, true)
+            .await
+            .unwrap();
+        // Confederate A and B.
+        use eperica_application::DiplomacyCommand;
+        eperica_application::set_diplomacy(&repo, f1, b, DiplomacyCommand::ProposeConfederation)
+            .await
+            .unwrap();
+        eperica_application::set_diplomacy(&repo, f2, a, DiplomacyCommand::AcceptConfederation)
+            .await
+            .unwrap();
+
+        // Two attacks: the enemy hits the confederate's village (visible to A); f2 attacks the enemy's
+        // village (NOT allied to A — excluded from A's incoming).
+        let insert_attack = "INSERT INTO troop_movements \
+             (id, owner_id, kind, home_village, deliver_village, origin_x, origin_y, dest_x, dest_y, \
+              depart_at, arrive_at, status) \
+             VALUES ($1, $2, 'attack', $3, $4, 0, 0, $5, $6, now(), \
+                     to_timestamp($7::double precision / 1000.0), 'in_transit')";
+        sqlx::query(insert_attack)
+            .bind(Uuid::new_v4())
+            .bind(Uuid::from_u128(enemy.0))
+            .bind(Uuid::from_u128(ev.id.0))
+            .bind(Uuid::from_u128(v2.id.0))
+            .bind(v2.coordinate.x)
+            .bind(v2.coordinate.y)
+            .bind(5_000_000_000_000_f64)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(insert_attack)
+            .bind(Uuid::new_v4())
+            .bind(Uuid::from_u128(f2.0))
+            .bind(Uuid::from_u128(v2.id.0))
+            .bind(Uuid::from_u128(ev.id.0))
+            .bind(ev.coordinate.x)
+            .bind(ev.coordinate.y)
+            .bind(6_000_000_000_000_f64)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // A *resolved* attack on the allied village must NOT show (only in-transit force is incoming).
+        sqlx::query(
+            "INSERT INTO troop_movements \
+             (id, owner_id, kind, home_village, deliver_village, origin_x, origin_y, dest_x, dest_y, \
+              depart_at, arrive_at, status) \
+             VALUES ($1, $2, 'attack', $3, $4, 0, 0, $5, $6, now(), \
+                     to_timestamp($7::double precision / 1000.0), 'done')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(Uuid::from_u128(enemy.0))
+        .bind(Uuid::from_u128(ev.id.0))
+        .bind(Uuid::from_u128(v2.id.0))
+        .bind(v2.coordinate.x)
+        .bind(v2.coordinate.y)
+        .bind(4_000_000_000_000_f64)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The founder's alliance view spans members + the confederate's villages, and the incoming list
+        // holds exactly the attack on the confederate village (target + ETA only).
+        let view = eperica_application::alliance_view(&repo, f1)
+            .await
+            .unwrap()
+            .expect("founder has a view");
+        assert!(
+            view.allied_villages.iter().any(|av| av.player == mem),
+            "fellow member's village is visible"
+        );
+        assert!(
+            view.allied_villages.iter().any(|av| av.village == v2.id),
+            "confederate's village is visible"
+        );
+        assert_eq!(view.incoming.len(), 1, "only the allied-target attack");
+        assert_eq!(view.incoming[0].target, v2.id);
+        assert_eq!(view.incoming[0].arrive_at, Timestamp(5_000_000_000_000));
+
+        // A non-member (the enemy) has no alliance view.
+        assert!(
+            eperica_application::alliance_view(&repo, enemy)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     // 014 AC7/AC8/AC12: a conquest transfers ownership in the battle transaction — the village keeps its

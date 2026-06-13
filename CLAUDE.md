@@ -8,9 +8,10 @@ Eperica is a from-scratch, **faithful Travian-style competitive strategy MMO** (
 built **spec-driven** and **performance-first** (sub-second timing is gameplay). The design is
 complete and implementation proceeds slice by slice from the roadmap; the foundation, economy,
 construction, tribes/units, training/upkeep, world-map, movement, trade, combat, scouting,
-siege/loot, oases, and settling slices (001–013) are built — milestones M1–M4 (the PvP conflict layer)
-and into M5 (the multi-village layer: culture points, settlers, founding villages, the capital) — and
-the **conquest** slice (014: loyalty, administrators, ownership transfer) is in progress (M5).
+siege/loot, oases, settling, and conquest slices (001–014) are built — milestones M1–M4 (the PvP
+conflict layer) and into M5 (the multi-village layer: culture points, settlers, founding villages, the
+capital, and conquest) — and the **alliances** slice (015: Embassy, membership + roles/rights,
+diplomacy stances, shared visibility + coordinated defence) is in progress (M5).
 
 ## Read the specs first — they are the source of truth
 
@@ -24,7 +25,7 @@ the **conquest** slice (014: loyalty, administrators, ownership transfer) is in 
 - **`specs/roadmap.md`** — dependency-ordered build order (slices 001 → end-game).
 - **`specs/social-and-meta-features.md`** — app-layer features (chat, profiles, UX) — not sim rules.
 - **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the active slice. Currently:
-  `014-conquest`.
+  `015-alliances`.
 
 If behavior must change, **update the spec first**, then the code.
 

@@ -128,6 +128,7 @@ mod tests {
         let markers = vec![VillageMarker {
             coordinate: here,
             owner_name: "alice".to_owned(),
+            alliance_tag: None,
         }];
         let v = map_viewport(&map(50), here, 1, &markers);
         assert_eq!(
