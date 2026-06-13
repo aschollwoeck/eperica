@@ -745,6 +745,10 @@ where
             target_debit,
             razed,
             loyalty: loyalty_apply,
+            // 016: per-defender reports + battle points are populated in T3; until then the write
+            // path persists nothing extra (attack_points 0, no contributions).
+            attack_points: 0,
+            defender_contributions: Vec::new(),
         })
         .await?;
     Ok(Some(target.id))

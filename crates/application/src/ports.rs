@@ -589,6 +589,36 @@ pub struct BattleApply {
     /// The post-battle loyalty result (014): `Reduced` writes the new loyalty; `Conquered` transfers
     /// ownership in this transaction. `None` for an ordinary battle (no administrators / a loss).
     pub loyalty: Option<LoyaltyApply>,
+    /// The battle's **attack points** (016 AC4): the valued defender troops the attacker killed,
+    /// credited to the attacker. Persisted as a fact on the report (summed on read).
+    pub attack_points: i64,
+    /// Per-defending-player contributions (016 AC3/AC4): one per defending player — the village owner
+    /// (`is_owner = true`) and each reinforcer — carrying their forces, losses, contributed defensive
+    /// value, and split defense points. Persisted as `battle_defenders` rows in this transaction;
+    /// empty for a battle with no recorded player defenders (e.g. PvE, or a legacy test).
+    pub defender_contributions: Vec<DefenderContribution>,
+}
+
+/// One defending player's share of a battle (016 AC3/AC4): the troops they contributed, their
+/// losses, the defensive value they brought (the [`apportion`](eperica_domain::apportion) weight),
+/// and their resulting defense points. The target's garrison owner is one of these (`is_owner =
+/// true`) alongside each reinforcing player; a reinforcer reads their own row as their report (§9.6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefenderContribution {
+    /// The defending player (the village owner, or a reinforcer).
+    pub player: PlayerId,
+    /// The home village of this defender's troops (the owner's target, or the reinforcer's home).
+    pub village: VillageId,
+    /// Whether this is the target village's garrison owner (vs. a reinforcing player).
+    pub is_owner: bool,
+    /// The troops this player had defending in the battle.
+    pub forces: UnitCounts,
+    /// This player's losses.
+    pub losses: UnitCounts,
+    /// The defensive value this player contributed — the weight their defense-point share is by.
+    pub defense_value: i64,
+    /// This player's split of the battle's defense-point total.
+    pub defense_points: i64,
 }
 
 /// A persisted battle report for the inbox/detail view (009 AC8).

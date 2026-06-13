@@ -47,16 +47,16 @@ pub use oasis::{
 pub use ports::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, AllianceRepository,
     AlliedVillage, BattleApply, BattleReportView, BuildRepository, CombatRepository,
-    ConquestRepository, ConquestTransfer, CultureRepository, DiplomacyEntry, DueAttack, DueBuild,
-    DueEvent, DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle,
-    DueTrade, DueTraining, DueUnitOrder, EventStore, IncomingAttack, LoyaltyApply, Membership,
-    MovementRepository, MovementView, NewBattleReport, NewBuildOrder, NewOasisReport,
-    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
-    OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PasswordHasher,
-    PendingInvite, RazedBuilding, ReinforcementReturn, RepoError, ResourceWrite, RosterEntry,
-    ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply, SettleOutcome,
-    SettleRepository, StarvationRepository, StationedGroup, TradeRepository, TradeView,
-    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    ConquestRepository, ConquestTransfer, CultureRepository, DefenderContribution, DiplomacyEntry,
+    DueAttack, DueBuild, DueEvent, DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce,
+    DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, EventStore, IncomingAttack,
+    LoyaltyApply, Membership, MovementRepository, MovementView, NewBattleReport, NewBuildOrder,
+    NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply,
+    OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite,
+    PasswordHasher, PendingInvite, RazedBuilding, ReinforcementReturn, RepoError, ResourceWrite,
+    RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply,
+    SettleOutcome, SettleRepository, StarvationRepository, StationedGroup, TradeRepository,
+    TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;

@@ -2696,6 +2696,7 @@ impl CombatRepository for PgAccountRepository {
 
         // The report (visible to both parties).
         let r = &apply.report;
+        let report_id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO battle_reports \
              (id, kind, attacker_player, attacker_village, defender_player, defender_village, \
@@ -2703,11 +2704,11 @@ impl CombatRepository for PgAccountRepository {
               attacker_forces, attacker_losses, defender_forces, defender_losses, \
               scouted, scout_target, loot_wood, loot_clay, loot_iron, loot_crop, \
               razed_building, razed_before, razed_after, \
-              loyalty_before, loyalty_after, conquered) \
+              loyalty_before, loyalty_after, conquered, attack_points) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, \
-                     $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)",
+                     $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)",
         )
-        .bind(Uuid::new_v4())
+        .bind(report_id)
         .bind(movement_kind_str(r.kind))
         .bind(Uuid::from_u128(r.attacker_player.0))
         .bind(Uuid::from_u128(r.attacker_village.0))
@@ -2734,9 +2735,35 @@ impl CombatRepository for PgAccountRepository {
         .bind(r.loyalty_before.and_then(|v| i16::try_from(v).ok()))
         .bind(r.loyalty_after.and_then(|v| i16::try_from(v).ok()))
         .bind(r.conquered)
+        .bind(apply.attack_points)
         .execute(&mut *tx)
         .await
         .map_err(backend)?;
+
+        // 016 AC3/AC4: one `battle_defenders` row per defending player (owner + each reinforcer),
+        // recording their forces/losses, contributed defensive value, and split defense points — so
+        // a reinforcer sees their own report and defense points are faithfully shared. Same tx as the
+        // report ⇒ exactly-once with the movement claim (no duplication on crash-resume).
+        for c in &apply.defender_contributions {
+            sqlx::query(
+                "INSERT INTO battle_defenders \
+                 (id, battle_id, player_id, village_id, is_owner, forces, losses, \
+                  defense_value, defense_points) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            )
+            .bind(Uuid::new_v4())
+            .bind(report_id)
+            .bind(Uuid::from_u128(c.player.0))
+            .bind(Uuid::from_u128(c.village.0))
+            .bind(c.is_owner)
+            .bind(counts_to_json(&c.forces))
+            .bind(counts_to_json(&c.losses))
+            .bind(c.defense_value)
+            .bind(c.defense_points)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        }
 
         // The scouter-facing intel report from scouts that rode the attack (010), if any.
         if let Some(report) = &apply.scout_report {
@@ -4891,7 +4918,9 @@ impl ScoutRepository for PgAccountRepository {
 mod tests {
     use super::*;
     use crate::world::World;
-    use eperica_application::{ConquestTransfer, NewBattleReport, ReinforcementReturn};
+    use eperica_application::{
+        ConquestTransfer, DefenderContribution, NewBattleReport, ReinforcementReturn,
+    };
     use eperica_domain::{EconomyRules, GameSpeed, WorldConfig};
 
     /// The resources row's last-settled time — the snapshot orders must be computed from.
@@ -5597,6 +5626,29 @@ mod tests {
             target_debit: None,
             razed: None,
             loyalty: None,
+            // 016 AC3/AC4: the battle's attack points + the per-defender split (owner 75, ally 25 of
+            // a 100-point defense total, weighted 3:1 by contributed defensive value).
+            attack_points: 30,
+            defender_contributions: vec![
+                DefenderContribution {
+                    player: defender,
+                    village: d.id,
+                    is_owner: true,
+                    forces: vec![(UnitId("phalanx".into()), 8)],
+                    losses: vec![(UnitId("phalanx".into()), 4)],
+                    defense_value: 75,
+                    defense_points: 75,
+                },
+                DefenderContribution {
+                    player: ally,
+                    village: al.id,
+                    is_owner: false,
+                    forces: vec![(UnitId("phalanx".into()), 4)],
+                    losses: vec![(UnitId("phalanx".into()), 2)],
+                    defense_value: 25,
+                    defense_points: 25,
+                },
+            ],
         })
         .await
         .expect("apply battle");
@@ -5638,6 +5690,35 @@ mod tests {
         assert!(repo.reports_for(ally, 50).await.unwrap().is_empty());
         assert!(repo.report(report_id, attacker).await.unwrap().is_some());
         assert!(repo.report(report_id, ally).await.unwrap().is_none()); // not a party
+
+        // 016 AC3/AC4 (T2): the battle's attack points persist on the report, and one
+        // `battle_defenders` row per defending player (owner + the ally reinforcer) persists with the
+        // split defense points — written exactly-once in the battle transaction.
+        let rid = Uuid::from_u128(report_id);
+        let attack_points: i64 =
+            sqlx::query_scalar("SELECT attack_points FROM battle_reports WHERE id = $1")
+                .bind(rid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(attack_points, 30);
+        let defenders: Vec<(Uuid, bool, i64)> = sqlx::query_as(
+            "SELECT player_id, is_owner, defense_points FROM battle_defenders \
+             WHERE battle_id = $1 ORDER BY is_owner DESC",
+        )
+        .bind(rid)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(defenders.len(), 2);
+        assert_eq!(defenders[0], (Uuid::from_u128(defender.0), true, 75)); // owner
+        assert_eq!(defenders[1], (Uuid::from_u128(ally.0), false, 25)); // reinforcer
+        // Defense points sum to the battle's defense total (no points lost/created).
+        assert_eq!(
+            defenders.iter().map(|(_, _, p)| p).sum::<i64>(),
+            100,
+            "shares sum to the defense total"
+        );
     }
 
     /// 011 AC2/AC6/AC9: `apply_battle` debits the target's resources, razes the targeted building,
@@ -5798,6 +5879,8 @@ mod tests {
                 after: 1,
             }),
             loyalty: None,
+            attack_points: 0,
+            defender_contributions: Vec::new(),
         })
         .await
         .expect("apply battle");
@@ -9204,6 +9287,8 @@ mod tests {
             target_debit: None,
             razed: None,
             loyalty: Some(LoyaltyApply::Conquered(transfer.clone())),
+            attack_points: 0,
+            defender_contributions: Vec::new(),
         };
         repo.apply_battle(apply.clone()).await.expect("conquest");
 
