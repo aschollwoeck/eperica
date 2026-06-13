@@ -2803,6 +2803,9 @@ impl CombatRepository for PgAccountRepository {
                 //     likewise bound to the village and follow it to the new owner.
                 //   • oases (owner = village_id)                 — occupied oases are owned by the
                 //     village, so they transfer with it implicitly.
+                //   • starvation_checks (PK village_id)          — left to self-resolve: the garrison
+                //     is emptied above, so when the pending check fires it finds no troops and
+                //     finishes as a no-op (`starve_village`); no need to cancel it in this tx.
                 //   • player_culture (both players)              — re-anchored below (013 AC1).
                 // The principle (AC7): assets located in or owned by the village pass with it; troops
                 // and shipments in transit that can no longer reach a loyal village are forfeited.

@@ -1,6 +1,6 @@
 # Feature 014 — Conquest — Technical Plan
 
-**Status:** Draft
+**Status:** Verified
 **Spec:** ./spec.md
 
 Conquest is the **aggressive** multi-village path: every village carries a **loyalty** that regenerates

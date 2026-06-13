@@ -1,6 +1,6 @@
 # Feature 014 — Conquest
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 013 (the capital flag + the unconquerable rule, the per-player culture/expansion-slot gate, the Residence/Palace, the `Expansion` unit role), 009 (the troop-movement battle engine + battle reports the conquest step rides on), 005 (training the administrator unit), 002/003 (the per-village economy/buildings that transfer), 006 (the seeded map the transferred village sits on)
 **Roadmap:** M5 · slice 014 · GDD §3.3, §3.4, §6.1, §9.4 (step 5), §11.1 — the **aggressive** expansion path: reduce a target village's **loyalty** with **administrators**; at zero, **ownership transfers**. The **capital** cannot be conquered.
 
@@ -186,7 +186,8 @@ Per [roles.md](../../roles.md).
   them would land the loser's army in enemy hands); the village's **own troops stationed elsewhere**
   (reinforcements keyed `home_village = target`), its **in-flight trades**, and its **occupied oases**
   (012) **follow the village to the new owner** (ownership of each is derived from the village, so no
-  row change is needed); **both players' culture** is re-anchored.
+  row change is needed); the pending **starvation check** is left to self-resolve (the emptied garrison
+  makes it fire as a no-op); **both players' culture** is re-anchored.
 - **Administrators are existing roster units, enabled like settlers were in 013.** Senator/Chief/
   Chieftain already exist (`role = expansion`, `trained_in = residence`); 013 enabled the Residence
   training gate. 014 makes them **conquer** (they are **not** excluded from combat — verify

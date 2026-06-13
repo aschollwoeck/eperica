@@ -71,7 +71,7 @@ math.
   existing movement requeue covers the attack). rustdoc; `docs/architecture/00NN-conquest.md`;
   `docs/manual/` conquest guide; `CLAUDE.md` active slice → 014.
 
-- [ ] **T8 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
+- [x] **T8 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
   **APPROVE**; PR.
 
 ## Done when
