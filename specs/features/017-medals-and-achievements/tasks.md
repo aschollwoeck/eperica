@@ -68,7 +68,7 @@ small rewards via existing credit paths).
   (the recurring settlement pattern, snapshots, idempotent grants); `docs/manual/` medals & achievements
   guide; `CLAUDE.md` active slice → 017.
 
-- [ ] **T9 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
+- [x] **T9 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
   **APPROVE**; PR.
 
 ## Done when

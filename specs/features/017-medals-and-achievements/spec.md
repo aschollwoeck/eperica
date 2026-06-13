@@ -1,6 +1,6 @@
 # Feature 017 — Medals & achievements
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 016 (ranking — the leaderboards/stats the weekly medals are awarded from, and the population/points facts), 009/011 (combat + loot — defensive wins and raider stats), 012 (oases — the "occupy an oasis" milestone), 013 (settling — village count + the capital that receives resource rewards; culture points for CP rewards), 004 (research — the "research every unit" milestone), 001 (the due-event scheduler the weekly settlement rides; accounts/world)
 **Roadmap:** M6 · slice 017 · GDD §11.2 — the **prestige layer**: a **weekly medal settlement** (the first **recurring** scheduled due-event) awards permanent **medals** to the top performers in each leaderboard category, and **achievements** (one-time milestone badges, with optional rewards) are granted server-side as players cross thresholds. This slice also **closes the 016 deferral**: the weekly **population snapshot** it introduces powers the **top-climbers leaderboard** and the **population-over-time** stat-page chart.
 

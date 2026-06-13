@@ -1,6 +1,6 @@
 # Feature 017 — Medals & achievements — Technical Plan
 
-**Status:** Reviewed
+**Status:** Verified
 **Spec:** ./spec.md
 
 The **prestige layer**: a **weekly medal settlement** (the first recurring scheduled due-event) snapshots
