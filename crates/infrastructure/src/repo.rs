@@ -10231,5 +10231,179 @@ mod tests {
             .await
             .unwrap();
         assert!(qpop.iter().any(|r| r.player == attacker));
+
+        // AC7 exclusion: move the defender's capital to the SW quadrant — an NE-scoped board excludes
+        // them, a SW-scoped board includes them.
+        sqlx::query("UPDATE villages SET x = -5, y = -5, is_capital = true WHERE id = $1")
+            .bind(Uuid::from_u128(d.id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ne = repo
+            .population_board(&econ, BoardScope::Quadrant(Quadrant::Ne), 100)
+            .await
+            .unwrap();
+        assert!(
+            ne.iter().all(|r| r.player != defender),
+            "an SW-capital player is excluded from the NE board"
+        );
+        let sw = repo
+            .population_board(&econ, BoardScope::Quadrant(Quadrant::Sw), 100)
+            .await
+            .unwrap();
+        assert!(sw.iter().any(|r| r.player == defender));
+
+        // AC5: a rolling window that predates the battle excludes it; all-time still includes it.
+        for t in ["battle_reports", "battle_defenders"] {
+            sqlx::query(&format!(
+                "UPDATE {t} SET occurred_at = now() - interval '40 days'"
+            ))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let since_30d = Some(Timestamp(crate::now().0 - 30 * 86_400 * 1000));
+        let recent = repo
+            .conflict_board(ConflictMetric::Attack, BoardScope::World, since_30d, 100)
+            .await
+            .unwrap();
+        assert!(
+            recent.iter().all(|r| r.player != attacker),
+            "a 40-day-old battle is outside the 30-day window"
+        );
+        let all_time = repo
+            .conflict_board(ConflictMetric::Attack, BoardScope::World, None, 100)
+            .await
+            .unwrap();
+        assert_eq!(
+            all_time
+                .iter()
+                .find(|r| r.player == attacker)
+                .map(|r| r.value),
+            Some(50),
+            "all-time still includes the old battle"
+        );
+    }
+
+    /// 016 AC4: defence points from a real `resolve_one` are split across the owner and a reinforcer
+    /// by contributed defensive value, summing to the valued attacker losses.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn defense_points_split_across_reinforcers(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            world,
+            config,
+        } = setup(pool.clone()).await;
+        let units = crate::unit_rules().expect("unit rules");
+        let combat = crate::combat_rules().expect("combat rules");
+        let scout = crate::scout_rules().expect("scout rules");
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (attacker, a) = account("dsatk").await;
+        let (_defender, d) = account("dsdef").await;
+        let (_ally, al) = account("dsally").await;
+
+        // A weak attacker (5 swordsmen) is wiped by a strong defence: the owner's 50 phalanx and the
+        // ally's 25 reinforcing phalanx (a 2:1 defence split).
+        for (v, unit, n) in [(a.id, "swordsman", 5), (d.id, "phalanx", 50)] {
+            sqlx::query(
+                "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, $2, $3)",
+            )
+            .bind(Uuid::from_u128(v.0))
+            .bind(unit)
+            .bind(n)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO reinforcements (host_village, home_village, unit_id, count) \
+             VALUES ($1, $2, 'phalanx', 25)",
+        )
+        .bind(Uuid::from_u128(d.id.0))
+        .bind(Uuid::from_u128(al.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let now = Timestamp(3_000_000_000_000);
+        let arrive = Timestamp(now.0 + 100_000);
+        repo.start_attack(
+            a.id,
+            d.id,
+            attacker,
+            a.coordinate,
+            d.coordinate,
+            now,
+            arrive,
+            MovementKind::Attack,
+            &[(UnitId("swordsman".into()), 5)],
+            None,
+            None,
+        )
+        .await
+        .expect("attack");
+        eperica_application::process_due_combat(
+            &repo,
+            &repo,
+            &repo,
+            &repo,
+            &econ,
+            &units,
+            &combat,
+            &scout,
+            &crate::culture_rules().unwrap(),
+            &crate::loyalty_rules().unwrap(),
+            &crate::ranking_rules().unwrap(),
+            &map,
+            GameSpeed::new(1.0).unwrap(),
+            world.seed as u64,
+            arrive,
+            100,
+        )
+        .await
+        .expect("resolve");
+
+        // The 5 swordsmen (point value 1 each) are destroyed → 5 defence points, split owner ≥ ally
+        // (the owner brought 2× the defence) and summing exactly to 5.
+        let defs: Vec<(bool, i64)> = sqlx::query_as(
+            "SELECT is_owner, defense_points FROM battle_defenders ORDER BY is_owner DESC",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(defs.len(), 2, "owner + reinforcer each get a row");
+        assert_eq!(
+            defs.iter().map(|(_, p)| p).sum::<i64>(),
+            5,
+            "defence points sum to the valued attacker losses"
+        );
+        assert!(
+            defs[0].1 > 0 && defs[1].1 > 0,
+            "both defenders earned points"
+        );
+        assert!(defs[0].1 >= defs[1].1, "the owner contributed more defence");
     }
 }

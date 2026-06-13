@@ -2064,13 +2064,28 @@ fn parse_scope(s: &str) -> BoardScope {
     }
 }
 
-/// The time window for a leaderboard query string (the seconds match `ranking.toml`'s windows).
-fn parse_window(s: &str) -> Window {
-    match s {
-        "7d" => Window::Last(7 * 86_400),
-        "30d" => Window::Last(30 * 86_400),
+/// The time window for a leaderboard query string, validated against config (P7): an `"<n>d"` key is
+/// honored only if `<n>` days is a configured window; anything else (incl. "all") is all-time. This
+/// keeps the selector and the use-case in agreement, so a config change can never 500 the page.
+fn parse_window(s: &str, rules: &eperica_domain::RankingRules) -> Window {
+    let secs = s
+        .strip_suffix('d')
+        .and_then(|n| n.parse::<i64>().ok())
+        .map(|days| days * 86_400);
+    match secs {
+        Some(secs) if rules.windows_secs.contains(&secs) => Window::Last(secs),
         _ => Window::AllTime,
     }
+}
+
+/// The window selector options, built from config (P7): "All-time" plus each configured window.
+fn window_options(rules: &eperica_domain::RankingRules) -> Vec<(String, String)> {
+    let mut out = vec![("all".to_owned(), "All-time".to_owned())];
+    for secs in &rules.windows_secs {
+        let days = secs / 86_400;
+        out.push((format!("{days}d"), format!("{days} days")));
+    }
+    out
 }
 
 /// Map player leaderboard rows to view rows (rank + stat-page link).
@@ -2110,10 +2125,10 @@ pub async fn leaderboard(
     let scope_key = q.scope.unwrap_or_else(|| "world".to_owned());
     let window_key = q.window.unwrap_or_else(|| "all".to_owned());
     let scope = parse_scope(&scope_key);
-    let window = parse_window(&window_key);
     let repo = state.accounts.as_ref();
     let econ = state.rules.as_ref();
     let rules = state.ranking_rules.as_ref();
+    let window = parse_window(&window_key, rules);
     let now_ts = now();
 
     let categories = vec![
@@ -2224,7 +2239,7 @@ pub async fn leaderboard(
             ("se", "SE"),
         ],
         window: window_key,
-        windows: vec![("all", "All-time"), ("7d", "7 days"), ("30d", "30 days")],
+        windows: window_options(rules),
         is_alliance,
         windowed,
         value_label,

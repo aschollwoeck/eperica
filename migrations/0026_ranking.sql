@@ -1,7 +1,9 @@
 -- Slice 016: ranking facts persisted at battle resolution (computed once, summed on read).
 --
 -- A battle's **attack points** — the valued defender troops the attacker killed (GDD §11.2) —
--- credited to the attacker. Persisted as a fact on the report, like loot.
+-- credited to the attacker. Persisted as a fact on the report, like loot. No backfill is intended:
+-- points are forward-looking battle facts (pre-016 battles keep 0 and have no battle_defenders rows;
+-- their per-group losses were never retained), and points are awarded at battle time by design.
 ALTER TABLE battle_reports ADD COLUMN attack_points bigint NOT NULL DEFAULT 0;
 
 -- Per-defending-player contribution + report (016 AC3/AC4): one row per defending player in a

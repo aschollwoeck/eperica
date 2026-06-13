@@ -2504,4 +2504,36 @@ async fn leaderboard_and_stats_are_public(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert_eq!(bad.status().as_u16(), 404);
+
+    // P11: with the world populated by more players, the board read stays within budget (best of 3 —
+    // the population board computes population in SQL bounded by the page size, not per-village in Rust).
+    for _ in 0..8 {
+        let p = unique("lbp");
+        client()
+            .post(format!("{base}/register"))
+            .form(&[
+                ("username", p.as_str()),
+                ("email", format!("{p}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", "gauls"),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+    let mut best = std::time::Duration::MAX;
+    for _ in 0..3 {
+        let started = std::time::Instant::now();
+        let r = visitor
+            .get(format!("{base}/leaderboard?cat=population"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 200);
+        best = best.min(started.elapsed());
+    }
+    assert!(
+        best.as_millis() < 250,
+        "leaderboard read too slow: {best:?}"
+    );
 }

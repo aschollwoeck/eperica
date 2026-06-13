@@ -649,9 +649,9 @@ pub struct LeaderboardTemplate {
     /// The selected scope key ("world" / "ne" / "nw" / "sw" / "se").
     pub scope: String,
     pub scopes: Vec<(&'static str, &'static str)>,
-    /// The selected window key ("all" / "7d" / "30d").
+    /// The selected window key ("all" / "7d" / "30d"); options are built from config (P7).
     pub window: String,
-    pub windows: Vec<(&'static str, &'static str)>,
+    pub windows: Vec<(String, String)>,
     /// Whether the selected category ranks alliances (shows the tag column).
     pub is_alliance: bool,
     /// Whether the selected category is windowed (shows the window selector).
