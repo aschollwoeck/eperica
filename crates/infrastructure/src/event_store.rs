@@ -494,20 +494,13 @@ impl Scheduler {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn processes_due_events_once_and_leaves_future_pending() {
-        let _ = dotenvy::dotenv();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping scheduler test: DATABASE_URL not set");
-            return;
-        };
-        let pool = crate::create_pool(&url).await.expect("connect");
-        crate::run_migrations(&pool).await.expect("migrate");
-        sqlx::query("TRUNCATE scheduled_events")
-            .execute(&pool)
-            .await
-            .expect("truncate");
-
+    // PROTOTYPE (sqlx::test): each test gets its own freshly-migrated database, created from a
+    // cached template and dropped on completion. That removes the per-test `create_pool` +
+    // `run_migrations` boilerplate *and* the `TRUNCATE scheduled_events` hack — the global event
+    // queue is now private to this test, so it is safe to run in parallel with every other test.
+    // The `migrations` path is relative to the crate manifest dir (`crates/infrastructure`).
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn processes_due_events_once_and_leaves_future_pending(pool: PgPool) {
         let store = PgEventStore::new(pool.clone());
         // Wide margins so a jittery dev/container clock can't flip "past"/"future".
         let due_past = Timestamp(now().0 - 600_000);

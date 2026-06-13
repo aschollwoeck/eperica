@@ -13,6 +13,30 @@ jobs:
   check:
     name: fmt · clippy · build · test
     runs-on: ubuntu-latest
+
+    # Postgres for the DB-backed tests. `#[sqlx::test]` creates an isolated, freshly-migrated
+    # database per test (and drops it after), so the suite runs fully in parallel — no shared
+    # state, no `--test-threads=1`. The `eperica` role owns the server and so may CREATE/DROP the
+    # per-test databases. Without this service `DATABASE_URL` is unset and every DB test silently
+    # skips, so they were never exercised in CI before.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: eperica
+          POSTGRES_PASSWORD: eperica
+          POSTGRES_DB: eperica
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U eperica"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://eperica:eperica@localhost:5432/eperica
+
     steps:
       - uses: actions/checkout@v4
 
