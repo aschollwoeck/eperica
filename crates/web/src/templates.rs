@@ -668,6 +668,24 @@ pub struct VillageStatRow {
     pub population: i64,
 }
 
+/// A medal earned by a player or alliance (017 AC5): its category, rank, and the week it was won.
+pub struct MedalRowView {
+    pub category: String,
+    pub rank: i64,
+    pub period: i64,
+}
+
+/// An achievement a player holds (017 AC8): a human-readable label.
+pub struct AchievementRowView {
+    pub label: String,
+}
+
+/// One population-over-time point on a player's stat page (017 AC11).
+pub struct HistoryPointView {
+    pub period: i64,
+    pub population: i64,
+}
+
 #[derive(Template)]
 #[template(path = "player_stats.html")]
 pub struct PlayerStatsTemplate {
@@ -677,6 +695,9 @@ pub struct PlayerStatsTemplate {
     pub defense_points: i64,
     pub loot_total: i64,
     pub villages: Vec<VillageStatRow>,
+    pub medals: Vec<MedalRowView>,
+    pub achievements: Vec<AchievementRowView>,
+    pub history: Vec<HistoryPointView>,
 }
 
 /// One member line on an alliance's statistics page (016 AC10).
@@ -697,4 +718,5 @@ pub struct AllianceStatsTemplate {
     pub attack_points: i64,
     pub defense_points: i64,
     pub members: Vec<MemberStatRow>,
+    pub medals: Vec<MedalRowView>,
 }

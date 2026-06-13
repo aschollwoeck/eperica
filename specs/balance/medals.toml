@@ -1,0 +1,18 @@
+# Weekly medal settlement balance (017, GDD §11.2) — interim, tunable.
+#
+# `period_secs` is the settlement cadence in REAL time (not speed-scaled — the decided faithful
+# exception; world speed scales what medals are awarded from, not the weekly boundary).
+# `medals_per_category` is how many medals each category awards per period (ranks 1..=N).
+# `categories` is the active set awarded each settlement.
+
+period_secs = 604800       # 7 days
+medals_per_category = 3
+categories = [
+    "attacker",
+    "defender",
+    "raider",
+    "climber",
+    "alliance_population",
+    "alliance_attacker",
+    "alliance_defender",
+]

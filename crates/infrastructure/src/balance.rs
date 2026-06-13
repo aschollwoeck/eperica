@@ -5,11 +5,12 @@
 //! types, keeping the domain itself free of serialization concerns.
 
 use eperica_domain::{
-    AllianceRules, BuildRules, BuildingKind, BuildingSlot, CombatRules, CultureRules, DomainError,
-    EconomyRules, FieldDistribution, LevelSpec, LoyaltyRules, MapRules, MerchantProfile,
-    MerchantRules, OasisBonus, OasisRules, RankingRules, ResearchSpec, ResourceAmounts,
-    ResourceField, ResourceKind, ScoutRules, SiegeKind, SmithyRules, StartingVillage,
-    TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec, WallProfile, Weighted,
+    AchievementDef, AchievementId, AchievementKind, AllianceRules, BuildRules, BuildingKind,
+    BuildingSlot, CombatRules, CultureRules, DomainError, EconomyRules, FieldDistribution,
+    LevelSpec, LoyaltyRules, MapRules, MedalCategory, MedalRules, MerchantProfile, MerchantRules,
+    OasisBonus, OasisRules, RankingRules, ResearchSpec, ResourceAmounts, ResourceField,
+    ResourceKind, Reward, ScoutRules, SiegeKind, SmithyRules, StartingVillage, TrainingRules,
+    Tribe, UnitId, UnitRole, UnitRules, UnitSpec, WallProfile, Weighted,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -73,6 +74,14 @@ const RANKING_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../specs/balance/ranking.toml"
 ));
+const MEDALS_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/medals.toml"
+));
+const ACHIEVEMENTS_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/achievements.toml"
+));
 
 /// Errors that can occur while loading balance data.
 #[derive(Debug, thiserror::Error)]
@@ -89,6 +98,12 @@ pub enum BalanceError {
     /// An unknown unit role appeared in the data.
     #[error("unknown unit role: {0}")]
     UnknownUnitRole(String),
+    /// An unknown medal category appeared in the data (017).
+    #[error("unknown medal category: {0}")]
+    UnknownMedalCategory(String),
+    /// An unknown achievement kind appeared in the data (017).
+    #[error("unknown achievement kind: {0}")]
+    UnknownAchievementKind(String),
     /// The parsed data did not form a valid domain template.
     #[error(transparent)]
     Domain(DomainError),
@@ -611,6 +626,102 @@ pub fn ranking_rules() -> Result<RankingRules, BalanceError> {
         windows_secs: dto.windows_days.iter().map(|d| d * 86_400).collect(),
         page_size: dto.leaderboard_page_size,
     })
+}
+
+#[derive(Deserialize)]
+struct MedalsDto {
+    period_secs: i64,
+    medals_per_category: usize,
+    categories: Vec<String>,
+}
+
+/// Load the weekly medal-settlement rules (017) from the embedded balance data.
+///
+/// # Errors
+/// Returns [`BalanceError`] if the data cannot be parsed or names an unknown medal category.
+pub fn medal_rules() -> Result<MedalRules, BalanceError> {
+    let dto: MedalsDto = toml::from_str(MEDALS_TOML)?;
+    let categories = dto
+        .categories
+        .iter()
+        .map(|c| {
+            MedalCategory::parse(c).ok_or_else(|| BalanceError::UnknownMedalCategory(c.clone()))
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(MedalRules {
+        period_secs: dto.period_secs,
+        per_category: dto.medals_per_category,
+        categories,
+    })
+}
+
+#[derive(Deserialize)]
+struct AchievementsDto {
+    achievements: Vec<AchievementDto>,
+}
+
+#[derive(Deserialize)]
+struct AchievementDto {
+    id: String,
+    kind: String,
+    #[serde(default)]
+    threshold: i64,
+    #[serde(default)]
+    reward: RewardDto,
+}
+
+#[derive(Deserialize, Default)]
+struct RewardDto {
+    culture: Option<i64>,
+    wood: Option<i64>,
+    clay: Option<i64>,
+    iron: Option<i64>,
+    crop: Option<i64>,
+}
+
+fn parse_achievement_kind(s: &str) -> Result<AchievementKind, BalanceError> {
+    Ok(match s {
+        "second_village" => AchievementKind::SecondVillage,
+        "defensive_wins" => AchievementKind::DefensiveWins,
+        "first_oasis" => AchievementKind::FirstOasis,
+        "population" => AchievementKind::Population,
+        "research_all_units" => AchievementKind::ResearchAllUnits,
+        other => return Err(BalanceError::UnknownAchievementKind(other.to_owned())),
+    })
+}
+
+fn parse_reward(dto: &RewardDto) -> Reward {
+    if let Some(cp) = dto.culture {
+        Reward::Culture(cp)
+    } else if dto.wood.is_some() || dto.clay.is_some() || dto.iron.is_some() || dto.crop.is_some() {
+        Reward::Resources(ResourceAmounts {
+            wood: dto.wood.unwrap_or(0),
+            clay: dto.clay.unwrap_or(0),
+            iron: dto.iron.unwrap_or(0),
+            crop: dto.crop.unwrap_or(0),
+        })
+    } else {
+        Reward::None
+    }
+}
+
+/// Load the achievement catalogue (017) from the embedded balance data.
+///
+/// # Errors
+/// Returns [`BalanceError`] if the data cannot be parsed or names an unknown achievement kind.
+pub fn achievement_catalogue() -> Result<Vec<AchievementDef>, BalanceError> {
+    let dto: AchievementsDto = toml::from_str(ACHIEVEMENTS_TOML)?;
+    dto.achievements
+        .iter()
+        .map(|a| {
+            Ok(AchievementDef {
+                id: AchievementId(a.id.clone()),
+                kind: parse_achievement_kind(&a.kind)?,
+                threshold: a.threshold,
+                reward: parse_reward(&a.reward),
+            })
+        })
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -1243,6 +1354,38 @@ mod tests {
         }
         // An unknown unit (e.g. a wild animal) carries no point value.
         assert_eq!(r.unit_value(&UnitId("elephant".into())), 0);
+    }
+
+    #[test]
+    fn loads_medal_and_achievement_balance() {
+        // 017: the weekly-settlement rules + achievement catalogue load fail-fast with the seed data.
+        let m = medal_rules().expect("medal rules load");
+        assert_eq!(m.period_secs, 604_800);
+        assert_eq!(m.per_category, 3);
+        assert!(m.categories.contains(&MedalCategory::Climber));
+        assert_eq!(m.categories.len(), 7);
+
+        let cat = achievement_catalogue().expect("achievement catalogue load");
+        assert_eq!(cat.len(), 5);
+        let pop = cat
+            .iter()
+            .find(|a| a.kind == AchievementKind::Population)
+            .expect("population achievement");
+        assert_eq!(pop.threshold, 1000);
+        assert_eq!(
+            pop.reward,
+            Reward::Resources(ResourceAmounts {
+                wood: 500,
+                clay: 500,
+                iron: 500,
+                crop: 500,
+            })
+        );
+        let second = cat
+            .iter()
+            .find(|a| a.kind == AchievementKind::SecondVillage)
+            .expect("second-village achievement");
+        assert_eq!(second.reward, Reward::Culture(50));
     }
 
     #[test]

@@ -5,6 +5,7 @@
 //! modules grow here slice by slice.
 #![forbid(unsafe_code)]
 
+pub mod achievements;
 pub mod alliance;
 pub mod building;
 pub mod combat;
@@ -15,6 +16,7 @@ pub mod error;
 pub mod event;
 pub mod loyalty;
 pub mod map;
+pub mod medals;
 pub mod movement;
 pub mod oasis;
 pub mod ranking;
@@ -25,6 +27,9 @@ pub mod units;
 pub mod village;
 pub mod world;
 
+pub use achievements::{
+    AchievementDef, AchievementId, AchievementKind, PlayerProgress, Reward, met, newly_earned,
+};
 pub use alliance::{
     AllianceId, AllianceRight, AllianceRole, AllianceRules, DiplomacyAction, DiplomacyError,
     DiplomacyStance, DiplomacyState, DiplomacyStatus, RightSet, can_expel, has_right, next_stance,
@@ -53,6 +58,7 @@ pub use loyalty::{
     conquest_outcome, regenerate_loyalty,
 };
 pub use map::{FieldDistribution, MapRules, OasisBonus, TileKind, Weighted, WorldMap};
+pub use medals::{MedalCategory, MedalRules, period_index, period_start, rank_top};
 pub use movement::{MovementKind, slowest_speed, travel_time_secs, travel_time_secs_floored};
 pub use oasis::{OasisRules, oasis_garrison, regrow_step};
 pub use ranking::{RankingRules, apportion};

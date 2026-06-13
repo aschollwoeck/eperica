@@ -5,7 +5,7 @@
 
 use crate::ports::{
     AllianceLeaderboardRow, AllianceStats, BoardScope, ConflictMetric, DefenderReport,
-    LeaderboardRow, PlayerStats, RankingRepository, RepoError,
+    LeaderboardRow, MedalRepository, PlayerStats, RankingRepository, RepoError,
 };
 use eperica_domain::{AllianceId, EconomyRules, PlayerId, RankingRules, Timestamp};
 
@@ -69,7 +69,7 @@ pub async fn conflict_leaderboard(
 ) -> Result<Vec<LeaderboardRow>, RankingError> {
     let since = window_since(rules, now, window)?;
     Ok(repo
-        .conflict_board(metric, scope, since, rules.page_size as i64)
+        .conflict_board(metric, scope, since, None, rules.page_size as i64)
         .await?)
 }
 
@@ -96,7 +96,7 @@ pub async fn alliance_conflict_leaderboard(
 ) -> Result<Vec<AllianceLeaderboardRow>, RankingError> {
     let since = window_since(rules, now, window)?;
     Ok(repo
-        .alliance_conflict_board(metric, scope, since, rules.page_size as i64)
+        .alliance_conflict_board(metric, scope, since, None, rules.page_size as i64)
         .await?)
 }
 
@@ -116,6 +116,29 @@ pub async fn alliance_statistics(
     alliance: AllianceId,
 ) -> Result<Option<AllianceStats>, RankingError> {
     Ok(repo.alliance_stats(econ, alliance).await?)
+}
+
+/// Players ranked by population gained over the **latest settled period** (017 AC11 — the climbers
+/// board, closing the 016 deferral). Empty until at least two snapshots exist.
+pub async fn climbers_leaderboard(
+    repo: &impl MedalRepository,
+    rules: &RankingRules,
+    scope: BoardScope,
+) -> Result<Vec<LeaderboardRow>, RankingError> {
+    match repo.latest_settled_period().await? {
+        Some(period) if period >= 1 => Ok(repo
+            .climber_board(period, period - 1, scope, rules.page_size as i64)
+            .await?),
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// A player's population over time, as `(period, population)` oldest first (017 AC11).
+pub async fn population_history(
+    repo: &impl MedalRepository,
+    player: PlayerId,
+) -> Result<Vec<(i64, i64)>, RankingError> {
+    Ok(repo.population_history(player).await?)
 }
 
 /// A player's reinforcer/own battle reports (016 AC3/AC12) — the defender inbox — newest first,

@@ -27,5 +27,19 @@
     </tbody>
   </table>
   {% endif %}
+
+  <h2>Medals</h2>
+  {% if medals.is_empty() %}
+  <p class="muted">No medals yet.</p>
+  {% else %}
+  <table class="table">
+    <thead><tr><th>Medal</th><th>Rank</th><th>Week</th></tr></thead>
+    <tbody>
+      {% for m in medals %}
+      <tr><td>{{ m.category }}</td><td>#{{ m.rank }}</td><td>{{ m.period }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
 </section>
 {% endblock %}

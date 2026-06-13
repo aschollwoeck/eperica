@@ -5,10 +5,10 @@
 use axum_extra::extract::cookie::Key;
 use eperica_domain::WorldMap;
 use eperica_infrastructure::{
-    AppConfig, Argon2Hasher, PgAccountRepository, PgEventStore, Scheduler, alliance_rules,
-    build_rules, combat_rules, create_pool, culture_rules, economy_rules, ensure_world,
-    loyalty_rules, map_rules, merchant_rules, oasis_rules, ranking_rules, run_migrations,
-    scout_rules, starting_village, unit_rules,
+    AppConfig, Argon2Hasher, PgAccountRepository, PgEventStore, Scheduler, achievement_catalogue,
+    alliance_rules, build_rules, combat_rules, create_pool, culture_rules, economy_rules,
+    ensure_world, loyalty_rules, map_rules, medal_rules, merchant_rules, oasis_rules,
+    ranking_rules, run_migrations, scout_rules, starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -32,6 +32,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let culture = Arc::new(culture_rules()?);
     let loyalty = Arc::new(loyalty_rules()?);
     let ranking = Arc::new(ranking_rules()?);
+    let medals = Arc::new(medal_rules()?);
+    let achievements = Arc::new(achievement_catalogue()?);
     let template = Arc::new(starting_village()?);
     let map = Arc::new(WorldMap::new(
         world.seed as u64,
@@ -60,10 +62,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&culture),
         Arc::clone(&loyalty),
         Arc::clone(&ranking),
+        Arc::clone(&medals),
         Arc::clone(&template),
         Arc::clone(&map),
         config.world.speed,
         world.seed as u64,
+        world.created_at,
     );
     let scheduler_handle = tokio::spawn(scheduler.run(shutdown_rx));
 
@@ -78,6 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         loyalty_rules: loyalty,
         alliance_rules: Arc::new(alliance_rules()?),
         ranking_rules: ranking,
+        achievement_catalogue: achievements,
         merchant_rules: merchants,
         map,
         world: config.world,

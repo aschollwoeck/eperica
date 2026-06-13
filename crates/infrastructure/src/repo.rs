@@ -2,12 +2,13 @@
 
 use async_trait::async_trait;
 use eperica_application::{
-    AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, AllianceLeaderboardRow,
-    AllianceRepository, AllianceStats, AlliedVillage, BattleApply, BattleReportView, BoardScope,
-    BuildRepository, CombatRepository, ConflictMetric, ConquestRepository, CultureRepository,
-    DefenderReport, DiplomacyEntry, DueAttack, DueBuild, DueMovement, DueOasisAttack,
-    DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder,
-    IncomingAttack, LeaderboardRow, LoyaltyApply, Membership, MovementRepository, MovementView,
+    AccountRepository, AchievementRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder,
+    AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage, BattleApply,
+    BattleReportView, BoardScope, BuildRepository, CombatRepository, ConflictMetric,
+    ConquestRepository, CultureRepository, DefenderReport, DiplomacyEntry, DueAttack, DueBuild,
+    DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade,
+    DueTraining, DueUnitOrder, IncomingAttack, LeaderboardRow, LoyaltyApply, MedalAward,
+    MedalRepository, MedalSubjectKind, MedalView, Membership, MovementRepository, MovementView,
     NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
     OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
     OutgoingInvite, PendingInvite, PlayerStats, RankingRepository, RazedBuilding, RepoError,
@@ -17,13 +18,15 @@ use eperica_application::{
     VillageMarker,
 };
 use eperica_domain::{
-    AllianceId, AllianceRole, BuildTarget, BuildingKind, BuildingSlot, Coordinate, DiplomacyStance,
-    DiplomacyStatus, EconomyRules, MovementKind, OasisBonus, OasisRules, PlayerId, Quadrant,
-    QueueLane, ResourceAmounts, ResourceField, ResourceKind, RightSet, ScoutTarget,
-    StartingVillage, TileKind, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village,
-    VillageId, WorldId, WorldMap, coordinates_within, oasis_garrison,
+    AchievementDef, AchievementId, AllianceId, AllianceRole, BuildTarget, BuildingKind,
+    BuildingSlot, Coordinate, DiplomacyStance, DiplomacyStatus, EconomyRules, MedalCategory,
+    MovementKind, OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant, QueueLane,
+    ResourceAmounts, ResourceField, ResourceKind, Reward, RightSet, ScoutTarget, StartingVillage,
+    TileKind, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
+    WorldId, WorldMap, capacities, coordinates_within, deposit_capped, oasis_garrison,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 /// SQLx-backed account repository bound to a single world.
@@ -5041,19 +5044,22 @@ impl RankingRepository for PgAccountRepository {
         metric: ConflictMetric,
         scope: BoardScope,
         since: Option<Timestamp>,
+        until: Option<Timestamp>,
         limit: i64,
     ) -> Result<Vec<LeaderboardRow>, RepoError> {
         let (table, val, pid, occ) = conflict_source(metric);
-        let qf = quadrant_filter(pid, "$2");
+        let qf = quadrant_filter(pid, "$3");
         let sql = format!(
             "SELECT u.id, u.username, COALESCE(SUM({val}), 0)::bigint AS total \
              FROM {table} JOIN users u ON u.id = {pid} \
-             WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) AND {qf} \
+             WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
+               AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) AND {qf} \
              GROUP BY u.id, u.username HAVING COALESCE(SUM({val}), 0) > 0 \
-             ORDER BY total DESC, u.id ASC LIMIT $3"
+             ORDER BY total DESC, u.id ASC LIMIT $4"
         );
         let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(&sql)
             .bind(since.map(|t| t.0 as f64))
+            .bind(until.map(|t| t.0 as f64))
             .bind(scope_code(scope))
             .bind(limit)
             .fetch_all(&self.pool)
@@ -5099,23 +5105,26 @@ impl RankingRepository for PgAccountRepository {
         metric: ConflictMetric,
         scope: BoardScope,
         since: Option<Timestamp>,
+        until: Option<Timestamp>,
         limit: i64,
     ) -> Result<Vec<AllianceLeaderboardRow>, RepoError> {
         let (table, val, pid, occ) = conflict_source(metric);
-        let qf = quadrant_filter("am.player_id", "$2");
+        let qf = quadrant_filter("am.player_id", "$3");
         let sql = format!(
             "SELECT a.id, a.name, a.tag, COALESCE(SUM(pv.val), 0)::bigint AS total \
              FROM alliances a \
              JOIN alliance_members am ON am.alliance_id = a.id \
              JOIN (SELECT {pid} AS pid, SUM({val}) AS val FROM {table} \
                    WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
+                     AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) \
                    GROUP BY {pid}) pv ON pv.pid = am.player_id \
              WHERE {qf} \
              GROUP BY a.id, a.name, a.tag HAVING COALESCE(SUM(pv.val), 0) > 0 \
-             ORDER BY total DESC, a.id ASC LIMIT $3"
+             ORDER BY total DESC, a.id ASC LIMIT $4"
         );
         let rows: Vec<(Uuid, String, String, i64)> = sqlx::query_as(&sql)
             .bind(since.map(|t| t.0 as f64))
+            .bind(until.map(|t| t.0 as f64))
             .bind(scope_code(scope))
             .bind(limit)
             .fetch_all(&self.pool)
@@ -5297,6 +5306,425 @@ fn alliance_row((id, name, tag, value): (Uuid, String, String, i64)) -> Alliance
         name,
         tag,
         value,
+    }
+}
+
+// ---------------------------------------------------------------- 017: medals & population snapshots
+
+/// The climber metric — population gained from the previous snapshot — as a SQL expression over a
+/// `cur`/`prev` snapshot join. Shared by the climbers board and the settlement so the delta + filter +
+/// tie-break never drift (P6/AC13).
+const CLIMBER_DELTA: &str = "(cur.population - COALESCE(prev.population, 0))";
+
+/// Insert one medal row inside an open transaction, idempotent per `(period, category, rank)`.
+async fn insert_medal(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    period: i64,
+    category: &str,
+    rank: i32,
+    subject_kind: &str,
+    subject_id: Uuid,
+) -> Result<(), RepoError> {
+    sqlx::query(
+        "INSERT INTO medals (id, period, category, rank, subject_kind, subject_id) \
+         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (period, category, rank) DO NOTHING",
+    )
+    .bind(Uuid::new_v4())
+    .bind(period)
+    .bind(category)
+    .bind(rank)
+    .bind(subject_kind)
+    .bind(subject_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    Ok(())
+}
+
+#[async_trait]
+impl MedalRepository for PgAccountRepository {
+    async fn latest_settled_period(&self) -> Result<Option<i64>, RepoError> {
+        sqlx::query_scalar("SELECT MAX(period) FROM population_snapshots WHERE world_id = $1")
+            .bind(Uuid::from_u128(self.world_id.0))
+            .fetch_one(&self.pool)
+            .await
+            .map_err(backend)
+    }
+
+    async fn snapshot_population(&self, econ: &EconomyRules, period: i64) -> Result<(), RepoError> {
+        let (fields, kinds, levels, pops) = population_arrays(econ);
+        let pop = village_pop_expr("v.id", "$2", "$3", "$4", "$5");
+        // One snapshot per player (every owner of a village in this world); idempotent per period.
+        let sql = format!(
+            "INSERT INTO population_snapshots (world_id, player_id, period, population) \
+             SELECT $1, v.owner_id, $6, SUM({pop})::bigint \
+             FROM villages v WHERE v.world_id = $1 \
+             GROUP BY v.owner_id ON CONFLICT DO NOTHING"
+        );
+        sqlx::query(&sql)
+            .bind(Uuid::from_u128(self.world_id.0))
+            .bind(&fields)
+            .bind(&kinds)
+            .bind(&levels)
+            .bind(&pops)
+            .bind(period)
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn award_medals(&self, period: i64, awards: &[MedalAward]) -> Result<(), RepoError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        for a in awards {
+            insert_medal(
+                &mut tx,
+                period,
+                a.category.as_str(),
+                i32::try_from(a.rank).unwrap_or(i32::MAX),
+                a.subject_kind.as_str(),
+                Uuid::from_u128(a.subject_id),
+            )
+            .await?;
+        }
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn settle_period(
+        &self,
+        econ: &EconomyRules,
+        period: i64,
+        climber_limit: Option<i64>,
+        awards: &[MedalAward],
+    ) -> Result<(), RepoError> {
+        let world = Uuid::from_u128(self.world_id.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+
+        // 1. Snapshot population for the period (idempotent). This advances the watermark, so it must
+        //    commit in the same transaction as the medals (AC6).
+        let (fields, kinds, levels, pops) = population_arrays(econ);
+        let pop = village_pop_expr("v.id", "$2", "$3", "$4", "$5");
+        let snap_sql = format!(
+            "INSERT INTO population_snapshots (world_id, player_id, period, population) \
+             SELECT $1, v.owner_id, $6, SUM({pop})::bigint \
+             FROM villages v WHERE v.world_id = $1 GROUP BY v.owner_id ON CONFLICT DO NOTHING"
+        );
+        sqlx::query(&snap_sql)
+            .bind(world)
+            .bind(&fields)
+            .bind(&kinds)
+            .bind(&levels)
+            .bind(&pops)
+            .bind(period)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+
+        // 2. Climber medals — top population gainers `period` vs `period-1`, read from the snapshot
+        //    just written (within this transaction). World-scoped (medals are world-wide).
+        if let Some(limit) = climber_limit {
+            let delta = CLIMBER_DELTA;
+            let climber_sql = format!(
+                "SELECT cur.player_id FROM population_snapshots cur \
+                 LEFT JOIN population_snapshots prev \
+                   ON prev.world_id = cur.world_id AND prev.player_id = cur.player_id \
+                      AND prev.period = $2 \
+                 WHERE cur.world_id = $1 AND cur.period = $3 AND {delta} > 0 \
+                 ORDER BY {delta} DESC, cur.player_id ASC LIMIT $4"
+            );
+            let rows: Vec<(Uuid,)> = sqlx::query_as(&climber_sql)
+                .bind(world)
+                .bind(period - 1)
+                .bind(period)
+                .bind(limit)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(backend)?;
+            for (i, (player,)) in rows.iter().enumerate() {
+                insert_medal(
+                    &mut tx,
+                    period,
+                    MedalCategory::Climber.as_str(),
+                    i32::try_from(i + 1).unwrap_or(i32::MAX),
+                    MedalSubjectKind::Player.as_str(),
+                    *player,
+                )
+                .await?;
+            }
+        }
+
+        // 3. The pre-computed non-climber medals.
+        for a in awards {
+            insert_medal(
+                &mut tx,
+                period,
+                a.category.as_str(),
+                i32::try_from(a.rank).unwrap_or(i32::MAX),
+                a.subject_kind.as_str(),
+                Uuid::from_u128(a.subject_id),
+            )
+            .await?;
+        }
+
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn medals_for(
+        &self,
+        subject_kind: MedalSubjectKind,
+        subject_id: u128,
+    ) -> Result<Vec<MedalView>, RepoError> {
+        let rows: Vec<(i64, String, i32)> = sqlx::query_as(
+            "SELECT period, category, rank FROM medals \
+             WHERE subject_kind = $1 AND subject_id = $2 ORDER BY awarded_at DESC, rank ASC",
+        )
+        .bind(subject_kind.as_str())
+        .bind(Uuid::from_u128(subject_id))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(period, cat, rank)| {
+                MedalCategory::parse(&cat).map(|category| MedalView {
+                    period,
+                    category,
+                    rank: i64::from(rank),
+                })
+            })
+            .collect())
+    }
+
+    async fn climber_board(
+        &self,
+        period: i64,
+        prev: i64,
+        scope: BoardScope,
+        limit: i64,
+    ) -> Result<Vec<LeaderboardRow>, RepoError> {
+        let qf = quadrant_filter("cur.player_id", "$4");
+        let delta = CLIMBER_DELTA;
+        let sql = format!(
+            "SELECT u.id, u.username, {delta}::bigint AS delta \
+             FROM population_snapshots cur \
+             JOIN users u ON u.id = cur.player_id \
+             LEFT JOIN population_snapshots prev \
+               ON prev.world_id = cur.world_id AND prev.player_id = cur.player_id AND prev.period = $2 \
+             WHERE cur.world_id = $1 AND cur.period = $3 AND {delta} > 0 AND {qf} \
+             ORDER BY {delta} DESC, cur.player_id ASC LIMIT $5"
+        );
+        let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(&sql)
+            .bind(Uuid::from_u128(self.world_id.0))
+            .bind(prev)
+            .bind(period)
+            .bind(scope_code(scope))
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(rows.into_iter().map(leaderboard_row).collect())
+    }
+
+    async fn population_history(&self, player: PlayerId) -> Result<Vec<(i64, i64)>, RepoError> {
+        sqlx::query_as(
+            "SELECT period, population FROM population_snapshots \
+             WHERE world_id = $1 AND player_id = $2 ORDER BY period",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(Uuid::from_u128(player.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)
+    }
+}
+
+// ---------------------------------------------------------------- 017: achievements
+
+#[async_trait]
+impl AchievementRepository for PgAccountRepository {
+    async fn held_achievements(
+        &self,
+        player: PlayerId,
+    ) -> Result<HashSet<AchievementId>, RepoError> {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT achievement_id FROM player_achievements WHERE player_id = $1")
+                .bind(Uuid::from_u128(player.0))
+                .fetch_all(&self.pool)
+                .await
+                .map_err(backend)?;
+        Ok(rows.into_iter().map(|(id,)| AchievementId(id)).collect())
+    }
+
+    async fn player_progress(
+        &self,
+        econ: &EconomyRules,
+        player: PlayerId,
+    ) -> Result<PlayerProgress, RepoError> {
+        let pid = Uuid::from_u128(player.0);
+        let world = Uuid::from_u128(self.world_id.0);
+        let village_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM villages WHERE owner_id = $1 AND world_id = $2",
+        )
+        .bind(pid)
+        .bind(world)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        let defensive_wins: i64 = sqlx::query_scalar(
+            "SELECT count(DISTINCT bd.battle_id) FROM battle_defenders bd \
+             JOIN battle_reports br ON br.id = bd.battle_id \
+             WHERE bd.player_id = $1 AND br.attacker_won = false",
+        )
+        .bind(pid)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        let oases_held: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM oases o JOIN villages v ON v.id = o.owner_village \
+             WHERE v.owner_id = $1 AND o.world_id = $2",
+        )
+        .bind(pid)
+        .bind(world)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        let units_researched: i64 = sqlx::query_scalar(
+            "SELECT count(DISTINCT r.unit_id) FROM village_research r \
+             JOIN villages v ON v.id = r.village_id WHERE v.owner_id = $1",
+        )
+        .bind(pid)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        let (fields, kinds, levels, pops) = population_arrays(econ);
+        let pop_expr = village_pop_expr("v.id", "$3", "$4", "$5", "$6");
+        let population: i64 = sqlx::query_scalar(&format!(
+            "SELECT COALESCE(SUM({pop_expr}), 0)::bigint FROM villages v \
+             WHERE v.owner_id = $1 AND v.world_id = $2"
+        ))
+        .bind(pid)
+        .bind(world)
+        .bind(&fields)
+        .bind(&kinds)
+        .bind(&levels)
+        .bind(&pops)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(PlayerProgress {
+            village_count,
+            defensive_wins,
+            oases_held,
+            population,
+            units_researched,
+            tribe_unit_count: 0, // filled by the caller from the unit roster
+        })
+    }
+
+    async fn grant_achievement(
+        &self,
+        econ: &EconomyRules,
+        player: PlayerId,
+        def: &AchievementDef,
+    ) -> Result<bool, RepoError> {
+        let pid = Uuid::from_u128(player.0);
+        let world = Uuid::from_u128(self.world_id.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        let inserted = sqlx::query(
+            "INSERT INTO player_achievements (player_id, achievement_id) VALUES ($1, $2) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(pid)
+        .bind(&def.id.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if inserted.rows_affected() == 0 {
+            tx.commit().await.map_err(backend)?;
+            return Ok(false); // already held — no double grant or reward
+        }
+        match def.reward {
+            Reward::None => {}
+            Reward::Culture(cp) => {
+                sqlx::query(
+                    "INSERT INTO player_culture (player_id, value, updated_at) \
+                     VALUES ($1, $2, now()) \
+                     ON CONFLICT (player_id) DO UPDATE SET value = player_culture.value + $2",
+                )
+                .bind(pid)
+                .bind(cp)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+            }
+            Reward::Resources(amount) => {
+                // Credit the player's capital (or oldest village), capped at its storage.
+                if let Some(row) = sqlx::query(
+                    "SELECT id FROM villages WHERE owner_id = $1 AND world_id = $2 \
+                     ORDER BY is_capital DESC, created_at ASC LIMIT 1",
+                )
+                .bind(pid)
+                .bind(world)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(backend)?
+                {
+                    let cap_id: Uuid = row.try_get("id").map_err(backend)?;
+                    let brows = sqlx::query(
+                        "SELECT building_type, level FROM village_buildings WHERE village_id = $1",
+                    )
+                    .bind(cap_id)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                    let mut buildings = Vec::with_capacity(brows.len());
+                    for br in &brows {
+                        let kind = parse_building(
+                            &br.try_get::<String, _>("building_type").map_err(backend)?,
+                        )?;
+                        let level: i16 = br.try_get("level").map_err(backend)?;
+                        buildings.push(BuildingSlot {
+                            kind,
+                            level: u8::try_from(level).unwrap_or(0),
+                        });
+                    }
+                    let caps = capacities(&buildings, econ);
+                    let (w, c, i, cr): (i64, i64, i64, i64) = sqlx::query_as(
+                        "SELECT wood, clay, iron, crop FROM village_resources WHERE village_id = $1",
+                    )
+                    .bind(cap_id)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                    let after = deposit_capped(
+                        ResourceAmounts {
+                            wood: w,
+                            clay: c,
+                            iron: i,
+                            crop: cr,
+                        },
+                        amount,
+                        caps,
+                    );
+                    sqlx::query(
+                        "UPDATE village_resources SET wood = $2, clay = $3, iron = $4, crop = $5 \
+                         WHERE village_id = $1",
+                    )
+                    .bind(cap_id)
+                    .bind(after.wood)
+                    .bind(after.clay)
+                    .bind(after.iron)
+                    .bind(after.crop)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                }
+            }
+        }
+        tx.commit().await.map_err(backend)?;
+        Ok(true)
     }
 }
 
@@ -10123,7 +10551,7 @@ mod tests {
 
         // AC5: attack board — the attacker has 50; the defender (zero) is omitted.
         let atk = repo
-            .conflict_board(ConflictMetric::Attack, BoardScope::World, None, 100)
+            .conflict_board(ConflictMetric::Attack, BoardScope::World, None, None, 100)
             .await
             .unwrap();
         assert_eq!(
@@ -10134,7 +10562,7 @@ mod tests {
 
         // AC5: defense board — defender 30, ally 20 (the split).
         let def = repo
-            .conflict_board(ConflictMetric::Defense, BoardScope::World, None, 100)
+            .conflict_board(ConflictMetric::Defense, BoardScope::World, None, None, 100)
             .await
             .unwrap();
         assert_eq!(
@@ -10148,7 +10576,7 @@ mod tests {
 
         // AC6: raider board — the attacker's looted 150 (100 + 50).
         let raid = repo
-            .conflict_board(ConflictMetric::Raided, BoardScope::World, None, 100)
+            .conflict_board(ConflictMetric::Raided, BoardScope::World, None, None, 100)
             .await
             .unwrap();
         assert_eq!(
@@ -10203,7 +10631,7 @@ mod tests {
             .unwrap();
         assert!(apop.iter().any(|r| r.tag == "RK" && r.value > 0));
         let aatk = repo
-            .alliance_conflict_board(ConflictMetric::Attack, BoardScope::World, None, 100)
+            .alliance_conflict_board(ConflictMetric::Attack, BoardScope::World, None, None, 100)
             .await
             .unwrap();
         assert_eq!(
@@ -10264,7 +10692,13 @@ mod tests {
         }
         let since_30d = Some(Timestamp(crate::now().0 - 30 * 86_400 * 1000));
         let recent = repo
-            .conflict_board(ConflictMetric::Attack, BoardScope::World, since_30d, 100)
+            .conflict_board(
+                ConflictMetric::Attack,
+                BoardScope::World,
+                since_30d,
+                None,
+                100,
+            )
             .await
             .unwrap();
         assert!(
@@ -10272,7 +10706,7 @@ mod tests {
             "a 40-day-old battle is outside the 30-day window"
         );
         let all_time = repo
-            .conflict_board(ConflictMetric::Attack, BoardScope::World, None, 100)
+            .conflict_board(ConflictMetric::Attack, BoardScope::World, None, None, 100)
             .await
             .unwrap();
         assert_eq!(
@@ -10405,5 +10839,537 @@ mod tests {
             "both defenders earned points"
         );
         assert!(defs[0].1 >= defs[1].1, "the owner contributed more defence");
+    }
+
+    /// 017 AC2/AC5/AC6: population snapshots and medal awards persist and are idempotent per period.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn medal_snapshot_and_award_persistence(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            repo.create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &template,
+            )
+            .await
+            .expect("create account")
+            .id
+        };
+        let a = account("msa").await;
+        let b = account("msb").await;
+
+        // AC2: one snapshot per player for period 0; re-running writes none (idempotent).
+        assert_eq!(repo.latest_settled_period().await.unwrap(), None);
+        repo.snapshot_population(&econ, 0).await.unwrap();
+        repo.snapshot_population(&econ, 0).await.unwrap();
+        let snap_count: i64 = sqlx::query_scalar("SELECT count(*) FROM population_snapshots")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(snap_count, 2);
+        assert_eq!(repo.latest_settled_period().await.unwrap(), Some(0));
+        let hist = repo.population_history(a).await.unwrap();
+        assert_eq!(hist.len(), 1);
+        assert_eq!(hist[0].0, 0);
+        assert!(hist[0].1 > 0, "starting village has population");
+
+        // AC3/AC5/AC6: award two attacker medals; re-running the same awards is a no-op.
+        let awards = vec![
+            MedalAward {
+                category: MedalCategory::Attacker,
+                rank: 1,
+                subject_kind: MedalSubjectKind::Player,
+                subject_id: a.0,
+            },
+            MedalAward {
+                category: MedalCategory::Attacker,
+                rank: 2,
+                subject_kind: MedalSubjectKind::Player,
+                subject_id: b.0,
+            },
+        ];
+        repo.award_medals(0, &awards).await.unwrap();
+        repo.award_medals(0, &awards).await.unwrap();
+        let medal_count: i64 = sqlx::query_scalar("SELECT count(*) FROM medals")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            medal_count, 2,
+            "per-period (category, rank) uniqueness holds"
+        );
+        let a_medals = repo
+            .medals_for(MedalSubjectKind::Player, a.0)
+            .await
+            .unwrap();
+        assert_eq!(a_medals.len(), 1);
+        assert_eq!(a_medals[0].category, MedalCategory::Attacker);
+        assert_eq!(a_medals[0].rank, 1);
+        assert_eq!(a_medals[0].period, 0);
+
+        // AC4: climber board over [0,1] — grow player a's snapshot, then the delta ranks them.
+        repo.snapshot_population(&econ, 1).await.unwrap();
+        sqlx::query("UPDATE population_snapshots SET population = population + 500 WHERE player_id = $1 AND period = 1")
+            .bind(Uuid::from_u128(a.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let climbers = repo
+            .climber_board(1, 0, BoardScope::World, 100)
+            .await
+            .unwrap();
+        assert_eq!(climbers.len(), 1, "only the grower is a positive climber");
+        assert_eq!(climbers[0].player, a);
+        assert_eq!(climbers[0].value, 500);
+    }
+
+    /// 017 AC1/AC3/AC6: the weekly settlement settles each complete period (snapshot + award the
+    /// period's attacker medal from battles in that window) and is idempotent.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn weekly_settlement_snapshots_and_awards(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (attacker, a) = account("wsatk").await;
+        let (defender, d) = account("wsdef").await;
+
+        // Seed a battle giving the attacker 50 attack points, then date it into period 0's window.
+        let battle_at = Timestamp(4_000_000_000_000);
+        repo.apply_battle(BattleApply {
+            movement_id: Uuid::new_v4().as_u128(),
+            owner: attacker,
+            attacker_home: a.id,
+            attacker_origin: a.coordinate,
+            target: d.id,
+            target_coord: d.coordinate,
+            defender_losses: Vec::new(),
+            reinforcement_losses: Vec::new(),
+            survivors: Vec::new(),
+            battle_at,
+            return_arrive: battle_at,
+            report: NewBattleReport {
+                kind: MovementKind::Raid,
+                attacker_player: attacker,
+                attacker_village: a.id,
+                defender_player: defender,
+                defender_village: d.id,
+                attacker_won: true,
+                luck: 1.0,
+                morale: 1.0,
+                wall_before: 0,
+                wall_after: 0,
+                attacker_forces: Vec::new(),
+                attacker_losses: Vec::new(),
+                defender_forces: Vec::new(),
+                defender_losses: Vec::new(),
+                loot: ResourceAmounts::default(),
+                razed: None,
+                loyalty_before: None,
+                loyalty_after: None,
+                conquered: false,
+            },
+            scouted: false,
+            scout_target: None,
+            scout_report: None,
+            loot: ResourceAmounts::default(),
+            target_debit: None,
+            razed: None,
+            loyalty: None,
+            attack_points: 50,
+            defender_contributions: Vec::new(),
+        })
+        .await
+        .expect("seed battle");
+
+        // A short real-time period; the battle sits inside period 0; `now` is in period 2 → settle 0 and 1.
+        let world_start = Timestamp(4_000_000_000_000 - 50_000); // period 0 starts 50s before the battle
+        let rules = eperica_domain::MedalRules {
+            period_secs: 100,
+            per_category: 3,
+            categories: vec![
+                eperica_domain::MedalCategory::Attacker,
+                eperica_domain::MedalCategory::Climber,
+            ],
+        };
+        sqlx::query(
+            "UPDATE battle_reports SET occurred_at = to_timestamp($1::double precision / 1000.0)",
+        )
+        .bind(battle_at.0 as f64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let now = Timestamp(world_start.0 + 250_000); // 2.5 periods elapsed
+
+        let settled = eperica_application::process_due_medal_settlement(
+            &repo,
+            &econ,
+            &rules,
+            world_start,
+            now,
+        )
+        .await
+        .expect("settle");
+        assert_eq!(settled, vec![0, 1], "periods 0 and 1 are complete");
+
+        // AC2: a snapshot per player per settled period (2 players × 2 periods).
+        let snaps: i64 = sqlx::query_scalar("SELECT count(*) FROM population_snapshots")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(snaps, 4);
+
+        // AC3: the attacker wins period 0's attacker medal (rank 1); period 1 has no battles → none.
+        let medals = repo
+            .medals_for(MedalSubjectKind::Player, attacker.0)
+            .await
+            .unwrap();
+        assert_eq!(medals.len(), 1);
+        assert_eq!(medals[0].category, MedalCategory::Attacker);
+        assert_eq!(medals[0].period, 0);
+        assert_eq!(medals[0].rank, 1);
+
+        // AC6: re-running settles nothing more and adds no duplicate medals/snapshots.
+        let again = eperica_application::process_due_medal_settlement(
+            &repo,
+            &econ,
+            &rules,
+            world_start,
+            now,
+        )
+        .await
+        .expect("settle again");
+        assert!(again.is_empty());
+        let medals2: i64 = sqlx::query_scalar("SELECT count(*) FROM medals")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(medals2, 1);
+    }
+
+    /// 017 AC8/AC9/AC10: achievements grant once at the milestone with their reward; re-evaluation is a
+    /// no-op; the resource reward credits the capital (capped) exactly once.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn achievement_grant_and_rewards(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            world,
+            ..
+        } = setup(pool.clone()).await;
+        let units = crate::unit_rules().expect("unit rules");
+        let catalogue = crate::achievement_catalogue().expect("catalogue");
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (player, v) = account("ach").await;
+
+        // AC10: a 2nd village ⇒ the `second_village` achievement, with its 50 CP reward (AC9).
+        sqlx::query("INSERT INTO villages (id, world_id, owner_id, x, y, tribe) VALUES ($1, $2, $3, 99, 99, 'gauls')")
+            .bind(Uuid::new_v4())
+            .bind(Uuid::from_u128(world.id.0))
+            .bind(Uuid::from_u128(player.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let granted =
+            eperica_application::evaluate_achievements(&repo, &econ, &units, &catalogue, player)
+                .await
+                .unwrap();
+        assert!(granted.iter().any(|id| id.0 == "second_village"));
+        let cp: i64 = sqlx::query_scalar("SELECT value FROM player_culture WHERE player_id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cp, 50, "the second-village CP reward applied once");
+
+        // AC8: re-evaluation grants nothing new and does not re-apply the reward.
+        let again =
+            eperica_application::evaluate_achievements(&repo, &econ, &units, &catalogue, player)
+                .await
+                .unwrap();
+        assert!(!again.iter().any(|id| id.0 == "second_village"));
+        let cp2: i64 = sqlx::query_scalar("SELECT value FROM player_culture WHERE player_id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cp2, 50);
+
+        // AC10: occupying an oasis ⇒ `first_oasis`.
+        sqlx::query("INSERT INTO oases (world_id, x, y, owner_village) VALUES ($1, 5, 5, $2)")
+            .bind(Uuid::from_u128(world.id.0))
+            .bind(Uuid::from_u128(v.id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let g2 =
+            eperica_application::evaluate_achievements(&repo, &econ, &units, &catalogue, player)
+                .await
+                .unwrap();
+        assert!(g2.iter().any(|id| id.0 == "first_oasis"));
+
+        // AC9: a resource reward credits the capital (capped), exactly once.
+        let before: i64 =
+            sqlx::query_scalar("SELECT wood FROM village_resources WHERE village_id = $1")
+                .bind(Uuid::from_u128(v.id.0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let res_def = AchievementDef {
+            id: AchievementId("res_test".into()),
+            kind: eperica_domain::AchievementKind::Population,
+            threshold: 0,
+            reward: Reward::Resources(ResourceAmounts {
+                wood: 100,
+                clay: 0,
+                iron: 0,
+                crop: 0,
+            }),
+        };
+        assert!(
+            repo.grant_achievement(&econ, player, &res_def)
+                .await
+                .unwrap()
+        );
+        let after: i64 =
+            sqlx::query_scalar("SELECT wood FROM village_resources WHERE village_id = $1")
+                .bind(Uuid::from_u128(v.id.0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(after > before, "the resource reward credited the capital");
+        // Re-granting is a no-op (already held) — no further credit.
+        assert!(
+            !repo
+                .grant_achievement(&econ, player, &res_def)
+                .await
+                .unwrap()
+        );
+        let after2: i64 =
+            sqlx::query_scalar("SELECT wood FROM village_resources WHERE village_id = $1")
+                .bind(Uuid::from_u128(v.id.0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(after2, after, "no double reward");
+    }
+
+    /// 017 AC10: the count-based predicates — `defensive_wins` (100 lost-defence battles) and
+    /// `research_all_units` (every researchable unit of the tribe) — grant at their crossing.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn achievement_count_predicates(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let units = crate::unit_rules().expect("unit rules");
+        let catalogue = crate::achievement_catalogue().expect("catalogue");
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (defender, dv) = account("cpdef").await;
+        let (attacker, av) = account("cpatk").await;
+
+        // Before crossing: neither count achievement is met.
+        let pre =
+            eperica_application::evaluate_achievements(&repo, &econ, &units, &catalogue, defender)
+                .await
+                .unwrap();
+        assert!(!pre.iter().any(|id| id.0 == "defender_100"));
+
+        // 100 battles the defender defended and the attacker lost (a defender_100 worth of wins).
+        sqlx::query(
+            "WITH ins AS ( \
+               INSERT INTO battle_reports \
+                 (id, kind, attacker_player, attacker_village, defender_player, defender_village, \
+                  attacker_won, luck, morale, wall_before, wall_after, \
+                  attacker_forces, attacker_losses, defender_forces, defender_losses) \
+               SELECT gen_random_uuid(), 'attack', $1, $2, $3, $4, false, 1, 1, 0, 0, \
+                      '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb \
+               FROM generate_series(1, 100) RETURNING id) \
+             INSERT INTO battle_defenders \
+               (id, battle_id, player_id, village_id, is_owner, forces, losses, defense_value, defense_points) \
+             SELECT gen_random_uuid(), ins.id, $3, $4, true, '[]'::jsonb, '[]'::jsonb, 0, 0 FROM ins",
+        )
+        .bind(Uuid::from_u128(attacker.0))
+        .bind(Uuid::from_u128(av.id.0))
+        .bind(Uuid::from_u128(defender.0))
+        .bind(Uuid::from_u128(dv.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Research every **researchable** gaul unit (the tier-1 phalanx is researched by default).
+        for unit in [
+            "swordsman",
+            "pathfinder",
+            "theutates_thunder",
+            "druidrider",
+            "haeduan",
+            "ram",
+            "trebuchet",
+            "chieftain",
+            "settler",
+        ] {
+            sqlx::query("INSERT INTO village_research (village_id, unit_id) VALUES ($1, $2)")
+                .bind(Uuid::from_u128(dv.id.0))
+                .bind(unit)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let granted =
+            eperica_application::evaluate_achievements(&repo, &econ, &units, &catalogue, defender)
+                .await
+                .unwrap();
+        assert!(
+            granted.iter().any(|id| id.0 == "defender_100"),
+            "100 defensive wins granted defender_100"
+        );
+        assert!(
+            granted.iter().any(|id| id.0 == "research_all_units"),
+            "all researchable units granted research_all_units"
+        );
+    }
+
+    /// 017 AC4: the settlement awards a **climber** medal — a player whose population grows between two
+    /// periods tops the climber category (exercises the in-transaction climber computation).
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn settlement_awards_climber_medal(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let uname = format!("clm_{}", Uuid::new_v4().simple());
+        let player = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &template,
+            )
+            .await
+            .expect("create account")
+            .id;
+        let v = repo.villages_of(player).await.unwrap()[0].clone();
+        let rules = eperica_domain::MedalRules {
+            period_secs: 100,
+            per_category: 3,
+            categories: vec![eperica_domain::MedalCategory::Climber],
+        };
+        let world_start = Timestamp(5_000_000_000_000);
+
+        // Settle period 0 (baseline snapshot) — no climber medal (no prior snapshot).
+        let s0 = eperica_application::process_due_medal_settlement(
+            &repo,
+            &econ,
+            &rules,
+            world_start,
+            Timestamp(world_start.0 + 150_000),
+        )
+        .await
+        .unwrap();
+        assert_eq!(s0, vec![0]);
+        assert!(
+            repo.medals_for(MedalSubjectKind::Player, player.0)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Grow the player's population, then settle period 1 → they top the climber category.
+        sqlx::query("UPDATE village_fields SET level = level + 1 WHERE village_id = $1")
+            .bind(Uuid::from_u128(v.id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let s1 = eperica_application::process_due_medal_settlement(
+            &repo,
+            &econ,
+            &rules,
+            world_start,
+            Timestamp(world_start.0 + 250_000),
+        )
+        .await
+        .unwrap();
+        assert_eq!(s1, vec![1]);
+        let medals = repo
+            .medals_for(MedalSubjectKind::Player, player.0)
+            .await
+            .unwrap();
+        assert_eq!(medals.len(), 1);
+        assert_eq!(medals[0].category, MedalCategory::Climber);
+        assert_eq!(medals[0].period, 1);
+        assert_eq!(medals[0].rank, 1);
     }
 }

@@ -23,5 +23,42 @@
     </tbody>
   </table>
   {% endif %}
+
+  <h2>Medals</h2>
+  {% if medals.is_empty() %}
+  <p class="muted">No medals yet.</p>
+  {% else %}
+  <table class="table">
+    <thead><tr><th>Medal</th><th>Rank</th><th>Week</th></tr></thead>
+    <tbody>
+      {% for m in medals %}
+      <tr><td>{{ m.category }}</td><td>#{{ m.rank }}</td><td>{{ m.period }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <h2>Achievements</h2>
+  {% if achievements.is_empty() %}
+  <p class="muted">No achievements yet.</p>
+  {% else %}
+  <ul class="stats">
+    {% for a in achievements %}<li>{{ a.label }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  <h2>Population over time</h2>
+  {% if history.is_empty() %}
+  <p class="muted">No history yet — population is snapshotted at each weekly settlement.</p>
+  {% else %}
+  <table class="table">
+    <thead><tr><th>Week</th><th>Population</th></tr></thead>
+    <tbody>
+      {% for p in history %}
+      <tr><td>{{ p.period }}</td><td>{{ p.population }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
 </section>
 {% endblock %}

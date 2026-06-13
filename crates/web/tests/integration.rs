@@ -12,9 +12,9 @@ use eperica_domain::{
     Coordinate, GameSpeed, TileKind, Timestamp, WorldConfig, WorldMap, coordinates_within,
 };
 use eperica_infrastructure::{
-    Argon2Hasher, PgAccountRepository, alliance_rules, build_rules, combat_rules, culture_rules,
-    economy_rules, ensure_world, loyalty_rules, map_rules, merchant_rules, now, oasis_rules,
-    ranking_rules, scout_rules, starting_village, unit_rules,
+    Argon2Hasher, PgAccountRepository, achievement_catalogue, alliance_rules, build_rules,
+    combat_rules, culture_rules, economy_rules, ensure_world, loyalty_rules, map_rules,
+    merchant_rules, now, oasis_rules, ranking_rules, scout_rules, starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -53,6 +53,7 @@ async fn spawn(pool: sqlx::PgPool) -> String {
         loyalty_rules: Arc::new(loyalty_rules().expect("loyalty rules")),
         alliance_rules: Arc::new(alliance_rules().expect("alliance rules")),
         ranking_rules: Arc::new(ranking_rules().expect("ranking rules")),
+        achievement_catalogue: Arc::new(achievement_catalogue().expect("achievement catalogue")),
         merchant_rules: Arc::new(merchant_rules().expect("merchant rules")),
         map,
         world: config,
@@ -2536,4 +2537,80 @@ async fn leaderboard_and_stats_are_public(pool: sqlx::PgPool) {
         best.as_millis() < 250,
         "leaderboard read too slow: {best:?}"
     );
+}
+
+/// 017 AC8/AC10: loading the (authenticated) village page lazily grants newly-earned achievements —
+/// here a 2nd village earns `second_village` server-side.
+#[sqlx::test(migrations = "../../migrations")]
+async fn village_view_grants_achievements(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let c = client();
+    let user = unique("achv");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", format!("{user}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    let pid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind(&user)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let world_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM worlds LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    // Give them a 2nd village (the milestone), then load the village page (logged-in via the cookie).
+    sqlx::query("INSERT INTO villages (id, world_id, owner_id, x, y, tribe) VALUES ($1, $2, $3, 88, 88, 'gauls')")
+        .bind(uuid::Uuid::new_v4())
+        .bind(world_id)
+        .bind(pid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        c.get(format!("{base}/village"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        200
+    );
+    let granted: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM player_achievements WHERE player_id = $1 AND achievement_id = 'second_village'",
+    )
+    .bind(pid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        granted, 1,
+        "loading the village granted the second-village achievement"
+    );
+
+    // 017 AC11/AC12: the public stat page shows the achievement, and the climbers board renders.
+    let stats = client()
+        .get(format!("{base}/stats/player/{}", pid.as_u128()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stats.status().as_u16(), 200);
+    let body = stats.text().await.unwrap();
+    assert!(body.contains("Achievements"));
+    assert!(body.contains("Founded a second village"));
+    assert!(body.contains("Population over time"));
+    let climbers = client()
+        .get(format!("{base}/leaderboard?cat=climbers"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(climbers.status().as_u16(), 200);
+    assert!(climbers.text().await.unwrap().contains("Top climbers"));
 }

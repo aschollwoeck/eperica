@@ -24,5 +24,6 @@ manual grows as the game does.
 - [Conquest](conquest.md) — lower an enemy village's loyalty with administrators and take it for your own; keep your capital safe.
 - [Alliances & diplomacy](alliances.md) — build an Embassy, found or join an alliance, hold roles & rights, set diplomacy, and defend together with shared visibility and incoming-attack warnings.
 - [Ranking & statistics](ranking-and-statistics.md) — leaderboards (population, attack/defence/raider, alliances) filterable by quadrant and time window, public stat pages, and the points you earn defending allies.
+- [Medals & achievements](medals-and-achievements.md) — weekly medals for topping a category, one-time milestone achievements with rewards, the top-climbers board, and population over time.
 
 *(More chapters arrive as those features ship.)*

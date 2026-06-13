@@ -4,13 +4,15 @@ use crate::repo::PgAccountRepository;
 use async_trait::async_trait;
 use eperica_application::{
     DueEvent, EventStore, RepoError, process_due, process_due_builds, process_due_combat,
-    process_due_movements, process_due_oasis_combat, process_due_oasis_regrow,
-    process_due_oasis_reinforce, process_due_scouts, process_due_settles, process_due_starvation,
-    process_due_trades, process_due_training, process_due_unit_orders, sync_starvation_checks,
+    process_due_medal_settlement, process_due_movements, process_due_oasis_combat,
+    process_due_oasis_regrow, process_due_oasis_reinforce, process_due_scouts, process_due_settles,
+    process_due_starvation, process_due_trades, process_due_training, process_due_unit_orders,
+    sync_starvation_checks,
 };
 use eperica_domain::{
-    CombatRules, CultureRules, EconomyRules, EventKind, GameSpeed, LoyaltyRules, MerchantRules,
-    OasisRules, RankingRules, ScoutRules, StartingVillage, Timestamp, UnitRules, WorldMap,
+    CombatRules, CultureRules, EconomyRules, EventKind, GameSpeed, LoyaltyRules, MedalRules,
+    MerchantRules, OasisRules, RankingRules, ScoutRules, StartingVillage, Timestamp, UnitRules,
+    WorldMap,
 };
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
@@ -147,10 +149,13 @@ pub struct Scheduler {
     culture_rules: Arc<CultureRules>,
     loyalty_rules: Arc<LoyaltyRules>,
     ranking_rules: Arc<RankingRules>,
+    medal_rules: Arc<MedalRules>,
     template: Arc<StartingVillage>,
     map: Arc<WorldMap>,
     speed: GameSpeed,
     world_seed: u64,
+    /// The world's creation instant (Unix-ms) — the real-time anchor for the weekly settlement (017).
+    world_start: Timestamp,
     poll_interval: Duration,
 }
 
@@ -171,10 +176,12 @@ impl Scheduler {
         culture_rules: Arc<CultureRules>,
         loyalty_rules: Arc<LoyaltyRules>,
         ranking_rules: Arc<RankingRules>,
+        medal_rules: Arc<MedalRules>,
         template: Arc<StartingVillage>,
         map: Arc<WorldMap>,
         speed: GameSpeed,
         world_seed: u64,
+        world_start: Timestamp,
     ) -> Self {
         Self {
             store,
@@ -188,10 +195,12 @@ impl Scheduler {
             culture_rules,
             loyalty_rules,
             ranking_rules,
+            medal_rules,
             template,
             map,
             speed,
             world_seed,
+            world_start,
             poll_interval: Duration::from_millis(200),
         }
     }
@@ -371,6 +380,23 @@ impl Scheduler {
                 }
                 Ok(_) => {}
                 Err(e) => tracing::error!(error = %e, "scheduler combat tick failed"),
+            }
+            // 017: the weekly medal settlement — snapshot population + award the period's medals when a
+            // weekly boundary has passed (state-driven; idempotent per period).
+            match process_due_medal_settlement(
+                &self.builds,
+                &self.economy_rules,
+                &self.medal_rules,
+                self.world_start,
+                now(),
+            )
+            .await
+            {
+                Ok(periods) if !periods.is_empty() => {
+                    tracing::info!(?periods, "scheduler settled medal periods");
+                }
+                Ok(_) => {}
+                Err(e) => tracing::error!(error = %e, "scheduler medal settlement failed"),
             }
             // Standalone scout missions (010): no village garrison changes at resolution, so there is
             // nothing to re-sync here (surviving scouts re-sync home when their return arrives).
