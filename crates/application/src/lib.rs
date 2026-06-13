@@ -29,8 +29,9 @@ mod tests;
 pub use eperica_domain as domain;
 
 pub use alliance::{
-    AllianceError, disband_alliance, expel_member, found_alliance, invite_player, leave_alliance,
-    respond_invite, revoke_invite, set_member_role, transfer_founder,
+    AllianceError, DiplomacyCommand, disband_alliance, expel_member, found_alliance, invite_player,
+    leave_alliance, respond_invite, revoke_invite, set_diplomacy, set_member_role,
+    transfer_founder,
 };
 pub use auth::{LoginError, authenticate};
 pub use build::{BuildError, order_build, process_due_builds};
@@ -46,16 +47,16 @@ pub use oasis::{
 pub use ports::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, AllianceRepository,
     BattleApply, BattleReportView, BuildRepository, CombatRepository, ConquestRepository,
-    ConquestTransfer, CultureRepository, DueAttack, DueBuild, DueEvent, DueMovement,
-    DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining,
-    DueUnitOrder, EventStore, LoyaltyApply, Membership, MovementRepository, MovementView,
-    NewBattleReport, NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder,
-    NewUser, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
-    OutgoingInvite, PasswordHasher, PendingInvite, RazedBuilding, ReinforcementReturn, RepoError,
-    ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository,
-    SettleApply, SettleOutcome, SettleRepository, StarvationRepository, StationedGroup,
-    TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
-    VillageMarker,
+    ConquestTransfer, CultureRepository, DiplomacyEntry, DueAttack, DueBuild, DueEvent,
+    DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade,
+    DueTraining, DueUnitOrder, EventStore, LoyaltyApply, Membership, MovementRepository,
+    MovementView, NewBattleReport, NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder,
+    NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership, OasisReinforceOutcome,
+    OasisRepository, OasisState, OutgoingInvite, PasswordHasher, PendingInvite, RazedBuilding,
+    ReinforcementReturn, RepoError, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel,
+    ScoutReportView, ScoutRepository, SettleApply, SettleOutcome, SettleRepository,
+    StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
+    UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;

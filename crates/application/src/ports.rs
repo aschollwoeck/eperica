@@ -5,9 +5,10 @@
 
 use async_trait::async_trait;
 use eperica_domain::{
-    AllianceId, AllianceRole, BuildTarget, BuildingKind, Coordinate, EventKind, MovementKind,
-    OasisBonus, OasisRules, PlayerId, QueueLane, ResourceAmounts, RightSet, ScoutTarget,
-    StartingVillage, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
+    AllianceId, AllianceRole, BuildTarget, BuildingKind, Coordinate, DiplomacyStance,
+    DiplomacyStatus, EventKind, MovementKind, OasisBonus, OasisRules, PlayerId, QueueLane,
+    ResourceAmounts, RightSet, ScoutTarget, StartingVillage, Timestamp, TradeKind, Tribe,
+    UnitCounts, UnitId, UnitSpec, Village, VillageId,
 };
 
 /// A village's public presence on the map: its tile and its owner's name (GDD §7.3 — layout and
@@ -1272,8 +1273,27 @@ pub struct OutgoingInvite {
     pub invitee_name: String,
 }
 
-/// Persistence for alliances & membership (015). Diplomacy and the visibility/defence reads are added
-/// in later tasks. Identity (alliance id, the founder's membership) is assigned by the repository.
+/// One diplomacy relationship as seen from an alliance (015 AC7/AC11): the other alliance, the stance,
+/// its status, and — for a confederation proposal — which alliance proposed it (only the *other* side
+/// may accept).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiplomacyEntry {
+    /// The counterpart alliance.
+    pub other: AllianceId,
+    /// Its name.
+    pub other_name: String,
+    /// Its tag.
+    pub other_tag: String,
+    /// The stance (war / confederation).
+    pub stance: DiplomacyStance,
+    /// Whether it is active or a pending confederation proposal.
+    pub status: DiplomacyStatus,
+    /// Who proposed a (still-pending) confederation; `None` for war / once active.
+    pub proposed_by: Option<AllianceId>,
+}
+
+/// Persistence for alliances & membership (015). Identity (alliance id, the founder's membership) is
+/// assigned by the repository.
 #[async_trait]
 pub trait AllianceRepository: Send + Sync {
     /// The player's **highest** Embassy level across their villages (0 if none) — the join/found gate
@@ -1400,6 +1420,53 @@ pub trait AllianceRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn disband(&self, alliance: AllianceId) -> Result<(), RepoError>;
+
+    /// The current diplomacy state of the pair `(a, b)` (normalised internally), or `None` if Neutral:
+    /// the stance, its status, and the proposer of a pending confederation (AC7).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn diplomacy_state(
+        &self,
+        a: AllianceId,
+        b: AllianceId,
+    ) -> Result<Option<(DiplomacyStance, DiplomacyStatus, Option<AllianceId>)>, RepoError>;
+
+    /// Upsert the diplomacy state of the pair `(a, b)` (normalised internally) — the stance, status, and
+    /// the proposer of a pending confederation (AC7).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn set_diplomacy_state(
+        &self,
+        a: AllianceId,
+        b: AllianceId,
+        stance: DiplomacyStance,
+        status: DiplomacyStatus,
+        proposed_by: Option<AllianceId>,
+    ) -> Result<(), RepoError>;
+
+    /// Clear the pair `(a, b)` back to Neutral (delete the row).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn clear_diplomacy(&self, a: AllianceId, b: AllianceId) -> Result<(), RepoError>;
+
+    /// Every diplomacy relationship `alliance` holds, for its diplomacy page (AC7/AC11).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn diplomacy_of(&self, alliance: AllianceId) -> Result<Vec<DiplomacyEntry>, RepoError>;
+
+    /// The alliances `alliance` is in an **active confederation** with — the one-hop confederate set the
+    /// visibility/defence reads use (AC8/AC9).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn confederate_alliances(
+        &self,
+        alliance: AllianceId,
+    ) -> Result<Vec<AllianceId>, RepoError>;
 }
 
 /// A claimed, due settle movement ready to resolve (013). Targets a free **valley tile**, not a village.

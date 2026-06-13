@@ -39,7 +39,7 @@ visibility/defence views.
 
 ## Persistence — diplomacy
 
-- [ ] **T4 — Diplomacy persistence + state machine.** Add `alliance_diplomacy` (normalised `lo<hi` pair,
+- [x] **T4 — Diplomacy persistence + state machine.** Add `alliance_diplomacy` (normalised `lo<hi` pair,
   PK, cascade) to the migration. Repo `diplomacy_of` / `confederate_alliances` / `upsert_diplomacy` /
   `delete_diplomacy`; the `set_diplomacy` use-case (`declare_war` | `propose_confederation` |
   `accept_confederation` | `cancel`) threading `next_stance` and **normalising** the pair before every

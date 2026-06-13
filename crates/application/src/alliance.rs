@@ -1,12 +1,13 @@
-//! Alliance & membership use-cases (015) — found / invite / accept / leave / expel / roles, plus the
-//! founder transfer and disband. Each loads the actor's membership, runs the **pure** domain
-//! role/rights/eligibility checks ([`eperica_domain::alliance`]), then calls the [`AllianceRepository`].
-//! Authority is enforced here, server-side (P4); the diplomacy use-cases land in T4.
+//! Alliance use-cases (015) — found / invite / accept / leave / expel / roles, the founder transfer,
+//! disband, and the [`set_diplomacy`] stance machine. Each loads the actor's membership, runs the
+//! **pure** domain role/rights/eligibility/diplomacy checks ([`eperica_domain::alliance`]), then calls
+//! the [`AllianceRepository`]. Authority is enforced here, server-side (P4).
 
 use crate::ports::{AllianceRepository, RepoError};
 use eperica_domain::AllianceRight;
 use eperica_domain::{
-    AllianceId, AllianceRole, AllianceRules, PlayerId, RightSet, can_expel, has_right,
+    AllianceId, AllianceRole, AllianceRules, DiplomacyAction, DiplomacyError, DiplomacyStance,
+    DiplomacyState, DiplomacyStatus, PlayerId, RightSet, can_expel, has_right, next_stance,
 };
 
 /// Why an alliance command is rejected (server-enforced, P4).
@@ -54,6 +55,15 @@ pub enum AllianceError {
     /// A role change tried to set an invalid role (e.g. a second Founder — use transfer instead).
     #[error("invalid role assignment")]
     BadRole,
+    /// An alliance cannot set diplomacy with itself (AC7).
+    #[error("cannot set diplomacy with your own alliance")]
+    SelfDiplomacy,
+    /// Only the *other* alliance may accept a confederation proposal — not the side that offered it.
+    #[error("cannot accept your own confederation proposal")]
+    CannotAcceptOwnProposal,
+    /// A rejected diplomacy transition (AC7).
+    #[error(transparent)]
+    Diplomacy(#[from] DiplomacyError),
     /// A backend/storage failure.
     #[error("storage error: {0}")]
     Backend(String),
@@ -334,10 +344,73 @@ pub async fn disband_alliance<R: AllianceRepository>(
     Ok(())
 }
 
+/// A diplomacy action a rights-holder takes toward another alliance (AC7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiplomacyCommand {
+    /// Declare war — unilateral, immediate, overrides any confederation.
+    DeclareWar,
+    /// Offer a confederation (pending until the other side accepts).
+    ProposeConfederation,
+    /// Accept a confederation the other side proposed.
+    AcceptConfederation,
+    /// Cancel the current stance back to Neutral.
+    Cancel,
+}
+
+/// Set the diplomacy stance between the actor's alliance and `other` (AC7). The actor needs the
+/// Diplomacy right; the pair cannot be the same alliance; only the **counterpart** may accept a pending
+/// confederation. The pure [`next_stance`] machine decides the transition; the repository stores the
+/// normalised pair.
+///
+/// # Errors
+/// [`AllianceError`] variants for the failed guard / [`DiplomacyError`], or a backend error.
+pub async fn set_diplomacy<R: AllianceRepository>(
+    repo: &R,
+    actor: PlayerId,
+    other: AllianceId,
+    command: DiplomacyCommand,
+) -> Result<(), AllianceError> {
+    let me = require_right(repo, actor, AllianceRight::Diplomacy).await?;
+    if me.alliance == other {
+        return Err(AllianceError::SelfDiplomacy);
+    }
+    let state = repo.diplomacy_state(me.alliance, other).await?;
+    let current = state.map(|(stance, status, _)| DiplomacyState { stance, status });
+    let action = match command {
+        DiplomacyCommand::DeclareWar => DiplomacyAction::DeclareWar,
+        DiplomacyCommand::ProposeConfederation => DiplomacyAction::ProposeConfederation,
+        DiplomacyCommand::Cancel => DiplomacyAction::Cancel,
+        DiplomacyCommand::AcceptConfederation => {
+            // Only the side that did *not* propose may accept.
+            if let Some((DiplomacyStance::Confederation, DiplomacyStatus::Proposed, Some(by))) =
+                state
+                && by == me.alliance
+            {
+                return Err(AllianceError::CannotAcceptOwnProposal);
+            }
+            DiplomacyAction::AcceptConfederation
+        }
+    };
+    match next_stance(current, action)? {
+        Some(next) => {
+            // A pending confederation records its proposer (the actor's alliance); everything else clears
+            // the proposer (war, or an active confederation).
+            let proposed_by = match (next.stance, next.status) {
+                (DiplomacyStance::Confederation, DiplomacyStatus::Proposed) => Some(me.alliance),
+                _ => None,
+            };
+            repo.set_diplomacy_state(me.alliance, other, next.stance, next.status, proposed_by)
+                .await?;
+        }
+        None => repo.clear_diplomacy(me.alliance, other).await?,
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ports::{Membership, OutgoingInvite, PendingInvite, RosterEntry};
+    use crate::ports::{DiplomacyEntry, Membership, OutgoingInvite, PendingInvite, RosterEntry};
     use async_trait::async_trait;
     use std::collections::{HashMap, HashSet};
     use std::sync::Mutex;
@@ -352,6 +425,12 @@ mod tests {
 
     /// In-memory `AllianceRepository` for use-case tests. Member rows keyed by player; invites a set of
     /// (alliance, invitee); embassy levels per player.
+    type DiploState = (DiplomacyStance, DiplomacyStatus, Option<u128>);
+
+    fn norm(a: AllianceId, b: AllianceId) -> (u128, u128) {
+        if a.0 <= b.0 { (a.0, b.0) } else { (b.0, a.0) }
+    }
+
     #[derive(Default)]
     struct FakeAlliance {
         members: Mutex<HashMap<u128, Membership>>,
@@ -359,6 +438,7 @@ mod tests {
         embassy: Mutex<HashMap<u128, u8>>,
         next_id: Mutex<u128>,
         names: Mutex<HashSet<String>>,
+        diplomacy: Mutex<HashMap<(u128, u128), DiploState>>,
     }
 
     impl FakeAlliance {
@@ -534,7 +614,82 @@ mod tests {
                 .lock()
                 .unwrap()
                 .retain(|(a, _)| *a != alliance.0);
+            self.diplomacy
+                .lock()
+                .unwrap()
+                .retain(|(lo, hi), _| *lo != alliance.0 && *hi != alliance.0);
             Ok(())
+        }
+        async fn diplomacy_state(
+            &self,
+            a: AllianceId,
+            b: AllianceId,
+        ) -> Result<Option<(DiplomacyStance, DiplomacyStatus, Option<AllianceId>)>, RepoError>
+        {
+            Ok(self
+                .diplomacy
+                .lock()
+                .unwrap()
+                .get(&norm(a, b))
+                .map(|(s, st, by)| (*s, *st, by.map(AllianceId))))
+        }
+        async fn set_diplomacy_state(
+            &self,
+            a: AllianceId,
+            b: AllianceId,
+            stance: DiplomacyStance,
+            status: DiplomacyStatus,
+            proposed_by: Option<AllianceId>,
+        ) -> Result<(), RepoError> {
+            self.diplomacy
+                .lock()
+                .unwrap()
+                .insert(norm(a, b), (stance, status, proposed_by.map(|p| p.0)));
+            Ok(())
+        }
+        async fn clear_diplomacy(&self, a: AllianceId, b: AllianceId) -> Result<(), RepoError> {
+            self.diplomacy.lock().unwrap().remove(&norm(a, b));
+            Ok(())
+        }
+        async fn diplomacy_of(
+            &self,
+            alliance: AllianceId,
+        ) -> Result<Vec<DiplomacyEntry>, RepoError> {
+            Ok(self
+                .diplomacy
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|((lo, hi), _)| *lo == alliance.0 || *hi == alliance.0)
+                .map(|((lo, hi), (s, st, by))| {
+                    let other = if *lo == alliance.0 { *hi } else { *lo };
+                    DiplomacyEntry {
+                        other: AllianceId(other),
+                        other_name: format!("a{other}"),
+                        other_tag: format!("T{other}"),
+                        stance: *s,
+                        status: *st,
+                        proposed_by: by.map(AllianceId),
+                    }
+                })
+                .collect())
+        }
+        async fn confederate_alliances(
+            &self,
+            alliance: AllianceId,
+        ) -> Result<Vec<AllianceId>, RepoError> {
+            Ok(self
+                .diplomacy
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|((lo, hi), (s, st, _))| {
+                    (*lo == alliance.0 || *hi == alliance.0)
+                        && *s == DiplomacyStance::Confederation
+                        && *st == DiplomacyStatus::Active
+                })
+                .map(|((lo, hi), _)| AllianceId(if *lo == alliance.0 { *hi } else { *lo }))
+                .collect())
         }
     }
 
@@ -727,5 +882,70 @@ mod tests {
         );
         disband_alliance(&repo, PlayerId(2)).await.unwrap();
         assert!(repo.member(1).is_none() && repo.member(2).is_none() && repo.member(3).is_none());
+    }
+
+    // AC7: diplomacy — propose→accept (only the counterpart accepts), war overrides confederation,
+    // war blocks a confederation proposal, cancel returns to neutral, and self-diplomacy is rejected.
+    #[tokio::test]
+    async fn diplomacy_propose_accept_war_cancel() {
+        let repo = FakeAlliance::with_embassy(&[(1, 3), (2, 3)]);
+        let r = rules();
+        let a = found_alliance(&repo, &r, PlayerId(1), "A", "A")
+            .await
+            .unwrap();
+        let b = found_alliance(&repo, &r, PlayerId(2), "B", "B")
+            .await
+            .unwrap();
+
+        // Cannot set diplomacy with your own alliance.
+        assert_eq!(
+            set_diplomacy(&repo, PlayerId(1), a, DiplomacyCommand::DeclareWar).await,
+            Err(AllianceError::SelfDiplomacy)
+        );
+        // A1 proposes a confederation to B; A1 cannot accept its own proposal.
+        set_diplomacy(
+            &repo,
+            PlayerId(1),
+            b,
+            DiplomacyCommand::ProposeConfederation,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            set_diplomacy(&repo, PlayerId(1), b, DiplomacyCommand::AcceptConfederation).await,
+            Err(AllianceError::CannotAcceptOwnProposal)
+        );
+        // Not yet active ⇒ not a confederate.
+        assert!(repo.confederate_alliances(a).await.unwrap().is_empty());
+        // B2 (the counterpart) accepts ⇒ active confederation both ways.
+        set_diplomacy(&repo, PlayerId(2), a, DiplomacyCommand::AcceptConfederation)
+            .await
+            .unwrap();
+        assert_eq!(repo.confederate_alliances(a).await.unwrap(), vec![b]);
+        assert_eq!(repo.confederate_alliances(b).await.unwrap(), vec![a]);
+
+        // Declaring war overrides the confederation; they are no longer confederates.
+        set_diplomacy(&repo, PlayerId(1), b, DiplomacyCommand::DeclareWar)
+            .await
+            .unwrap();
+        assert!(repo.confederate_alliances(a).await.unwrap().is_empty());
+        // Cannot propose a confederation while at war.
+        assert_eq!(
+            set_diplomacy(
+                &repo,
+                PlayerId(2),
+                a,
+                DiplomacyCommand::ProposeConfederation
+            )
+            .await,
+            Err(AllianceError::Diplomacy(
+                DiplomacyError::WarBlocksConfederation
+            ))
+        );
+        // Cancel ⇒ neutral (no stored stance).
+        set_diplomacy(&repo, PlayerId(1), b, DiplomacyCommand::Cancel)
+            .await
+            .unwrap();
+        assert!(repo.diplomacy_state(a, b).await.unwrap().is_none());
     }
 }

@@ -4,10 +4,10 @@ use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, AllianceRepository,
     BattleApply, BattleReportView, BuildRepository, CombatRepository, ConquestRepository,
-    CultureRepository, DueAttack, DueBuild, DueMovement, DueOasisAttack, DueOasisRegrow,
-    DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, LoyaltyApply,
-    Membership, MovementRepository, MovementView, NewBuildOrder, NewOasisReport, NewScoutReport,
-    NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
+    CultureRepository, DiplomacyEntry, DueAttack, DueBuild, DueMovement, DueOasisAttack,
+    DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder,
+    LoyaltyApply, Membership, MovementRepository, MovementView, NewBuildOrder, NewOasisReport,
+    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
     OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PendingInvite,
     RazedBuilding, RepoError, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
     ScoutRepository, SettleApply, SettleOutcome, SettleRepository, StarvationRepository,
@@ -15,10 +15,11 @@ use eperica_application::{
     UserRecord, VillageMarker,
 };
 use eperica_domain::{
-    AllianceId, AllianceRole, BuildTarget, BuildingKind, BuildingSlot, Coordinate, MovementKind,
-    OasisBonus, OasisRules, PlayerId, QueueLane, ResourceAmounts, ResourceField, ResourceKind,
-    RightSet, ScoutTarget, StartingVillage, TileKind, Timestamp, TradeKind, Tribe, UnitCounts,
-    UnitId, UnitSpec, Village, VillageId, WorldId, WorldMap, coordinates_within, oasis_garrison,
+    AllianceId, AllianceRole, BuildTarget, BuildingKind, BuildingSlot, Coordinate, DiplomacyStance,
+    DiplomacyStatus, MovementKind, OasisBonus, OasisRules, PlayerId, QueueLane, ResourceAmounts,
+    ResourceField, ResourceKind, RightSet, ScoutTarget, StartingVillage, TileKind, Timestamp,
+    TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId, WorldId, WorldMap,
+    coordinates_within, oasis_garrison,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use uuid::Uuid;
@@ -149,6 +150,48 @@ fn parse_alliance_role(s: &str) -> Result<AllianceRole, RepoError> {
         other => Err(RepoError::Backend(format!(
             "unknown alliance role: {other}"
         ))),
+    }
+}
+
+fn stance_str(s: DiplomacyStance) -> &'static str {
+    match s {
+        DiplomacyStance::War => "war",
+        DiplomacyStance::Confederation => "confederation",
+    }
+}
+
+fn parse_stance(s: &str) -> Result<DiplomacyStance, RepoError> {
+    match s {
+        "war" => Ok(DiplomacyStance::War),
+        "confederation" => Ok(DiplomacyStance::Confederation),
+        other => Err(RepoError::Backend(format!("unknown stance: {other}"))),
+    }
+}
+
+fn status_str(s: DiplomacyStatus) -> &'static str {
+    match s {
+        DiplomacyStatus::Proposed => "proposed",
+        DiplomacyStatus::Active => "active",
+    }
+}
+
+fn parse_status(s: &str) -> Result<DiplomacyStatus, RepoError> {
+    match s {
+        "proposed" => Ok(DiplomacyStatus::Proposed),
+        "active" => Ok(DiplomacyStatus::Active),
+        other => Err(RepoError::Backend(format!(
+            "unknown diplomacy status: {other}"
+        ))),
+    }
+}
+
+/// Normalise an alliance pair to `(lo, hi)` with `lo < hi` (matching the DB CHECK + composite PK), so
+/// the pair has a single canonical row regardless of argument order.
+fn normalise_pair(a: AllianceId, b: AllianceId) -> (Uuid, Uuid) {
+    if a.0 <= b.0 {
+        (Uuid::from_u128(a.0), Uuid::from_u128(b.0))
+    } else {
+        (Uuid::from_u128(b.0), Uuid::from_u128(a.0))
     }
 }
 
@@ -4088,6 +4131,126 @@ impl AllianceRepository for PgAccountRepository {
             .await
             .map_err(backend)?;
         Ok(())
+    }
+
+    async fn diplomacy_state(
+        &self,
+        a: AllianceId,
+        b: AllianceId,
+    ) -> Result<Option<(DiplomacyStance, DiplomacyStatus, Option<AllianceId>)>, RepoError> {
+        let (lo, hi) = normalise_pair(a, b);
+        let row = sqlx::query(
+            "SELECT stance, status, proposed_by FROM alliance_diplomacy \
+             WHERE alliance_lo = $1 AND alliance_hi = $2",
+        )
+        .bind(lo)
+        .bind(hi)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        let Some(r) = row else { return Ok(None) };
+        let stance = parse_stance(&r.try_get::<String, _>("stance").map_err(backend)?)?;
+        let status = parse_status(&r.try_get::<String, _>("status").map_err(backend)?)?;
+        let proposed_by: Option<Uuid> = r.try_get("proposed_by").map_err(backend)?;
+        Ok(Some((
+            stance,
+            status,
+            proposed_by.map(|u| AllianceId(u.as_u128())),
+        )))
+    }
+
+    async fn set_diplomacy_state(
+        &self,
+        a: AllianceId,
+        b: AllianceId,
+        stance: DiplomacyStance,
+        status: DiplomacyStatus,
+        proposed_by: Option<AllianceId>,
+    ) -> Result<(), RepoError> {
+        let (lo, hi) = normalise_pair(a, b);
+        sqlx::query(
+            "INSERT INTO alliance_diplomacy (alliance_lo, alliance_hi, stance, status, proposed_by) \
+             VALUES ($1, $2, $3, $4, $5) \
+             ON CONFLICT (alliance_lo, alliance_hi) \
+             DO UPDATE SET stance = EXCLUDED.stance, status = EXCLUDED.status, \
+                           proposed_by = EXCLUDED.proposed_by",
+        )
+        .bind(lo)
+        .bind(hi)
+        .bind(stance_str(stance))
+        .bind(status_str(status))
+        .bind(proposed_by.map(|p| Uuid::from_u128(p.0)))
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn clear_diplomacy(&self, a: AllianceId, b: AllianceId) -> Result<(), RepoError> {
+        let (lo, hi) = normalise_pair(a, b);
+        sqlx::query("DELETE FROM alliance_diplomacy WHERE alliance_lo = $1 AND alliance_hi = $2")
+            .bind(lo)
+            .bind(hi)
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn diplomacy_of(&self, alliance: AllianceId) -> Result<Vec<DiplomacyEntry>, RepoError> {
+        // The alliance is either side of the normalised pair; join the *other* side for its name/tag.
+        let me = Uuid::from_u128(alliance.0);
+        let rows = sqlx::query(
+            "SELECT d.stance, d.status, d.proposed_by, \
+                    CASE WHEN d.alliance_lo = $1 THEN d.alliance_hi ELSE d.alliance_lo END AS other, \
+                    o.name AS other_name, o.tag AS other_tag \
+             FROM alliance_diplomacy d \
+             JOIN alliances o ON o.id = CASE WHEN d.alliance_lo = $1 THEN d.alliance_hi \
+                                                                     ELSE d.alliance_lo END \
+             WHERE d.alliance_lo = $1 OR d.alliance_hi = $1 \
+             ORDER BY o.name",
+        )
+        .bind(me)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let other: Uuid = r.try_get("other").map_err(backend)?;
+            let proposed_by: Option<Uuid> = r.try_get("proposed_by").map_err(backend)?;
+            out.push(DiplomacyEntry {
+                other: AllianceId(other.as_u128()),
+                other_name: r.try_get("other_name").map_err(backend)?,
+                other_tag: r.try_get("other_tag").map_err(backend)?,
+                stance: parse_stance(&r.try_get::<String, _>("stance").map_err(backend)?)?,
+                status: parse_status(&r.try_get::<String, _>("status").map_err(backend)?)?,
+                proposed_by: proposed_by.map(|u| AllianceId(u.as_u128())),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn confederate_alliances(
+        &self,
+        alliance: AllianceId,
+    ) -> Result<Vec<AllianceId>, RepoError> {
+        let me = Uuid::from_u128(alliance.0);
+        let rows = sqlx::query(
+            "SELECT CASE WHEN alliance_lo = $1 THEN alliance_hi ELSE alliance_lo END AS other \
+             FROM alliance_diplomacy \
+             WHERE (alliance_lo = $1 OR alliance_hi = $1) \
+               AND stance = 'confederation' AND status = 'active'",
+        )
+        .bind(me)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let other: Uuid = r.try_get("other").map_err(backend)?;
+            out.push(AllianceId(other.as_u128()));
+        }
+        Ok(out)
     }
 }
 
@@ -9066,6 +9229,127 @@ mod tests {
             .await
             .unwrap();
         assert!(exists.is_none(), "the alliance row is gone");
+    }
+
+    // 015 AC7/AC12: diplomacy over the real repository — war is unilateral + mutual, a confederation is
+    // propose→accept, declaring war clears the confederation, and the normalised pair (lo<hi PK) makes
+    // a single canonical row regardless of who acts.
+    #[tokio::test]
+    async fn alliance_diplomacy_lifecycle() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping diplomacy test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let rules = crate::alliance_rules().expect("alliance rules");
+        let template = crate::starting_village().unwrap();
+
+        let make = |label: &'static str| {
+            let repo = &repo;
+            let pool = &pool;
+            let template = &template;
+            async move {
+                let uname = format!("{label}_{}", Uuid::new_v4().simple());
+                let user = repo
+                    .create_account(
+                        NewUser {
+                            username: uname.clone(),
+                            email: format!("{uname}@example.com"),
+                            password_hash: "h".to_owned(),
+                            email_confirmed: true,
+                            tribe: Tribe::Gauls,
+                        },
+                        template,
+                    )
+                    .await
+                    .expect("create account");
+                let v = repo.villages_of(user.id).await.unwrap()[0].id;
+                sqlx::query(
+                    "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+                     VALUES ($1, 16, 'embassy', 3) \
+                     ON CONFLICT (village_id, slot) DO UPDATE SET level = EXCLUDED.level",
+                )
+                .bind(Uuid::from_u128(v.0))
+                .execute(pool)
+                .await
+                .unwrap();
+                user.id
+            }
+        };
+        let f1 = make("dip_a").await;
+        let f2 = make("dip_b").await;
+        let suffix = Uuid::new_v4().simple().to_string();
+        let a = eperica_application::found_alliance(
+            &repo,
+            &rules,
+            f1,
+            &format!("A_{suffix}"),
+            &format!("A{}", &suffix[..5]),
+        )
+        .await
+        .unwrap();
+        let b = eperica_application::found_alliance(
+            &repo,
+            &rules,
+            f2,
+            &format!("B_{suffix}"),
+            &format!("B{}", &suffix[..5]),
+        )
+        .await
+        .unwrap();
+
+        use eperica_application::DiplomacyCommand;
+        // Propose → accept builds a single canonical row, active both ways.
+        eperica_application::set_diplomacy(&repo, f1, b, DiplomacyCommand::ProposeConfederation)
+            .await
+            .unwrap();
+        eperica_application::set_diplomacy(&repo, f2, a, DiplomacyCommand::AcceptConfederation)
+            .await
+            .unwrap();
+        assert_eq!(repo.confederate_alliances(a).await.unwrap(), vec![b]);
+        assert_eq!(repo.confederate_alliances(b).await.unwrap(), vec![a]);
+        // Exactly one diplomacy row for the pair, regardless of action order.
+        let rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM alliance_diplomacy \
+             WHERE (alliance_lo = $1 AND alliance_hi = $2) OR (alliance_lo = $2 AND alliance_hi = $1)",
+        )
+        .bind(Uuid::from_u128(a.0))
+        .bind(Uuid::from_u128(b.0))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows, 1, "the normalised pair has a single row");
+
+        // Declaring war (from the other side) overrides the confederation and is mutual.
+        eperica_application::set_diplomacy(&repo, f2, a, DiplomacyCommand::DeclareWar)
+            .await
+            .unwrap();
+        assert!(repo.confederate_alliances(a).await.unwrap().is_empty());
+        let (stance, status, _) = repo.diplomacy_state(a, b).await.unwrap().unwrap();
+        assert_eq!(
+            (stance, status),
+            (DiplomacyStance::War, DiplomacyStatus::Active)
+        );
+
+        // Cancel ⇒ neutral.
+        eperica_application::set_diplomacy(&repo, f1, b, DiplomacyCommand::Cancel)
+            .await
+            .unwrap();
+        assert!(repo.diplomacy_state(a, b).await.unwrap().is_none());
     }
 
     // 014 AC7/AC8/AC12: a conquest transfers ownership in the battle transaction — the village keeps its
