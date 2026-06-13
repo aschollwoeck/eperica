@@ -68,8 +68,8 @@ pub use ports::{
 };
 pub use ranking::{
     RankingError, Window, alliance_conflict_leaderboard, alliance_population_leaderboard,
-    alliance_statistics, conflict_leaderboard, player_statistics, population_leaderboard,
-    reinforcement_reports,
+    alliance_statistics, climbers_leaderboard, conflict_leaderboard, player_statistics,
+    population_history, population_leaderboard, reinforcement_reports,
 };
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;

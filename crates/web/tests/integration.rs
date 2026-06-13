@@ -2594,4 +2594,23 @@ async fn village_view_grants_achievements(pool: sqlx::PgPool) {
         granted, 1,
         "loading the village granted the second-village achievement"
     );
+
+    // 017 AC11/AC12: the public stat page shows the achievement, and the climbers board renders.
+    let stats = client()
+        .get(format!("{base}/stats/player/{}", pid.as_u128()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stats.status().as_u16(), 200);
+    let body = stats.text().await.unwrap();
+    assert!(body.contains("Achievements"));
+    assert!(body.contains("Founded a second village"));
+    assert!(body.contains("Population over time"));
+    let climbers = client()
+        .get(format!("{base}/leaderboard?cat=climbers"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(climbers.status().as_u16(), 200);
+    assert!(climbers.text().await.unwrap().contains("Top climbers"));
 }

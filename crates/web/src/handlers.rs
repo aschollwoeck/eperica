@@ -3,14 +3,14 @@
 use crate::auth::{AuthUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
 use crate::templates::{
-    AcademyRow, AcademyTemplate, ActiveView, AllianceStatsTemplate, AllianceTemplate,
-    AlliedVillageView, BuildRow, DiploRowView, ForceRow, GarrisonRow, IncomingView, IndexTemplate,
-    LeaderboardRowView, LeaderboardTemplate, LoginTemplate, MapCellView, MapTemplate,
-    MarketTemplate, MemberStatRow, MovementRow, OasisRow, OutgoingInviteView, PendingInviteView,
-    PlayerStatsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate,
-    ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, RosterRowView,
-    ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate,
-    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
+    AcademyRow, AcademyTemplate, AchievementRowView, ActiveView, AllianceStatsTemplate,
+    AllianceTemplate, AlliedVillageView, BuildRow, DiploRowView, ForceRow, GarrisonRow,
+    HistoryPointView, IncomingView, IndexTemplate, LeaderboardRowView, LeaderboardTemplate,
+    LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MedalRowView, MemberStatRow,
+    MovementRow, OasisRow, OutgoingInviteView, PendingInviteView, PlayerStatsTemplate, QueueView,
+    RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate,
+    ReportsTemplate, RosterRowView, ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow,
+    SmithyTemplate, StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
     VillageTemplate,
 };
 use askama::Template;
@@ -20,25 +20,26 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
-    AccountRepository, AllianceLeaderboardRow, AllianceRepository, BattleReportView, BoardScope,
-    BuildRepository, CombatRepository, ConflictMetric, ConquestRepository, DiplomacyCommand,
-    LeaderboardRow, LoginError, MovementRepository, OasisRepository, RegisterCommand,
-    RegisterError, ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository,
-    TrainingRepository, UnitOrderKind, UnitRepository, Window, alliance_conflict_leaderboard,
+    AccountRepository, AchievementRepository, AllianceLeaderboardRow, AllianceRepository,
+    BattleReportView, BoardScope, BuildRepository, CombatRepository, ConflictMetric,
+    ConquestRepository, DiplomacyCommand, LeaderboardRow, LoginError, MedalRepository,
+    MedalSubjectKind, MovementRepository, OasisRepository, RegisterCommand, RegisterError,
+    ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository, TrainingRepository,
+    UnitOrderKind, UnitRepository, Window, alliance_conflict_leaderboard,
     alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
-    conflict_leaderboard, disband_alliance, evaluate_achievements, expel_member, found_alliance,
-    invite_player, leave_alliance, load_culture, load_economy, map_viewport, order_attack,
-    order_build, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
-    order_reinforcement, order_research, order_return, order_scout, order_settle,
-    order_smithy_upgrade, order_trade, order_train, player_statistics, population_leaderboard,
-    register, reinforcement_reports, respond_invite, revoke_invite, set_diplomacy, set_member_role,
-    transfer_founder, viewport_coords,
+    climbers_leaderboard, conflict_leaderboard, disband_alliance, evaluate_achievements,
+    expel_member, found_alliance, invite_player, leave_alliance, load_culture, load_economy,
+    map_viewport, order_attack, order_build, order_oasis_attack, order_oasis_recall,
+    order_oasis_reinforce, order_reinforcement, order_research, order_return, order_scout,
+    order_settle, order_smithy_upgrade, order_trade, order_train, player_statistics,
+    population_history, population_leaderboard, register, reinforcement_reports, respond_invite,
+    revoke_invite, set_diplomacy, set_member_role, transfer_founder, viewport_coords,
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, Coordinate,
-    DiplomacyStance, DiplomacyStatus, MovementKind, OasisBonus, PlayerId, Quadrant, QueueLane,
-    ResearchDenied, ResourceAmounts, ResourceKind, RightSet, ScoutTarget, TileKind, TradeKind,
-    Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, VillageId, can_afford,
+    DiplomacyStance, DiplomacyStatus, MedalCategory, MovementKind, OasisBonus, PlayerId, Quadrant,
+    QueueLane, ResearchDenied, ResourceAmounts, ResourceKind, RightSet, ScoutTarget, TileKind,
+    TradeKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, VillageId, can_afford,
     can_research, can_upgrade, garrison_upkeep, per_unit_time_secs, queue_lane, regenerate_loyalty,
     scaled_time_secs,
 };
@@ -180,6 +181,31 @@ fn server_error() -> Response {
 
 fn not_found() -> Response {
     (StatusCode::NOT_FOUND, "not found").into_response()
+}
+
+/// A display label for a medal category (017).
+fn medal_label(c: MedalCategory) -> &'static str {
+    match c {
+        MedalCategory::Attacker => "Top attacker",
+        MedalCategory::Defender => "Top defender",
+        MedalCategory::Raider => "Top raider",
+        MedalCategory::Climber => "Top climber",
+        MedalCategory::AlliancePopulation => "Top alliance (population)",
+        MedalCategory::AllianceAttacker => "Top alliance (attack)",
+        MedalCategory::AllianceDefender => "Top alliance (defense)",
+    }
+}
+
+/// A display label for an achievement id (017). Falls back to the id for unknown entries.
+fn achievement_label(id: &str) -> &'static str {
+    match id {
+        "second_village" => "Founded a second village",
+        "defender_100" => "Won 100 defensive battles",
+        "first_oasis" => "Occupied a first oasis",
+        "population_1000" => "Reached 1000 population",
+        "research_all_units" => "Researched every unit of your tribe",
+        _ => "Achievement",
+    }
 }
 
 /// Optional village selector for the multi-village pages (013 AC11): `?village=<id>` chooses which of
@@ -2150,6 +2176,7 @@ pub async fn leaderboard(
         ("attackers", "Top attackers"),
         ("defenders", "Top defenders"),
         ("raiders", "Top raiders"),
+        ("climbers", "Top climbers"),
         ("alliances", "Alliances"),
         ("alliance-atk", "Alliance attack"),
         ("alliance-def", "Alliance defense"),
@@ -2186,6 +2213,14 @@ pub async fn leaderboard(
                 "Resources looted",
                 false,
                 true,
+            ),
+            "climbers" => (
+                climbers_leaderboard(repo, rules, scope)
+                    .await
+                    .map(player_rows),
+                "Population gained",
+                false,
+                false,
             ),
             "alliances" => (
                 alliance_population_leaderboard(repo, econ, rules, scope)
@@ -2269,29 +2304,73 @@ pub async fn player_stats_page(
     let Ok(pid) = id.parse::<u128>() else {
         return not_found();
     };
-    match player_statistics(state.accounts.as_ref(), state.rules.as_ref(), PlayerId(pid)).await {
-        Ok(Some(s)) => page(&PlayerStatsTemplate {
-            name: s.name,
-            population: s.population,
-            attack_points: s.attack_points,
-            defense_points: s.defense_points,
-            loot_total: s.loot_total,
-            villages: s
-                .villages
-                .into_iter()
-                .map(|(_, c, population)| VillageStatRow {
-                    x: c.x,
-                    y: c.y,
-                    population,
-                })
-                .collect(),
-        }),
-        Ok(None) => not_found(),
+    let repo = state.accounts.as_ref();
+    let s = match player_statistics(repo, state.rules.as_ref(), PlayerId(pid)).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return not_found(),
         Err(e) => {
             tracing::error!(error = %e, "player stats failed");
-            server_error()
+            return server_error();
         }
-    }
+    };
+    // 017: medals, achievements, and population history (all public, derived from persisted state).
+    let medals = match repo.medals_for(MedalSubjectKind::Player, pid).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!(error = %e, "player medals failed");
+            return server_error();
+        }
+    };
+    let held = match repo.held_achievements(PlayerId(pid)).await {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!(error = %e, "player achievements failed");
+            return server_error();
+        }
+    };
+    let history = match population_history(repo, PlayerId(pid)).await {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!(error = %e, "player history failed");
+            return server_error();
+        }
+    };
+    let mut achievements: Vec<AchievementRowView> = held
+        .iter()
+        .map(|a| AchievementRowView {
+            label: achievement_label(&a.0).to_owned(),
+        })
+        .collect();
+    achievements.sort_by(|a, b| a.label.cmp(&b.label));
+    page(&PlayerStatsTemplate {
+        name: s.name,
+        population: s.population,
+        attack_points: s.attack_points,
+        defense_points: s.defense_points,
+        loot_total: s.loot_total,
+        villages: s
+            .villages
+            .into_iter()
+            .map(|(_, c, population)| VillageStatRow {
+                x: c.x,
+                y: c.y,
+                population,
+            })
+            .collect(),
+        medals: medals
+            .into_iter()
+            .map(|m| MedalRowView {
+                category: medal_label(m.category).to_owned(),
+                rank: m.rank,
+                period: m.period,
+            })
+            .collect(),
+        achievements,
+        history: history
+            .into_iter()
+            .map(|(period, population)| HistoryPointView { period, population })
+            .collect(),
+    })
 }
 
 /// Public alliance statistics page (016 AC10).
@@ -2302,39 +2381,50 @@ pub async fn alliance_stats_page(
     let Ok(aid) = id.parse::<u128>() else {
         return not_found();
     };
-    match alliance_statistics(
-        state.accounts.as_ref(),
-        state.rules.as_ref(),
-        AllianceId(aid),
-    )
-    .await
-    {
-        Ok(Some(s)) => page(&AllianceStatsTemplate {
-            name: s.name,
-            tag: s.tag,
-            population: s.population,
-            attack_points: s.attack_points,
-            defense_points: s.defense_points,
-            members: s
-                .members
-                .into_iter()
-                .map(
-                    |(player, name, population, attack_points, defense_points)| MemberStatRow {
-                        name,
-                        href: format!("/stats/player/{}", player.0),
-                        population,
-                        attack_points,
-                        defense_points,
-                    },
-                )
-                .collect(),
-        }),
-        Ok(None) => not_found(),
+    let repo = state.accounts.as_ref();
+    let s = match alliance_statistics(repo, state.rules.as_ref(), AllianceId(aid)).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return not_found(),
         Err(e) => {
             tracing::error!(error = %e, "alliance stats failed");
-            server_error()
+            return server_error();
         }
-    }
+    };
+    let medals = match repo.medals_for(MedalSubjectKind::Alliance, aid).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!(error = %e, "alliance medals failed");
+            return server_error();
+        }
+    };
+    page(&AllianceStatsTemplate {
+        name: s.name,
+        tag: s.tag,
+        population: s.population,
+        attack_points: s.attack_points,
+        defense_points: s.defense_points,
+        members: s
+            .members
+            .into_iter()
+            .map(
+                |(player, name, population, attack_points, defense_points)| MemberStatRow {
+                    name,
+                    href: format!("/stats/player/{}", player.0),
+                    population,
+                    attack_points,
+                    defense_points,
+                },
+            )
+            .collect(),
+        medals: medals
+            .into_iter()
+            .map(|m| MedalRowView {
+                category: medal_label(m.category).to_owned(),
+                rank: m.rank,
+                period: m.period,
+            })
+            .collect(),
+    })
 }
 
 /// One scout report's detail — scouter sees the intel, a detected target sees only the notification;
