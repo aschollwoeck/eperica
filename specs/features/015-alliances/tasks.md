@@ -16,7 +16,7 @@ visibility/defence views.
   `economy.toml`. Tests: the Embassy loads in the catalog with costs/prereqs; building it rides the 003
   path (a DB build reads back); no exclusivity (**AC1**).
 
-- [ ] **T2 — Pure alliance rules (`domain/alliance.rs`).** `AllianceRole`, `AllianceRight` + `RightSet`
+- [x] **T2 — Pure alliance rules (`domain/alliance.rs`).** `AllianceRole`, `AllianceRight` + `RightSet`
   (u8 bitset), `has_right` (Founder⇒all / Member⇒none / Leader⇒granted), `can_expel` (strictly higher
   rank), `AllianceRules { max_members, join/found_embassy_level }` + `can_found`/`can_join`/`at_cap`, and
   the `DiplomacyStance`/`DiplomacyStatus` + `next_stance` state machine (war unilateral & clears confed;

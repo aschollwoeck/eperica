@@ -5,11 +5,11 @@
 //! types, keeping the domain itself free of serialization concerns.
 
 use eperica_domain::{
-    BuildRules, BuildingKind, BuildingSlot, CombatRules, CultureRules, DomainError, EconomyRules,
-    FieldDistribution, LevelSpec, LoyaltyRules, MapRules, MerchantProfile, MerchantRules,
-    OasisBonus, OasisRules, ResearchSpec, ResourceAmounts, ResourceField, ResourceKind, ScoutRules,
-    SiegeKind, SmithyRules, StartingVillage, TrainingRules, Tribe, UnitId, UnitRole, UnitRules,
-    UnitSpec, WallProfile, Weighted,
+    AllianceRules, BuildRules, BuildingKind, BuildingSlot, CombatRules, CultureRules, DomainError,
+    EconomyRules, FieldDistribution, LevelSpec, LoyaltyRules, MapRules, MerchantProfile,
+    MerchantRules, OasisBonus, OasisRules, ResearchSpec, ResourceAmounts, ResourceField,
+    ResourceKind, ScoutRules, SiegeKind, SmithyRules, StartingVillage, TrainingRules, Tribe,
+    UnitId, UnitRole, UnitRules, UnitSpec, WallProfile, Weighted,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -64,6 +64,10 @@ const CULTURE_TOML: &str = include_str!(concat!(
 const CONQUEST_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../specs/balance/conquest.toml"
+));
+const ALLIANCE_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/alliance.toml"
 ));
 
 /// Errors that can occur while loading balance data.
@@ -550,6 +554,26 @@ pub fn loyalty_rules() -> Result<LoyaltyRules, BalanceError> {
         drop_min: dto.loyalty_drop_min,
         drop_max: dto.loyalty_drop_max,
         administrator_ids: dto.administrator_ids,
+    })
+}
+
+#[derive(Deserialize)]
+struct AllianceDto {
+    max_members: u32,
+    join_embassy_level: u8,
+    found_embassy_level: u8,
+}
+
+/// Load the alliance / diplomacy rules (015) from the embedded balance data.
+///
+/// # Errors
+/// Returns [`BalanceError`] if the data cannot be parsed.
+pub fn alliance_rules() -> Result<AllianceRules, BalanceError> {
+    let dto: AllianceDto = toml::from_str(ALLIANCE_TOML)?;
+    Ok(AllianceRules {
+        max_members: dto.max_members,
+        join_embassy_level: dto.join_embassy_level,
+        found_embassy_level: dto.found_embassy_level,
     })
 }
 
@@ -1043,6 +1067,21 @@ mod tests {
         // 013 AC3: a Residence/Palace grants expansion slots, rising with level.
         assert_eq!(r.slots_at(0), 0);
         assert!(r.slots_at(10) > r.slots_at(1));
+    }
+
+    #[test]
+    fn loads_alliance_rules() {
+        // 015 AC1/AC2/AC3/AC4: alliance balance loads and is well-formed — a positive cap, and the
+        // join gate no higher than the found gate (join ≤ found, both > 0 in faithful play).
+        let r = alliance_rules().expect("alliance rules");
+        assert!(r.max_members > 0);
+        assert!(r.join_embassy_level >= 1);
+        assert!(r.found_embassy_level >= r.join_embassy_level);
+        // The gates behave: L0 ⇒ neither, the join level ⇒ join only, the found level ⇒ both.
+        assert!(!r.can_join(0) && !r.can_found(0));
+        assert!(r.can_join(r.join_embassy_level) && !r.can_found(r.join_embassy_level - 1));
+        assert!(r.can_found(r.found_embassy_level));
+        assert!(r.at_cap(r.max_members) && !r.at_cap(r.max_members - 1));
     }
 
     #[test]

@@ -5,6 +5,7 @@
 //! modules grow here slice by slice.
 #![forbid(unsafe_code)]
 
+pub mod alliance;
 pub mod building;
 pub mod combat;
 pub mod construction;
@@ -23,6 +24,10 @@ pub mod units;
 pub mod village;
 pub mod world;
 
+pub use alliance::{
+    AllianceRight, AllianceRole, AllianceRules, DiplomacyAction, DiplomacyError, DiplomacyStance,
+    DiplomacyState, DiplomacyStatus, RightSet, can_expel, has_right, next_stance,
+};
 pub use building::BuildingKind;
 pub use combat::{
     AttackMode, AttackPower, BattleInput, BattleOutcome, CombatRules, WallProfile, add_defense,
