@@ -151,6 +151,31 @@ pub fn coordinates_within(radius: u32) -> impl Iterator<Item = Coordinate> {
     (0..=r).flat_map(ring_coordinates)
 }
 
+/// The four map quadrants about the origin (016 §11.2): the region filter for leaderboards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Quadrant {
+    /// `x ≥ 0, y ≥ 0` — north-east (the origin and the positive axes resolve here).
+    Ne,
+    /// `x < 0, y ≥ 0` — north-west.
+    Nw,
+    /// `x < 0, y < 0` — south-west.
+    Sw,
+    /// `x ≥ 0, y < 0` — south-east.
+    Se,
+}
+
+/// The quadrant a coordinate lies in (016 AC7): a **total, pure** function of its sign about the
+/// origin (P3/P6). The origin and the positive axes fall into `Ne` by the `≥ 0` rule, so every
+/// coordinate maps to exactly one quadrant and the result is reproducible.
+pub fn quadrant(c: Coordinate) -> Quadrant {
+    match (c.x >= 0, c.y >= 0) {
+        (true, true) => Quadrant::Ne,
+        (false, true) => Quadrant::Nw,
+        (false, false) => Quadrant::Sw,
+        (true, false) => Quadrant::Se,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,5 +318,21 @@ mod tests {
         unique.sort_by_key(|c| (c.x, c.y));
         unique.dedup();
         assert_eq!(unique.len(), 9);
+    }
+
+    #[test]
+    fn quadrant_maps_signs_with_axes_resolving_to_ne() {
+        use Quadrant::*;
+        assert_eq!(quadrant(Coordinate::new(3, 4)), Ne);
+        assert_eq!(quadrant(Coordinate::new(-3, 4)), Nw);
+        assert_eq!(quadrant(Coordinate::new(-3, -4)), Sw);
+        assert_eq!(quadrant(Coordinate::new(3, -4)), Se);
+        // The origin and the positive axes are the documented ties → NE (the `≥ 0` rule).
+        assert_eq!(quadrant(Coordinate::new(0, 0)), Ne);
+        assert_eq!(quadrant(Coordinate::new(5, 0)), Ne); // +x axis
+        assert_eq!(quadrant(Coordinate::new(0, 5)), Ne); // +y axis
+        // The negative axes fall to the quadrant on their clockwise side.
+        assert_eq!(quadrant(Coordinate::new(-5, 0)), Nw); // −x axis (y ≥ 0)
+        assert_eq!(quadrant(Coordinate::new(0, -5)), Se); // −y axis (x ≥ 0)
     }
 }

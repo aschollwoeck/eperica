@@ -656,6 +656,7 @@ mod tests {
                 speed: if i == 0 { 9 } else { 6 },
                 carry_capacity: 0,
                 crop_upkeep: 0,
+                point_value: 0,
                 cost: amounts(1),
                 train_secs: 1,
                 trained_in: BuildingKind::Barracks,

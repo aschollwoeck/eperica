@@ -17,6 +17,7 @@ pub mod loyalty;
 pub mod map;
 pub mod movement;
 pub mod oasis;
+pub mod ranking;
 pub mod resource;
 pub mod scouting;
 pub mod trade;
@@ -54,6 +55,7 @@ pub use loyalty::{
 pub use map::{FieldDistribution, MapRules, OasisBonus, TileKind, Weighted, WorldMap};
 pub use movement::{MovementKind, slowest_speed, travel_time_secs, travel_time_secs_floored};
 pub use oasis::{OasisRules, oasis_garrison, regrow_step};
+pub use ranking::{RankingRules, apportion};
 pub use resource::ResourceKind;
 pub use scouting::{ScoutOutcome, ScoutRules, ScoutTarget, resolve_scouting, scouting_power};
 pub use trade::{
@@ -71,5 +73,6 @@ pub use village::{
     VillageId,
 };
 pub use world::{
-    Coordinate, GameSpeed, WorldConfig, WorldId, coordinates_within, toroidal_distance,
+    Coordinate, GameSpeed, Quadrant, WorldConfig, WorldId, coordinates_within, quadrant,
+    toroidal_distance,
 };

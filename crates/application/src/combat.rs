@@ -1015,6 +1015,7 @@ mod tests {
                 speed: 6 + i as u32,
                 carry_capacity: if i < 8 { 50 } else { 0 },
                 crop_upkeep: 0,
+                point_value: 0,
                 cost: amounts(1),
                 train_secs: 1,
                 trained_in: BuildingKind::Barracks,
