@@ -1,6 +1,6 @@
 # Feature 013 — Settling & culture points — Technical Plan
 
-**Status:** Draft
+**Status:** Verified
 **Spec:** ./spec.md
 
 A player becomes **multi-village**. The new mechanics are: a **per-player culture-point accumulator**

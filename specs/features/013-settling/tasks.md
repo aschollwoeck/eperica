@@ -58,7 +58,7 @@ on its own.
   movement requeue covers `settle`). rustdoc; `docs/architecture/00NN-settling.md`; `docs/manual/`
   settling guide; `CLAUDE.md` active slice → 013.
 
-- [ ] **T8 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
+- [x] **T8 — Review & accept.** Full gates + P11; `eperica-reviewer` on the slice diff; fix until
   **APPROVE**; PR.
 
 ## Done when

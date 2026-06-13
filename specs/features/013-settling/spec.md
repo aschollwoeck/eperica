@@ -1,6 +1,6 @@
 # Feature 013 — Settling & culture points
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 005 (training + the garrison/queue engine; the `Residence` building kind + `Expansion` unit role already scaffolded), 007 (troop movement engine), 006 (the seeded map + free-valley placement), 003 (buildings), 002 (per-village economy the new buildings extend)
 **Roadmap:** M5 · slice 013 · GDD §3.3, §3.4, §11.1, §4.2, §6.1 — the multi-village layer: produce **culture points**, train **settlers**, and found new villages on free tiles; designate an unconquerable **capital** via the **Palace**.
 

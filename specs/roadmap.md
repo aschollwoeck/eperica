@@ -95,7 +95,7 @@ timed construction. Proves the entire architecture end-to-end on the smallest po
 
 | #   | Slice | Depends on | Delivers / proves | GDD |
 |-----|-------|-----------|-------------------|-----|
-| 013 | **Settling & culture points** — CP production, expansion slots, Residence/Palace, settlers found new villages on free tiles; the **capital** (Palace, uncapped fields). | 007, 005 | Multi-village economy + capital rule (§3.3–3.4, §11.1). | §3.3, §3.4, §11.1 |
+| 013 ✅ | **Settling & culture points** — CP production, expansion slots, Residence/Palace, settlers found new villages on free tiles; the **capital** (Palace, uncapped fields). | 007, 005 | Multi-village economy + capital rule (§3.3–3.4, §11.1). | §3.3, §3.4, §11.1 |
 | 014 | **Conquest** — administrators reduce **loyalty**; ownership transfer at zero; capital is unconquerable. | 013, 009 | The aggressive expansion path (§6.1). | §6.1, §3.4 |
 
 ---
