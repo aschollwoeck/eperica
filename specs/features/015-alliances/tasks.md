@@ -60,7 +60,7 @@ visibility/defence views.
 
 ## Interface — web
 
-- [ ] **T6 — Embassy & alliance pages + tag.** Embassy page (found / accept-decline invites / manage,
+- [x] **T6 — Embassy & alliance pages + tag.** Embassy page (found / accept-decline invites / manage,
   per eligibility) and the alliance page (roster, diplomacy, incoming overview, rights-gated controls,
   Founder transfer/disband), obeying the ui-style-guide. Surface the alliance **tag** on the map/player
   view; make allied village coordinates reachable for the existing 007 reinforce. Integration tests:

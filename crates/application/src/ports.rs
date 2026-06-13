@@ -19,6 +19,8 @@ pub struct VillageMarker {
     pub coordinate: Coordinate,
     /// The owner's login name.
     pub owner_name: String,
+    /// The owner's alliance **tag**, if they are in one (public, §7.3; 015 AC11).
+    pub alliance_tag: Option<String>,
 }
 
 /// Details for a new account to be created.
@@ -1340,6 +1342,15 @@ pub trait AllianceRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn member_count(&self, alliance: AllianceId) -> Result<u32, RepoError>;
+
+    /// The alliance's `(name, tag)`, or `None` if it does not exist.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn alliance_summary(
+        &self,
+        alliance: AllianceId,
+    ) -> Result<Option<(String, String)>, RepoError>;
 
     /// The alliance's roster, ordered by rank then name (AC8/AC11).
     ///

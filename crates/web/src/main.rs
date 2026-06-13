@@ -5,10 +5,10 @@
 use axum_extra::extract::cookie::Key;
 use eperica_domain::WorldMap;
 use eperica_infrastructure::{
-    AppConfig, Argon2Hasher, PgAccountRepository, PgEventStore, Scheduler, build_rules,
-    combat_rules, create_pool, culture_rules, economy_rules, ensure_world, loyalty_rules,
-    map_rules, merchant_rules, oasis_rules, run_migrations, scout_rules, starting_village,
-    unit_rules,
+    AppConfig, Argon2Hasher, PgAccountRepository, PgEventStore, Scheduler, alliance_rules,
+    build_rules, combat_rules, create_pool, culture_rules, economy_rules, ensure_world,
+    loyalty_rules, map_rules, merchant_rules, oasis_rules, run_migrations, scout_rules,
+    starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -74,6 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         unit_rules: units,
         culture_rules: culture,
         loyalty_rules: loyalty,
+        alliance_rules: Arc::new(alliance_rules()?),
         merchant_rules: merchants,
         map,
         world: config.world,

@@ -3,11 +3,13 @@
 use crate::auth::{AuthUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
 use crate::templates::{
-    AcademyRow, AcademyTemplate, ActiveView, BuildRow, ForceRow, GarrisonRow, IndexTemplate,
-    LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MovementRow, OasisRow, QueueView,
-    RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate,
-    ReportsTemplate, ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate,
-    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageSwitchRow, VillageTemplate,
+    AcademyRow, AcademyTemplate, ActiveView, AllianceTemplate, AlliedVillageView, BuildRow,
+    DiploRowView, ForceRow, GarrisonRow, IncomingView, IndexTemplate, LoginTemplate, MapCellView,
+    MapTemplate, MarketTemplate, MovementRow, OasisRow, OutgoingInviteView, PendingInviteView,
+    QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow,
+    ReportTemplate, ReportsTemplate, RosterRowView, ScoutReportTemplate, ScoutResourceRow,
+    ShipmentRow, SmithyRow, SmithyTemplate, StyleGuideTemplate, TrainRow, TroopsTemplate,
+    VillageSwitchRow, VillageTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -16,19 +18,23 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
-    AccountRepository, BattleReportView, BuildRepository, CombatRepository, ConquestRepository,
-    LoginError, MovementRepository, OasisRepository, RegisterCommand, RegisterError, ScoutIntel,
-    ScoutReportView, ScoutRepository, TradeRepository, TrainingRepository, UnitOrderKind,
-    UnitRepository, authenticate, load_culture, load_economy, map_viewport, order_attack,
-    order_build, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
-    order_reinforcement, order_research, order_return, order_scout, order_settle,
-    order_smithy_upgrade, order_trade, order_train, register, viewport_coords,
+    AccountRepository, AllianceRepository, BattleReportView, BuildRepository, CombatRepository,
+    ConquestRepository, DiplomacyCommand, LoginError, MovementRepository, OasisRepository,
+    RegisterCommand, RegisterError, ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository,
+    TrainingRepository, UnitOrderKind, UnitRepository, alliance_view, authenticate,
+    disband_alliance, expel_member, found_alliance, invite_player, leave_alliance, load_culture,
+    load_economy, map_viewport, order_attack, order_build, order_oasis_attack, order_oasis_recall,
+    order_oasis_reinforce, order_reinforcement, order_research, order_return, order_scout,
+    order_settle, order_smithy_upgrade, order_trade, order_train, register, respond_invite,
+    revoke_invite, set_diplomacy, set_member_role, transfer_founder, viewport_coords,
 };
 use eperica_domain::{
-    AttackMode, BuildTarget, BuildingKind, Coordinate, MovementKind, OasisBonus, QueueLane,
-    ResearchDenied, ResourceAmounts, ResourceKind, ScoutTarget, TileKind, TradeKind, Tribe, UnitId,
-    UnitRole, UnitRules, UpgradeDenied, Village, VillageId, can_afford, can_research, can_upgrade,
-    garrison_upkeep, per_unit_time_secs, queue_lane, regenerate_loyalty, scaled_time_secs,
+    AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, Coordinate,
+    DiplomacyStance, DiplomacyStatus, MovementKind, OasisBonus, PlayerId, QueueLane,
+    ResearchDenied, ResourceAmounts, ResourceKind, RightSet, ScoutTarget, TileKind, TradeKind,
+    Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, VillageId, can_afford,
+    can_research, can_upgrade, garrison_upkeep, per_unit_time_secs, queue_lane, regenerate_loyalty,
+    scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
@@ -856,10 +862,17 @@ pub async fn map(
                             class.push_str(" map-grid__cell--capital");
                         }
                         glyph = "★";
+                        // Alliance membership is public (§7.3): show the owner's alliance tag if any.
+                        let tag = marker
+                            .alliance_tag
+                            .as_deref()
+                            .map(|t| format!(" [{t}]"))
+                            .unwrap_or_default();
                         label = format!(
-                            "{} — {}{} ({}|{})",
+                            "{} — {}{}{} ({}|{})",
                             base_label,
                             marker.owner_name,
+                            tag,
                             if is_capital { " (capital)" } else { "" },
                             coord.x,
                             coord.y
@@ -2146,4 +2159,414 @@ pub async fn report_detail(
         loyalty,
         conquered: report.conquered,
     })
+}
+
+// ---------------------------------------------------------------- alliances (015)
+
+fn role_name(role: AllianceRole) -> &'static str {
+    match role {
+        AllianceRole::Founder => "Founder",
+        AllianceRole::Leader => "Leader",
+        AllianceRole::Member => "Member",
+    }
+}
+
+/// A human summary of a member effective rights for the roster.
+fn rights_summary(role: AllianceRole, rights: RightSet) -> String {
+    match role {
+        AllianceRole::Founder => "all".to_owned(),
+        AllianceRole::Member => "—".to_owned(),
+        AllianceRole::Leader => {
+            let names: Vec<&str> = [
+                (AllianceRight::Invite, "invite"),
+                (AllianceRight::Expel, "expel"),
+                (AllianceRight::Diplomacy, "diplomacy"),
+                (AllianceRight::Announce, "announce"),
+                (AllianceRight::ManageRoles, "manage"),
+            ]
+            .into_iter()
+            .filter(|(r, _)| rights.contains(*r))
+            .map(|(_, n)| n)
+            .collect();
+            if names.is_empty() {
+                "—".to_owned()
+            } else {
+                names.join(", ")
+            }
+        }
+    }
+}
+
+/// The alliance / Embassy page (015 AC8/AC9/AC11): the founder/join controls when alliance-less, or the
+/// roster + diplomacy + incoming-defence overview + management controls when in one.
+pub async fn alliance(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+    let repo = state.accounts.as_ref();
+    let rules = state.alliance_rules.as_ref();
+    match alliance_view(repo, player).await {
+        Ok(Some(ov)) => {
+            let me = ov.membership.alliance;
+            let roster = ov
+                .roster
+                .iter()
+                .map(|e| RosterRowView {
+                    player_id: e.player.0.to_string(),
+                    name: e.name.clone(),
+                    role: role_name(e.role),
+                    rights: rights_summary(e.role, e.rights),
+                    is_self: e.player == player,
+                })
+                .collect();
+            let diplomacy = ov
+                .diplomacy
+                .iter()
+                .map(|d| {
+                    let label = match (d.stance, d.status) {
+                        (DiplomacyStance::War, _) => "War".to_owned(),
+                        (DiplomacyStance::Confederation, DiplomacyStatus::Active) => {
+                            "Confederation".to_owned()
+                        }
+                        (DiplomacyStance::Confederation, DiplomacyStatus::Proposed) => {
+                            if d.proposed_by == Some(me) {
+                                "Confederation (proposed by you)".to_owned()
+                            } else {
+                                "Confederation (proposed by them)".to_owned()
+                            }
+                        }
+                    };
+                    let can_accept = d.stance == DiplomacyStance::Confederation
+                        && d.status == DiplomacyStatus::Proposed
+                        && d.proposed_by == Some(d.other);
+                    DiploRowView {
+                        other_id: d.other.0.to_string(),
+                        other: format!("{} [{}]", d.other_name, d.other_tag),
+                        label,
+                        can_accept,
+                    }
+                })
+                .collect();
+            let allied_villages = ov
+                .allied_villages
+                .iter()
+                .map(|v| AlliedVillageView {
+                    owner: v.owner_name.clone(),
+                    x: v.coordinate.x,
+                    y: v.coordinate.y,
+                })
+                .collect();
+            let incoming = ov
+                .incoming
+                .iter()
+                .map(|i| IncomingView {
+                    x: i.coordinate.x,
+                    y: i.coordinate.y,
+                    arrive_ms: i.arrive_at.0,
+                })
+                .collect();
+            let role = ov.membership.role;
+            let rights = ov.membership.rights;
+            let outgoing_invites = match repo.invites_of(me).await {
+                Ok(invs) => invs
+                    .into_iter()
+                    .map(|o| OutgoingInviteView {
+                        invitee_name: o.invitee_name,
+                    })
+                    .collect(),
+                Err(e) => {
+                    tracing::error!(error = %e, "alliance invites lookup failed");
+                    return server_error();
+                }
+            };
+            page(&AllianceTemplate {
+                in_alliance: true,
+                can_found: false,
+                embassy_level: 0,
+                found_level: rules.found_embassy_level,
+                join_level: rules.join_embassy_level,
+                pending: Vec::new(),
+                name: ov.name,
+                tag: ov.tag,
+                my_role: role_name(role),
+                is_founder: role == AllianceRole::Founder,
+                can_invite: eperica_domain::has_right(role, rights, AllianceRight::Invite),
+                can_diplomacy: eperica_domain::has_right(role, rights, AllianceRight::Diplomacy),
+                can_expel: eperica_domain::has_right(role, rights, AllianceRight::Expel),
+                can_manage: eperica_domain::has_right(role, rights, AllianceRight::ManageRoles),
+                roster,
+                diplomacy,
+                allied_villages,
+                incoming,
+                outgoing_invites,
+            })
+        }
+        Ok(None) => {
+            let embassy = repo.max_embassy_level(player).await.unwrap_or(0);
+            let pending = match repo.pending_invites_for(player).await {
+                Ok(invs) => invs
+                    .into_iter()
+                    .map(|i| PendingInviteView {
+                        alliance_id: i.alliance.0.to_string(),
+                        name: i.alliance_name,
+                        tag: i.alliance_tag,
+                    })
+                    .collect(),
+                Err(e) => {
+                    tracing::error!(error = %e, "pending invites lookup failed");
+                    return server_error();
+                }
+            };
+            page(&AllianceTemplate {
+                in_alliance: false,
+                can_found: rules.can_found(embassy),
+                embassy_level: embassy,
+                found_level: rules.found_embassy_level,
+                join_level: rules.join_embassy_level,
+                pending,
+                name: String::new(),
+                tag: String::new(),
+                my_role: "",
+                is_founder: false,
+                can_invite: false,
+                can_diplomacy: false,
+                can_expel: false,
+                can_manage: false,
+                roster: Vec::new(),
+                diplomacy: Vec::new(),
+                allied_villages: Vec::new(),
+                incoming: Vec::new(),
+                outgoing_invites: Vec::new(),
+            })
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "alliance view failed");
+            server_error()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct FoundForm {
+    name: String,
+    tag: String,
+}
+
+pub async fn alliance_found(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<FoundForm>,
+) -> Response {
+    if let Err(e) = found_alliance(
+        state.accounts.as_ref(),
+        state.alliance_rules.as_ref(),
+        player,
+        form.name.trim(),
+        form.tag.trim(),
+    )
+    .await
+    {
+        tracing::warn!(error = %e, "found alliance rejected");
+    }
+    Redirect::to("/alliance").into_response()
+}
+
+#[derive(Deserialize)]
+pub struct UsernameForm {
+    username: String,
+}
+
+/// Resolve a username to a player id, or `None` (logged) if it does not exist.
+async fn resolve_player(state: &AppState, username: &str) -> Option<PlayerId> {
+    match state.accounts.find_user_by_username(username.trim()).await {
+        Ok(Some(u)) => Some(u.id),
+        Ok(None) => None,
+        Err(e) => {
+            tracing::error!(error = %e, "username lookup failed");
+            None
+        }
+    }
+}
+
+pub async fn alliance_invite(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<UsernameForm>,
+) -> Response {
+    if let Some(invitee) = resolve_player(&state, &form.username).await
+        && let Err(e) = invite_player(state.accounts.as_ref(), player, invitee).await
+    {
+        tracing::warn!(error = %e, "invite rejected");
+    }
+    Redirect::to("/alliance").into_response()
+}
+
+pub async fn alliance_revoke(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<UsernameForm>,
+) -> Response {
+    if let Some(invitee) = resolve_player(&state, &form.username).await
+        && let Err(e) = revoke_invite(state.accounts.as_ref(), player, invitee).await
+    {
+        tracing::warn!(error = %e, "revoke rejected");
+    }
+    Redirect::to("/alliance").into_response()
+}
+
+#[derive(Deserialize)]
+pub struct RespondForm {
+    alliance: String,
+    accept: bool,
+}
+
+pub async fn alliance_respond(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<RespondForm>,
+) -> Response {
+    if let Ok(id) = form.alliance.parse::<u128>()
+        && let Err(e) = respond_invite(
+            state.accounts.as_ref(),
+            state.alliance_rules.as_ref(),
+            player,
+            eperica_domain::AllianceId(id),
+            form.accept,
+        )
+        .await
+    {
+        tracing::warn!(error = %e, "respond invite rejected");
+    }
+    Redirect::to("/alliance").into_response()
+}
+
+pub async fn alliance_leave(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+    if let Err(e) = leave_alliance(state.accounts.as_ref(), player).await {
+        tracing::warn!(error = %e, "leave rejected");
+    }
+    Redirect::to("/alliance").into_response()
+}
+
+pub async fn alliance_disband(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+) -> Response {
+    if let Err(e) = disband_alliance(state.accounts.as_ref(), player).await {
+        tracing::warn!(error = %e, "disband rejected");
+    }
+    Redirect::to("/alliance").into_response()
+}
+
+#[derive(Deserialize)]
+pub struct TargetForm {
+    target: String,
+}
+
+pub async fn alliance_expel(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<TargetForm>,
+) -> Response {
+    if let Ok(id) = form.target.parse::<u128>()
+        && let Err(e) = expel_member(state.accounts.as_ref(), player, PlayerId(id)).await
+    {
+        tracing::warn!(error = %e, "expel rejected");
+    }
+    Redirect::to("/alliance").into_response()
+}
+
+pub async fn alliance_transfer(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<TargetForm>,
+) -> Response {
+    if let Ok(id) = form.target.parse::<u128>()
+        && let Err(e) = transfer_founder(state.accounts.as_ref(), player, PlayerId(id)).await
+    {
+        tracing::warn!(error = %e, "transfer rejected");
+    }
+    Redirect::to("/alliance").into_response()
+}
+
+#[derive(Deserialize)]
+pub struct RoleForm {
+    target: String,
+    role: String,
+    #[serde(default)]
+    invite: bool,
+    #[serde(default)]
+    expel: bool,
+    #[serde(default)]
+    diplomacy: bool,
+    #[serde(default)]
+    announce: bool,
+    #[serde(default)]
+    manage_roles: bool,
+}
+
+pub async fn alliance_role(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<RoleForm>,
+) -> Response {
+    let Ok(id) = form.target.parse::<u128>() else {
+        return Redirect::to("/alliance").into_response();
+    };
+    let role = match form.role.as_str() {
+        "leader" => AllianceRole::Leader,
+        _ => AllianceRole::Member,
+    };
+    let mut rights = RightSet::empty();
+    if form.invite {
+        rights = rights.with(AllianceRight::Invite);
+    }
+    if form.expel {
+        rights = rights.with(AllianceRight::Expel);
+    }
+    if form.diplomacy {
+        rights = rights.with(AllianceRight::Diplomacy);
+    }
+    if form.announce {
+        rights = rights.with(AllianceRight::Announce);
+    }
+    if form.manage_roles {
+        rights = rights.with(AllianceRight::ManageRoles);
+    }
+    if let Err(e) =
+        set_member_role(state.accounts.as_ref(), player, PlayerId(id), role, rights).await
+    {
+        tracing::warn!(error = %e, "role change rejected");
+    }
+    Redirect::to("/alliance").into_response()
+}
+
+#[derive(Deserialize)]
+pub struct DiplomacyForm {
+    other: String,
+    command: String,
+}
+
+pub async fn alliance_diplomacy(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<DiplomacyForm>,
+) -> Response {
+    let Ok(id) = form.other.parse::<u128>() else {
+        return Redirect::to("/alliance").into_response();
+    };
+    let command = match form.command.as_str() {
+        "declare_war" => DiplomacyCommand::DeclareWar,
+        "propose_confederation" => DiplomacyCommand::ProposeConfederation,
+        "accept_confederation" => DiplomacyCommand::AcceptConfederation,
+        "cancel" => DiplomacyCommand::Cancel,
+        _ => return Redirect::to("/alliance").into_response(),
+    };
+    if let Err(e) = set_diplomacy(
+        state.accounts.as_ref(),
+        player,
+        eperica_domain::AllianceId(id),
+        command,
+    )
+    .await
+    {
+        tracing::warn!(error = %e, "diplomacy change rejected");
+    }
+    Redirect::to("/alliance").into_response()
 }

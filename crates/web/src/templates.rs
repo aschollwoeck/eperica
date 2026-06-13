@@ -532,3 +532,95 @@ pub struct VillageTemplate {
     /// Building build rows.
     pub buildings: Vec<BuildRow>,
 }
+
+// ---------------------------------------------------------------- alliances (015)
+
+/// A pending invitation shown to the invited player (AC3/AC11).
+pub struct PendingInviteView {
+    /// The inviting alliance's id (string — the form value).
+    pub alliance_id: String,
+    /// Its name.
+    pub name: String,
+    /// Its tag.
+    pub tag: String,
+}
+
+/// One roster row (AC8/AC11).
+pub struct RosterRowView {
+    /// The member's id (string — the management form value).
+    pub player_id: String,
+    /// Their login name.
+    pub name: String,
+    /// Their role (Founder / Leader / Member).
+    pub role: &'static str,
+    /// A comma-separated rights summary (empty for none).
+    pub rights: String,
+    /// Whether this row is the viewer.
+    pub is_self: bool,
+}
+
+/// One diplomacy row (AC7/AC11).
+pub struct DiploRowView {
+    /// The other alliance's id (string — the form value).
+    pub other_id: String,
+    /// Its name + tag.
+    pub other: String,
+    /// A human label for the stance (e.g. "War", "Confederation", "Confederation (proposed by them)").
+    pub label: String,
+    /// Whether the viewer's alliance can accept a pending proposal from the other side.
+    pub can_accept: bool,
+}
+
+/// An allied village in the shared list (AC8).
+pub struct AlliedVillageView {
+    /// The owner's name.
+    pub owner: String,
+    pub x: i32,
+    pub y: i32,
+}
+
+/// An incoming hostile movement against an allied village (AC9).
+pub struct IncomingView {
+    pub x: i32,
+    pub y: i32,
+    /// Arrival instant (ms) — rendered client-side.
+    pub arrive_ms: i64,
+}
+
+/// A pending invitation the alliance has sent (the management view, AC11).
+pub struct OutgoingInviteView {
+    /// The invited player's name (the revoke form value).
+    pub invitee_name: String,
+}
+
+#[derive(Template)]
+#[template(path = "alliance.html")]
+pub struct AllianceTemplate {
+    /// Whether the viewer is in an alliance (selects which half of the page renders).
+    pub in_alliance: bool,
+    // --- when NOT in an alliance ---
+    /// Whether the viewer's Embassy is high enough to found (shows the form).
+    pub can_found: bool,
+    /// The viewer's highest Embassy level.
+    pub embassy_level: u8,
+    /// The Embassy level required to found.
+    pub found_level: u8,
+    /// The Embassy level required to join.
+    pub join_level: u8,
+    /// Pending invitations addressed to the viewer.
+    pub pending: Vec<PendingInviteView>,
+    // --- when in an alliance ---
+    pub name: String,
+    pub tag: String,
+    pub my_role: &'static str,
+    pub is_founder: bool,
+    pub can_invite: bool,
+    pub can_diplomacy: bool,
+    pub can_expel: bool,
+    pub can_manage: bool,
+    pub roster: Vec<RosterRowView>,
+    pub diplomacy: Vec<DiploRowView>,
+    pub allied_villages: Vec<AlliedVillageView>,
+    pub incoming: Vec<IncomingView>,
+    pub outgoing_invites: Vec<OutgoingInviteView>,
+}

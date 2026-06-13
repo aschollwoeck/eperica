@@ -417,6 +417,10 @@ pub async fn set_diplomacy<R: AllianceRepository>(
 pub struct AllianceOverview {
     /// The viewer's own membership (alliance + role + rights).
     pub membership: Membership,
+    /// The alliance's name.
+    pub name: String,
+    /// The alliance's tag.
+    pub tag: String,
     /// The viewer's alliance roster (members + roles/rights).
     pub roster: Vec<RosterEntry>,
     /// The viewer's alliance's diplomacy relationships.
@@ -439,6 +443,10 @@ pub async fn alliance_view<R: AllianceRepository>(
     let Some(membership) = repo.alliance_of(viewer).await? else {
         return Ok(None);
     };
+    let (name, tag) = repo
+        .alliance_summary(membership.alliance)
+        .await?
+        .unwrap_or_default();
     let mut allied = vec![membership.alliance];
     allied.extend(repo.confederate_alliances(membership.alliance).await?);
     let roster = repo.roster(membership.alliance).await?;
@@ -448,6 +456,8 @@ pub async fn alliance_view<R: AllianceRepository>(
     let incoming = repo.incoming_against(&village_ids).await?;
     Ok(Some(AllianceOverview {
         membership,
+        name,
+        tag,
         roster,
         diplomacy,
         allied_villages,
@@ -523,6 +533,15 @@ mod tests {
                 .values()
                 .filter(|m| m.alliance == alliance)
                 .count() as u32)
+        }
+        async fn alliance_summary(
+            &self,
+            alliance: AllianceId,
+        ) -> Result<Option<(String, String)>, RepoError> {
+            Ok(Some((
+                format!("a{}", alliance.0),
+                format!("T{}", alliance.0),
+            )))
         }
         async fn roster(&self, alliance: AllianceId) -> Result<Vec<RosterEntry>, RepoError> {
             Ok(self

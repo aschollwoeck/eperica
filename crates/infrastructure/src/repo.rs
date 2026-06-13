@@ -245,6 +245,7 @@ fn parse_building(s: &str) -> Result<BuildingKind, RepoError> {
         "warehouse" => Ok(BuildingKind::Warehouse),
         "granary" => Ok(BuildingKind::Granary),
         "marketplace" => Ok(BuildingKind::Marketplace),
+        "embassy" => Ok(BuildingKind::Embassy),
         "wall" => Ok(BuildingKind::Wall),
         "barracks" => Ok(BuildingKind::Barracks),
         "academy" => Ok(BuildingKind::Academy),
@@ -636,7 +637,10 @@ impl AccountRepository for PgAccountRepository {
         let ys: Vec<i32> = coords.iter().map(|c| c.y).collect();
         // Exact match on the requested tiles via the (world_id, x, y) unique index.
         let rows = sqlx::query(
-            "SELECT v.x, v.y, u.username FROM villages v JOIN users u ON u.id = v.owner_id \
+            "SELECT v.x, v.y, u.username, al.tag AS alliance_tag \
+             FROM villages v JOIN users u ON u.id = v.owner_id \
+             LEFT JOIN alliance_members am ON am.player_id = v.owner_id \
+             LEFT JOIN alliances al ON al.id = am.alliance_id \
              WHERE v.world_id = $1 AND (v.x, v.y) IN (SELECT * FROM unnest($2::int[], $3::int[]))",
         )
         .bind(Uuid::from_u128(self.world_id.0))
@@ -650,9 +654,11 @@ impl AccountRepository for PgAccountRepository {
                 let x: i32 = r.try_get("x").map_err(backend)?;
                 let y: i32 = r.try_get("y").map_err(backend)?;
                 let owner_name: String = r.try_get("username").map_err(backend)?;
+                let alliance_tag: Option<String> = r.try_get("alliance_tag").map_err(backend)?;
                 Ok(VillageMarker {
                     coordinate: Coordinate::new(x, y),
                     owner_name,
+                    alliance_tag,
                 })
             })
             .collect()
@@ -3861,6 +3867,22 @@ impl AllianceRepository for PgAccountRepository {
                 .await
                 .map_err(backend)?;
         Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
+    async fn alliance_summary(
+        &self,
+        alliance: AllianceId,
+    ) -> Result<Option<(String, String)>, RepoError> {
+        let row = sqlx::query("SELECT name, tag FROM alliances WHERE id = $1")
+            .bind(Uuid::from_u128(alliance.0))
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(backend)?;
+        let Some(r) = row else { return Ok(None) };
+        Ok(Some((
+            r.try_get("name").map_err(backend)?,
+            r.try_get("tag").map_err(backend)?,
+        )))
     }
 
     async fn roster(&self, alliance: AllianceId) -> Result<Vec<RosterEntry>, RepoError> {
