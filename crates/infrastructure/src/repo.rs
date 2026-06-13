@@ -8190,6 +8190,88 @@ mod tests {
         );
     }
 
+    // 013 AC1 (migration boundary): a player whose account predates the culture accumulator (no
+    // `player_culture` row) must NOT be handed a CP windfall. The read anchors a missing row at *now*
+    // (zero CP), never the epoch — anchoring at the epoch would settle rate x decades of culture on the
+    // first read and vault the player past the expansion thresholds. The 0021 backfill seeds the row.
+    #[tokio::test]
+    async fn pre_013_account_without_a_culture_row_gets_no_windfall() {
+        let _ = dotenvy::dotenv();
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping culture-backfill test: DATABASE_URL not set");
+            return;
+        };
+        let pool = crate::create_pool(&url).await.expect("connect");
+        crate::run_migrations(&pool).await.expect("migrate");
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let econ = crate::economy_rules().expect("economy rules");
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            econ.starting_amounts,
+        );
+        let crules = crate::culture_rules().expect("culture rules");
+        let template = crate::starting_village().unwrap();
+        let uname = format!("legacy_{}", Uuid::new_v4().simple());
+        let user = repo
+            .create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &template,
+            )
+            .await
+            .expect("create account");
+
+        // Reproduce the legacy state: drop the seeded row so the account looks pre-013.
+        sqlx::query("DELETE FROM player_culture WHERE player_id = $1")
+            .bind(Uuid::from_u128(user.id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // The read anchors at *now* (a recent ms timestamp), not the epoch, and yields zero CP.
+        let (value, anchor) = repo.player_culture(user.id).await.unwrap();
+        assert_eq!(value, 0, "a missing row reads as zero CP");
+        assert!(
+            anchor.0 > 1_500_000_000_000,
+            "a missing row anchors at now, not the epoch (got {})",
+            anchor.0
+        );
+        let view = eperica_application::load_culture(&repo, &repo, &crules, crate::now(), user.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            view.cp, 0,
+            "no windfall — CP starts at zero, not rate x decades"
+        );
+
+        // The 0021 backfill (idempotently) seeds the row anchored at now.
+        sqlx::query(
+            "INSERT INTO player_culture (player_id, value, updated_at) \
+             SELECT id, 0, now() FROM users WHERE id = $1 ON CONFLICT (player_id) DO NOTHING",
+        )
+        .bind(Uuid::from_u128(user.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (value, anchor) = repo.player_culture(user.id).await.unwrap();
+        assert_eq!(value, 0);
+        assert!(
+            anchor.0 > 1_500_000_000_000,
+            "backfilled row anchored at now"
+        );
+    }
+
     // 013 AC4/AC6/AC7/AC8/AC12: a settle founds a new, independent village on a free valley with a free
     // slot; a settle whose target is taken in flight bounces the settlers home.
     #[tokio::test]
