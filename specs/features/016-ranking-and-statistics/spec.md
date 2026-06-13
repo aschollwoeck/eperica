@@ -102,10 +102,13 @@ need snapshots and land with 017.
 
 ## Acceptance criteria
 
-> Rankings are **public** (GDD §11.2) and **derived on read** from persisted state (P1/P2): no ranking
-> tick, no denormalized rank table, no points counter. The combat amendment (AC3) is a
-> **server-authoritative** (P4), exactly-once outcome of battle resolution (P1 due-event), reproducible
-> from persisted rows (P2/P6). Balance numbers (per-unit point value, window lengths, page size, quadrant
+> Rankings are **public** (GDD §11.2). **Population** is **derived on read** from current build state
+> (P1). **Attack/defense points and loot** are a **battle's persisted yield** — computed **once at
+> resolution** and stored as facts (exactly like `loot_*`), so leaderboards **sum persisted facts**
+> rather than re-valuing history; this is also faithful (points are awarded when the battle happens) and
+> survives later balance tuning (P2/P6). There is **no** ranking tick, **no** separate rank/aggregate
+> cache. The combat amendment (AC3) is a **server-authoritative** (P4), exactly-once outcome of battle
+> resolution (P1 due-event). Balance numbers (per-unit point value, window lengths, page size, quadrant
 > rule) are **config** (P7). Read paths respect the latency budget (P11).
 
 - **AC1 — Population is the player metric (derived).** Given a player owning villages whose built
@@ -172,12 +175,15 @@ need snapshots and land with 017.
   member's public contribution. It exposes no member's private state beyond existing 015 shared-visibility
   rules and the public ranking metrics.
 
-- **AC11 — Authority, derivation & determinism (P2/P4/P6).** Rankings and stat pages are computed
-  **server-side** from **persisted rows** only; the client cannot influence ranking, page beyond the
-  bound, or read hidden state through these views. Recomputing a board over the same data + same
-  window/scope yields the **same** ordering. No ranking value is stored as authoritative — persisted
-  battles/contributions/villages/memberships are the single source of truth (P5). The AC3 reports are the
-  one new persisted **fact** (a defender's contribution), written once at resolution (P4).
+- **AC11 — Authority, persistence & determinism (P2/P4/P5/P6).** A battle's **point yield** — its attack
+  points and each defender's defense points — and the per-defender contribution (AC3) are computed and
+  **persisted once at resolution** as facts about that battle (alongside the existing `loot_*`),
+  server-authoritatively (P4) and exactly-once. **Leaderboards and stat pages sum these persisted facts**
+  (and derive population on read); the client cannot influence ranking, page beyond the bound, or read
+  hidden state. There is **no** separate authoritative rank/aggregate cache — the persisted
+  battles/contributions/villages/memberships are the single source of truth (P5). Recomputing a board
+  over the same persisted data + same window/scope yields the **same** ordering (P2/P6); a later balance
+  change does not rewrite already-awarded points.
 
 - **AC12 — Reinforcer report visibility & read performance (P11/§7.3).** A reinforcing player may read
   **their own** report for a battle at a village they do **not** own (the troops were theirs); they do
@@ -218,11 +224,12 @@ never leak private game state (troops, resources — P4/§7.3), and no role may 
 
 ## Decisions
 
-- **Ranking views are read-side derivations (P1/P2/P5).** No `ranking`/`points` table, no caches, no
-  ranking tick. Boards/stat pages are **queries** over villages (population), battle data (points, loot),
-  per-defender contributions (defense shares), and `alliance_members` (aggregates), computed at request
-  time and deterministically reproducible (P2/P6).
-- **Per-defender contribution is the one new persisted fact (AC3).** The resolver already computes each
+- **Points are a persisted battle fact; rankings sum them (P2/P5/P11).** A battle's attack points and each
+  defender's defense points are computed at resolution and **persisted** (like `loot_*`). Leaderboards are
+  **queries that `SUM` those facts** (and derive **population** on read) over a window/scope, bounded and
+  indexed — **no** separate `ranking`/rank-cache table, **no** ranking tick. Deterministically
+  reproducible from the persisted facts (P2/P6); points are *not* recomputed against later balance.
+- **Per-defender contribution is a new persisted fact (AC3).** The resolver already computes each
   reinforcement group's forces and losses; 016 **persists** them as a per-defender contribution
   alongside the battle (e.g. a `battle_defenders` row per defending player: battle, player, defending
   village, forces, losses, defensive value), written **exactly once** in the same crash-safe transaction
