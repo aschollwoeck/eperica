@@ -624,6 +624,10 @@ where
                 defender_losses: defender_losses_total,
                 loot,
                 razed,
+                // The conquest step (014) is wired in T5; an ordinary battle records no loyalty change.
+                loyalty_before: None,
+                loyalty_after: None,
+                conquered: false,
             },
             scouted,
             scout_target,
@@ -631,6 +635,7 @@ where
             loot,
             target_debit,
             razed,
+            loyalty: None,
         })
         .await?;
     Ok(Some(target.id))

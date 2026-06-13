@@ -36,7 +36,7 @@ math.
 
 ## Persistence — the transfer
 
-- [ ] **T4 — Ownership transfer (one tx).** `apply_battle` gains the **conquest branch**, guarded on the
+- [x] **T4 — Ownership transfer (one tx).** `apply_battle` gains the **conquest branch**, guarded on the
   defender still owning the village: re-point `owner_id`; set `loyalty = post_conquest`, `is_capital =
   false`; empty the garrison; **return** third-party reinforcements (007); **cancel** the old owner's
   pending build/unit/training orders + outgoing movements for the village; **re-anchor both** players'
