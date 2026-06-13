@@ -3,7 +3,6 @@
 //! progress and persisting grants is the application/infrastructure's job.
 
 use crate::economy::ResourceAmounts;
-use crate::units::UnitId;
 use std::collections::HashSet;
 
 /// A catalogue entry's stable id (also the persisted/granted key).
@@ -83,11 +82,6 @@ pub fn newly_earned<'a>(
         .iter()
         .filter(|d| !held.contains(&d.id) && met(d, progress))
         .collect()
-}
-
-/// A unit roster's size for the `ResearchAllUnits` target (helper for the application).
-pub fn researchable_unit_count(roster: &[UnitId]) -> i64 {
-    roster.len() as i64
 }
 
 #[cfg(test)]

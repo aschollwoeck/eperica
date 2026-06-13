@@ -20,11 +20,15 @@ granted as players cross thresholds. This slice also **closes the 016 deferral**
 - **Real-time period (the decided faithful exception, P7).** `period_secs` (config, default 7 days) is
   applied in **real time** — `period_index`/`period_start` do not scale by world speed. Faithful to
   Travian's wall-clock weekly medals; world speed still scales everything the medals are *awarded from*.
-- **Idempotent settlement (P1/P2).** Settling period `P` writes one population snapshot per player (PK
-  `(world, player, period)`) and awards each category's top-N medals (UNIQUE `(period, category, rank)`).
-  Both use `ON CONFLICT DO NOTHING`, so a crash-resume re-run of `P` is a no-op. The settlement reads the
-  conflict boards with a **period-bounded** window `[period_start(P), period_start(P+1))` (the 016
-  `conflict_board` gained an `until` bound) so awards are reproducible even on late catch-up.
+- **Atomic, idempotent settlement (P1/P2).** Settling period `P` happens in **one transaction**
+  (`MedalRepository::settle_period`): write the snapshot (PK `(world, player, period)`), compute the
+  **climber** medals from that just-written snapshot, and award all medals (UNIQUE `(period, category,
+  rank)`) — commit together. This is essential: the watermark is `MAX(population_snapshots.period)`, so
+  the snapshot must not commit without the medals, or a failure between them would advance the watermark
+  and lose `P`'s medals forever. All inserts are `ON CONFLICT DO NOTHING`, so a re-settle of `P` is a
+  no-op. The non-climber boards (attacker/defender/raider/alliance) are read before the transaction with
+  a **period-bounded** window `[period_start(P), period_start(P+1))` (the 016 `conflict_board` gained an
+  `until` bound) so awards are reproducible even on late catch-up.
 - **Medal categories.** Attacker / defender / raider (valued battle facts over the period), climber
   (snapshot delta `P − (P−1)`; the first period only sets the baseline), and the three alliance
   aggregates. Medals are **permanent** facts (`medals` row, polymorphic player/alliance subject), never

@@ -2265,6 +2265,20 @@ pub trait MedalRepository: Send + Sync {
     /// Award the given medals for `period` (idempotent via the per-period (category, rank) uniqueness).
     async fn award_medals(&self, period: i64, awards: &[MedalAward]) -> Result<(), RepoError>;
 
+    /// Settle a period **atomically** (017 AC6/P2): in one transaction, write the population snapshot,
+    /// compute the **climber** medals from that just-written snapshot (when `climber_limit` is `Some`),
+    /// and award them together with `awards` (the pre-computed non-climber medals). Because the
+    /// snapshot advances the `MAX(period)` watermark, it must commit *with* the medals — so a failure
+    /// re-settles the whole period rather than losing its medals. Idempotent (snapshot PK + medal
+    /// uniqueness).
+    async fn settle_period(
+        &self,
+        econ: &EconomyRules,
+        period: i64,
+        climber_limit: Option<i64>,
+        awards: &[MedalAward],
+    ) -> Result<(), RepoError>;
+
     /// A subject's held medals (017 AC5), newest first.
     async fn medals_for(
         &self,

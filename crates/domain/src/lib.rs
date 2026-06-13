@@ -29,7 +29,6 @@ pub mod world;
 
 pub use achievements::{
     AchievementDef, AchievementId, AchievementKind, PlayerProgress, Reward, met, newly_earned,
-    researchable_unit_count,
 };
 pub use alliance::{
     AllianceId, AllianceRight, AllianceRole, AllianceRules, DiplomacyAction, DiplomacyError,

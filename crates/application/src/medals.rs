@@ -39,8 +39,10 @@ where
     Ok(settled)
 }
 
-/// Settle one period: snapshot population, then award each category's top-N medals. Both steps are
-/// idempotent (snapshot PK / medal (period,category,rank) uniqueness), so this is safe to re-run.
+/// Settle one period: gather each non-climber category's top-N from the period-windowed boards, then
+/// hand them — plus the climber limit — to the repository's **atomic** `settle_period`, which writes
+/// the snapshot, the climber medals (from that snapshot), and these medals in one transaction (AC6).
+/// The board reads happen before the transaction; they don't depend on this period's snapshot.
 async fn settle_period<R>(
     repo: &R,
     econ: &EconomyRules,
@@ -51,13 +53,11 @@ async fn settle_period<R>(
 where
     R: RankingRepository + MedalRepository,
 {
-    // Snapshot first so the climber category can read this period's snapshot.
-    repo.snapshot_population(econ, period).await?;
-
     let since = period_start(period, world_start, rules.period_secs);
     let until = period_start(period + 1, world_start, rules.period_secs);
     let n = rules.per_category as i64;
     let mut awards = Vec::new();
+    let mut climber_limit = None;
 
     for &category in &rules.categories {
         match category {
@@ -79,20 +79,11 @@ where
                     });
                 }
             }
+            // The climber medals are computed inside the atomic settle (from the snapshot it writes).
+            // No prior snapshot in period 0 ⇒ no climber medal (AC4).
             MedalCategory::Climber => {
-                // No prior snapshot in period 0 ⇒ no climber medal (AC4).
                 if period > 0 {
-                    let rows = repo
-                        .climber_board(period, period - 1, BoardScope::World, n)
-                        .await?;
-                    for (i, row) in rows.into_iter().enumerate() {
-                        awards.push(MedalAward {
-                            category,
-                            rank: i + 1,
-                            subject_kind: MedalSubjectKind::Player,
-                            subject_id: row.player.0,
-                        });
-                    }
+                    climber_limit = Some(n);
                 }
             }
             MedalCategory::AlliancePopulation => {
@@ -115,7 +106,8 @@ where
         }
     }
 
-    repo.award_medals(period, &awards).await
+    repo.settle_period(econ, period, climber_limit, &awards)
+        .await
 }
 
 fn push_alliance(
