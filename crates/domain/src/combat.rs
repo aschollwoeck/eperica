@@ -688,6 +688,21 @@ mod tests {
         assert_eq!(p.ram, 60.0 * 2.0);
     }
 
+    // 014 AC2: an administrator (the Expansion-role conqueror) **fights** — it contributes attack and
+    // defence in the main battle, unlike a Scout (reconnaissance, resolved separately).
+    #[test]
+    fn administrators_are_combatants() {
+        let roster = vec![unit("senator", UnitRole::Expansion, 50, 40, 30, None)];
+        let troops = vec![(UnitId("senator".into()), 3)];
+        // Attack: the administrator adds to infantry power.
+        let p = attack_power(&troops, &roster, &[], &rules());
+        assert_eq!(p.infantry, 50.0 * 3.0);
+        // Defence: the administrator defends (both infantry and cavalry defence accumulate).
+        let mut totals = (0.0, 0.0);
+        add_defense(&mut totals, &troops, &roster, &[], &rules());
+        assert_eq!(totals, (40.0 * 3.0, 30.0 * 3.0));
+    }
+
     #[test]
     fn apply_losses_rounds_half_to_even_and_conserves() {
         // Round half to even (banker's). The discriminating ties: 5×0.5 = 2.5 → 2 (down to even;

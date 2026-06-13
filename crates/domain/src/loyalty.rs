@@ -8,6 +8,7 @@
 //! a non-capital target — the village is **conquered** (ownership transfers, 014). Everything here is
 //! pure over numbers + injected [`LoyaltyRules`] (P3).
 
+use crate::units::UnitId;
 use crate::world::GameSpeed;
 
 /// The maximum (and starting) loyalty a village can hold.
@@ -26,6 +27,29 @@ pub struct LoyaltyRules {
     pub drop_min: i64,
     /// Maximum loyalty a single surviving administrator removes (seeded draw, P6).
     pub drop_max: i64,
+    /// The unit ids that **conquer** — the tribes' administrators (Senator/Chief/Chieftain). They are
+    /// ordinary `Expansion`-role combatants (they fight, unlike settlers); this list is what marks a
+    /// surviving unit as an administrator for the loyalty step, without overloading the unit role.
+    pub administrator_ids: Vec<String>,
+}
+
+impl LoyaltyRules {
+    /// Whether `id` is an administrator (a conqueror) per the balance list.
+    #[must_use]
+    pub fn is_administrator(&self, id: &UnitId) -> bool {
+        self.administrator_ids.iter().any(|a| a == id.as_str())
+    }
+}
+
+/// How many administrators a composition holds — the input to the loyalty drop (013/014). Counts every
+/// unit whose id is an administrator id; `0` for an attack carrying none.
+#[must_use]
+pub fn administrator_count(troops: &[(UnitId, u32)], rules: &LoyaltyRules) -> u32 {
+    troops
+        .iter()
+        .filter(|(id, _)| rules.is_administrator(id))
+        .map(|(_, n)| *n)
+        .sum()
 }
 
 /// Regenerate loyalty toward [`MAX_LOYALTY`] over `elapsed_secs` at the **speed-scaled** rate, clamped
@@ -54,7 +78,25 @@ mod tests {
             regen_per_hour: 5,
             drop_min: 20,
             drop_max: 30,
+            administrator_ids: vec!["senator".to_owned(), "chieftain".to_owned()],
         }
+    }
+
+    // AC2/AC3: administrators are identified by the balance list (not the role), and counted in a
+    // composition; settlers and ordinary troops are not administrators.
+    #[test]
+    fn administrators_are_identified_and_counted() {
+        let r = rules();
+        assert!(r.is_administrator(&UnitId("senator".to_owned())));
+        assert!(r.is_administrator(&UnitId("chieftain".to_owned())));
+        assert!(!r.is_administrator(&UnitId("settler".to_owned())));
+        assert!(!r.is_administrator(&UnitId("legionnaire".to_owned())));
+        let troops = vec![
+            (UnitId("legionnaire".to_owned()), 50),
+            (UnitId("senator".to_owned()), 2),
+        ];
+        assert_eq!(administrator_count(&troops, &r), 2);
+        assert_eq!(administrator_count(&[], &r), 0);
     }
 
     // AC1/AC9: loyalty regenerates toward the maximum at the speed-scaled rate and clamps at 100.

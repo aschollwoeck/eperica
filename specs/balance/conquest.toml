@@ -15,3 +15,8 @@ loyalty_regen_per_hour = 2
 # Loyalty a single surviving administrator removes — a seeded draw in [min, max] (the luck RNG, P6).
 loyalty_drop_min = 20
 loyalty_drop_max = 30
+
+# The tribes' administrator (conqueror) unit ids — Roman Senator, Teuton Chief, Gaul Chieftain. A
+# surviving unit with one of these ids reduces the target's loyalty (they are ordinary Expansion-role
+# combatants that fight in the battle; this list, not the role, marks them as conquerors).
+administrator_ids = ["senator", "chief", "chieftain"]

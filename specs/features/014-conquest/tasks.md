@@ -16,12 +16,14 @@ math.
   the `Village` read and exposes `set_loyalty(village, value, at)`. Domain + DB tests: loyalty reads back,
   regenerates toward 100, and clamps (**AC1**, **AC9**).
 
-- [ ] **T2 — Administrators + the `conquers` flag.** `UnitSpec.conquers: bool` (serde default `false`);
-  `units.toml` sets `conquers = true` on `senator`/`chief`/`chieftain`. Confirm administrators already
-  contribute to `attack_power`/`add_defense` (Expansion falls through the combatant path); **decide**
-  the 013 settler-defence intent — if hardening is needed, exclude **non-conquering** Expansion from
-  `add_defense` behind the flag, with a test guarding 009 behaviour. Tests: administrators load with
-  `conquers=true` and fight; settlers do not conquer (**AC2**).
+- [x] **T2 — Administrators (the conqueror id-set).** Identify administrators by a **balance
+  `administrator_ids`** list (Senator/Chief/Chieftain) on `LoyaltyRules` + `conquest.toml` — not a
+  `UnitSpec` flag (that would churn all 27 `UnitSpec` constructors for one bool, and administrators are
+  already named per tribe). `LoyaltyRules::is_administrator` + `administrator_count`. Administrators
+  **already** fight (Expansion falls through `attack_power`/`add_defense`); confirmed by a domain test —
+  **no combat-math change** (the 013 settler-defence intent is left as a 013 carry-over, out of 014
+  scope). Tests: administrators are identified/counted; each id is a real Expansion combatant trained in
+  a Residence; an Expansion administrator contributes attack + defence (**AC2**).
 
 ## Domain — the conquest decision
 

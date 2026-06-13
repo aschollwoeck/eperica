@@ -43,14 +43,15 @@ combat math.
   - `conquest_outcome(loyalty_now, drop, is_capital, attacker_has_slot) -> ConquestOutcome` — the pure
     decision: a **capital** drops nothing and never transfers; otherwise `new = max(0, loyalty_now −
     drop)`; `transferred = new == 0 && attacker_has_slot`. Returns `{ new_loyalty, transferred }`.
-- `units.rs` — add a `conquers: bool` to `UnitSpec` (administrators `true`; settlers/others `false`),
-  so the resolver can count **surviving administrators** without role overloading (both administrators
-  and settlers are `UnitRole::Expansion`). **Verify** administrators already contribute attack/defence
-  (they do: `attack_power`/`add_defense` only exclude `Scout`/`Wild`, so the `Expansion` administrator
-  falls through to the combatant path — no change needed; settlers stay effectively inert via attack 0,
-  and their defence is irrelevant here as settling never garrisons a contested village). Confirm and, if
-  the 013 "settlers provide no defence" intent needs hardening, exclude **non-conquering Expansion** from
-  `add_defense` (small, behind the `conquers` flag) — flagged as a risk below.
+- `loyalty.rs` — administrators are identified by a **balance `administrator_ids`** list on
+  `LoyaltyRules` (not a `UnitSpec` flag, which would churn all 27 `UnitSpec` constructors for one bool;
+  administrators are already tribe-named units): `LoyaltyRules::is_administrator(id)` +
+  `administrator_count(troops, rules)`, so the resolver counts **surviving administrators** by id without
+  role overloading (both administrators and settlers are `UnitRole::Expansion`). Administrators **already
+  contribute** attack/defence (`attack_power`/`add_defense` only exclude `Scout`/`Wild`, so the
+  `Expansion` administrator falls through to the combatant path — confirmed by a domain test, **no
+  combat-math change**). The 013 "settlers provide no defence" intent is a 013 carry-over left out of 014
+  scope (settlers never realistically garrison a contested village; attack 0 makes them inert on offence).
 
 ## Balance (`specs/balance/` + `infrastructure::balance`)
 

@@ -531,6 +531,7 @@ struct ConquestDto {
     loyalty_regen_per_hour: i64,
     loyalty_drop_min: i64,
     loyalty_drop_max: i64,
+    administrator_ids: Vec<String>,
 }
 
 /// Load the loyalty / conquest rules (014) from the embedded balance data.
@@ -545,6 +546,7 @@ pub fn loyalty_rules() -> Result<LoyaltyRules, BalanceError> {
         regen_per_hour: dto.loyalty_regen_per_hour,
         drop_min: dto.loyalty_drop_min,
         drop_max: dto.loyalty_drop_max,
+        administrator_ids: dto.administrator_ids,
     })
 }
 
@@ -1031,6 +1033,23 @@ mod tests {
         let speed = eperica_domain::GameSpeed::new(1.0).unwrap();
         assert!(regenerate_loyalty(50, 3600, &r, speed) > 50);
         assert_eq!(regenerate_loyalty(100, 36_000, &r, speed), MAX_LOYALTY);
+
+        // 014 AC2: each administrator id names a real roster unit that **fights** (Expansion role,
+        // attack > 0) and trains in a Residence/Palace — one per tribe.
+        assert!(!r.administrator_ids.is_empty());
+        let units = unit_rules().expect("unit rules");
+        for tribe in [Tribe::Romans, Tribe::Teutons, Tribe::Gauls] {
+            let admins: Vec<_> = units
+                .roster(tribe)
+                .iter()
+                .filter(|s| r.is_administrator(&s.id))
+                .collect();
+            assert_eq!(admins.len(), 1, "exactly one administrator for {tribe:?}");
+            let a = admins[0];
+            assert_eq!(a.role, UnitRole::Expansion);
+            assert!(a.attack > 0, "the administrator fights ({})", a.id.as_str());
+            assert_eq!(a.trained_in, BuildingKind::Residence);
+        }
     }
 
     #[test]
