@@ -6,9 +6,9 @@
 use async_trait::async_trait;
 use eperica_domain::{
     AllianceId, AllianceRole, BuildTarget, BuildingKind, Coordinate, DiplomacyStance,
-    DiplomacyStatus, EventKind, MovementKind, OasisBonus, OasisRules, PlayerId, QueueLane,
-    ResourceAmounts, RightSet, ScoutTarget, StartingVillage, Timestamp, TradeKind, Tribe,
-    UnitCounts, UnitId, UnitSpec, Village, VillageId,
+    DiplomacyStatus, EconomyRules, EventKind, MovementKind, OasisBonus, OasisRules, PlayerId,
+    Quadrant, QueueLane, ResourceAmounts, RightSet, ScoutTarget, StartingVillage, Timestamp,
+    TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
 };
 
 /// A village's public presence on the map: its tile and its owner's name (GDD §7.3 — layout and
@@ -2059,4 +2059,153 @@ pub trait StarvationRepository: Send + Sync {
         village: VillageId,
         reschedule_at: Option<Timestamp>,
     ) -> Result<(), RepoError>;
+}
+
+/// The scope of a leaderboard query (016 AC7): the whole world, or one map quadrant (filtered by the
+/// player's / alliance member's capital).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoardScope {
+    /// Every player/alliance in the world.
+    World,
+    /// Only those whose capital lies in the given quadrant.
+    Quadrant(Quadrant),
+}
+
+/// Which conflict metric a windowed board ranks by (016 AC5/AC6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictMetric {
+    /// Attack points — valued defender troops destroyed on the offensive.
+    Attack,
+    /// Defense points — the defender's split of valued attacker troops destroyed.
+    Defense,
+    /// Resources looted as the attacker (summed across the four resources).
+    Raided,
+}
+
+/// One ranked player on a leaderboard (016): the player, their public name, and the metric value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaderboardRow {
+    pub player: PlayerId,
+    pub name: String,
+    pub value: i64,
+}
+
+/// One ranked alliance on a leaderboard (016 AC8): the alliance, its name + tag, and the aggregate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AllianceLeaderboardRow {
+    pub alliance: AllianceId,
+    pub name: String,
+    pub tag: String,
+    pub value: i64,
+}
+
+/// A defender's own report for a battle they had troops in (016 AC3/AC12) — the reinforcer inbox row
+/// and a line of a player's stat-page battle history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefenderReport {
+    /// The battle this contribution belongs to.
+    pub battle_id: u128,
+    pub occurred_at: Timestamp,
+    /// The defending village these troops were stationed at (the owner's village).
+    pub at_village: VillageId,
+    /// Whether the viewer owned the defending village (vs. having reinforced it).
+    pub is_owner: bool,
+    /// The viewer's troops in the battle, and their losses.
+    pub forces: UnitCounts,
+    pub losses: UnitCounts,
+    /// The defense points the viewer earned.
+    pub defense_points: i64,
+}
+
+/// A player's public statistics (016 AC9): the headline metrics, derived from persisted state. Never
+/// includes private troop counts or stored resources (P4/§7.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerStats {
+    pub player: PlayerId,
+    pub name: String,
+    /// Total population across all the player's villages.
+    pub population: i64,
+    /// Public per-village breakdown: (village, coordinate, population) — villages are public by tile.
+    pub villages: Vec<(VillageId, Coordinate, i64)>,
+    pub attack_points: i64,
+    pub defense_points: i64,
+    /// Total resources looted as attacker (the four resources summed).
+    pub loot_total: i64,
+}
+
+/// An alliance's public statistics (016 AC10): aggregates over current members + their contributions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AllianceStats {
+    pub alliance: AllianceId,
+    pub name: String,
+    pub tag: String,
+    pub population: i64,
+    pub attack_points: i64,
+    pub defense_points: i64,
+    /// Per-member public contribution: (player, name, population, attack points, defense points).
+    pub members: Vec<(PlayerId, String, i64, i64, i64)>,
+}
+
+/// Read-only ranking & statistics queries (016): public leaderboards and stat pages, derived on read
+/// from persisted facts (population from build state; points/loot from the battle rows). Every board
+/// is bounded by a caller-supplied `limit` (P11); `since` is the window lower bound (`None` =
+/// all-time). Quadrant scope filters by the player's / member's capital (AC7).
+#[async_trait]
+pub trait RankingRepository: Send + Sync {
+    /// Players ranked by total population (AC1/AC2). Population is summed from current build levels
+    /// using `econ`'s per-level tables.
+    async fn population_board(
+        &self,
+        econ: &EconomyRules,
+        scope: BoardScope,
+        limit: i64,
+    ) -> Result<Vec<LeaderboardRow>, RepoError>;
+
+    /// Players ranked by a conflict metric over the window (AC5/AC6); zero-activity players omitted.
+    async fn conflict_board(
+        &self,
+        metric: ConflictMetric,
+        scope: BoardScope,
+        since: Option<Timestamp>,
+        limit: i64,
+    ) -> Result<Vec<LeaderboardRow>, RepoError>;
+
+    /// Alliances ranked by aggregate member population (AC8).
+    async fn alliance_population_board(
+        &self,
+        econ: &EconomyRules,
+        scope: BoardScope,
+        limit: i64,
+    ) -> Result<Vec<AllianceLeaderboardRow>, RepoError>;
+
+    /// Alliances ranked by aggregate member attack/defense points over the window (AC8).
+    async fn alliance_conflict_board(
+        &self,
+        metric: ConflictMetric,
+        scope: BoardScope,
+        since: Option<Timestamp>,
+        limit: i64,
+    ) -> Result<Vec<AllianceLeaderboardRow>, RepoError>;
+
+    /// A player's public statistics (AC9), or `None` if the player does not exist.
+    async fn player_stats(
+        &self,
+        econ: &EconomyRules,
+        player: PlayerId,
+    ) -> Result<Option<PlayerStats>, RepoError>;
+
+    /// An alliance's public statistics (AC10), or `None` if the alliance does not exist.
+    async fn alliance_stats(
+        &self,
+        econ: &EconomyRules,
+        alliance: AllianceId,
+    ) -> Result<Option<AllianceStats>, RepoError>;
+
+    /// The defender reports a player earned (AC3/AC12) — battles where they owned the target or
+    /// reinforced it — newest first, bounded by `limit`.
+    async fn defender_reports_for(
+        &self,
+        player: PlayerId,
+        limit: i64,
+    ) -> Result<Vec<DefenderReport>, RepoError>;
 }

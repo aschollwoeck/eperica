@@ -2,24 +2,26 @@
 
 use async_trait::async_trait;
 use eperica_application::{
-    AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, AllianceRepository,
-    AlliedVillage, BattleApply, BattleReportView, BuildRepository, CombatRepository,
-    ConquestRepository, CultureRepository, DiplomacyEntry, DueAttack, DueBuild, DueMovement,
-    DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining,
-    DueUnitOrder, IncomingAttack, LoyaltyApply, Membership, MovementRepository, MovementView,
+    AccountRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder, AllianceLeaderboardRow,
+    AllianceRepository, AllianceStats, AlliedVillage, BattleApply, BattleReportView, BoardScope,
+    BuildRepository, CombatRepository, ConflictMetric, ConquestRepository, CultureRepository,
+    DefenderReport, DiplomacyEntry, DueAttack, DueBuild, DueMovement, DueOasisAttack,
+    DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder,
+    IncomingAttack, LeaderboardRow, LoyaltyApply, Membership, MovementRepository, MovementView,
     NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
     OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
-    OutgoingInvite, PendingInvite, RazedBuilding, RepoError, ResourceWrite, RosterEntry,
-    ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply, SettleOutcome,
-    SettleRepository, StarvationRepository, StationedGroup, TradeRepository, TradeView,
-    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    OutgoingInvite, PendingInvite, PlayerStats, RankingRepository, RazedBuilding, RepoError,
+    ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository,
+    SettleApply, SettleOutcome, SettleRepository, StarvationRepository, StationedGroup,
+    TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
+    VillageMarker,
 };
 use eperica_domain::{
     AllianceId, AllianceRole, BuildTarget, BuildingKind, BuildingSlot, Coordinate, DiplomacyStance,
-    DiplomacyStatus, MovementKind, OasisBonus, OasisRules, PlayerId, QueueLane, ResourceAmounts,
-    ResourceField, ResourceKind, RightSet, ScoutTarget, StartingVillage, TileKind, Timestamp,
-    TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId, WorldId, WorldMap,
-    coordinates_within, oasis_garrison,
+    DiplomacyStatus, EconomyRules, MovementKind, OasisBonus, OasisRules, PlayerId, Quadrant,
+    QueueLane, ResourceAmounts, ResourceField, ResourceKind, RightSet, ScoutTarget,
+    StartingVillage, TileKind, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village,
+    VillageId, WorldId, WorldMap, coordinates_within, oasis_garrison,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use uuid::Uuid;
@@ -4914,12 +4916,397 @@ impl ScoutRepository for PgAccountRepository {
     }
 }
 
+// ---------------------------------------------------------------- 016: ranking & statistics reads
+
+/// A SQL `i32` board-scope code: `-1` = whole world, else the quadrant ordinal (NE 0, NW 1, SW 2, SE
+/// 3 — matching `domain::quadrant`'s sign rule).
+fn scope_code(scope: BoardScope) -> i32 {
+    match scope {
+        BoardScope::World => -1,
+        BoardScope::Quadrant(Quadrant::Ne) => 0,
+        BoardScope::Quadrant(Quadrant::Nw) => 1,
+        BoardScope::Quadrant(Quadrant::Sw) => 2,
+        BoardScope::Quadrant(Quadrant::Se) => 3,
+    }
+}
+
+/// The quadrant of a candidate capital `cap`, as the same ordinal `scope_code` uses (P6 sign rule).
+const CAPITAL_QUADRANT_CASE: &str = "(CASE WHEN cap.x >= 0 AND cap.y >= 0 THEN 0 \
+     WHEN cap.x < 0 AND cap.y >= 0 THEN 1 WHEN cap.x < 0 AND cap.y < 0 THEN 2 ELSE 3 END)";
+
+/// A `WHERE`-clause fragment that passes when the scope is the world (`bind` = -1) or the player's
+/// **capital** lies in the scoped quadrant (016 AC7). `pid` is the player-id column to match on.
+fn quadrant_filter(pid: &str, bind: &str) -> String {
+    format!(
+        "({bind} = -1 OR EXISTS (SELECT 1 FROM villages cap \
+          WHERE cap.owner_id = {pid} AND cap.is_capital AND {CAPITAL_QUADRANT_CASE} = {bind}))"
+    )
+}
+
+/// A correlated scalar SQL expression for one village's population (016 AC1), summing the per-level
+/// field + building contributions from the balance tables passed as array binds (`p_*`). `vid` is the
+/// village-id column to correlate on.
+fn village_pop_expr(
+    vid: &str,
+    p_fields: &str,
+    p_kinds: &str,
+    p_levels: &str,
+    p_pops: &str,
+) -> String {
+    format!(
+        "(COALESCE((SELECT SUM(fp.pop) FROM village_fields vf \
+            JOIN unnest({p_fields}::bigint[]) WITH ORDINALITY AS fp(pop, lvl) \
+              ON (fp.lvl - 1) = vf.level WHERE vf.village_id = {vid}), 0) \
+        + COALESCE((SELECT SUM(bp.pop) FROM village_buildings vb \
+            JOIN unnest({p_kinds}::text[], {p_levels}::int[], {p_pops}::bigint[]) AS bp(kind, lvl, pop) \
+              ON bp.kind = vb.building_type AND bp.lvl = vb.level WHERE vb.village_id = {vid}), 0))"
+    )
+}
+
+/// Flatten the economy population balance into array binds: `(field_pops, b_kinds, b_levels, b_pops)`
+/// (the per-level field table, and the building (kind, level, pop) triples).
+fn population_arrays(econ: &EconomyRules) -> (Vec<i64>, Vec<String>, Vec<i32>, Vec<i64>) {
+    let field_pops = econ.field_population_per_level.clone();
+    let (mut kinds, mut levels, mut pops) = (Vec::new(), Vec::new(), Vec::new());
+    for (kind, table) in &econ.building_population_per_level {
+        for (level, &pop) in table.iter().enumerate() {
+            kinds.push(building_str(*kind).to_owned());
+            levels.push(i32::try_from(level).unwrap_or(i32::MAX));
+            pops.push(pop);
+        }
+    }
+    (field_pops, kinds, levels, pops)
+}
+
+/// `(table, value_expr, player_id_col, occurred_at_col)` for a conflict metric (016 AC5/AC6).
+fn conflict_source(
+    metric: ConflictMetric,
+) -> (&'static str, &'static str, &'static str, &'static str) {
+    match metric {
+        ConflictMetric::Attack => (
+            "battle_reports br",
+            "br.attack_points",
+            "br.attacker_player",
+            "br.occurred_at",
+        ),
+        ConflictMetric::Defense => (
+            "battle_defenders bd",
+            "bd.defense_points",
+            "bd.player_id",
+            "bd.occurred_at",
+        ),
+        ConflictMetric::Raided => (
+            "battle_reports br",
+            "(br.loot_wood + br.loot_clay + br.loot_iron + br.loot_crop)",
+            "br.attacker_player",
+            "br.occurred_at",
+        ),
+    }
+}
+
+#[async_trait]
+impl RankingRepository for PgAccountRepository {
+    async fn population_board(
+        &self,
+        econ: &EconomyRules,
+        scope: BoardScope,
+        limit: i64,
+    ) -> Result<Vec<LeaderboardRow>, RepoError> {
+        let (fields, kinds, levels, pops) = population_arrays(econ);
+        let pop = village_pop_expr("v.id", "$2", "$3", "$4", "$5");
+        let qf = quadrant_filter("v.owner_id", "$6");
+        let sql = format!(
+            "SELECT u.id, u.username, SUM({pop})::bigint AS total \
+             FROM villages v JOIN users u ON u.id = v.owner_id \
+             WHERE v.world_id = $1 AND {qf} \
+             GROUP BY u.id, u.username HAVING SUM({pop}) > 0 \
+             ORDER BY total DESC, u.id ASC LIMIT $7"
+        );
+        let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(&sql)
+            .bind(Uuid::from_u128(self.world_id.0))
+            .bind(&fields)
+            .bind(&kinds)
+            .bind(&levels)
+            .bind(&pops)
+            .bind(scope_code(scope))
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(rows.into_iter().map(leaderboard_row).collect())
+    }
+
+    async fn conflict_board(
+        &self,
+        metric: ConflictMetric,
+        scope: BoardScope,
+        since: Option<Timestamp>,
+        limit: i64,
+    ) -> Result<Vec<LeaderboardRow>, RepoError> {
+        let (table, val, pid, occ) = conflict_source(metric);
+        let qf = quadrant_filter(pid, "$2");
+        let sql = format!(
+            "SELECT u.id, u.username, COALESCE(SUM({val}), 0)::bigint AS total \
+             FROM {table} JOIN users u ON u.id = {pid} \
+             WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) AND {qf} \
+             GROUP BY u.id, u.username HAVING COALESCE(SUM({val}), 0) > 0 \
+             ORDER BY total DESC, u.id ASC LIMIT $3"
+        );
+        let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(&sql)
+            .bind(since.map(|t| t.0 as f64))
+            .bind(scope_code(scope))
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(rows.into_iter().map(leaderboard_row).collect())
+    }
+
+    async fn alliance_population_board(
+        &self,
+        econ: &EconomyRules,
+        scope: BoardScope,
+        limit: i64,
+    ) -> Result<Vec<AllianceLeaderboardRow>, RepoError> {
+        let (fields, kinds, levels, pops) = population_arrays(econ);
+        let pop = village_pop_expr("v.id", "$2", "$3", "$4", "$5");
+        let qf = quadrant_filter("am.player_id", "$6");
+        let sql = format!(
+            "SELECT a.id, a.name, a.tag, COALESCE(SUM({pop}), 0)::bigint AS total \
+             FROM alliances a \
+             JOIN alliance_members am ON am.alliance_id = a.id \
+             JOIN villages v ON v.owner_id = am.player_id AND v.world_id = $1 \
+             WHERE {qf} \
+             GROUP BY a.id, a.name, a.tag HAVING COALESCE(SUM({pop}), 0) > 0 \
+             ORDER BY total DESC, a.id ASC LIMIT $7"
+        );
+        let rows: Vec<(Uuid, String, String, i64)> = sqlx::query_as(&sql)
+            .bind(Uuid::from_u128(self.world_id.0))
+            .bind(&fields)
+            .bind(&kinds)
+            .bind(&levels)
+            .bind(&pops)
+            .bind(scope_code(scope))
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(rows.into_iter().map(alliance_row).collect())
+    }
+
+    async fn alliance_conflict_board(
+        &self,
+        metric: ConflictMetric,
+        scope: BoardScope,
+        since: Option<Timestamp>,
+        limit: i64,
+    ) -> Result<Vec<AllianceLeaderboardRow>, RepoError> {
+        let (table, val, pid, occ) = conflict_source(metric);
+        let qf = quadrant_filter("am.player_id", "$2");
+        let sql = format!(
+            "SELECT a.id, a.name, a.tag, COALESCE(SUM(pv.val), 0)::bigint AS total \
+             FROM alliances a \
+             JOIN alliance_members am ON am.alliance_id = a.id \
+             JOIN (SELECT {pid} AS pid, SUM({val}) AS val FROM {table} \
+                   WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
+                   GROUP BY {pid}) pv ON pv.pid = am.player_id \
+             WHERE {qf} \
+             GROUP BY a.id, a.name, a.tag HAVING COALESCE(SUM(pv.val), 0) > 0 \
+             ORDER BY total DESC, a.id ASC LIMIT $3"
+        );
+        let rows: Vec<(Uuid, String, String, i64)> = sqlx::query_as(&sql)
+            .bind(since.map(|t| t.0 as f64))
+            .bind(scope_code(scope))
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(rows.into_iter().map(alliance_row).collect())
+    }
+
+    async fn player_stats(
+        &self,
+        econ: &EconomyRules,
+        player: PlayerId,
+    ) -> Result<Option<PlayerStats>, RepoError> {
+        let pid = Uuid::from_u128(player.0);
+        let Some(name): Option<String> =
+            sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
+                .bind(pid)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(backend)?
+        else {
+            return Ok(None);
+        };
+        let pop = village_pop_expr("v.id", "$2", "$3", "$4", "$5");
+        let (fields, kinds, levels, pops) = population_arrays(econ);
+        let vsql = format!(
+            "SELECT v.id, v.x, v.y, {pop}::bigint AS pop \
+             FROM villages v WHERE v.owner_id = $1 AND v.world_id = $6 ORDER BY v.created_at"
+        );
+        let vrows: Vec<(Uuid, i32, i32, i64)> = sqlx::query_as(&vsql)
+            .bind(pid)
+            .bind(&fields)
+            .bind(&kinds)
+            .bind(&levels)
+            .bind(&pops)
+            .bind(Uuid::from_u128(self.world_id.0))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend)?;
+        let villages: Vec<(VillageId, Coordinate, i64)> = vrows
+            .into_iter()
+            .map(|(id, x, y, pop)| (VillageId(id.as_u128()), Coordinate::new(x, y), pop))
+            .collect();
+        let population = villages.iter().map(|(_, _, p)| p).sum();
+        let attack_points: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(attack_points), 0)::bigint FROM battle_reports \
+             WHERE attacker_player = $1",
+        )
+        .bind(pid)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        let defense_points: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(defense_points), 0)::bigint FROM battle_defenders \
+             WHERE player_id = $1",
+        )
+        .bind(pid)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        let loot_total: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(loot_wood + loot_clay + loot_iron + loot_crop), 0)::bigint \
+             FROM battle_reports WHERE attacker_player = $1",
+        )
+        .bind(pid)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(Some(PlayerStats {
+            player,
+            name,
+            population,
+            villages,
+            attack_points,
+            defense_points,
+            loot_total,
+        }))
+    }
+
+    async fn alliance_stats(
+        &self,
+        econ: &EconomyRules,
+        alliance: AllianceId,
+    ) -> Result<Option<AllianceStats>, RepoError> {
+        let aid = Uuid::from_u128(alliance.0);
+        let Some((name, tag)): Option<(String, String)> =
+            sqlx::query_as("SELECT name, tag FROM alliances WHERE id = $1")
+                .bind(aid)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(backend)?
+        else {
+            return Ok(None);
+        };
+        let pop = village_pop_expr("v.id", "$3", "$4", "$5", "$6");
+        let (fields, kinds, levels, pops) = population_arrays(econ);
+        let sql = format!(
+            "SELECT u.id, u.username, \
+               COALESCE((SELECT SUM({pop}) FROM villages v WHERE v.owner_id = u.id AND v.world_id = $2), 0)::bigint AS pop, \
+               COALESCE((SELECT SUM(attack_points) FROM battle_reports WHERE attacker_player = u.id), 0)::bigint AS atk, \
+               COALESCE((SELECT SUM(defense_points) FROM battle_defenders WHERE player_id = u.id), 0)::bigint AS def \
+             FROM alliance_members am JOIN users u ON u.id = am.player_id \
+             WHERE am.alliance_id = $1 ORDER BY pop DESC, u.id ASC"
+        );
+        let rows: Vec<(Uuid, String, i64, i64, i64)> = sqlx::query_as(&sql)
+            .bind(aid)
+            .bind(Uuid::from_u128(self.world_id.0))
+            .bind(&fields)
+            .bind(&kinds)
+            .bind(&levels)
+            .bind(&pops)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend)?;
+        let members: Vec<(PlayerId, String, i64, i64, i64)> = rows
+            .into_iter()
+            .map(|(id, n, p, a, d)| (PlayerId(id.as_u128()), n, p, a, d))
+            .collect();
+        Ok(Some(AllianceStats {
+            alliance,
+            name,
+            tag,
+            population: members.iter().map(|(_, _, p, _, _)| p).sum(),
+            attack_points: members.iter().map(|(_, _, _, a, _)| a).sum(),
+            defense_points: members.iter().map(|(_, _, _, _, d)| d).sum(),
+            members,
+        }))
+    }
+
+    async fn defender_reports_for(
+        &self,
+        player: PlayerId,
+        limit: i64,
+    ) -> Result<Vec<DefenderReport>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT battle_id, village_id, is_owner, forces, losses, defense_points, \
+                    (EXTRACT(EPOCH FROM occurred_at) * 1000)::bigint AS occ_ms \
+             FROM battle_defenders WHERE player_id = $1 ORDER BY occurred_at DESC LIMIT $2",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let battle_id: Uuid = r.try_get("battle_id").map_err(backend)?;
+            let village_id: Uuid = r.try_get("village_id").map_err(backend)?;
+            let forces: serde_json::Value = r.try_get("forces").map_err(backend)?;
+            let losses: serde_json::Value = r.try_get("losses").map_err(backend)?;
+            let occ_ms: i64 = r.try_get("occ_ms").map_err(backend)?;
+            out.push(DefenderReport {
+                battle_id: battle_id.as_u128(),
+                occurred_at: Timestamp(occ_ms),
+                at_village: VillageId(village_id.as_u128()),
+                is_owner: r.try_get("is_owner").map_err(backend)?,
+                forces: counts_from_json(&forces),
+                losses: counts_from_json(&losses),
+                defense_points: r.try_get("defense_points").map_err(backend)?,
+            });
+        }
+        Ok(out)
+    }
+}
+
+/// Map a `(id, name, value)` row to a [`LeaderboardRow`].
+fn leaderboard_row((id, name, value): (Uuid, String, i64)) -> LeaderboardRow {
+    LeaderboardRow {
+        player: PlayerId(id.as_u128()),
+        name,
+        value,
+    }
+}
+
+/// Map an `(id, name, tag, value)` row to an [`AllianceLeaderboardRow`].
+fn alliance_row((id, name, tag, value): (Uuid, String, String, i64)) -> AllianceLeaderboardRow {
+    AllianceLeaderboardRow {
+        alliance: AllianceId(id.as_u128()),
+        name,
+        tag,
+        value,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::world::World;
     use eperica_application::{
-        ConquestTransfer, DefenderContribution, NewBattleReport, ReinforcementReturn,
+        BoardScope, ConflictMetric, ConquestTransfer, DefenderContribution, NewBattleReport,
+        ReinforcementReturn,
     };
     use eperica_domain::{EconomyRules, GameSpeed, WorldConfig};
 
@@ -9613,5 +10000,236 @@ mod tests {
                 .any(|(u, n)| u.0 == settler && *n == crules.settlers_per_village)),
             "the settlers bounced home"
         );
+    }
+
+    /// 016 AC1/AC2/AC5/AC6/AC8/AC9/AC10/AC12: the ranking read paths — population / attack / defense /
+    /// raider boards, alliance aggregates, player & alliance stat pages, the reinforcer inbox, and the
+    /// quadrant scope — all derived from persisted facts.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn ranking_boards_and_stats(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (attacker, a) = account("rkatk").await;
+        let (defender, d) = account("rkdef").await;
+        let (ally, al) = account("rkally").await;
+
+        // Seed one resolved battle directly: attacker scores 50 attack points and loots; the defender
+        // (30) and the ally reinforcer (20) split the defense points.
+        let battle_at = Timestamp(3_000_000_000_000);
+        repo.apply_battle(BattleApply {
+            movement_id: Uuid::new_v4().as_u128(),
+            owner: attacker,
+            attacker_home: a.id,
+            attacker_origin: a.coordinate,
+            target: d.id,
+            target_coord: d.coordinate,
+            defender_losses: Vec::new(),
+            reinforcement_losses: Vec::new(),
+            survivors: Vec::new(),
+            battle_at,
+            return_arrive: battle_at,
+            report: NewBattleReport {
+                kind: MovementKind::Raid,
+                attacker_player: attacker,
+                attacker_village: a.id,
+                defender_player: defender,
+                defender_village: d.id,
+                attacker_won: true,
+                luck: 1.0,
+                morale: 1.0,
+                wall_before: 0,
+                wall_after: 0,
+                attacker_forces: vec![(UnitId("swordsman".into()), 10)],
+                attacker_losses: Vec::new(),
+                defender_forces: Vec::new(),
+                defender_losses: Vec::new(),
+                loot: ResourceAmounts {
+                    wood: 100,
+                    clay: 50,
+                    iron: 0,
+                    crop: 0,
+                },
+                razed: None,
+                loyalty_before: None,
+                loyalty_after: None,
+                conquered: false,
+            },
+            scouted: false,
+            scout_target: None,
+            scout_report: None,
+            loot: ResourceAmounts {
+                wood: 100,
+                clay: 50,
+                iron: 0,
+                crop: 0,
+            },
+            target_debit: None,
+            razed: None,
+            loyalty: None,
+            attack_points: 50,
+            defender_contributions: vec![
+                DefenderContribution {
+                    player: defender,
+                    village: d.id,
+                    is_owner: true,
+                    forces: Vec::new(),
+                    losses: Vec::new(),
+                    defense_value: 30,
+                    defense_points: 30,
+                },
+                DefenderContribution {
+                    player: ally,
+                    village: al.id,
+                    is_owner: false,
+                    forces: Vec::new(),
+                    losses: Vec::new(),
+                    defense_value: 20,
+                    defense_points: 20,
+                },
+            ],
+        })
+        .await
+        .expect("seed battle");
+
+        // AC1/AC2: population board lists all three (equal starting pop > 0), bounded + ranked.
+        let pop = repo
+            .population_board(&econ, BoardScope::World, 100)
+            .await
+            .unwrap();
+        assert!(pop.len() >= 3);
+        assert!(pop.iter().all(|r| r.value > 0));
+        assert!(pop.iter().any(|r| r.player == attacker));
+
+        // AC5: attack board — the attacker has 50; the defender (zero) is omitted.
+        let atk = repo
+            .conflict_board(ConflictMetric::Attack, BoardScope::World, None, 100)
+            .await
+            .unwrap();
+        assert_eq!(
+            atk.iter().find(|r| r.player == attacker).map(|r| r.value),
+            Some(50)
+        );
+        assert!(atk.iter().all(|r| r.player != defender)); // omitted (zero activity)
+
+        // AC5: defense board — defender 30, ally 20 (the split).
+        let def = repo
+            .conflict_board(ConflictMetric::Defense, BoardScope::World, None, 100)
+            .await
+            .unwrap();
+        assert_eq!(
+            def.iter().find(|r| r.player == defender).map(|r| r.value),
+            Some(30)
+        );
+        assert_eq!(
+            def.iter().find(|r| r.player == ally).map(|r| r.value),
+            Some(20)
+        );
+
+        // AC6: raider board — the attacker's looted 150 (100 + 50).
+        let raid = repo
+            .conflict_board(ConflictMetric::Raided, BoardScope::World, None, 100)
+            .await
+            .unwrap();
+        assert_eq!(
+            raid.iter().find(|r| r.player == attacker).map(|r| r.value),
+            Some(150)
+        );
+
+        // AC9: player stats — public metrics, never empty population.
+        let s = repo.player_stats(&econ, attacker).await.unwrap().unwrap();
+        assert_eq!(s.attack_points, 50);
+        assert_eq!(s.loot_total, 150);
+        assert!(s.population > 0 && !s.villages.is_empty());
+        let sd = repo.player_stats(&econ, defender).await.unwrap().unwrap();
+        assert_eq!(sd.defense_points, 30);
+        assert!(
+            repo.player_stats(&econ, PlayerId(0))
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        // AC3/AC12: the ally reinforcer reads their own defender report (20 points, not the owner).
+        let inbox = repo.defender_reports_for(ally, 100).await.unwrap();
+        assert_eq!(inbox.len(), 1);
+        assert!(!inbox[0].is_owner);
+        assert_eq!(inbox[0].defense_points, 20);
+
+        // AC8/AC10: an alliance of {attacker, defender} aggregates their stats.
+        let aid = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO alliances (id, name, tag, founder_id) VALUES ($1, 'Rankers', 'RK', $2)",
+        )
+        .bind(aid)
+        .bind(Uuid::from_u128(attacker.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        for p in [attacker, defender] {
+            sqlx::query(
+                "INSERT INTO alliance_members (player_id, alliance_id, role, rights) \
+                 VALUES ($1, $2, 'member', 0)",
+            )
+            .bind(Uuid::from_u128(p.0))
+            .bind(aid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let apop = repo
+            .alliance_population_board(&econ, BoardScope::World, 100)
+            .await
+            .unwrap();
+        assert!(apop.iter().any(|r| r.tag == "RK" && r.value > 0));
+        let aatk = repo
+            .alliance_conflict_board(ConflictMetric::Attack, BoardScope::World, None, 100)
+            .await
+            .unwrap();
+        assert_eq!(
+            aatk.iter().find(|r| r.tag == "RK").map(|r| r.value),
+            Some(50)
+        );
+        let ast = repo
+            .alliance_stats(&econ, AllianceId(aid.as_u128()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(ast.attack_points, 50);
+        assert_eq!(ast.defense_points, 30); // the defender is a member; the ally is not
+        assert_eq!(ast.members.len(), 2);
+
+        // AC7: with the attacker's village flagged capital, a quadrant-scoped board includes them.
+        sqlx::query("UPDATE villages SET is_capital = true WHERE id = $1")
+            .bind(Uuid::from_u128(a.id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let q = eperica_domain::quadrant(a.coordinate);
+        let qpop = repo
+            .population_board(&econ, BoardScope::Quadrant(q), 100)
+            .await
+            .unwrap();
+        assert!(qpop.iter().any(|r| r.player == attacker));
     }
 }
