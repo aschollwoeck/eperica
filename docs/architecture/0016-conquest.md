@@ -50,7 +50,21 @@ new scheduler tick, no new combat math.
   / `training_orders` + outgoing in-transit movements for the village, and **re-anchors both** players'
   `player_culture` at the battle instant (013 — settle each at the OLD rate before the village count/rate
   moves between them). **Reduced** just writes the new loyalty. The village keeps its tile, fields,
-  buildings, and stored resources; its occupied oases follow it (keyed by village id).
+  buildings, and stored resources.
+  - **Disposition of every `village_id`-keyed dependency** (AC7 — *assets in/owned by the village pass
+    with it; in-transit troops/shipments that can no longer reach a loyal village are forfeited*):
+    garrison **emptied**; third-party reinforcements **sent home**; queues **cancelled**; the loser's
+    **outgoing** movements cancelled, while troops **returning to** the lost village are **forfeited**
+    (no loyal home — and leaving them would land the loser's army inside an enemy village); the
+    village's **own troops stationed elsewhere** (`reinforcements.home_village = target`), its
+    **in-flight trades**, and its **occupied oases** **follow the village to the new owner**
+    (each derives ownership from the village, so no row change is needed); **both players' culture**
+    re-anchored. A **capital** strike is a true no-op — the resolver attaches **no** `LoyaltyApply`, so
+    `apply_battle` writes nothing (the report still records `before == after`).
+- **You cannot attack/conquer your own village (P4, roles).** `order_attack` rejects any target the
+  attacker owns (`dest.owner == owner`) — not just the selected home tile but any of their villages
+  (013 multi-village) — so a self-attack never becomes a movement and the conquest step can never
+  transfer a village to its own owner.
 
 ## Consequences
 - **Alliances/diplomacy** (Embassy, confederation/war) are 015; conquest here is two-player. Allied

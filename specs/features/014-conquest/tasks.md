@@ -9,7 +9,7 @@ math.
 
 ## Domain & balance
 
-- [ ] **T1 — Loyalty model + regen.** `loyalty.rs`: `LoyaltyRules` + pure `regenerate_loyalty`
+- [x] **T1 — Loyalty model + regen.** `loyalty.rs`: `LoyaltyRules` + pure `regenerate_loyalty`
   (accrue-to-100, clamped `[0,100]`, speed-scaled). `conquest.toml` + `loyalty_rules()` loader
   (fail-fast). Migration `00NN` adds `villages.loyalty smallint NOT NULL DEFAULT 100` +
   `loyalty_updated_at timestamptz NOT NULL DEFAULT now()`; repo fills the **regenerated** loyalty onto
@@ -59,7 +59,7 @@ math.
 
 ## Interface — web
 
-- [ ] **T6 — Loyalty read + web.** Each owned village's **loyalty** on the village page (013 area); the
+- [x] **T6 — Loyalty read + web.** Each owned village's **loyalty** on the village page (013 area); the
   **battle report** shows loyalty **before → after** + **"Village captured"** when transferred; a
   just-conquered village appears in the conqueror's **switcher** and drops from the loser's. Integration
   tests: send administrators → the report shows the loyalty change + capture → the village is the

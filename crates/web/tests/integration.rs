@@ -2164,8 +2164,10 @@ async fn settling_culture_panel_switcher_and_capital_flow() {
 }
 
 /// 014 AC4/AC10/AC11: sending administrators with a winning attack against a low-loyalty enemy village
-/// conquers it — the report shows the capture, the village joins the conqueror's switcher, and a
-/// capital is immune. The defender's own village loyalty is shown on their village page.
+/// conquers it — the report shows the capture, and the village joins the conqueror's switcher. The
+/// defender's own village loyalty is shown on their village page. (The capital exception, AC5, is
+/// covered server-side by `admin_attack_on_a_capital_changes_nothing` and the `conquest_outcome`
+/// domain test.)
 #[tokio::test]
 async fn conquest_with_administrators_flow() {
     let Some(base) = spawn().await else {

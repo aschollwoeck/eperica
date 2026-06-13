@@ -177,6 +177,16 @@ Per [roles.md](../../roles.md).
   village, and re-anchor **both** players' `player_culture` (013) — all in the battle apply's tx,
   **guarded** on the village still being owned by the defender (a concurrent change ⇒ the conquest is
   abandoned for that resolution, like the 012 occupy race).
+- **Disposition of every `village_id`-keyed dependency (the AC7 principle).** *Assets located in or
+  owned by the village pass with it; troops/shipments in transit that can no longer reach a loyal
+  village are forfeited.* Concretely: the **garrison** is emptied; **third-party reinforcements**
+  stationed in the village are sent home (007); **build/unit/training queues** are cancelled; the
+  loser's **outgoing movements** from the village are cancelled, and any troops **returning to** the
+  village are **forfeited** (it is no longer theirs — there is no loyal home to arrive at, and leaving
+  them would land the loser's army in enemy hands); the village's **own troops stationed elsewhere**
+  (reinforcements keyed `home_village = target`), its **in-flight trades**, and its **occupied oases**
+  (012) **follow the village to the new owner** (ownership of each is derived from the village, so no
+  row change is needed); **both players' culture** is re-anchored.
 - **Administrators are existing roster units, enabled like settlers were in 013.** Senator/Chief/
   Chieftain already exist (`role = expansion`, `trained_in = residence`); 013 enabled the Residence
   training gate. 014 makes them **conquer** (they are **not** excluded from combat — verify

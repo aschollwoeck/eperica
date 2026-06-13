@@ -2782,7 +2782,30 @@ impl CombatRepository for PgAccountRepository {
                     .await
                     .map_err(backend)?;
 
-                // Cancel the loser's pending queues and outgoing movements for the village.
+                // Every remaining `village_id`-keyed dependency is resolved here so the transfer is
+                // complete (AC7) and nothing is left dangling under the old owner. The full
+                // enumeration and the disposition of each:
+                //   • village_units (garrison)                  — emptied above (the defenders fell).
+                //   • reinforcements host_village = target       — third parties stationed here; sent
+                //                                                  home (007) + cleared above.
+                //   • build / unit / training orders             — cancelled below (the new owner
+                //     (village_id = target)                        starts every queue fresh).
+                //   • troop_movements (home_village = target)    — completed below: the loser's
+                //     OUTGOING movements from the village are cancelled (AC7, "outgoing movements"),
+                //     and any troops still RETURNING to it are forfeited — the village is no longer
+                //     theirs, so there is no loyal home to arrive at (leaving them would land the
+                //     loser's army inside what is now an enemy village).
+                //   • reinforcements home_village = target       — the village's OWN troops stationed
+                //     at other villages: left in place. Stationed-troop ownership is derived from the
+                //     home village's owner, so they pass to the new owner with the village (its
+                //     standing army follows it) — no row change is needed or wanted.
+                //   • trades (home_village = target)             — in-flight merchants/shipments are
+                //     likewise bound to the village and follow it to the new owner.
+                //   • oases (owner = village_id)                 — occupied oases are owned by the
+                //     village, so they transfer with it implicitly.
+                //   • player_culture (both players)              — re-anchored below (013 AC1).
+                // The principle (AC7): assets located in or owned by the village pass with it; troops
+                // and shipments in transit that can no longer reach a loyal village are forfeited.
                 for sql in [
                     "DELETE FROM build_orders WHERE village_id = $1",
                     "DELETE FROM unit_orders WHERE village_id = $1",
@@ -8599,6 +8622,35 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        // The defender's OWN troops are stationed abroad (home = the soon-conquered village, hosted at
+        // the ally's village) and a column of the defender's troops is RETURNING to the village.
+        sqlx::query(
+            "INSERT INTO reinforcements (host_village, home_village, unit_id, count) \
+             VALUES ($1, $2, 'phalanx', 5)",
+        )
+        .bind(Uuid::from_u128(al.id.0))
+        .bind(Uuid::from_u128(d.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let inbound_return = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO troop_movements \
+             (id, owner_id, kind, home_village, deliver_village, origin_x, origin_y, dest_x, dest_y, \
+              depart_at, arrive_at, status) \
+             VALUES ($1, $2, 'return', $3, $3, $4, $5, $6, $7, now(), now() + interval '1 hour', \
+                     'in_transit')",
+        )
+        .bind(inbound_return)
+        .bind(Uuid::from_u128(defender.0))
+        .bind(Uuid::from_u128(d.id.0))
+        .bind(a.coordinate.x)
+        .bind(a.coordinate.y)
+        .bind(d.coordinate.x)
+        .bind(d.coordinate.y)
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO build_orders \
              (id, village_id, target_table, slot, building_type, target_level, complete_at, status, lane) \
@@ -8730,6 +8782,36 @@ mod tests {
         assert!(
             returning.iter().any(|m| m.kind == MovementKind::Return),
             "the ally's reinforcement returns home"
+        );
+
+        // AC7 enumeration: the village's OWN troops stationed abroad pass to the new owner with the
+        // village (their home is now the attacker's), and off the loser's books.
+        assert!(
+            repo.reinforcements_of(attacker)
+                .await
+                .unwrap()
+                .iter()
+                .any(|g| g.home_village == d.id),
+            "the conquered village's stationed army follows it to the new owner"
+        );
+        assert!(
+            repo.reinforcements_of(defender)
+                .await
+                .unwrap()
+                .iter()
+                .all(|g| g.home_village != d.id),
+            "the loser no longer owns the conquered village's stationed army"
+        );
+        // AC7: a column returning to the now-lost village is forfeited (no loyal home to arrive at).
+        let inbound_status: String =
+            sqlx::query_scalar("SELECT status FROM troop_movements WHERE id = $1")
+                .bind(inbound_return)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            inbound_status, "done",
+            "a return inbound to the conquered village is forfeited"
         );
 
         // AC1/AC7: both players' culture was re-anchored at the battle instant.

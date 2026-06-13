@@ -32,7 +32,8 @@ pub enum CombatError {
     /// No village occupies the target tile.
     #[error("no village at the target")]
     NoTargetThere,
-    /// The target is the attacker's own village tile.
+    /// The target village belongs to the attacker — you cannot attack, raid, or (014) conquer your
+    /// own village, whether it is the selected home tile or another of your villages (013).
     #[error("cannot attack your own village")]
     SameTile,
     /// The chosen catapult target is the Wall or Rally Point (not catapultable, 011).
@@ -227,7 +228,11 @@ where
     let Some(dest) = accounts.village_at(target).await? else {
         return Err(CombatError::NoTargetThere);
     };
-    if dest.id == home.id || dest.coordinate == home.coordinate {
+    // P4 / roles: you cannot attack, raid, or conquer a village you own — not the selected home tile,
+    // and (013 multi-village) not any other of your villages either. Guarding on ownership here keeps a
+    // self-attack from ever becoming a movement, so the 014 conquest step can never transfer a village
+    // to its own owner.
+    if dest.owner == owner {
         return Err(CombatError::SameTile);
     }
 
@@ -632,7 +637,7 @@ where
             .await?;
             let has_slot = attacker_view.used_slots < attacker_view.allowed_villages;
             let oc = conquest_outcome(loyalty_now, drop, target.is_capital, has_slot);
-            let apply = if oc.transferred {
+            let apply: Option<LoyaltyApply> = if oc.transferred {
                 let loser_view = load_culture(
                     accounts,
                     accounts,
@@ -670,24 +675,30 @@ where
                         arrive_at,
                     });
                 }
-                LoyaltyApply::Conquered(ConquestTransfer {
+                Some(LoyaltyApply::Conquered(ConquestTransfer {
                     new_owner: attack.owner,
                     loser: target.owner,
                     post_conquest_loyalty: loyalty_rules.post_conquest_loyalty,
                     loser_culture_value: loser_view.cp,
                     gainer_culture_value: attacker_view.cp,
                     reinforcement_returns,
-                })
+                }))
+            } else if target.is_capital {
+                // AC5: a capital's loyalty is pinned — the strike "reduces nothing". `conquest_outcome`
+                // already left `new_loyalty == loyalty_now`, so there is nothing to persist: skip the
+                // write entirely (no re-anchor). The report below still records before == after so the
+                // attacker learns the capital is untouchable.
+                None
             } else {
-                LoyaltyApply::Reduced {
+                Some(LoyaltyApply::Reduced {
                     new_loyalty: oc.new_loyalty,
-                }
+                })
             };
             (
                 Some(loyalty_now),
                 Some(oc.new_loyalty),
                 oc.transferred,
-                Some(apply),
+                apply,
             )
         } else {
             (None, None, false, None)
@@ -1463,6 +1474,73 @@ mod tests {
         assert_eq!(applied.report.loyalty_before, Some(100));
     }
 
+    // 014 AC5: a capital is unconquerable — even a crushing win with surviving administrators and a
+    // free slot leaves its loyalty untouched, never transfers, and (being a no-op) writes nothing,
+    // while the report still records before == after so the attacker learns it is immune.
+    #[tokio::test]
+    async fn admin_attack_on_a_capital_changes_nothing() {
+        let mut capital = village(2, 2, Coordinate::new(3, 4));
+        capital.is_capital = true;
+        let acc = accounts(Vec::new(), Some(capital));
+        let cb = FakeCombat::default();
+        *cb.due.lock().unwrap() = vec![DueAttack {
+            id: 7,
+            kind: MovementKind::Attack,
+            owner: PlayerId(1),
+            home_village: VillageId(1),
+            target_village: VillageId(2),
+            origin: Coordinate::new(0, 0),
+            dest: Coordinate::new(3, 4),
+            arrive_at: Timestamp(1_000_000),
+            troops: vec![(UnitId("u0".into()), 50), (UnitId("u1".into()), 2)],
+            scout_target: None,
+            catapult_target: None,
+        }];
+        let mv = FakeMovements {
+            reinforcements: Vec::new(),
+        };
+        let loyalty = LoyaltyRules {
+            starting_loyalty: 100,
+            post_conquest_loyalty: 25,
+            regen_per_hour: 2,
+            drop_min: 20,
+            drop_max: 30,
+            administrator_ids: vec!["u1".to_owned()],
+        };
+        process_due_combat(
+            &acc,
+            &mv,
+            &FakeUnits,
+            &cb,
+            &economy_rules(),
+            &unit_rules(),
+            &combat_rules(),
+            &ScoutRules { loss_exponent: 1.5 },
+            &culture_rules(),
+            &loyalty,
+            &map(),
+            GameSpeed::new(1.0).unwrap(),
+            42,
+            Timestamp(1_000_000),
+            100,
+        )
+        .await
+        .unwrap();
+
+        let applied = cb.applied.lock().unwrap().clone().expect("applied");
+        assert!(
+            applied.loyalty.is_none(),
+            "a capital strike persists nothing, got {:?}",
+            applied.loyalty
+        );
+        assert!(!applied.report.conquered, "a capital never transfers");
+        assert_eq!(
+            (applied.report.loyalty_before, applied.report.loyalty_after),
+            (Some(100), Some(100)),
+            "the capital's loyalty is unchanged before == after"
+        );
+    }
+
     /// 011 AC1: an attack carrying catapults persists a valid target; the Wall/Rally Point is
     /// rejected; an attack without catapults carries no catapult target.
     #[tokio::test]
@@ -1714,6 +1792,23 @@ mod tests {
             vec![(UnitId("u0".into()), 10)],
             Some(village(1, 1, Coordinate::new(3, 4))),
         );
+        assert_eq!(
+            send(
+                &acc,
+                &cb,
+                vec![(UnitId("u0".into()), 1)],
+                AttackMode::Attack
+            )
+            .await,
+            Err(CombatError::SameTile)
+        );
+        assert!(cb.sent.lock().unwrap().is_none());
+
+        // Roles (P4): you cannot attack — and so cannot conquer — *another* village you own (013
+        // multi-village). The target is a distinct village id at a distinct tile but the same owner as
+        // the attacker; ownership alone must reject it, never reaching a movement.
+        let own_second = village(7, 1, Coordinate::new(3, 4)); // id 7, owner 1 (== attacker), other tile
+        let acc = accounts(vec![(UnitId("u0".into()), 10)], Some(own_second));
         assert_eq!(
             send(
                 &acc,
