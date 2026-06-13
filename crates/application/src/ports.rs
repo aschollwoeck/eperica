@@ -5,11 +5,13 @@
 
 use async_trait::async_trait;
 use eperica_domain::{
-    AllianceId, AllianceRole, BuildTarget, BuildingKind, Coordinate, DiplomacyStance,
-    DiplomacyStatus, EconomyRules, EventKind, MovementKind, OasisBonus, OasisRules, PlayerId,
-    Quadrant, QueueLane, ResourceAmounts, RightSet, ScoutTarget, StartingVillage, Timestamp,
-    TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
+    AchievementDef, AchievementId, AllianceId, AllianceRole, BuildTarget, BuildingKind, Coordinate,
+    DiplomacyStance, DiplomacyStatus, EconomyRules, EventKind, MedalCategory, MovementKind,
+    OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant, QueueLane, ResourceAmounts,
+    RightSet, ScoutTarget, StartingVillage, Timestamp, TradeKind, Tribe, UnitCounts, UnitId,
+    UnitSpec, Village, VillageId,
 };
+use std::collections::HashSet;
 
 /// A village's public presence on the map: its tile and its owner's name (GDD §7.3 — layout and
 /// ownership are public; troops/resources are not).
@@ -2208,4 +2210,95 @@ pub trait RankingRepository: Send + Sync {
         player: PlayerId,
         limit: i64,
     ) -> Result<Vec<DefenderReport>, RepoError>;
+}
+
+/// Whether a medal's subject is a player or an alliance (017).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MedalSubjectKind {
+    Player,
+    Alliance,
+}
+
+impl MedalSubjectKind {
+    /// The persisted string key.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Player => "player",
+            Self::Alliance => "alliance",
+        }
+    }
+}
+
+/// A medal to award at settlement (017 AC3): a category + rank to a player or alliance subject.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MedalAward {
+    pub category: MedalCategory,
+    pub rank: usize,
+    pub subject_kind: MedalSubjectKind,
+    /// The subject's id (a `PlayerId.0` or `AllianceId.0`).
+    pub subject_id: u128,
+}
+
+/// A medal a subject holds (017 AC5), newest first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MedalView {
+    pub period: i64,
+    pub category: MedalCategory,
+    pub rank: i64,
+}
+
+/// Read/write of the weekly-settlement state: population snapshots and medals (017). The repository is
+/// bound to one world; `period` is the settlement period index (`domain::medals::period_index`).
+#[async_trait]
+pub trait MedalRepository: Send + Sync {
+    /// The most recent settled period for this world (the max snapshot period), or `None` if never.
+    async fn latest_settled_period(&self) -> Result<Option<i64>, RepoError>;
+
+    /// Write a population snapshot for **every** player for `period` (idempotent — re-running writes
+    /// none). Population is computed from current build state using `econ`'s per-level tables.
+    async fn snapshot_population(&self, econ: &EconomyRules, period: i64) -> Result<(), RepoError>;
+
+    /// Award the given medals for `period` (idempotent via the per-period (category, rank) uniqueness).
+    async fn award_medals(&self, period: i64, awards: &[MedalAward]) -> Result<(), RepoError>;
+
+    /// A subject's held medals (017 AC5), newest first.
+    async fn medals_for(
+        &self,
+        subject_kind: MedalSubjectKind,
+        subject_id: u128,
+    ) -> Result<Vec<MedalView>, RepoError>;
+
+    /// Players ranked by population gained from `prev` to `period` (the climber metric, 017 AC4 / the
+    /// 016-deferred board). Only positive gainers; quadrant-scoped; bounded by `limit`.
+    async fn climber_board(
+        &self,
+        period: i64,
+        prev: i64,
+        scope: BoardScope,
+        limit: i64,
+    ) -> Result<Vec<LeaderboardRow>, RepoError>;
+
+    /// A player's population snapshots over time as `(period, population)`, oldest first (AC11).
+    async fn population_history(&self, player: PlayerId) -> Result<Vec<(i64, i64)>, RepoError>;
+}
+
+/// Read/write of achievement progress + grants (017). The repository is bound to one world.
+#[async_trait]
+pub trait AchievementRepository: Send + Sync {
+    /// The achievements a player already holds (017 AC8) — the idempotency set.
+    async fn held_achievements(
+        &self,
+        player: PlayerId,
+    ) -> Result<HashSet<AchievementId>, RepoError>;
+
+    /// A player's current persisted progress (counts) for the achievement predicates.
+    async fn player_progress(&self, player: PlayerId) -> Result<PlayerProgress, RepoError>;
+
+    /// Grant `def` to `player` and apply its reward in **one transaction**, exactly once (the
+    /// `(player, achievement)` PK guards against double grant/reward). Returns `true` if newly granted.
+    async fn grant_achievement(
+        &self,
+        player: PlayerId,
+        def: &AchievementDef,
+    ) -> Result<bool, RepoError>;
 }

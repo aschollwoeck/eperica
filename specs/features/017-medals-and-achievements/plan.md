@@ -74,26 +74,28 @@ grants, and small rewards via existing credit paths.
   medal list.
 - `player_achievements (player_id uuid, achievement_id text, granted_at timestamptz default now(),
   PRIMARY KEY (player_id, achievement_id))` — the PK is the exactly-once guard.
-- `EventKind::WeeklyMedalSettlement` + its `kind_str`/`parse_kind` mapping; the settlement row lives in
-  `scheduled_events` (payload `{ "period": P }`).
-- `MedalRepository` (port + `PgAccountRepository` impl): `claim_due_settlement(now) -> Option<DueSettlement
-  { event_id, period }>` (claims the due `weekly_medal_settlement` event, SKIP LOCKED), `schedule_settlement
-  (period, due_at)`, `ensure_settlement_scheduled(world_start, period_secs, now)` (bootstrap/self-heal:
-  schedule the next boundary if none pending), `snapshot_population(period, now)` (bulk insert via the
-  016 population SQL, `ON CONFLICT DO NOTHING`), `award_medals(period, rows)` (`ON CONFLICT DO NOTHING`),
+- **The settlement is state-driven, not a `scheduled_events` row (refinement).** The generic `process_due`
+  claims *all* `scheduled_events` and dispatches by kind with no repo access — but the settlement needs
+  repos — so a settlement row there would race the generic claimer. Instead the **latest settled period is
+  derived from `MAX(period)` in `population_snapshots`**; the scheduler tick settles any complete,
+  unsettled period (its boundary has passed). This is the same observable behavior as the spec's AC1
+  (fires at each boundary, one period at a time, self-advancing, idempotent, no entity ticking), with no
+  double-claim race and natural crash-catch-up. No `EventKind` variant is added.
+- `MedalRepository` (port + `PgAccountRepository` impl): `latest_settled_period() -> Option<i64>`,
+  `snapshot_population(period)` (bulk insert via the 016 population SQL, `ON CONFLICT DO NOTHING`),
+  `award_medals(period, rows)` (`ON CONFLICT DO NOTHING`), `medals_for(subject_kind, subject_id)`,
   `climber_board(period, prev, scope, limit)` (snapshot delta), `population_history(player)`, and the
-  achievement side: `player_progress(player)` (the counts), `held_achievements(player)`,
-  `grant_achievement(player, def)` (insert + apply reward in one tx, `ON CONFLICT DO NOTHING`). Medal
-  reads: `medals_for(subject_kind, subject_id)`.
+  achievement side (T4): `player_progress(player)` (the counts), `held_achievements(player)`,
+  `grant_achievement(player, def)` (insert + apply reward in one tx, `ON CONFLICT DO NOTHING`).
 - Extend the 016 conflict board with an **upper** time bound so the settlement reads each category over
   `[boundary(P−1), boundary(P))` reproducibly (`conflict_board_window(metric, scope, since, until, n)`;
   the existing `conflict_board` becomes `until = None`).
 
 ## Application (`application`)
 
-- `process_due_medal_settlement(events, accounts, ranking, medals, medal_rules, world_start, now)` — the
-  recurring processor the Scheduler calls each tick: `ensure_settlement_scheduled`; then while a settlement
-  is due, **claim** it, in one transaction **snapshot** population for period `P` and **award** each
+- `process_due_medal_settlement(accounts, ranking, medals, medal_rules, world_start, now)` — the recurring
+  processor the Scheduler calls each tick: derive the latest settled period; while the next period's
+  boundary has passed, in one transaction **snapshot** population for period `P` and **award** each
   category's top-N (attacker/defender/raider via the period-windowed board; climber via the snapshot
   delta P vs P−1; alliances via the alliance boards), **schedule** `P+1`, and mark the event done.
   Idempotent via the claim + per-period uniqueness.

@@ -7,19 +7,19 @@ use eperica_application::{
     BuildRepository, CombatRepository, ConflictMetric, ConquestRepository, CultureRepository,
     DefenderReport, DiplomacyEntry, DueAttack, DueBuild, DueMovement, DueOasisAttack,
     DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder,
-    IncomingAttack, LeaderboardRow, LoyaltyApply, Membership, MovementRepository, MovementView,
-    NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
-    OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
-    OutgoingInvite, PendingInvite, PlayerStats, RankingRepository, RazedBuilding, RepoError,
-    ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository,
-    SettleApply, SettleOutcome, SettleRepository, StarvationRepository, StationedGroup,
-    TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
-    VillageMarker,
+    IncomingAttack, LeaderboardRow, LoyaltyApply, MedalAward, MedalRepository, MedalSubjectKind,
+    MedalView, Membership, MovementRepository, MovementView, NewBuildOrder, NewOasisReport,
+    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
+    OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PendingInvite, PlayerStats,
+    RankingRepository, RazedBuilding, RepoError, ResourceWrite, RosterEntry, ScoutApply,
+    ScoutIntel, ScoutReportView, ScoutRepository, SettleApply, SettleOutcome, SettleRepository,
+    StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
+    UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 use eperica_domain::{
     AllianceId, AllianceRole, BuildTarget, BuildingKind, BuildingSlot, Coordinate, DiplomacyStance,
-    DiplomacyStatus, EconomyRules, MovementKind, OasisBonus, OasisRules, PlayerId, Quadrant,
-    QueueLane, ResourceAmounts, ResourceField, ResourceKind, RightSet, ScoutTarget,
+    DiplomacyStatus, EconomyRules, MedalCategory, MovementKind, OasisBonus, OasisRules, PlayerId,
+    Quadrant, QueueLane, ResourceAmounts, ResourceField, ResourceKind, RightSet, ScoutTarget,
     StartingVillage, TileKind, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village,
     VillageId, WorldId, WorldMap, coordinates_within, oasis_garrison,
 };
@@ -5300,6 +5300,131 @@ fn alliance_row((id, name, tag, value): (Uuid, String, String, i64)) -> Alliance
     }
 }
 
+// ---------------------------------------------------------------- 017: medals & population snapshots
+
+#[async_trait]
+impl MedalRepository for PgAccountRepository {
+    async fn latest_settled_period(&self) -> Result<Option<i64>, RepoError> {
+        sqlx::query_scalar("SELECT MAX(period) FROM population_snapshots WHERE world_id = $1")
+            .bind(Uuid::from_u128(self.world_id.0))
+            .fetch_one(&self.pool)
+            .await
+            .map_err(backend)
+    }
+
+    async fn snapshot_population(&self, econ: &EconomyRules, period: i64) -> Result<(), RepoError> {
+        let (fields, kinds, levels, pops) = population_arrays(econ);
+        let pop = village_pop_expr("v.id", "$2", "$3", "$4", "$5");
+        // One snapshot per player (every owner of a village in this world); idempotent per period.
+        let sql = format!(
+            "INSERT INTO population_snapshots (world_id, player_id, period, population) \
+             SELECT $1, v.owner_id, $6, SUM({pop})::bigint \
+             FROM villages v WHERE v.world_id = $1 \
+             GROUP BY v.owner_id ON CONFLICT DO NOTHING"
+        );
+        sqlx::query(&sql)
+            .bind(Uuid::from_u128(self.world_id.0))
+            .bind(&fields)
+            .bind(&kinds)
+            .bind(&levels)
+            .bind(&pops)
+            .bind(period)
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn award_medals(&self, period: i64, awards: &[MedalAward]) -> Result<(), RepoError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        for a in awards {
+            sqlx::query(
+                "INSERT INTO medals (id, period, category, rank, subject_kind, subject_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (period, category, rank) DO NOTHING",
+            )
+            .bind(Uuid::new_v4())
+            .bind(period)
+            .bind(a.category.as_str())
+            .bind(i32::try_from(a.rank).unwrap_or(i32::MAX))
+            .bind(a.subject_kind.as_str())
+            .bind(Uuid::from_u128(a.subject_id))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        }
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn medals_for(
+        &self,
+        subject_kind: MedalSubjectKind,
+        subject_id: u128,
+    ) -> Result<Vec<MedalView>, RepoError> {
+        let rows: Vec<(i64, String, i32)> = sqlx::query_as(
+            "SELECT period, category, rank FROM medals \
+             WHERE subject_kind = $1 AND subject_id = $2 ORDER BY awarded_at DESC, rank ASC",
+        )
+        .bind(subject_kind.as_str())
+        .bind(Uuid::from_u128(subject_id))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(period, cat, rank)| {
+                MedalCategory::parse(&cat).map(|category| MedalView {
+                    period,
+                    category,
+                    rank: i64::from(rank),
+                })
+            })
+            .collect())
+    }
+
+    async fn climber_board(
+        &self,
+        period: i64,
+        prev: i64,
+        scope: BoardScope,
+        limit: i64,
+    ) -> Result<Vec<LeaderboardRow>, RepoError> {
+        let qf = quadrant_filter("cur.player_id", "$4");
+        let sql = format!(
+            "SELECT u.id, u.username, (cur.population - COALESCE(prev.population, 0))::bigint AS delta \
+             FROM population_snapshots cur \
+             JOIN users u ON u.id = cur.player_id \
+             LEFT JOIN population_snapshots prev \
+               ON prev.world_id = cur.world_id AND prev.player_id = cur.player_id AND prev.period = $2 \
+             WHERE cur.world_id = $1 AND cur.period = $3 \
+               AND (cur.population - COALESCE(prev.population, 0)) > 0 AND {qf} \
+             ORDER BY delta DESC, u.id ASC LIMIT $5"
+        );
+        let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(&sql)
+            .bind(Uuid::from_u128(self.world_id.0))
+            .bind(prev)
+            .bind(period)
+            .bind(scope_code(scope))
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(rows.into_iter().map(leaderboard_row).collect())
+    }
+
+    async fn population_history(&self, player: PlayerId) -> Result<Vec<(i64, i64)>, RepoError> {
+        sqlx::query_as(
+            "SELECT period, population FROM population_snapshots \
+             WHERE world_id = $1 AND player_id = $2 ORDER BY period",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(Uuid::from_u128(player.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -10405,5 +10530,98 @@ mod tests {
             "both defenders earned points"
         );
         assert!(defs[0].1 >= defs[1].1, "the owner contributed more defence");
+    }
+
+    /// 017 AC2/AC5/AC6: population snapshots and medal awards persist and are idempotent per period.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn medal_snapshot_and_award_persistence(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            repo.create_account(
+                NewUser {
+                    username: uname.clone(),
+                    email: format!("{uname}@example.com"),
+                    password_hash: "h".to_owned(),
+                    email_confirmed: true,
+                    tribe: Tribe::Gauls,
+                },
+                &template,
+            )
+            .await
+            .expect("create account")
+            .id
+        };
+        let a = account("msa").await;
+        let b = account("msb").await;
+
+        // AC2: one snapshot per player for period 0; re-running writes none (idempotent).
+        assert_eq!(repo.latest_settled_period().await.unwrap(), None);
+        repo.snapshot_population(&econ, 0).await.unwrap();
+        repo.snapshot_population(&econ, 0).await.unwrap();
+        let snap_count: i64 = sqlx::query_scalar("SELECT count(*) FROM population_snapshots")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(snap_count, 2);
+        assert_eq!(repo.latest_settled_period().await.unwrap(), Some(0));
+        let hist = repo.population_history(a).await.unwrap();
+        assert_eq!(hist.len(), 1);
+        assert_eq!(hist[0].0, 0);
+        assert!(hist[0].1 > 0, "starting village has population");
+
+        // AC3/AC5/AC6: award two attacker medals; re-running the same awards is a no-op.
+        let awards = vec![
+            MedalAward {
+                category: MedalCategory::Attacker,
+                rank: 1,
+                subject_kind: MedalSubjectKind::Player,
+                subject_id: a.0,
+            },
+            MedalAward {
+                category: MedalCategory::Attacker,
+                rank: 2,
+                subject_kind: MedalSubjectKind::Player,
+                subject_id: b.0,
+            },
+        ];
+        repo.award_medals(0, &awards).await.unwrap();
+        repo.award_medals(0, &awards).await.unwrap();
+        let medal_count: i64 = sqlx::query_scalar("SELECT count(*) FROM medals")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            medal_count, 2,
+            "per-period (category, rank) uniqueness holds"
+        );
+        let a_medals = repo
+            .medals_for(MedalSubjectKind::Player, a.0)
+            .await
+            .unwrap();
+        assert_eq!(a_medals.len(), 1);
+        assert_eq!(a_medals[0].category, MedalCategory::Attacker);
+        assert_eq!(a_medals[0].rank, 1);
+        assert_eq!(a_medals[0].period, 0);
+
+        // AC4: climber board over [0,1] — grow player a's snapshot, then the delta ranks them.
+        repo.snapshot_population(&econ, 1).await.unwrap();
+        sqlx::query("UPDATE population_snapshots SET population = population + 500 WHERE player_id = $1 AND period = 1")
+            .bind(Uuid::from_u128(a.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let climbers = repo
+            .climber_board(1, 0, BoardScope::World, 100)
+            .await
+            .unwrap();
+        assert_eq!(climbers.len(), 1, "only the grower is a positive climber");
+        assert_eq!(climbers[0].player, a);
+        assert_eq!(climbers[0].value, 500);
     }
 }
