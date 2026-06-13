@@ -22,6 +22,9 @@ pub enum BuildError {
     /// A building prerequisite is unmet.
     #[error("prerequisites not met")]
     PrereqUnmet,
+    /// A village may hold at most one of {Residence, Palace}; the other is already present (013 AC3).
+    #[error("a Residence or Palace already occupies this village")]
+    Exclusive,
     /// The village or target does not exist.
     #[error("not found")]
     NotFound,
@@ -103,6 +106,20 @@ where
         && !prerequisites_met(kind, &village.buildings, build_rules)
     {
         return Err(BuildError::PrereqUnmet);
+    }
+    // 013 AC3: a village holds at most one of {Residence, Palace} — reject building one when the other
+    // is already present (upgrading the existing one is unaffected: `current` is this kind's level).
+    if let BuildTarget::Building { kind, .. } = target {
+        let exclusive_other = match kind {
+            BuildingKind::Residence => Some(BuildingKind::Palace),
+            BuildingKind::Palace => Some(BuildingKind::Residence),
+            _ => None,
+        };
+        if let Some(other) = exclusive_other
+            && building_level(&village, other) > 0
+        {
+            return Err(BuildError::Exclusive);
+        }
     }
 
     let cost = build_rules
@@ -207,7 +224,8 @@ where
         if is_town_hall
             && let Ok(Some(v)) = accounts.village_by_id(order.village).await
             && let Err(e) =
-                crate::culture::reanchor_culture(culture, culture_rules, now, v.owner).await
+                crate::culture::reanchor_culture(culture, culture_rules, order.complete_at, v.owner)
+                    .await
         {
             tracing::error!(error = %e, "failed to re-anchor culture before a Town Hall");
         }
@@ -294,6 +312,17 @@ mod tests {
                 time_secs_per_level: vec![800],
             },
         );
+        // Residence/Palace specs so the exclusivity check (not a max-level/cost short-circuit) is the
+        // tested path (013 AC3).
+        for kind in [BuildingKind::Residence, BuildingKind::Palace] {
+            buildings.insert(
+                kind,
+                LevelSpec {
+                    cost_per_level: vec![amounts(50)],
+                    time_secs_per_level: vec![800],
+                },
+            );
+        }
         let mut prerequisites = HashMap::new();
         prerequisites.insert(
             BuildingKind::Warehouse,
@@ -637,5 +666,30 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err, BuildError::MaxLevel);
+    }
+
+    #[tokio::test]
+    async fn residence_and_palace_are_exclusive() {
+        // 013 AC3: a village holding a Residence cannot also build a Palace (and vice versa).
+        let mut village = make_village(0, true);
+        village.buildings.push(BuildingSlot {
+            kind: BuildingKind::Residence,
+            level: 1,
+        });
+        let accounts = FakeAccounts {
+            village,
+            stored: amounts(1000),
+        };
+        let err = order(
+            &accounts,
+            &FakeBuilds::default(),
+            BuildTarget::Building {
+                slot: 15,
+                kind: BuildingKind::Palace,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, BuildError::Exclusive);
     }
 }

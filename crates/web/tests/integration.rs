@@ -1863,6 +1863,83 @@ async fn oasis_attack_occupy_and_bonus_flow() {
     );
 }
 
+/// 013 AC11 / roles (P4): a player cannot act on another player's village by forging the `village=`
+/// selector — the action falls back to the caller's own village, never the victim's.
+#[tokio::test]
+async fn forged_village_selector_cannot_act_on_anothers_village() {
+    let Some(base) = spawn().await else {
+        return;
+    };
+    let _ = dotenvy::dotenv();
+    let url = std::env::var("DATABASE_URL").unwrap();
+    let pool = create_pool(&url).await.unwrap();
+
+    let attacker = unique("forge_a");
+    let victim = unique("forge_v");
+    let ca = client();
+    let cv = client();
+    for (c, u) in [(&ca, &attacker), (&cv, &victim)] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", "gauls"),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+
+    let a_village: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&attacker)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let v_village: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&victim)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // The attacker orders a build, forging the victim's village id in the form.
+    let res = ca
+        .post(format!("{base}/village/build"))
+        .form(&[
+            ("table", "field"),
+            ("slot", "0"),
+            ("village", v_village.as_u128().to_string().as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+
+    // P4: nothing was queued on the victim's village; the build landed on the attacker's own.
+    let victim_orders: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM build_orders WHERE village_id = $1")
+            .bind(v_village)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(victim_orders, 0, "the victim's village was untouched");
+    let attacker_orders: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM build_orders WHERE village_id = $1")
+            .bind(a_village)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        attacker_orders, 1,
+        "the build fell back to the caller's own village"
+    );
+    let _ = cv;
+}
+
 /// 013 AC11: the village page shows culture points + expansion slots; with a free slot the Rally
 /// Point offers a **Settle** order that founds a new village; the player can then switch between
 /// their villages; the **capital** is badged on the village page and distinguished on the map.

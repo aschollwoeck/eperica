@@ -1306,6 +1306,10 @@ pub struct DueBuild {
     pub target: BuildTarget,
     /// The level to set.
     pub target_level: u8,
+    /// When the order completed (its due instant, Unix-ms UTC) — the deterministic time a rate-changing
+    /// completion (e.g. a Town Hall) re-anchors the player's culture at, independent of when the
+    /// scheduler fires (013 AC1/P2).
+    pub complete_at: Timestamp,
 }
 
 /// Persistence for the build queue (due-timestamped orders, P1).

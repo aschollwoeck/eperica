@@ -750,7 +750,8 @@ impl BuildRepository for PgAccountRepository {
                  SELECT id FROM build_orders \
                  WHERE status = 'pending' AND complete_at <= to_timestamp($1::double precision / 1000.0) \
                  ORDER BY complete_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
-             ) RETURNING id, village_id, target_table, slot, building_type, target_level",
+             ) RETURNING id, village_id, target_table, slot, building_type, target_level, \
+                 (EXTRACT(EPOCH FROM complete_at) * 1000)::bigint AS complete_ms",
         )
         .bind(now.0 as f64)
         .bind(limit)
@@ -766,11 +767,13 @@ impl BuildRepository for PgAccountRepository {
             let slot: i16 = r.try_get("slot").map_err(backend)?;
             let building_type: Option<String> = r.try_get("building_type").map_err(backend)?;
             let target_level: i16 = r.try_get("target_level").map_err(backend)?;
+            let complete_ms: i64 = r.try_get("complete_ms").map_err(backend)?;
             out.push(DueBuild {
                 id: id.as_u128(),
                 village: VillageId(village.as_u128()),
                 target: parse_target(&table, slot, building_type)?,
                 target_level: u8::try_from(target_level).unwrap_or(0),
+                complete_at: Timestamp(complete_ms),
             });
         }
         Ok(out)
@@ -809,11 +812,24 @@ impl BuildRepository for PgAccountRepository {
                 .map_err(backend)?;
 
                 // 013 AC9: completing a Palace makes this village the owner's capital — exactly one
-                // per player, so any prior capital (and Palace's capital role) is cleared.
+                // per player, so any prior capital is cleared and the **previous Palace building is
+                // removed** (at most one Palace per player; the old one cannot remain).
                 if kind == BuildingKind::Palace {
                     sqlx::query(
                         "UPDATE villages SET is_capital = (id = $1) \
                          WHERE owner_id = (SELECT owner_id FROM villages WHERE id = $1)",
+                    )
+                    .bind(vid)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                    // Demolish any Palace the owner holds in another village (relocation).
+                    sqlx::query(
+                        "DELETE FROM village_buildings \
+                         WHERE building_type = 'palace' AND village_id <> $1 \
+                           AND village_id IN ( \
+                               SELECT id FROM villages \
+                               WHERE owner_id = (SELECT owner_id FROM villages WHERE id = $1))",
                     )
                     .bind(vid)
                     .execute(&mut *tx)
@@ -3480,9 +3496,11 @@ impl CultureRepository for PgAccountRepository {
                 r.try_get("value").map_err(backend)?,
                 Timestamp(r.try_get("updated_ms").map_err(backend)?),
             )),
-            // A pre-013 account with no row yet: treat as zero, anchored at epoch (the first
-            // re-anchor stamps a real instant).
-            None => Ok((0, Timestamp(0))),
+            // No row (a defensive edge — `create_account` seeds one and migration 0021 backfills
+            // pre-013 accounts): treat as zero CP anchored at **now**, never the epoch. Anchoring at
+            // the epoch would settle `rate × decades` of CP on the first read, vaulting the player
+            // past the expansion thresholds (013 AC1/AC4); anchoring at now yields 0 CP.
+            None => Ok((0, crate::now())),
         }
     }
 
@@ -8002,11 +8020,22 @@ mod tests {
                 kind: BuildingKind::Palace,
             },
             target_level: 1,
+            complete_at: Timestamp(0),
         };
         repo.apply_build(palace(v1.id)).await.expect("build palace");
         assert!(
             repo.village_by_id(v1.id).await.unwrap().unwrap().is_capital,
             "the Palace village is now the capital"
+        );
+        assert!(
+            repo.village_by_id(v1.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .buildings
+                .iter()
+                .any(|b| b.kind == BuildingKind::Palace),
+            "v1 has a Palace building"
         );
 
         // A second village for the same player (founded directly for the test). The shared dev DB is
@@ -8045,12 +8074,31 @@ mod tests {
             .unwrap();
         let v2 = VillageId(v2_id.as_u128());
 
-        // Building a Palace in v2 relocates the capital: v2 becomes it, v1 is cleared.
+        // Building a Palace in v2 relocates the capital: v2 becomes it, v1's flag AND its Palace
+        // building are cleared (at most one Palace per player — the old one cannot remain, AC9).
         repo.apply_build(palace(v2)).await.expect("build palace v2");
         assert!(repo.village_by_id(v2).await.unwrap().unwrap().is_capital);
+        let v1_after = repo.village_by_id(v1.id).await.unwrap().unwrap();
         assert!(
-            !repo.village_by_id(v1.id).await.unwrap().unwrap().is_capital,
+            !v1_after.is_capital,
             "the previous capital is cleared — one per player"
+        );
+        assert!(
+            !v1_after
+                .buildings
+                .iter()
+                .any(|b| b.kind == BuildingKind::Palace),
+            "the previous Palace building is demolished on relocation"
+        );
+        assert!(
+            repo.village_by_id(v2)
+                .await
+                .unwrap()
+                .unwrap()
+                .buildings
+                .iter()
+                .any(|b| b.kind == BuildingKind::Palace),
+            "the new capital keeps its Palace"
         );
     }
 
