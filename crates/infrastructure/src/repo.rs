@@ -6800,6 +6800,64 @@ mod tests {
         assert_eq!(holder_b, Some(natar_b), "no Treasury ⇒ artifact not taken");
     }
 
+    /// 020 AC6: a held Storage artifact raises the holding village's warehouse/granary capacity on the
+    /// economy read; losing it reverts on the next read (effects fold into the read, no stored mutation).
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn storage_artifact_raises_capacity(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            config,
+            world,
+        } = setup(pool.clone()).await;
+        let units = crate::unit_rules().unwrap();
+        let player = make_account(&repo, &template, "stor").await;
+        let v = repo.villages_of(player).await.unwrap()[0].clone();
+        let load = async || {
+            eperica_application::load_economy(
+                &repo,
+                &econ,
+                &units,
+                config.speed,
+                crate::now(),
+                player,
+                None,
+            )
+            .await
+            .unwrap()
+            .unwrap()
+        };
+        let base = load().await.economy.capacities.warehouse;
+
+        // A large Storage artifact (×2.0) held by the player's village.
+        sqlx::query(
+            "INSERT INTO artifacts (id, world_id, kind, scope, magnitude, holder_village, origin_x, origin_y) \
+             VALUES ('t_stor', $1, 'storage', 'large', 2.0, $2, 0, 0)",
+        )
+        .bind(Uuid::from_u128(world.id.0))
+        .bind(Uuid::from_u128(v.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            load().await.economy.capacities.warehouse,
+            base * 2,
+            "Storage artifact doubled the warehouse capacity"
+        );
+
+        // Losing it reverts on the next read.
+        sqlx::query("DELETE FROM artifacts WHERE id = 't_stor'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            load().await.economy.capacities.warehouse,
+            base,
+            "reverts when lost"
+        );
+    }
+
     /// 019 AC7/AC8: the abandonment sweep abandons an idle account — deleting its village (freeing the
     /// valley) and retiring (but **retaining**) the account row — leaves an active account untouched,
     /// and is idempotent per period.

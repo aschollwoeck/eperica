@@ -1,9 +1,9 @@
 //! The economy read use-case: load a player's village economy, computed on read (P1).
 
-use crate::ports::{AccountRepository, RepoError};
+use crate::ports::{AccountRepository, ArtifactRepository, RepoError};
 use eperica_domain::{
     Economy, EconomyRules, GameSpeed, PlayerId, ResourceAmounts, Timestamp, UnitCounts, UnitRules,
-    Village, VillageId, compute_economy, garrison_upkeep,
+    Village, VillageId, accrue, compute_economy, garrison_upkeep,
 };
 
 /// Pick the village a multi-village request is acting on (013 AC11): the `selected` village when the
@@ -100,7 +100,7 @@ pub async fn load_economy<R>(
     selected: Option<VillageId>,
 ) -> Result<Option<VillageEconomy>, RepoError>
 where
-    R: AccountRepository,
+    R: AccountRepository + ArtifactRepository,
 {
     let Some(village) = select_village(repo, owner, selected).await? else {
         return Ok(None);
@@ -109,12 +109,16 @@ where
         return Ok(None);
     };
     let garrison = repo.garrison(village.id).await?;
-    let upkeep = village
+    let base_upkeep = village
         .tribe
         .map_or(0, |t| garrison_upkeep(&garrison, unit_rules.roster(t)));
+    // 020 AC6: artifact effects in force for this village (its own small + the account's large/unique).
+    let effects = crate::artifact::village_effects(repo, owner, village.id).await?;
+    // Sustenance reduces the garrison's crop upkeep.
+    let upkeep = (base_upkeep as f64 * effects.upkeep).round() as i64;
 
     let elapsed_secs = (now.0 - updated_at.0) / 1000;
-    let economy = compute_economy(
+    let mut economy = compute_economy(
         stored,
         elapsed_secs,
         &village.fields,
@@ -124,6 +128,36 @@ where
         speed,
         village.oasis_bonus,
     );
+    // Storage enlarges warehouse/granary; re-cap the accrued amounts at the boosted capacity.
+    if (effects.storage - 1.0).abs() > f64::EPSILON {
+        economy.capacities.warehouse =
+            (economy.capacities.warehouse as f64 * effects.storage) as i64;
+        economy.capacities.granary = (economy.capacities.granary as f64 * effects.storage) as i64;
+        economy.amounts.wood = accrue(
+            stored.wood,
+            economy.rates.wood,
+            elapsed_secs,
+            economy.capacities.warehouse,
+        );
+        economy.amounts.clay = accrue(
+            stored.clay,
+            economy.rates.clay,
+            elapsed_secs,
+            economy.capacities.warehouse,
+        );
+        economy.amounts.iron = accrue(
+            stored.iron,
+            economy.rates.iron,
+            elapsed_secs,
+            economy.capacities.warehouse,
+        );
+        economy.amounts.crop = accrue(
+            stored.crop,
+            economy.rates.crop_net,
+            elapsed_secs,
+            economy.capacities.granary,
+        );
+    }
     Ok(Some(VillageEconomy {
         village,
         garrison,
