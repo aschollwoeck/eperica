@@ -42,8 +42,8 @@ pub enum ArtifactScope {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ArtifactId(pub String);
 
-/// A released artifact: its type, scope, and effect magnitude (interpretation is per-kind, see
-/// [`apply_to_effects`]).
+/// A released artifact: its type, scope, and effect magnitude (interpretation is per-kind — a factor
+/// applied to the matching [`ArtifactEffects`] field).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArtifactDef {
     /// Stable id (catalogue key).

@@ -16,10 +16,14 @@ battle reports + shared defence points) and **medals & achievements** (017: a we
 the first recurring due-event — population snapshots, permanent medals, milestone achievements with
 rewards, and the 016-deferred top-climbers board + population-over-time) and **quests & onboarding**
 (018: a finite, stage-gated quest chain that walks new players through the core loop, server-evaluated
-from persisted state with exactly-once resource/culture/troop rewards) slices. The **protection &
-lifecycle** slice (019: beginner's attack-immunity — speed-scaled, ending on offence or at a population
-threshold — plus a two-stage inactivity lifecycle: derived farmable greying, then a state-driven
-abandonment sweep that frees villages back to the map and soft-deletes the account) is in progress (M6).
+from persisted state with exactly-once resource/culture/troop rewards) and **protection & lifecycle**
+(019: beginner's attack-immunity — speed-scaled, ending on offence or at a population threshold — plus a
+two-stage inactivity lifecycle: derived farmable greying, then a state-driven abandonment sweep that frees
+villages back to the map and soft-deletes the account) slices, closing M6. The **artifacts & Natar
+villages** slice (020, M7 end-game: at a configured date the reserved Natar tiles materialize into NPC
+villages — ordinary villages owned by a synthetic NPC, reusing the combat engine — each holding one of the
+full Travian artifact set (8 types × small/large/unique); a winning attack from a Treasury village
+captures/steals an artifact, whose effects fold into the sim reads by scope) is in progress (M7).
 
 ## Read the specs first — they are the source of truth
 
@@ -33,7 +37,7 @@ abandonment sweep that frees villages back to the map and soft-deletes the accou
 - **`specs/roadmap.md`** — dependency-ordered build order (slices 001 → end-game).
 - **`specs/social-and-meta-features.md`** — app-layer features (chat, profiles, UX) — not sim rules.
 - **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the active slice. Currently:
-  `019-protection-and-lifecycle`.
+  `020-artifacts-and-natars`.
 
 If behavior must change, **update the spec first**, then the code.
 
