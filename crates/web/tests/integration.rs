@@ -3733,3 +3733,76 @@ async fn presence_last_seen_and_touch_excludes_pollers(pool: sqlx::PgPool) {
     .unwrap();
     assert!(after_nav > before, "navigation refreshes presence");
 }
+
+/// 025 AC4: the population leaderboard renders a presence indicator for player rows; a freshly-active
+/// player reads as online.
+#[sqlx::test(migrations = "../../migrations")]
+async fn leaderboard_rows_show_presence(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let name = unique("lbpres");
+    register_client(&base, &pool, &name).await;
+    let visitor = client();
+    let body = visitor
+        .get(format!("{base}/leaderboard"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains(&name), "the player is listed");
+    assert!(
+        body.contains("presence--online"),
+        "a just-active player shows an online presence indicator"
+    );
+}
+
+/// 025 AC4: a DM conversation surfaces the other party's presence on the list and the thread header.
+#[sqlx::test(migrations = "../../migrations")]
+async fn dm_surfaces_other_party_presence(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let alice = unique("apres");
+    let bob = unique("bpres");
+    let (ca, _aid) = register_client(&base, &pool, &alice).await;
+    let (_cb, bid) = register_client(&base, &pool, &bob).await;
+
+    // Alice DMs Bob, then views her conversation list + the thread header.
+    ca.post(format!("{base}/messages/send"))
+        .form(&[
+            ("conversation", format!("dm:{bid}").as_str()),
+            ("body", "hi bob"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let list = ca
+        .get(format!("{base}/messages"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        list.contains("presence--"),
+        "the DM thread shows Bob's presence in the list"
+    );
+    let header = ca
+        .get(format!("{base}/messages/c/dm:{bid}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        header.contains("presence--"),
+        "the DM header shows Bob's presence"
+    );
+
+    // The global channel is present too (sanity) — channels carry no single presence.
+    assert!(
+        list.contains("Global"),
+        "the global channel is listed (sanity)"
+    );
+}

@@ -1103,13 +1103,25 @@ pub async fn map(
                             .as_deref()
                             .map(|t| format!(" [{t}]"))
                             .unwrap_or_default();
+                        // 025: the owner's presence, surfaced in the marker label.
+                        let (online, presence_label) = presence_view(
+                            marker.owner_last_activity,
+                            now(),
+                            state.lifecycle_rules.presence_online_secs,
+                        );
+                        let presence = if online {
+                            " · online".to_owned()
+                        } else {
+                            format!(" · {presence_label}")
+                        };
                         label = format!(
-                            "{} — {}{}{}{} ({}|{})",
+                            "{} — {}{}{}{}{} ({}|{})",
                             base_label,
                             marker.owner_name,
                             tag,
                             if is_capital { " (capital)" } else { "" },
                             if inactive { " (inactive)" } else { "" },
+                            presence,
                             coord.x,
                             coord.y
                         );
@@ -2314,21 +2326,32 @@ fn window_options(rules: &eperica_domain::RankingRules) -> Vec<(String, String)>
     out
 }
 
-/// Map player leaderboard rows to view rows (rank + stat-page link).
-fn player_rows(rows: Vec<LeaderboardRow>) -> Vec<LeaderboardRowView> {
+/// Map player leaderboard rows to view rows (rank + stat-page link + 025 presence indicator).
+fn player_rows(
+    rows: Vec<LeaderboardRow>,
+    now: Timestamp,
+    online_secs: i64,
+) -> Vec<LeaderboardRowView> {
     rows.into_iter()
         .enumerate()
-        .map(|(i, r)| LeaderboardRowView {
-            rank: i + 1,
-            name: r.name,
-            tag: String::new(),
-            href: format!("/stats/player/{}", r.player.0),
-            value: r.value,
+        .map(|(i, r)| {
+            let (online, presence_label) = presence_view(r.last_activity, now, online_secs);
+            LeaderboardRowView {
+                rank: i + 1,
+                name: r.name,
+                tag: String::new(),
+                href: format!("/stats/player/{}", r.player.0),
+                value: r.value,
+                has_presence: true,
+                online,
+                presence_label,
+            }
         })
         .collect()
 }
 
-/// Map alliance leaderboard rows to view rows (rank + tag + stat-page link).
+/// Map alliance leaderboard rows to view rows (rank + tag + stat-page link). Alliances have no
+/// presence — `has_presence` is false so the template renders no indicator.
 fn alliance_rows(rows: Vec<AllianceLeaderboardRow>) -> Vec<LeaderboardRowView> {
     rows.into_iter()
         .enumerate()
@@ -2338,6 +2361,9 @@ fn alliance_rows(rows: Vec<AllianceLeaderboardRow>) -> Vec<LeaderboardRowView> {
             tag: r.tag,
             href: format!("/stats/alliance/{}", r.alliance.0),
             value: r.value,
+            has_presence: false,
+            online: false,
+            presence_label: String::new(),
         })
         .collect()
 }
@@ -2356,6 +2382,7 @@ pub async fn leaderboard(
     let rules = state.ranking_rules.as_ref();
     let window = parse_window(&window_key, rules);
     let now_ts = now();
+    let online_secs = state.lifecycle_rules.presence_online_secs;
 
     let categories = vec![
         ("population", "Population"),
@@ -2379,7 +2406,7 @@ pub async fn leaderboard(
             "attackers" => (
                 conflict_leaderboard(repo, rules, ConflictMetric::Attack, scope, window, now_ts)
                     .await
-                    .map(player_rows),
+                    .map(|r| player_rows(r, now_ts, online_secs)),
                 "Attack points",
                 false,
                 true,
@@ -2387,7 +2414,7 @@ pub async fn leaderboard(
             "defenders" => (
                 conflict_leaderboard(repo, rules, ConflictMetric::Defense, scope, window, now_ts)
                     .await
-                    .map(player_rows),
+                    .map(|r| player_rows(r, now_ts, online_secs)),
                 "Defense points",
                 false,
                 true,
@@ -2395,7 +2422,7 @@ pub async fn leaderboard(
             "raiders" => (
                 conflict_leaderboard(repo, rules, ConflictMetric::Raided, scope, window, now_ts)
                     .await
-                    .map(player_rows),
+                    .map(|r| player_rows(r, now_ts, online_secs)),
                 "Resources looted",
                 false,
                 true,
@@ -2403,7 +2430,7 @@ pub async fn leaderboard(
             "climbers" => (
                 climbers_leaderboard(repo, rules, scope)
                     .await
-                    .map(player_rows),
+                    .map(|r| player_rows(r, now_ts, online_secs)),
                 "Population gained",
                 false,
                 false,
@@ -2449,7 +2476,7 @@ pub async fn leaderboard(
             _ => (
                 population_leaderboard(repo, econ, rules, scope)
                     .await
-                    .map(player_rows),
+                    .map(|r| player_rows(r, now_ts, online_secs)),
                 "Population",
                 false,
                 false,
@@ -3600,15 +3627,30 @@ async fn viewer_alliance(state: &AppState, player: PlayerId) -> Option<AllianceI
 
 /// The conversations list (024 AC3).
 pub async fn messages(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+    let now_ts = now();
+    let online_secs = state.lifecycle_rules.presence_online_secs;
     match conversation_list(state.accounts.as_ref(), state.accounts.as_ref(), player).await {
         Ok(list) => page(&MessagesTemplate {
             conversations: list
                 .into_iter()
-                .map(|c| ConversationRow {
-                    key: c.key,
-                    title: c.title,
-                    last_body: c.last_body,
-                    unread: c.unread,
+                .map(|c| {
+                    // DM rows carry the other party's activity; channels do not.
+                    let (has_presence, online, presence_label) = match c.other_last_activity {
+                        Some(ms) => {
+                            let (online, label) = presence_view(Timestamp(ms), now_ts, online_secs);
+                            (true, online, label)
+                        }
+                        None => (false, false, String::new()),
+                    };
+                    ConversationRow {
+                        key: c.key,
+                        title: c.title,
+                        last_body: c.last_body,
+                        unread: c.unread,
+                        has_presence,
+                        online,
+                        presence_label,
+                    }
                 })
                 .collect(),
         }),
@@ -3626,14 +3668,20 @@ pub async fn conversation(
     Path(key): Path<String>,
 ) -> Response {
     let now = now();
-    // Resolve the title + load history, access-checked, depending on the key kind.
-    let (title, history) = if let Some(other) = parse_dm_key(&key) {
-        let title = match state.accounts.find_user_by_id(other).await {
-            Ok(Some(u)) => u.username,
-            _ => return not_found(),
+    let online_secs = state.lifecycle_rules.presence_online_secs;
+    // Resolve the title + load history, access-checked, depending on the key kind. DM headers also
+    // carry the other party's presence (025); channels do not.
+    let (title, presence, history) = if let Some(other) = parse_dm_key(&key) {
+        let (title, other_activity) = match view_profile(state.accounts.as_ref(), other).await {
+            Ok(p) => (p.name, p.last_activity),
+            Err(eperica_application::ProfileError::NotFound) => return not_found(),
+            Err(e) => {
+                tracing::error!(error = %e, "dm header profile failed");
+                return server_error();
+            }
         };
         match open_dm(state.accounts.as_ref(), player, other, 100, now).await {
-            Ok(h) => (title, h),
+            Ok(h) => (title, Some(other_activity), h),
             Err(e) => return comms_error_response(e),
         }
     } else if let Some(channel) = ChatChannel::parse(&key) {
@@ -3648,11 +3696,18 @@ pub async fn conversation(
         )
         .await
         {
-            Ok(h) => (title, h),
+            Ok(h) => (title, None, h),
             Err(e) => return comms_error_response(e),
         }
     } else {
         return not_found();
+    };
+    let (has_presence, online, presence_label) = match presence {
+        Some(activity) => {
+            let (online, label) = presence_view(activity, now, online_secs);
+            (true, online, label)
+        }
+        None => (false, false, String::new()),
     };
     let lines = history
         .into_iter()
@@ -3662,7 +3717,14 @@ pub async fn conversation(
             mine: m.sender == player,
         })
         .collect();
-    page(&ConversationTemplate { key, title, lines })
+    page(&ConversationTemplate {
+        key,
+        title,
+        has_presence,
+        online,
+        presence_label,
+        lines,
+    })
 }
 
 /// Display title for a channel (the alliance name, or "Global").

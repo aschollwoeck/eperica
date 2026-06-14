@@ -163,6 +163,12 @@ a { color: var(--c-gold); }
   font-weight: 700;
 }
 
+/* 025: presence indicator — a small online/away marker next to a player's name. */
+.presence { font-size: 0.85rem; margin-left: var(--space-2); white-space: nowrap; }
+.presence--online { color: #3fb950; }
+.presence--away { color: var(--c-ink-muted); }
+.bio { white-space: pre-wrap; }
+
 .table { width: 100%; border-collapse: collapse; }
 .table th, .table td { text-align: left; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--c-border); }
 .table th { color: var(--c-ink-muted); }

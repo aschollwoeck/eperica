@@ -49,7 +49,12 @@
       {% for r in rows %}
       <tr>
         <td class="muted">{{ r.rank }}</td>
-        <td><a href="{{ r.href }}">{{ r.name }}</a></td>
+        <td><a href="{{ r.href }}">{{ r.name }}</a>
+          {% if r.has_presence %}
+          {% if r.online %}<span class="presence presence--online" title="Online">●</span>
+          {% else %}<span class="presence presence--away" title="{{ r.presence_label }}">○</span>{% endif %}
+          {% endif %}
+        </td>
         {% if is_alliance %}<td class="muted">{{ r.tag }}</td>{% endif %}
         <td>{{ r.value }}</td>
       </tr>

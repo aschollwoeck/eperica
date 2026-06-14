@@ -218,6 +218,8 @@ async fn channel_summary<C: CommsRepository>(
         last_body,
         last_ms,
         unread,
+        // Channels have no single presence.
+        other_last_activity: None,
     })
 }
 

@@ -12,6 +12,10 @@
     <li>
       <a href="/messages/c/{{ c.key }}">
         <strong>{{ c.title }}</strong>
+        {% if c.has_presence %}
+        {% if c.online %}<span class="presence presence--online" title="Online">●</span>
+        {% else %}<span class="presence presence--away" title="{{ c.presence_label }}">○</span>{% endif %}
+        {% endif %}
         {% if c.unread > 0 %}<span class="badge">{{ c.unread }}</span>{% endif %}
         <span class="muted preview">{{ c.last_body }}</span>
       </a>

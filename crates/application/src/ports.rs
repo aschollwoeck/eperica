@@ -2197,6 +2197,8 @@ pub struct LeaderboardRow {
     pub player: PlayerId,
     pub name: String,
     pub value: i64,
+    /// The player's last activity (Unix-ms UTC) — feeds the 025 presence indicator on board rows.
+    pub last_activity: Timestamp,
 }
 
 /// One ranked alliance on a leaderboard (016 AC8): the alliance, its name + tag, and the aggregate.
@@ -2817,6 +2819,9 @@ pub struct ConversationSummary {
     pub last_ms: i64,
     /// Unread count for the viewer.
     pub unread: i64,
+    /// For DM threads, the other party's last activity (Unix-ms UTC) for the 025 presence indicator;
+    /// `None` for channels (which have no single presence).
+    pub other_last_activity: Option<i64>,
 }
 
 /// Persistence for conversations (024): direct messages, channel chat, and per-viewer read state. Default
