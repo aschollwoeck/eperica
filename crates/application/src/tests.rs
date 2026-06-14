@@ -64,6 +64,7 @@ impl AccountRepository for InMemoryAccounts {
             password_hash: user.password_hash,
             email_confirmed: user.email_confirmed,
             tribe: user.tribe,
+            abandoned: false,
         };
         users.push(rec.clone());
         Ok(rec)

@@ -55,6 +55,9 @@ pub struct UserRecord {
     pub email_confirmed: bool,
     /// The account's tribe (chosen at registration; pre-004 accounts were backfilled).
     pub tribe: Tribe,
+    /// Whether the account has been **abandoned** by the inactivity sweep (019) — retired: cannot log
+    /// in, hidden from rankings, but the row is retained for historical referential integrity.
+    pub abandoned: bool,
 }
 
 /// Errors a repository/port can return to the application.
@@ -159,6 +162,38 @@ pub trait AccountRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn village_at(&self, coord: Coordinate) -> Result<Option<Village>, RepoError>;
+
+    /// A player's beginner's-protection expiry (019), or `None` if never granted / already ended. The
+    /// pure [`eperica_domain::is_protected`] turns this into the protected/unprotected decision.
+    ///
+    /// Defaults to "never protected" so non-account fakes need not implement it; the real adapter
+    /// overrides it.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn protection_of(&self, _player: PlayerId) -> Result<Option<Timestamp>, RepoError> {
+        Ok(None)
+    }
+
+    /// End a player's beginner's protection now (019 AC3/AC4) — sets `protected_until = now`, but only
+    /// while a window is still active (idempotent; never extends or re-arms protection). Defaults to a
+    /// no-op; the real adapter overrides it.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn end_protection(&self, _player: PlayerId, _now: Timestamp) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// Refresh a player's `last_activity` (019 AC5), **throttled**: a no-op unless the stored value is
+    /// already older than the implementation's freshness interval, so it is a cheap conditional write.
+    /// Defaults to a no-op; the real adapter overrides it.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn touch_activity(&self, _player: PlayerId, _now: Timestamp) -> Result<(), RepoError> {
+        Ok(())
+    }
 }
 
 /// An in-flight movement, for the owner's view (007 AC7).

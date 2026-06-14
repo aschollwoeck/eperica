@@ -13,9 +13,9 @@ use eperica_domain::{
 };
 use eperica_infrastructure::{
     Argon2Hasher, PgAccountRepository, achievement_catalogue, alliance_rules, build_rules,
-    combat_rules, culture_rules, economy_rules, ensure_world, loyalty_rules, map_rules,
-    merchant_rules, now, oasis_rules, quest_chain, ranking_rules, scout_rules, starting_village,
-    unit_rules,
+    combat_rules, culture_rules, economy_rules, ensure_world, lifecycle_rules, loyalty_rules,
+    map_rules, merchant_rules, now, oasis_rules, quest_chain, ranking_rules, scout_rules,
+    starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -44,6 +44,10 @@ async fn spawn(pool: sqlx::PgPool) -> String {
             world.seed,
             config.radius,
             rules.starting_amounts,
+            lifecycle_rules()
+                .expect("lifecycle rules")
+                .beginner_protection_secs,
+            config.speed,
         )),
         hasher: Arc::new(Argon2Hasher),
         template: Arc::new(starting_village().unwrap()),
@@ -842,6 +846,10 @@ async fn movement_repo(pool: &sqlx::PgPool) -> PgAccountRepository {
         world.seed,
         config.radius,
         rules.starting_amounts,
+        lifecycle_rules()
+            .expect("lifecycle rules")
+            .beginner_protection_secs,
+        config.speed,
     )
 }
 

@@ -19,12 +19,12 @@ use eperica_application::{
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, BuildTarget, BuildingKind,
-    BuildingSlot, Coordinate, DiplomacyStance, DiplomacyStatus, EconomyRules, MedalCategory,
-    MovementKind, OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant, QuestDef, QuestId,
-    QuestProgress, QueueLane, ResourceAmounts, ResourceField, ResourceKind, Reward, RightSet,
-    ScoutTarget, StartingVillage, TileKind, Timestamp, TradeKind, Tribe, UnitCounts, UnitId,
-    UnitSpec, Village, VillageId, WorldId, WorldMap, capacities, coordinates_within,
-    deposit_capped, oasis_garrison,
+    BuildingSlot, Coordinate, DiplomacyStance, DiplomacyStatus, EconomyRules, GameSpeed,
+    MedalCategory, MovementKind, OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant,
+    QuestDef, QuestId, QuestProgress, QueueLane, ResourceAmounts, ResourceField, ResourceKind,
+    Reward, RightSet, ScoutTarget, StartingVillage, TileKind, Timestamp, TradeKind, Tribe,
+    UnitCounts, UnitId, UnitSpec, Village, VillageId, WorldId, WorldMap, capacities,
+    coordinates_within, deposit_capped, oasis_garrison, protection_expiry,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use std::collections::{HashMap, HashSet};
@@ -37,18 +37,25 @@ pub struct PgAccountRepository {
     world_id: WorldId,
     map: WorldMap,
     starting_amounts: ResourceAmounts,
+    /// Beginner's-protection window (base seconds, 019) granted at spawn; speed-scaled with `speed`.
+    protection_window_secs: i64,
+    /// World speed — scales the protection window (P7).
+    speed: GameSpeed,
 }
 
 impl PgAccountRepository {
     /// Create a repository for `world_id`. The world's `seed` + `radius` (with the embedded map
     /// balance) drive the generated map used for village placement (006); `starting_amounts` are
-    /// seeded into each new village's resources.
+    /// seeded into each new village's resources. `protection_window_secs` + `speed` set the
+    /// beginner's-protection window granted at spawn (019, speed-scaled, P7).
     pub fn new(
         pool: PgPool,
         world_id: WorldId,
         seed: i64,
         radius: u32,
         starting_amounts: ResourceAmounts,
+        protection_window_secs: i64,
+        speed: GameSpeed,
     ) -> Self {
         let rules = crate::balance::map_rules().expect("embedded map balance is valid");
         Self {
@@ -56,6 +63,8 @@ impl PgAccountRepository {
             world_id,
             map: WorldMap::new(seed as u64, radius, rules),
             starting_amounts,
+            protection_window_secs,
+            speed,
         }
     }
 
@@ -291,6 +300,7 @@ fn row_to_user(r: &PgRow) -> Result<UserRecord, RepoError> {
         password_hash: r.try_get("password_hash").map_err(backend)?,
         email_confirmed: r.try_get("email_confirmed").map_err(backend)?,
         tribe,
+        abandoned: r.try_get("abandoned").map_err(backend)?,
     })
 }
 
@@ -304,9 +314,13 @@ impl AccountRepository for PgAccountRepository {
         let mut tx = self.pool.begin().await.map_err(backend)?;
 
         let user_id = Uuid::new_v4();
+        // Beginner's protection (019 AC1): immune to attack until now + the speed-scaled window.
+        let protected_until =
+            protection_expiry(crate::now(), self.protection_window_secs, self.speed);
         let insert_user = sqlx::query(
-            "INSERT INTO users (id, username, email, password_hash, email_confirmed, tribe) \
-             VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO users (id, username, email, password_hash, email_confirmed, tribe, \
+             protected_until) \
+             VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7::double precision / 1000.0))",
         )
         .bind(user_id)
         .bind(&user.username)
@@ -314,6 +328,7 @@ impl AccountRepository for PgAccountRepository {
         .bind(&user.password_hash)
         .bind(user.email_confirmed)
         .bind(user.tribe.slug())
+        .bind(protected_until.0)
         .execute(&mut *tx)
         .await;
         if let Err(e) = insert_user {
@@ -433,12 +448,14 @@ impl AccountRepository for PgAccountRepository {
             password_hash: user.password_hash,
             email_confirmed: user.email_confirmed,
             tribe: user.tribe,
+            abandoned: false,
         })
     }
 
     async fn find_user_by_username(&self, username: &str) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
-            "SELECT id, username, email, password_hash, email_confirmed, tribe FROM users WHERE username = $1",
+            "SELECT id, username, email, password_hash, email_confirmed, tribe, \
+             (abandoned_at IS NOT NULL) AS abandoned FROM users WHERE username = $1",
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -449,7 +466,8 @@ impl AccountRepository for PgAccountRepository {
 
     async fn find_user_by_id(&self, id: PlayerId) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
-            "SELECT id, username, email, password_hash, email_confirmed, tribe FROM users WHERE id = $1",
+            "SELECT id, username, email, password_hash, email_confirmed, tribe, \
+             (abandoned_at IS NOT NULL) AS abandoned FROM users WHERE id = $1",
         )
         .bind(Uuid::from_u128(id.0))
         .fetch_optional(&self.pool)
@@ -684,7 +702,54 @@ impl AccountRepository for PgAccountRepository {
             None => Ok(None),
         }
     }
+
+    async fn protection_of(&self, player: PlayerId) -> Result<Option<Timestamp>, RepoError> {
+        let ms: Option<i64> = sqlx::query_scalar(
+            "SELECT (EXTRACT(EPOCH FROM protected_until) * 1000)::bigint FROM users WHERE id = $1",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?
+        .flatten();
+        Ok(ms.map(Timestamp))
+    }
+
+    async fn end_protection(&self, player: PlayerId, now: Timestamp) -> Result<(), RepoError> {
+        // Only ends an *active* window; never extends or re-arms (idempotent — AC3/AC4).
+        sqlx::query(
+            "UPDATE users SET protected_until = to_timestamp($2::double precision / 1000.0) \
+             WHERE id = $1 AND protected_until > to_timestamp($2::double precision / 1000.0)",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .bind(now.0)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn touch_activity(&self, player: PlayerId, now: Timestamp) -> Result<(), RepoError> {
+        // Throttled (AC5): rewrite only when the stored value is staler than ACTIVITY_THROTTLE_MS, so
+        // an authenticated view costs at most one tiny write per throttle window, not per request.
+        let cutoff = now.0 - ACTIVITY_THROTTLE_MS;
+        sqlx::query(
+            "UPDATE users SET last_activity = to_timestamp($2::double precision / 1000.0) \
+             WHERE id = $1 AND last_activity < to_timestamp($3::double precision / 1000.0)",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .bind(now.0)
+        .bind(cutoff)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
 }
+
+/// Freshness window for [`PgAccountRepository::touch_activity`] — `last_activity` is rewritten only
+/// when older than this (5 minutes). An implementation constant, not game balance.
+const ACTIVITY_THROTTLE_MS: i64 = 5 * 60 * 1000;
 
 fn lane_str(lane: QueueLane) -> &'static str {
     match lane {
@@ -5902,7 +5967,7 @@ mod tests {
         BoardScope, ConflictMetric, ConquestTransfer, DefenderContribution, NewBattleReport,
         ReinforcementReturn,
     };
-    use eperica_domain::{EconomyRules, GameSpeed, WorldConfig};
+    use eperica_domain::{EconomyRules, GameSpeed, WorldConfig, is_protected};
 
     /// The resources row's last-settled time — the snapshot orders must be computed from.
     async fn snapshot(repo: &PgAccountRepository, village: VillageId) -> Timestamp {
@@ -5926,12 +5991,15 @@ mod tests {
             .await
             .expect("ensure world");
         let econ = crate::economy_rules().expect("economy rules");
+        let lifecycle = crate::lifecycle_rules().expect("lifecycle rules");
         let repo = PgAccountRepository::new(
             pool.clone(),
             world.id,
             world.seed,
             config.radius,
             econ.starting_amounts,
+            lifecycle.beginner_protection_secs,
+            config.speed,
         );
         let template = crate::starting_village().unwrap();
         Setup {
@@ -5941,6 +6009,115 @@ mod tests {
             repo,
             template,
         }
+    }
+
+    /// Create a bare account (no extra villages) and return its player id.
+    async fn make_account(
+        repo: &PgAccountRepository,
+        template: &StartingVillage,
+        tag: &str,
+    ) -> PlayerId {
+        let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+        repo.create_account(
+            NewUser {
+                username: uname.clone(),
+                email: format!("{uname}@example.com"),
+                password_hash: "h".to_owned(),
+                email_confirmed: true,
+                tribe: Tribe::Gauls,
+            },
+            template,
+        )
+        .await
+        .expect("create account")
+        .id
+    }
+
+    /// 019 AC1: registration grants beginner's protection — `protected_until` is set ahead of now by
+    /// the (speed-scaled) window.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn create_account_grants_beginner_protection(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let lifecycle = crate::lifecycle_rules().unwrap();
+        let player = make_account(&repo, &template, "prot").await;
+        let until = repo
+            .protection_of(player)
+            .await
+            .unwrap()
+            .expect("a new account is protected");
+        let now = crate::now();
+        assert!(until.0 > now.0, "protection extends into the future");
+        // At speed 1.0 the window is the base seconds; allow generous slack for clock + insert latency.
+        let window_ms = lifecycle.beginner_protection_secs * 1000;
+        assert!(
+            until.0 >= now.0 + window_ms - 60_000,
+            "≈ the full window remains"
+        );
+        assert!(
+            is_protected(Some(until), now),
+            "the player reads as protected"
+        );
+    }
+
+    /// 019 AC3: `end_protection` ends an active window and is idempotent / never re-arms.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn end_protection_is_one_way(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let player = make_account(&repo, &template, "end").await;
+        let t = crate::now();
+        repo.end_protection(player, t).await.unwrap();
+        let after = repo.protection_of(player).await.unwrap().unwrap();
+        assert!(
+            !is_protected(Some(after), crate::now()),
+            "protection has ended"
+        );
+        // Re-ending later does not push protection further out (no re-arm).
+        repo.end_protection(player, Timestamp(t.0 + 1_000_000))
+            .await
+            .unwrap();
+        let after2 = repo.protection_of(player).await.unwrap().unwrap();
+        assert_eq!(after2.0, after.0, "already-ended protection is not moved");
+    }
+
+    /// 019 AC5: `touch_activity` is throttled — a no-op while fresh, a write once stale.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn touch_activity_is_throttled(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let player = make_account(&repo, &template, "act").await;
+        let pid = Uuid::from_u128(player.0);
+        let read = async |pool: &PgPool| -> i64 {
+            sqlx::query_scalar("SELECT (EXTRACT(EPOCH FROM last_activity) * 1000)::bigint FROM users WHERE id = $1")
+                .bind(pid)
+                .fetch_one(pool)
+                .await
+                .unwrap()
+        };
+        let seeded = read(&pool).await;
+        // A touch within the throttle window is a no-op.
+        repo.touch_activity(player, Timestamp(seeded + 1000))
+            .await
+            .unwrap();
+        assert_eq!(read(&pool).await, seeded, "fresh activity is not rewritten");
+        // A touch past the throttle window writes.
+        let later = Timestamp(seeded + ACTIVITY_THROTTLE_MS + 1000);
+        repo.touch_activity(player, later).await.unwrap();
+        assert_eq!(read(&pool).await, later.0, "stale activity is refreshed");
+    }
+
+    /// 019 AC8: an abandoned account surfaces as `abandoned` (which blocks login at the use-case).
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn abandoned_flag_surfaces(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let player = make_account(&repo, &template, "aband").await;
+        let rec = repo.find_user_by_id(player).await.unwrap().unwrap();
+        assert!(!rec.abandoned, "a live account is not abandoned");
+        sqlx::query("UPDATE users SET abandoned_at = now() WHERE id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let rec = repo.find_user_by_id(player).await.unwrap().unwrap();
+        assert!(rec.abandoned, "the sweep flag surfaces on the user record");
     }
 
     /// 007 AC1/AC4/AC5: a reinforcement debits the source garrison, arrives once (crash-resume

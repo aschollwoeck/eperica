@@ -373,6 +373,9 @@ pub async fn login_submit(
         Err(LoginError::EmailNotConfirmed) => page(&LoginTemplate {
             error: Some("Please confirm your email before logging in.".to_owned()),
         }),
+        Err(LoginError::Abandoned) => page(&LoginTemplate {
+            error: Some("This account has been retired after a long inactivity.".to_owned()),
+        }),
         Err(LoginError::Backend(e)) => {
             tracing::error!(error = %e, "login failed");
             server_error()
