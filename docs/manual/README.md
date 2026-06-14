@@ -34,5 +34,6 @@ manual grows as the game does.
 - [Your profile & who's online](profiles-and-presence.md) — write a public bio and see other players' online / last-seen presence on profiles, leaderboards, conversations, and the map.
 - [Notifications & alerts](notifications.md) — the nav bell: live, private alerts for incoming attacks, battle reports, and new messages, with a feed you can revisit.
 - [The alliance forum](alliance-forum.md) — your alliance's private threaded discussion: start threads, reply, and post locked announcements (with the Announce right).
+- [Finding players, alliances & places](search.md) — the search box: jump to a player, an alliance (by name or tag), or a map tile by coordinate.
 
 *(More chapters arrive as those features ship.)*
