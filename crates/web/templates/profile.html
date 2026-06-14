@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Your profile</h1>
+  <p class="muted"><a href="/village">← Back to the village</a></p>
+
+  <h2>Bio</h2>
+  <p class="muted">Shown on your public profile. Plain text, up to 500 characters.</p>
+  <form method="post" action="/profile/bio" class="bio">
+    <textarea name="bio" rows="4" maxlength="500" placeholder="Tell other players about yourself…">{{ bio }}</textarea>
+    <button type="submit">Save</button>
+  </form>
+</section>
+{% endblock %}

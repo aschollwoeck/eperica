@@ -10,11 +10,11 @@ use crate::templates::{
     LeaderboardTemplate, LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MedalRowView,
     MemberStatRow, MessagesTemplate, ModAccountTemplate, ModQueueTemplate, ModReportRow,
     MovementRow, OasisRow, OutgoingInviteView, PendingInviteView, PlayerStatsTemplate,
-    QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow,
-    ReportRow, ReportTemplate, ReportsTemplate, RosterRowView, ScoutReportTemplate,
-    ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate, StyleGuideTemplate, TrainRow,
-    TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate, WonderStandingView,
-    WonderTemplate,
+    ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate,
+    ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, RosterRowView,
+    ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate,
+    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
+    VillageTemplate, WonderStandingView, WonderTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -32,7 +32,7 @@ use eperica_application::{
     WonderRepository, account_signals, alliance_conflict_leaderboard,
     alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
     climbers_leaderboard, conflict_leaderboard, conversation_list, disband_alliance, dm_key,
-    dm_pair_key, end_protection_if_established, evaluate_achievements, evaluate_quests,
+    dm_pair_key, edit_bio, end_protection_if_established, evaluate_achievements, evaluate_quests,
     expel_member, file_report, found_alliance, invite_player, leave_alliance, load_culture,
     load_economy, map_viewport, open_chat, open_dm, order_attack, order_build, order_oasis_attack,
     order_oasis_recall, order_oasis_reinforce, order_reinforcement, order_research, order_return,
@@ -40,16 +40,16 @@ use eperica_application::{
     parse_dm_key, player_statistics, population_history, population_leaderboard, register,
     reinforcement_reports, resolve_report, respond_invite, review_queue, revoke_invite,
     sanction_account, send_chat, send_dm, set_diplomacy, set_member_role, transfer_founder,
-    unread_badge, viewport_coords,
+    unread_badge, view_profile, viewport_coords,
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, ChatChannel,
     Coordinate, DiplomacyStance, DiplomacyStatus, MedalCategory, MovementKind, OasisBonus,
-    PlayerId, Quadrant, QuestReward, QueueLane, ReportReason, ResearchDenied, ResourceAmounts,
-    ResourceKind, RightSet, SanctionKind, ScoutTarget, TileKind, TradeKind, Tribe, UnitId,
-    UnitRole, UnitRules, UpgradeDenied, Village, VillageId, can_access_channel, can_afford,
-    can_research, can_upgrade, current_quest, garrison_upkeep, is_inactive, per_unit_time_secs,
-    queue_lane, regenerate_loyalty, scaled_time_secs,
+    PlayerId, Presence, Quadrant, QuestReward, QueueLane, ReportReason, ResearchDenied,
+    ResourceAmounts, ResourceKind, RightSet, SanctionKind, ScoutTarget, TileKind, Timestamp,
+    TradeKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, VillageId,
+    can_access_channel, can_afford, can_research, can_upgrade, current_quest, garrison_upkeep,
+    is_inactive, per_unit_time_secs, presence, queue_lane, regenerate_loyalty, scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
@@ -2758,6 +2758,26 @@ pub struct ReportForm {
     note: Option<String>,
 }
 
+/// Render a presence value (025) as an `(online, label)` pair for templates: `(true, "online")` when
+/// the player acted within the configured window, else `(false, "last seen …")` with a coarse,
+/// human-friendly age. Time math is on the pure `Timestamp` ms values; no wall-clock formatting.
+fn presence_view(last_activity: Timestamp, now: Timestamp, online_secs: i64) -> (bool, String) {
+    match presence(last_activity, now, online_secs) {
+        Presence::Online => (true, "online".to_owned()),
+        Presence::LastSeen(seen) => {
+            let secs = ((now.0 - seen.0) / 1000).max(0);
+            let label = if secs < 3600 {
+                format!("last seen {}m ago", (secs / 60).max(1))
+            } else if secs < 86_400 {
+                format!("last seen {}h ago", secs / 3600)
+            } else {
+                format!("last seen {}d ago", secs / 86_400)
+            };
+            (false, label)
+        }
+    }
+}
+
 /// Public player statistics page (016 AC9).
 pub async fn player_stats_page(
     State(state): State<AppState>,
@@ -2797,6 +2817,19 @@ pub async fn player_stats_page(
             return server_error();
         }
     };
+    // 025: bio + presence, derived from the account's profile and last activity.
+    let profile = match view_profile(repo, PlayerId(pid)).await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(error = %e, "player profile failed");
+            return server_error();
+        }
+    };
+    let (online, presence_label) = presence_view(
+        profile.last_activity,
+        Timestamp(now().0),
+        state.lifecycle_rules.presence_online_secs,
+    );
     let mut achievements: Vec<AchievementRowView> = held
         .iter()
         .map(|a| AchievementRowView {
@@ -2807,6 +2840,9 @@ pub async fn player_stats_page(
     page(&PlayerStatsTemplate {
         subject_id: pid.to_string(),
         name: s.name,
+        bio: profile.bio,
+        online,
+        presence_label,
         population: s.population,
         attack_points: s.attack_points,
         defense_points: s.defense_points,
@@ -2834,6 +2870,44 @@ pub async fn player_stats_page(
             .map(|(period, population)| HistoryPointView { period, population })
             .collect(),
     })
+}
+
+/// The bio-edit form (025 AC2, owner only).
+#[derive(Deserialize)]
+pub struct BioForm {
+    bio: String,
+}
+
+/// The signed-in player's own profile page (025, Player only): renders the editable bio. The public
+/// view lives on `/stats/player/{id}`; this page is purely for self-editing.
+pub async fn profile_page(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+    match view_profile(state.accounts.as_ref(), player).await {
+        Ok(p) => page(&ProfileTemplate { bio: p.bio }),
+        Err(e) => {
+            tracing::error!(error = %e, "profile load failed");
+            server_error()
+        }
+    }
+}
+
+/// Save the signed-in player's bio (025 AC2, owner-scoped, P4). Validation (length) lives in the pure
+/// domain via `edit_bio`; an invalid bio re-renders the form rather than persisting.
+pub async fn profile_bio_submit(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<BioForm>,
+) -> Response {
+    match edit_bio(state.accounts.as_ref(), player, &form.bio).await {
+        Ok(()) => Redirect::to("/profile").into_response(),
+        Err(eperica_application::ProfileError::Invalid) => {
+            // Re-render with the rejected text so the player can fix it.
+            page(&ProfileTemplate { bio: form.bio })
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "bio save failed");
+            server_error()
+        }
+    }
 }
 
 /// The player's onboarding quests (018 AC8, Player only): the current quest with its reward, the
