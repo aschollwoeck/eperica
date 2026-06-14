@@ -82,20 +82,7 @@ impl PgAccountRepository {
             return Ok(ArtifactEffects::NONE);
         }
         let held = self.held_by_player(owner).await?;
-        if held.is_empty() {
-            return Ok(ArtifactEffects::NONE);
-        }
-        let small: Vec<ArtifactDef> = held
-            .iter()
-            .filter(|h| h.holder == village && h.def.scope == ArtifactScope::Small)
-            .map(|h| h.def.clone())
-            .collect();
-        let account_wide: Vec<ArtifactDef> = held
-            .iter()
-            .filter(|h| matches!(h.def.scope, ArtifactScope::Large | ArtifactScope::Unique))
-            .map(|h| h.def.clone())
-            .collect();
-        Ok(aggregate_effects(&small, &account_wide))
+        Ok(artifact_effects_from(&held, village, is_natar))
     }
 
     /// Reset build orders stuck in `processing` (e.g. left by a crash) back to `pending` so they are
@@ -519,6 +506,8 @@ impl AccountRepository for PgAccountRepository {
         .await
         .map_err(backend)?;
 
+        // The owner's artifact holdings, fetched once and reused for every village (no N+1, P11).
+        let held = self.held_by_player(owner).await?;
         let mut villages = Vec::with_capacity(village_rows.len());
         for r in &village_rows {
             let vid: Uuid = r.try_get("id").map_err(backend)?;
@@ -577,9 +566,7 @@ impl AccountRepository for PgAccountRepository {
                 oasis_bonus: self.village_oasis_bonus(vid_typed).await?,
                 is_capital,
                 is_natar,
-                artifact_effects: self
-                    .artifact_effects_for(owner, vid_typed, is_natar)
-                    .await?,
+                artifact_effects: artifact_effects_from(&held, vid_typed, is_natar),
             });
         }
         Ok(villages)
@@ -6139,6 +6126,30 @@ fn parse_artifact_scope(s: &str) -> Result<ArtifactScope, RepoError> {
             "unknown artifact scope: {other}"
         ))),
     }
+}
+
+/// Aggregate a player's already-fetched holdings into the effects for one of their villages (020 AC6):
+/// the village's own **small** artifacts plus the account's **large/unique**. `NONE` for a Natar
+/// village. Pure, so `villages_of` can fetch the holdings once and reuse them across the loop.
+fn artifact_effects_from(
+    held: &[HeldArtifact],
+    village: VillageId,
+    is_natar: bool,
+) -> ArtifactEffects {
+    if is_natar || held.is_empty() {
+        return ArtifactEffects::NONE;
+    }
+    let small: Vec<ArtifactDef> = held
+        .iter()
+        .filter(|h| h.holder == village && h.def.scope == ArtifactScope::Small)
+        .map(|h| h.def.clone())
+        .collect();
+    let account_wide: Vec<ArtifactDef> = held
+        .iter()
+        .filter(|h| matches!(h.def.scope, ArtifactScope::Large | ArtifactScope::Unique))
+        .map(|h| h.def.clone())
+        .collect();
+    aggregate_effects(&small, &account_wide)
 }
 
 fn artifact_from_row(r: &PgRow) -> Result<ArtifactDef, RepoError> {
