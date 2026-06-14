@@ -24,6 +24,8 @@ pub struct AppConfig {
     pub database_url: String,
     /// The world's static configuration (speed, radius).
     pub world: WorldConfig,
+    /// Seconds after world creation when artifacts are released (020, GDD §13.2). Default 90 days.
+    pub artifact_release_offset_secs: i64,
 }
 
 impl AppConfig {
@@ -51,9 +53,16 @@ impl AppConfig {
             .parse()
             .map_err(|_| ConfigError::Invalid("WORLD_RADIUS", radius_raw))?;
 
+        let release_raw =
+            env::var("ARTIFACT_RELEASE_DELAY_SECS").unwrap_or_else(|_| "7776000".to_owned());
+        let artifact_release_offset_secs: i64 = release_raw
+            .parse()
+            .map_err(|_| ConfigError::Invalid("ARTIFACT_RELEASE_DELAY_SECS", release_raw))?;
+
         Ok(Self {
             database_url,
             world: WorldConfig::new(speed, radius),
+            artifact_release_offset_secs,
         })
     }
 }

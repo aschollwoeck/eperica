@@ -7,9 +7,9 @@ use eperica_domain::WorldMap;
 use eperica_infrastructure::{
     AppConfig, Argon2Hasher, PgAccountRepository, PgEventStore, Scheduler, achievement_catalogue,
     alliance_rules, build_rules, combat_rules, create_pool, culture_rules, economy_rules,
-    ensure_world, lifecycle_rules, loyalty_rules, map_rules, medal_rules, merchant_rules,
-    oasis_rules, quest_chain, ranking_rules, run_migrations, scout_rules, starting_village,
-    unit_rules,
+    ensure_world_with_release, lifecycle_rules, loyalty_rules, map_rules, medal_rules,
+    merchant_rules, oasis_rules, quest_chain, ranking_rules, run_migrations, scout_rules,
+    starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -23,7 +23,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::from_env()?;
     let pool = create_pool(&config.database_url).await?;
     run_migrations(&pool).await?;
-    let world = ensure_world(&pool, &config.world).await?;
+    let world =
+        ensure_world_with_release(&pool, &config.world, config.artifact_release_offset_secs)
+            .await?;
     let rules = Arc::new(economy_rules()?);
     let units = Arc::new(unit_rules()?);
     let merchants = Arc::new(merchant_rules()?);

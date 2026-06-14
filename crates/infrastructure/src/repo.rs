@@ -6342,6 +6342,27 @@ mod tests {
         );
     }
 
+    /// 020 AC1/AC7: `ensure_world` persists the artifact-release date (created + offset), returned
+    /// stably on later calls.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn world_carries_artifact_release_date(pool: PgPool) {
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = crate::world::ensure_world_with_release(&pool, &config, 3600)
+            .await
+            .unwrap();
+        let release = world.artifact_release_at.expect("a release is scheduled");
+        let delta = release.0 - world.created_at.0;
+        assert!(
+            (delta - 3_600_000).abs() < 5_000,
+            "release ≈ created + 1h, got {delta}ms"
+        );
+        // A later call returns the persisted release, not a recomputed one.
+        let again = crate::world::ensure_world_with_release(&pool, &config, 999)
+            .await
+            .unwrap();
+        assert_eq!(again.artifact_release_at, world.artifact_release_at);
+    }
+
     /// 019 AC7/AC8: the abandonment sweep abandons an idle account — deleting its village (freeing the
     /// valley) and retiring (but **retaining**) the account row — leaves an active account untouched,
     /// and is idempotent per period.
