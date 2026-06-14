@@ -884,6 +884,26 @@ pub struct NotificationsTemplate {
     pub notifications: Vec<NotificationRowView>,
 }
 
+/// A player or alliance hit on the search page (028).
+pub struct SearchHitRow {
+    pub href: String,
+    pub label: String,
+}
+
+#[derive(Template)]
+#[template(path = "search.html")]
+pub struct SearchTemplate {
+    /// The submitted query (echoed into the box).
+    pub query: String,
+    /// Whether a (non-empty) search was actually run — distinguishes the prompt from "no results".
+    pub searched: bool,
+    pub players: Vec<SearchHitRow>,
+    pub alliances: Vec<SearchHitRow>,
+    /// A "go to (x|y)" map link when the query parsed as a coordinate.
+    pub coordinate_href: Option<String>,
+    pub coordinate_label: String,
+}
+
 /// One row in the alliance forum thread list (027 AC1).
 pub struct ForumThreadRow {
     pub id: String,

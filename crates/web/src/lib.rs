@@ -232,6 +232,7 @@ pub fn router(state: AppState) -> Router {
         .route("/reports/scout/{id}", get(handlers::scout_report_detail))
         .route("/reports/{id}", get(handlers::report_detail))
         .route("/leaderboard", get(handlers::leaderboard))
+        .route("/search", get(handlers::search_page))
         .route("/messages", get(handlers::messages))
         .route("/messages/unread", get(handlers::messages_unread))
         .route("/messages/send", post(handlers::messages_send))

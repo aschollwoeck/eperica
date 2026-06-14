@@ -4135,3 +4135,84 @@ async fn alliance_forum_flow_and_access(pool: sqlx::PgPool) {
     );
     let _ = blocked;
 }
+
+/// 028 AC1–AC4/AC6: who-is search finds players + alliances with links, offers a coordinate jump,
+/// shows a prompt for an empty query and "no results" otherwise, and is reachable without login.
+#[sqlx::test(migrations = "../../migrations")]
+async fn search_finds_players_alliances_and_coordinates(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (_ca, alice) = register_client(&base, &pool, &unique("Searchable")).await;
+    // Rename to a deterministic prefix.
+    sqlx::query("UPDATE users SET username = 'Aragorn' WHERE id = $1")
+        .bind(alice)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let a = seed_alliance(&pool, "Iron Pact", "IRON", alice).await;
+    let _ = a;
+
+    let anon = client(); // public: no login
+
+    // Player prefix.
+    let body = anon
+        .get(format!("{base}/search?q=arag"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("Aragorn"));
+    assert!(body.contains(&format!("/stats/player/{}", alice.as_u128())));
+
+    // Alliance by tag.
+    let body = anon
+        .get(format!("{base}/search?q=iro"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("Iron Pact"));
+    assert!(body.contains(&format!("/stats/alliance/{}", a.as_u128())));
+
+    // Coordinate jump.
+    let body = anon
+        .get(format!("{base}/search?q=12%7C-7"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    // `&` is HTML-escaped to `&amp;` in the rendered attribute (still a valid link).
+    assert!(
+        body.contains("/map?x=12&amp;y=-7"),
+        "offers a map jump for a coordinate query"
+    );
+
+    // Empty query → prompt (not "no results").
+    let body = anon
+        .get(format!("{base}/search"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains("Type something"),
+        "empty query shows the prompt"
+    );
+
+    // No match → clear empty state.
+    let res = anon
+        .get(format!("{base}/search?q=zzzqqq"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 200);
+    let body = res.text().await.unwrap();
+    assert!(body.contains("No players found") && body.contains("No alliances found"));
+}
