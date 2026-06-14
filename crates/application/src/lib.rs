@@ -48,8 +48,8 @@ pub use auth::{LoginError, authenticate};
 pub use build::{BuildError, order_build, process_due_builds};
 pub use combat::{CombatError, order_attack, process_due_combat};
 pub use comms::{
-    CommsError, conversation_list, dm_key, open_chat, open_dm, parse_dm_key, send_chat, send_dm,
-    unread_badge,
+    CommsError, conversation_list, dm_key, dm_pair_key, open_chat, open_dm, parse_dm_key,
+    send_chat, send_dm, unread_badge,
 };
 pub use culture::{CultureView, load_culture, reanchor_culture};
 pub use economy::{VillageEconomy, load_economy, pick_village, select_village, settle_amounts};

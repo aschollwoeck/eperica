@@ -49,6 +49,18 @@ pub fn parse_dm_key(key: &str) -> Option<PlayerId> {
         .map(|u| PlayerId(u.as_u128()))
 }
 
+/// The **pair-canonical** live-delivery key for the DM between `a` and `b` — `dmp:<lo-uuid>:<hi-uuid>`,
+/// sorted so both parties derive the same key and **only** the two parties can (024 — the broadcast/notify
+/// routing key; unlike the viewer-relative `dm:<other>`, this is pair-unique so it can't be used to
+/// subscribe to a third party's thread). Sorted by uuid text to match the DB's `LEAST/GREATEST` on the
+/// notify side.
+pub fn dm_pair_key(a: PlayerId, b: PlayerId) -> String {
+    let x = uuid::Uuid::from_u128(a.0).to_string();
+    let y = uuid::Uuid::from_u128(b.0).to_string();
+    let (lo, hi) = if x <= y { (x, y) } else { (y, x) };
+    format!("dmp:{lo}:{hi}")
+}
+
 /// Send a direct message from `sender` to `recipient` (024 AC1). Rejects an invalid body, a self-DM, and an
 /// unknown/abandoned recipient — server-side. Returns the new message id.
 ///
@@ -222,9 +234,13 @@ where
     L: AllianceRepository,
     C: CommsRepository,
 {
-    Ok(conversation_list(alliances, comms, viewer)
-        .await?
-        .iter()
-        .map(|c| c.unread)
-        .sum())
+    // A few aggregate counts, not the whole conversation list (this is polled often, P11).
+    let mut total =
+        comms.dm_total_unread(viewer).await? + comms.channel_unread(viewer, "global").await?;
+    if let Some(alliance) = membership_of(alliances, viewer).await? {
+        total += comms
+            .channel_unread(viewer, &ChatChannel::Alliance(alliance).as_key())
+            .await?;
+    }
+    Ok(total)
 }

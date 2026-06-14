@@ -2886,4 +2886,12 @@ pub trait CommsRepository: Send + Sync {
     ) -> Result<i64, RepoError> {
         Ok(0)
     }
+
+    /// `player`'s total unread across **all** their DM threads, in one query (the nav badge, 024 AC4).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn dm_total_unread(&self, _player: PlayerId) -> Result<i64, RepoError> {
+        Ok(0)
+    }
 }

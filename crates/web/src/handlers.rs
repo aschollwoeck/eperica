@@ -32,9 +32,9 @@ use eperica_application::{
     WonderRepository, account_signals, alliance_conflict_leaderboard,
     alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
     climbers_leaderboard, conflict_leaderboard, conversation_list, disband_alliance, dm_key,
-    end_protection_if_established, evaluate_achievements, evaluate_quests, expel_member,
-    file_report, found_alliance, invite_player, leave_alliance, load_culture, load_economy,
-    map_viewport, open_chat, open_dm, order_attack, order_build, order_oasis_attack,
+    dm_pair_key, end_protection_if_established, evaluate_achievements, evaluate_quests,
+    expel_member, file_report, found_alliance, invite_player, leave_alliance, load_culture,
+    load_economy, map_viewport, open_chat, open_dm, order_attack, order_build, order_oasis_attack,
     order_oasis_recall, order_oasis_reinforce, order_reinforcement, order_research, order_return,
     order_scout, order_settle, order_smithy_upgrade, order_trade, order_train, order_wonder_build,
     parse_dm_key, player_statistics, population_history, population_leaderboard, register,
@@ -3678,20 +3678,22 @@ pub async fn messages_stream(
     AuthUser(player): AuthUser,
     Path(key): Path<String>,
 ) -> Response {
-    // Access: a DM key is the viewer's own thread (always allowed); a channel needs membership.
-    let allowed = if parse_dm_key(&key).is_some() {
-        true
+    // The broadcast filter key. For a DM, subscribe on the **pair-canonical** key derived from
+    // (viewer, other): only the two parties can compute it, so a viewer can never wiretap a third party's
+    // thread (the URL key `dm:<other>` is viewer-relative and NOT pair-unique). For a channel, the key is
+    // the channel itself, gated by membership.
+    let want = if let Some(other) = parse_dm_key(&key) {
+        dm_pair_key(player, other)
     } else if let Some(channel) = ChatChannel::parse(&key) {
-        can_access_channel(channel, viewer_alliance(&state, player).await)
+        if !can_access_channel(channel, viewer_alliance(&state, player).await) {
+            return forbidden();
+        }
+        key
     } else {
-        false
-    };
-    if !allowed {
         return forbidden();
-    }
+    };
 
     let mut rx = state.chat_hub.subscribe();
-    let want = key;
     let stream = async_stream::stream! {
         loop {
             match rx.recv().await {

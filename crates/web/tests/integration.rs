@@ -3501,3 +3501,72 @@ async fn chat_live_delivery(pool: sqlx::PgPool) {
         .unwrap();
     assert_eq!(n, 1, "the chat message persisted");
 }
+
+/// 024 AC5 (privacy): a third party cannot wiretap a DM live stream — the canonical pair key means only
+/// the two parties' streams match. The actual recipient does receive it live.
+#[sqlx::test(migrations = "../../migrations")]
+async fn dm_stream_is_private_to_the_pair(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (eve, _e) = register_client(&base, &pool, &unique("eve")).await; // the wiretapper
+    let (xavier, _x) = register_client(&base, &pool, &unique("xavier")).await; // the recipient
+    let (zoe, _z) = register_client(&base, &pool, &unique("zoe")).await; // the sender
+    let xid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username LIKE 'xavier%'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let zid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username LIKE 'zoe%'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Eve tries to wiretap Xavier by streaming her "conversation with Xavier"; Xavier streams his with Zoe.
+    let mut eve_stream = eve
+        .get(format!("{base}/messages/stream/dm:{xid}"))
+        .send()
+        .await
+        .unwrap();
+    let mut xav_stream = xavier
+        .get(format!("{base}/messages/stream/dm:{zid}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(eve_stream.status().as_u16(), 200);
+    assert_eq!(xav_stream.status().as_u16(), 200);
+
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    // Zoe DMs Xavier.
+    zoe.post(format!("{base}/messages/send"))
+        .form(&[
+            ("conversation", format!("dm:{xid}").as_str()),
+            ("body", "private secret"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    let received = async |resp: &mut reqwest::Response, secs: u64| -> bool {
+        tokio::time::timeout(std::time::Duration::from_secs(secs), async {
+            let mut acc = String::new();
+            while let Some(chunk) = resp.chunk().await.unwrap() {
+                acc.push_str(&String::from_utf8_lossy(&chunk));
+                if acc.contains("private secret") {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false)
+    };
+
+    // The recipient receives it live...
+    assert!(
+        received(&mut xav_stream, 5).await,
+        "Xavier (a party) receives the DM"
+    );
+    // ...the wiretapper does not.
+    assert!(
+        !received(&mut eve_stream, 1).await,
+        "Eve (not a party) must NOT receive the DM"
+    );
+}

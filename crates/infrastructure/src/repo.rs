@@ -6916,7 +6916,8 @@ impl CommsRepository for PgAccountRepository {
                 RETURNING created_at \
              ) \
              SELECT pg_notify('comms', json_build_object( \
-                'keys', json_build_array('dm:' || $3::text, 'dm:' || $4::text), \
+                'keys', json_build_array( \
+                    'dmp:' || LEAST($3::text, $4::text) || ':' || GREATEST($3::text, $4::text)), \
                 'sender_name', (SELECT username FROM users WHERE id = $3), \
                 'body', $5::text, \
                 'created_ms', (EXTRACT(EPOCH FROM (SELECT created_at FROM ins)) * 1000)::bigint \
@@ -7111,6 +7112,25 @@ impl CommsRepository for PgAccountRepository {
         )
         .bind(Uuid::from_u128(self.world_id.0))
         .bind(channel_key)
+        .bind(p)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)
+    }
+
+    async fn dm_total_unread(&self, player: PlayerId) -> Result<i64, RepoError> {
+        // Messages received by `player` after their per-thread read watermark — summed across all senders
+        // in one query (the read key is viewer-relative `dm:<sender>`).
+        let p = Uuid::from_u128(player.0);
+        sqlx::query_scalar(
+            "SELECT count(*) FROM direct_messages dm \
+             WHERE dm.world_id = $1 AND dm.recipient_id = $2 \
+               AND dm.created_at > COALESCE( \
+                    (SELECT last_read_at FROM conversation_reads \
+                      WHERE player_id = $2 AND conversation = 'dm:' || dm.sender_id::text), \
+                    to_timestamp(0))",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
         .bind(p)
         .fetch_one(&self.pool)
         .await
