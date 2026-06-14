@@ -5141,6 +5141,10 @@ fn village_pop_expr(
 /// `village_fields`/`village_buildings` joined to users, instead of [`village_pop_expr`]'s two correlated
 /// subqueries per village (O(villages)). `qf` is the quadrant filter on `u.id`. Placeholders: `$1` world,
 /// `$2` field-pops, `$3`/`$4`/`$5` building kinds/levels/pops, `$6` quadrant, `$7` limit.
+///
+/// Driven `FROM users` (the CTEs are world-scoped via `v.world_id = $1`, and the `> 0` filter prunes users
+/// with no village in this world) — single-world today. A multi-world deployment would scope this to users
+/// owning a village in the world to avoid a global `users` scan.
 fn population_board_sql(qf: &str) -> String {
     format!(
         "WITH field_pop AS ( \
