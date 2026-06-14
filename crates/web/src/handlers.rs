@@ -2854,7 +2854,7 @@ pub async fn player_stats_page(
     };
     let (online, presence_label) = presence_view(
         profile.last_activity,
-        Timestamp(now().0),
+        now(),
         state.lifecycle_rules.presence_online_secs,
     );
     let mut achievements: Vec<AchievementRowView> = held

@@ -3656,6 +3656,32 @@ async fn profile_bio_edit_is_owner_scoped(pool: sqlx::PgPool) {
     );
 }
 
+/// 025 AC6 (Visitor role): an unauthenticated bio edit is refused — redirected to login, with no
+/// effect on anyone's stored bio.
+#[sqlx::test(migrations = "../../migrations")]
+async fn profile_bio_edit_requires_login(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let anon = client();
+    let res = anon
+        .post(format!("{base}/profile/bio"))
+        .form(&[("bio", "anonymous graffiti")])
+        .send()
+        .await
+        .unwrap();
+    // The auth extractor redirects to /login; the bio is never written.
+    assert_eq!(res.status().as_u16(), 303);
+    assert_eq!(
+        res.headers().get(LOCATION).unwrap().to_str().unwrap(),
+        "/login"
+    );
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE bio = $1")
+        .bind("anonymous graffiti")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "no bio was persisted by the anonymous POST");
+}
+
 /// 025: presence reads as "last seen" once the configured window has elapsed; the presence-touch
 /// middleware refreshes `last_activity` on real navigation but NOT on the background unread poll.
 #[sqlx::test(migrations = "../../migrations")]
