@@ -39,8 +39,13 @@ Everything is **server-authoritative** (P4) and **reproducible** from persisted 
   100. Construction is server-validated (P4) and resolves via the scheduler like any build.
 
 - **Victory (first to 100).** When a Wonder reaches **level 100**, its owner's **alliance wins**. A
-  state-driven check records the **winner alliance** + **won_at** on the world, **exactly once** (the
-  first to 100; ties broken deterministically by completion instant then id, P6).
+  state-driven check (a scheduler tick) records the **winner alliance** + **won_at** on the world,
+  **exactly once** (guarded by `won_at IS NULL`). Because the check runs every tick and the first tick to
+  observe *any* complete Wonder records the winner, the **earliest completer wins** — a Wonder finished in
+  a later tick can never overwrite it. The only residual ambiguity is two Wonders completing within the
+  **same tick** with neither yet recorded; that is broken **deterministically by descending level then
+  ascending alliance tag** (P6) — a stable, reproducible order, not the wall-clock completion instant
+  (which is not separately persisted).
 
 - **Round end / freeze (§13.3).** Once the world is **won**, the round is **over**: further game actions
   are **rejected** (the world is read-only / frozen) and a **victory** state is surfaced. Auto-archival and
@@ -82,7 +87,8 @@ Everything is **server-authoritative** (P4) and **reproducible** from persisted 
   rejected. Construction resolves through the scheduler like any build (P1).
 
 - **AC6 — Victory: first to 100 wins, once.** When a Wonder reaches level 100, the world records the
-  **winner alliance** and **won_at**, **exactly once** — the first alliance to 100 (deterministic tiebreak).
+  **winner alliance** and **won_at**, **exactly once** — the first alliance to 100 (earliest completer via
+  the per-tick guard; a same-tick tie broken deterministically by descending level then ascending tag, P6).
   A later completion does not overwrite the winner.
 
 - **AC7 — Round freeze.** Once the world is won, mutating game actions are **rejected** (the world is

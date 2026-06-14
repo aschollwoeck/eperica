@@ -3021,6 +3021,14 @@ async fn wonder_race_page_shows_progress(pool: sqlx::PgPool) {
     .await
     .unwrap();
     sqlx::query(
+        "UPDATE villages SET is_wonder_site = true \
+         WHERE owner_id = (SELECT id FROM users WHERE username = $1)",
+    )
+    .bind(&user)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
         "INSERT INTO village_buildings (village_id, slot, building_type, level) \
          SELECT v.id, 18, 'wonder', 5 FROM villages v JOIN users u ON u.id = v.owner_id \
          WHERE u.username = $1",

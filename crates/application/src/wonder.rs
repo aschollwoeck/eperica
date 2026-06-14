@@ -2,7 +2,7 @@
 //! Wonder-release date, the gated construction order, and the round-victory check (first alliance to a
 //! complete Wonder).
 
-use crate::build::{BuildError, order_build};
+use crate::build::{BuildError, place_build_order};
 use crate::ports::{
     AccountRepository, AllianceRepository, BuildRepository, RepoError, StarvationRepository,
     WonderRepository,
@@ -137,7 +137,7 @@ where
         return Err(WonderError::AlreadyComplete);
     }
 
-    order_build(
+    place_build_order(
         accounts,
         builds,
         starvation,

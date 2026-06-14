@@ -33,9 +33,9 @@ use eperica_application::{
     found_alliance, invite_player, leave_alliance, load_culture, load_economy, map_viewport,
     order_attack, order_build, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
     order_reinforcement, order_research, order_return, order_scout, order_settle,
-    order_smithy_upgrade, order_trade, order_train, player_statistics, population_history,
-    population_leaderboard, register, reinforcement_reports, respond_invite, revoke_invite,
-    set_diplomacy, set_member_role, transfer_founder, viewport_coords,
+    order_smithy_upgrade, order_trade, order_train, order_wonder_build, player_statistics,
+    population_history, population_leaderboard, register, reinforcement_reports, respond_invite,
+    revoke_invite, set_diplomacy, set_member_role, transfer_founder, viewport_coords,
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, Coordinate,
@@ -850,6 +850,7 @@ pub async fn village(
     page(&VillageTemplate {
         username: user.username,
         world_won,
+        is_wonder_site: village.is_wonder_site,
         village_id: village.id.0.to_string(),
         is_capital: village.is_capital,
         loyalty,
@@ -2492,6 +2493,41 @@ pub async fn wonder(State(state): State<AppState>) -> Response {
         max_level: eperica_domain::MAX_WONDER_LEVEL,
         standings,
     })
+}
+
+/// Order one level of Wonder construction on a controlled site (021 AC4) — the only path that builds a
+/// Wonder; gating (site control + alliance holds a plan + level < 100) is server-side.
+pub async fn wonder_build_submit(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<WonderBuildForm>,
+) -> Response {
+    if let Err(e) = order_wonder_build(
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.rules.as_ref(),
+        state.build_rules.as_ref(),
+        state.unit_rules.as_ref(),
+        state.world.speed,
+        now(),
+        player,
+        selected_village(form.village.as_deref()),
+    )
+    .await
+    {
+        tracing::warn!(error = %e, "Wonder build order rejected");
+    }
+    redirect_to_village(form.village.as_deref())
+}
+
+/// The Wonder-build form: which controlled site village to build the Wonder in (013 AC11).
+#[derive(Deserialize)]
+pub struct WonderBuildForm {
+    #[serde(default)]
+    village: Option<String>,
 }
 
 /// Public player statistics page (016 AC9).

@@ -6516,10 +6516,12 @@ impl WonderRepository for PgAccountRepository {
 
     async fn top_wonders(&self) -> Result<Vec<WonderStanding>, RepoError> {
         let rows = sqlx::query(
+            // Only Wonders on conquered Wonder **sites** count (021) — a Wonder can be built nowhere else,
+            // so an off-site `wonder` row (should never exist) never reaches the standings or wins.
             "SELECT a.id AS alliance_id, a.tag, a.name, MAX(vb.level)::int AS lvl \
              FROM alliance_members m \
              JOIN alliances a ON a.id = m.alliance_id \
-             JOIN villages v ON v.owner_id = m.player_id AND v.world_id = $1 \
+             JOIN villages v ON v.owner_id = m.player_id AND v.world_id = $1 AND v.is_wonder_site \
              JOIN village_buildings vb ON vb.village_id = v.id AND vb.building_type = 'wonder' \
              GROUP BY a.id, a.tag, a.name \
              ORDER BY lvl DESC, a.tag ASC",
@@ -7082,6 +7084,72 @@ mod tests {
         assert_eq!(again, 0, "the Wonder release happens at most once");
     }
 
+    /// 021 AC3: read through the repo, a Wonder-site Natar village reads as **conquerable** while an
+    /// artifact-vault Natar village does not — the column the 014 conquest guard consumes round-trips.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn wonder_site_reads_as_conquerable_vault_does_not(pool: PgPool) {
+        let Setup { repo, .. } = setup(pool.clone()).await;
+        // Release artifacts (creates vaults) and the Wonder (creates conquerable sites); both coexist on
+        // distinct Natar tiles.
+        let cat = crate::artifact_catalogue().unwrap();
+        let now = Timestamp(10_000_000_000_000);
+        eperica_application::process_due_artifact_release(
+            &repo,
+            Some(Timestamp(now.0 - 2)),
+            now,
+            &eperica_application::ReleaseSpec {
+                catalogue: &cat.artifacts,
+                garrison_unit: &cat.garrison_unit,
+                garrison_base_count: cat.garrison_base_count,
+                garrison_per_index: cat.garrison_per_index,
+            },
+        )
+        .await
+        .unwrap();
+        let rules = crate::wonder_rules().unwrap();
+        eperica_application::process_due_wonder_release(
+            &repo,
+            Some(Timestamp(now.0 - 1)),
+            now,
+            &eperica_application::WonderReleaseSpec {
+                plan_count: rules.plan_count,
+                site_count: rules.site_count,
+                garrison_unit: &rules.garrison_unit,
+                garrison_base_count: rules.garrison_base_count,
+                garrison_per_index: rules.garrison_per_index,
+            },
+        )
+        .await
+        .unwrap();
+
+        let site: Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE is_wonder_site LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let vault: Uuid = sqlx::query_scalar(
+            "SELECT id FROM villages WHERE is_natar AND NOT is_wonder_site LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let site_v = repo
+            .village_by_id(VillageId(site.as_u128()))
+            .await
+            .unwrap()
+            .expect("site exists");
+        let vault_v = repo
+            .village_by_id(VillageId(vault.as_u128()))
+            .await
+            .unwrap()
+            .expect("vault exists");
+        assert!(site_v.is_conquerable(), "a Wonder site is conquerable");
+        assert!(
+            !vault_v.is_conquerable(),
+            "an artifact vault is not conquerable"
+        );
+    }
+
     /// 020 AC4: a winning attack from a Treasury village claims a Natar village's artifact; an
     /// attacker without a Treasury wins but takes nothing.
     #[sqlx::test(migrations = "../../migrations")]
@@ -7588,6 +7656,12 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+            // The Wonder counts only on a conquered Wonder site, so flag the village as one.
+            sqlx::query("UPDATE villages SET is_wonder_site = true WHERE id = $1")
+                .bind(Uuid::from_u128(village.0))
+                .execute(&pool)
+                .await
+                .unwrap();
             sqlx::query(
                 "INSERT INTO village_buildings (village_id, slot, building_type, level) \
                  VALUES ($1, 18, 'wonder', $2)",

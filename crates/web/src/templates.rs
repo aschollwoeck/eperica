@@ -32,6 +32,7 @@ mod tests {
         VillageTemplate {
             username: "player".to_owned(),
             world_won: false,
+            is_wonder_site: false,
             village_id: "1".to_owned(),
             is_capital: false,
             loyalty: 100,
@@ -471,6 +472,8 @@ pub struct VillageTemplate {
     pub username: String,
     /// Whether the world has been won (021 AC7) — shows a victory notice + freeze warning.
     pub world_won: bool,
+    /// Whether the shown village is a conquered Wonder site (021) — offers the Wonder-build action.
+    pub is_wonder_site: bool,
     /// The shown village's id (carried into action forms + nav links so they target it, AC11).
     pub village_id: String,
     /// Whether the shown village is the player's capital (badged; raises its field cap, AC9/AC10).
