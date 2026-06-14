@@ -482,7 +482,7 @@ impl AccountRepository for PgAccountRepository {
     async fn villages_of(&self, owner: PlayerId) -> Result<Vec<Village>, RepoError> {
         let owner_uuid = Uuid::from_u128(owner.0);
         let village_rows = sqlx::query(
-            "SELECT id, x, y, tribe, is_capital FROM villages WHERE owner_id = $1 \
+            "SELECT id, x, y, tribe, is_capital, is_natar FROM villages WHERE owner_id = $1 \
              ORDER BY created_at, id",
         )
         .bind(owner_uuid)
@@ -497,6 +497,7 @@ impl AccountRepository for PgAccountRepository {
             let y: i32 = r.try_get("y").map_err(backend)?;
             let tribe_raw: Option<String> = r.try_get("tribe").map_err(backend)?;
             let is_capital: bool = r.try_get("is_capital").map_err(backend)?;
+            let is_natar: bool = r.try_get("is_natar").map_err(backend)?;
 
             let field_rows = sqlx::query(
                 "SELECT resource_type, level FROM village_fields WHERE village_id = $1 ORDER BY slot",
@@ -546,6 +547,7 @@ impl AccountRepository for PgAccountRepository {
                 // computation that takes this `Village` sees it.
                 oasis_bonus: self.village_oasis_bonus(vid_typed).await?,
                 is_capital,
+                is_natar,
             });
         }
         Ok(villages)
@@ -553,12 +555,13 @@ impl AccountRepository for PgAccountRepository {
 
     async fn village_by_id(&self, village: VillageId) -> Result<Option<Village>, RepoError> {
         let vid = Uuid::from_u128(village.0);
-        let Some(r) =
-            sqlx::query("SELECT owner_id, x, y, tribe, is_capital FROM villages WHERE id = $1")
-                .bind(vid)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(backend)?
+        let Some(r) = sqlx::query(
+            "SELECT owner_id, x, y, tribe, is_capital, is_natar FROM villages WHERE id = $1",
+        )
+        .bind(vid)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?
         else {
             return Ok(None);
         };
@@ -567,6 +570,7 @@ impl AccountRepository for PgAccountRepository {
         let y: i32 = r.try_get("y").map_err(backend)?;
         let tribe_raw: Option<String> = r.try_get("tribe").map_err(backend)?;
         let is_capital: bool = r.try_get("is_capital").map_err(backend)?;
+        let is_natar: bool = r.try_get("is_natar").map_err(backend)?;
 
         let field_rows = sqlx::query(
             "SELECT resource_type, level FROM village_fields WHERE village_id = $1 ORDER BY slot",
@@ -612,6 +616,7 @@ impl AccountRepository for PgAccountRepository {
             // Fold the village's occupied-oasis bonus into the read (012, AC8).
             oasis_bonus: self.village_oasis_bonus(village).await?,
             is_capital,
+            is_natar,
         }))
     }
 
@@ -3038,6 +3043,16 @@ impl CombatRepository for PgAccountRepository {
             .execute(&mut *tx)
             .await
             .map_err(backend)?;
+
+        // 020 AC4/AC5: a captured artifact moves to the attacking village, in the battle transaction.
+        if let Some(cap) = &apply.artifact_capture {
+            sqlx::query("UPDATE artifacts SET holder_village = $1 WHERE id = $2")
+                .bind(Uuid::from_u128(cap.to_village.0))
+                .bind(&cap.artifact_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+        }
         tx.commit().await.map_err(backend)?;
         Ok(())
     }
@@ -6160,6 +6175,16 @@ impl ArtifactRepository for PgAccountRepository {
             .execute(&mut *tx)
             .await
             .map_err(backend)?;
+            // A developed Main Building gives the Natar vault a population, so attacking it is a normal
+            // battle (not a morale-crushed strike against an empty village).
+            sqlx::query(
+                "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+                 VALUES ($1, 0, 'main_building', 10)",
+            )
+            .bind(village_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
             let count = garrison_base_count + garrison_per_index * i as i64;
             sqlx::query(
                 "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, $2, $3)",
@@ -6619,6 +6644,160 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(again, 0, "release happens at most once");
+    }
+
+    /// 020 AC4: a winning attack from a Treasury village claims a Natar village's artifact; an
+    /// attacker without a Treasury wins but takes nothing.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn artifact_captured_only_with_treasury(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            config,
+            world,
+        } = setup(pool.clone()).await;
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let units = crate::unit_rules().unwrap();
+        let cat = crate::artifact_catalogue().unwrap();
+        let spec = eperica_application::ReleaseSpec {
+            catalogue: &cat.artifacts,
+            garrison_unit: &cat.garrison_unit,
+            garrison_base_count: cat.garrison_base_count,
+            garrison_per_index: cat.garrison_per_index,
+        };
+        let release_at = Timestamp(1_000_000_000_000);
+        eperica_application::process_due_artifact_release(
+            &repo,
+            Some(release_at),
+            Timestamp(release_at.0 + 1),
+            &spec,
+        )
+        .await
+        .unwrap();
+
+        // Two small-scope artifacts in their Natar vaults; weaken the garrisons so an attack wins.
+        let smalls: Vec<(String, Uuid, i32, i32)> = sqlx::query_as(
+            "SELECT a.id, a.holder_village, v.x, v.y FROM artifacts a \
+             JOIN villages v ON v.id = a.holder_village WHERE a.scope = 'small' ORDER BY a.id LIMIT 2",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(
+            smalls.len() >= 2,
+            "need two small artifacts to test both paths"
+        );
+        for (_, vid, _, _) in &smalls {
+            sqlx::query("UPDATE village_units SET count = 1 WHERE village_id = $1")
+                .bind(vid)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let speed = config.speed;
+        let attack_natar = async |tag: &str,
+                                  treasury: Option<i16>,
+                                  tx: i32,
+                                  ty: i32|
+               -> VillageId {
+            let player = make_account(&repo, &template, tag).await;
+            let v = repo.villages_of(player).await.unwrap()[0].clone();
+            if let Some(level) = treasury {
+                sqlx::query(
+                    "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+                     VALUES ($1, 30, 'treasury', $2)",
+                )
+                .bind(Uuid::from_u128(v.id.0))
+                .bind(level)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+            sqlx::query(
+                "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'swordsman', 200)",
+            )
+            .bind(Uuid::from_u128(v.id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+            eperica_application::order_attack(
+                &repo,
+                &repo,
+                &repo,
+                &econ,
+                &units,
+                &map,
+                speed,
+                crate::now(),
+                player,
+                None,
+                Coordinate::new(tx, ty),
+                vec![(UnitId("swordsman".into()), 150)],
+                AttackMode::Attack,
+                None,
+                None,
+            )
+            .await
+            .expect("attack launches");
+            v.id
+        };
+
+        // With a qualifying Treasury (level 5 ≥ small's 3): the artifact is claimed.
+        let (art_a, _natar_a, ax, ay) = smalls[0].clone();
+        let cap_village = attack_natar("treasured", Some(5), ax, ay).await;
+        // Without a Treasury: the attacker wins but takes nothing.
+        let (art_b, natar_b, bx, by) = smalls[1].clone();
+        attack_natar("treasuryless", None, bx, by).await;
+
+        // Resolve all due attacks.
+        eperica_application::process_due_combat(
+            &repo,
+            &repo,
+            &repo,
+            &repo,
+            &econ,
+            &units,
+            &crate::combat_rules().unwrap(),
+            &crate::scout_rules().unwrap(),
+            &crate::culture_rules().unwrap(),
+            &crate::loyalty_rules().unwrap(),
+            &crate::ranking_rules().unwrap(),
+            &map,
+            speed,
+            world.seed as u64,
+            Timestamp(crate::now().0 + 100_000_000_000),
+            100,
+            (cat.treasury_small, cat.treasury_large, cat.treasury_unique),
+        )
+        .await
+        .unwrap();
+
+        // AC4: the Treasury attacker now holds artifact A.
+        let holder_a: Option<Uuid> =
+            sqlx::query_scalar("SELECT holder_village FROM artifacts WHERE id = $1")
+                .bind(&art_a)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            holder_a,
+            Some(Uuid::from_u128(cap_village.0)),
+            "captured with a Treasury"
+        );
+        // Artifact B stayed in its Natar vault (no Treasury ⇒ no transfer).
+        let holder_b: Option<Uuid> =
+            sqlx::query_scalar("SELECT holder_village FROM artifacts WHERE id = $1")
+                .bind(&art_b)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(holder_b, Some(natar_b), "no Treasury ⇒ artifact not taken");
     }
 
     /// 019 AC7/AC8: the abandonment sweep abandons an idle account — deleting its village (freeing the
@@ -7538,6 +7717,7 @@ mod tests {
                     defense_points: 25,
                 },
             ],
+            artifact_capture: None,
         })
         .await
         .expect("apply battle");
@@ -7770,6 +7950,7 @@ mod tests {
             loyalty: None,
             attack_points: 0,
             defender_contributions: Vec::new(),
+            artifact_capture: None,
         })
         .await
         .expect("apply battle");
@@ -7950,6 +8131,7 @@ mod tests {
                     world.seed as u64,
                     arrive,
                     100,
+                    (3, 6, 10),
                 )
                 .await
                 .expect("resolve");
@@ -8078,6 +8260,7 @@ mod tests {
             world.seed as u64,
             arrive,
             100,
+            (3, 6, 10),
         )
         .await
         .expect("resolve");
@@ -8213,6 +8396,7 @@ mod tests {
             world.seed as u64,
             arrive,
             100,
+            (3, 6, 10),
         )
         .await
         .expect("resolve");
@@ -8602,6 +8786,7 @@ mod tests {
                 world.seed as u64,
                 arrive,
                 100,
+                (3, 6, 10),
             )
             .await
             .expect("resolve")
@@ -11217,6 +11402,7 @@ mod tests {
             loyalty: Some(LoyaltyApply::Conquered(transfer.clone())),
             attack_points: 0,
             defender_contributions: Vec::new(),
+            artifact_capture: None,
         };
         repo.apply_battle(apply.clone()).await.expect("conquest");
 
@@ -11610,6 +11796,7 @@ mod tests {
                     defense_points: 20,
                 },
             ],
+            artifact_capture: None,
         })
         .await
         .expect("seed battle");
@@ -11890,6 +12077,7 @@ mod tests {
             world.seed as u64,
             arrive,
             100,
+            (3, 6, 10),
         )
         .await
         .expect("resolve");
@@ -12082,6 +12270,7 @@ mod tests {
             loyalty: None,
             attack_points: 50,
             defender_contributions: Vec::new(),
+            artifact_capture: None,
         })
         .await
         .expect("seed battle");

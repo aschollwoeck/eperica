@@ -421,6 +421,7 @@ mod tests {
             }],
             oasis_bonus: Default::default(),
             is_capital: false,
+            is_natar: false,
         }
     }
 

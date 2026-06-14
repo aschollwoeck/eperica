@@ -123,6 +123,9 @@ pub struct Village {
     /// Whether this village is the player's **capital** (013, §3.4) — set by building a Palace. The
     /// capital may raise its resource fields past the normal cap; folded into the village read.
     pub is_capital: bool,
+    /// Whether this is a **Natar NPC** village (020) — an artifact vault, not ownable (conquest never
+    /// transfers it) and excluded from boards/stats.
+    pub is_natar: bool,
 }
 
 impl Village {
@@ -147,6 +150,7 @@ impl Village {
             buildings: template.buildings().to_vec(),
             oasis_bonus: OasisBonus::default(),
             is_capital: false,
+            is_natar: false,
         }
     }
 }

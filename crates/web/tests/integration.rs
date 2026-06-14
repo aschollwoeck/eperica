@@ -1313,6 +1313,7 @@ async fn combat_raid_and_reports_flow(pool: sqlx::PgPool) {
         world.seed as u64,
         future,
         100,
+        (3, 6, 10),
     )
     .await
     .unwrap();
@@ -1616,6 +1617,7 @@ async fn siege_loot_and_cranny_flow(pool: sqlx::PgPool) {
         world.seed as u64,
         future,
         100,
+        (3, 6, 10),
     )
     .await
     .unwrap();
@@ -2250,6 +2252,7 @@ async fn conquest_with_administrators_flow(pool: sqlx::PgPool) {
         world.seed as u64,
         future,
         100,
+        (3, 6, 10),
     )
     .await
     .unwrap();
