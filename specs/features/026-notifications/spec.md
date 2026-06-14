@@ -1,6 +1,6 @@
 # Feature 026 — Notifications & alerts
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 009 (combat — incoming attacks + battle reports), 024 (the SSE + `LISTEN/NOTIFY` live bus, the nav-badge poll pattern), 016/025 (the profile/identity the bell sits beside), 001 (auth/sessions)
 **Roadmap:** app-layer social/meta (`social-and-meta-features.md` §Communication → "Notifications / alerts") — incoming-attack warnings, report arrival, and message arrival, delivered live with a nav bell + read/unread.
 

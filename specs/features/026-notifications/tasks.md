@@ -47,7 +47,7 @@ advancing. Live delivery + persistence reuse the 024 `LISTEN/NOTIFY` + SSE archi
 
 ## Acceptance
 
-- [ ] **T6 — Docs + review.** rustdoc on new public items; `docs/architecture/0028-notifications.md`;
+- [x] **T6 — Docs + review.** rustdoc on new public items; `docs/architecture/0028-notifications.md`;
   `docs/manual/` notifications note; `CLAUDE.md` active slice → 026. Full gates + P11; `eperica-reviewer`
   until **APPROVE**; PR.
 

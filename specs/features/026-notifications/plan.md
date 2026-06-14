@@ -1,6 +1,6 @@
 # Feature 026 — Notifications & alerts — Plan
 
-**Spec:** ./spec.md · **Status:** Reviewed
+**Spec:** ./spec.md · **Status:** Verified
 
 A communication slice: a persisted, per-player notification feed for the attention-critical trio (incoming
 attack, battle report, new message), with a nav bell + read/unread, delivered live by reusing the 024
