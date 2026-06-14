@@ -31,7 +31,11 @@ the server then freezes — reusing 020 plan capture, 014 site conquest, and the
 **fair play & anti-cheat** slice (022, M8 launch hardening: a Moderator role; player reporting →
 moderator review queue → sanctions (warn/suspend/ban) enforced server-side via the 019 login-block + 021
 freeze-guard chokepoints; DB-backed rate limiting (429); and reproducible, advisory detection signals —
-shared registration-IP association + inhuman action-rate — surfaced to moderators) is in progress (M8).
+shared registration-IP association + inhuman action-rate — surfaced to moderators). The **performance &
+scale** slice (023, the M8 launch-hardening capstone: a reusable large-world seeder feeding both CI scale
+guards and a re-runnable `eperica-perf` seed/measure/load tool, criterion hot-path benches, a query/index
+audit, and a scale + P5 horizontal-scale report — measurement & tuning only, no gameplay change) is in
+progress (M8).
 
 ## Read the specs first — they are the source of truth
 
@@ -45,7 +49,7 @@ shared registration-IP association + inhuman action-rate — surfaced to moderat
 - **`specs/roadmap.md`** — dependency-ordered build order (slices 001 → end-game).
 - **`specs/social-and-meta-features.md`** — app-layer features (chat, profiles, UX) — not sim rules.
 - **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the active slice. Currently:
-  `022-fair-play-and-anti-cheat`.
+  `023-performance-and-scale`.
 
 If behavior must change, **update the spec first**, then the code.
 
