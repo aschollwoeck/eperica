@@ -40,4 +40,7 @@ pub enum BuildingKind {
     /// Designates the player's **capital** and trains settlers/administrators; at most one per player.
     /// The Residence is its non-capital counterpart. (Loyalty defence + conquest are 014.)
     Palace,
+    /// Required to hold an **artifact** (020, GDD §6/§11.3); its level gates which artifact scopes a
+    /// village may hold. One artifact per village.
+    Treasury,
 }
