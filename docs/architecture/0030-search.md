@@ -31,6 +31,15 @@ state (P4).
 - `CREATE INDEX users_username_prefix ON users (lower(username) text_pattern_ops)` — makes the anchored,
   case-insensitive username prefix scan index-backed.
 
+## Notes
+- **Index usage depends on a custom plan.** The `LIKE` pattern is built from the bind parameter
+  (`replace(… lower($1) …) || '%'`), so Postgres can only extract the prefix range — and use
+  `users_username_prefix` — when planning with the parameter value (its default custom-plan path, which sqlx
+  uses). Forcing generic plans (`plan_cache_mode = force_generic_plan`) would degrade the username scan to a
+  filtered index scan; keep the default.
+- The coordinate link is *offered* to everyone, but `/map` itself requires login (per `roles.md`); a Visitor
+  following it is redirected to log in — the search never exposes anything private.
+
 ## Reuse / decisions
 - **Prefix, not substring / fuzzy** — index-friendly and the natural who-is behaviour; fuzzy/full-text
   ranking + autocomplete are deferred.

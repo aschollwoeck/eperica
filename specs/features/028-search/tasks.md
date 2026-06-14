@@ -32,7 +32,7 @@ advancing. Read-only over public data.
 
 ## Acceptance
 
-- [ ] **T5 — Docs + review.** rustdoc on new public items; `docs/architecture/0030-search.md`;
+- [x] **T5 — Docs + review.** rustdoc on new public items; `docs/architecture/0030-search.md`;
   `docs/manual/` search note; `CLAUDE.md` active slice → 028. Full gates + P11; `eperica-reviewer` until
   **APPROVE**; PR.
 

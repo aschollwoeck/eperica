@@ -1,6 +1,6 @@
 # Feature 028 — Search / who-is — Plan
 
-**Spec:** ./spec.md · **Status:** Reviewed
+**Spec:** ./spec.md · **Status:** Verified
 
 A small read-only slice: one search box → players (by username prefix), alliances (by name/tag prefix), and
 a coordinate jump. Public data only (P4), bounded index-backed reads (P11), a pure coordinate parser (P3).

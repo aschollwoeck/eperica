@@ -1,6 +1,6 @@
 # Feature 028 — Search / who-is
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 016 (public player + alliance stat pages the results link to), 006 (the map + coordinates), 001 (auth/sessions)
 **Roadmap:** app-layer social/meta (`social-and-meta-features.md` §Presentation & profiles → "Search / who-is").
 
@@ -45,7 +45,7 @@ tags, coordinates — never private state, P4).
 
 | Role | Permitted | Denied (server-enforced) |
 |------|-----------|--------------------------|
-| **Visitor** | Search; follow links to public stat pages / the map. | See any private state via search. |
+| **Visitor** | Search; follow links to public stat pages (the map link requires login, per roles.md). | See any private state via search. |
 | **Player** | (as Visitor). | — |
 | **Moderator/Administrator** | (as Visitor) + their elevated tools elsewhere. | — |
 
