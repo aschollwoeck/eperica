@@ -216,6 +216,7 @@ fn parse_building(name: &str) -> Result<BuildingKind, BalanceError> {
         "outpost" => Ok(BuildingKind::Outpost),
         "town_hall" => Ok(BuildingKind::TownHall),
         "palace" => Ok(BuildingKind::Palace),
+        "treasury" => Ok(BuildingKind::Treasury),
         other => Err(BalanceError::UnknownBuilding(other.to_owned())),
     }
 }

@@ -5,11 +5,11 @@
 
 use async_trait::async_trait;
 use eperica_domain::{
-    AchievementDef, AchievementId, AllianceId, AllianceRole, BuildTarget, BuildingKind, Coordinate,
-    DiplomacyStance, DiplomacyStatus, EconomyRules, EventKind, MedalCategory, MovementKind,
-    OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant, QuestDef, QuestId, QuestProgress,
-    QueueLane, ResourceAmounts, RightSet, ScoutTarget, StartingVillage, Timestamp, TradeKind,
-    Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
+    AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, BuildTarget,
+    BuildingKind, Coordinate, DiplomacyStance, DiplomacyStatus, EconomyRules, EventKind,
+    MedalCategory, MovementKind, OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant,
+    QuestDef, QuestId, QuestProgress, QueueLane, ResourceAmounts, RightSet, ScoutTarget,
+    StartingVillage, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
 };
 use std::collections::HashSet;
 
@@ -2416,4 +2416,49 @@ pub trait LifecycleRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn sweep_abandoned(&self, period: i64, cutoff: Timestamp) -> Result<usize, RepoError>;
+}
+
+/// One held artifact and the village holding it (020).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeldArtifact {
+    /// The artifact.
+    pub def: ArtifactDef,
+    /// The village currently holding it.
+    pub holder: VillageId,
+}
+
+/// Persistence for the end-game artifacts + their Natar vaults (020).
+#[async_trait]
+pub trait ArtifactRepository: Send + Sync {
+    /// Materialize the released artifact set **once** (020 AC1): if `now ≥ release_at` and nothing has
+    /// been released yet, ensure the synthetic Natar NPC owner, place one Natar village per artifact on
+    /// the reserved Natar tiles (seeded ring order) with a seeded garrison, and insert each artifact
+    /// held by its Natar village. Returns the number released (0 if not yet due or already released).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn release_artifacts(
+        &self,
+        release_at: Timestamp,
+        now: Timestamp,
+        catalogue: &[ArtifactDef],
+        garrison_unit: &str,
+        garrison_base_count: i64,
+        garrison_per_index: i64,
+    ) -> Result<usize, RepoError>;
+
+    /// The artifact a village currently holds, if any (020).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn artifact_at_village(
+        &self,
+        village: VillageId,
+    ) -> Result<Option<ArtifactDef>, RepoError>;
+
+    /// Every artifact a player currently holds, with its holding village (020) — for effects + display.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn held_by_player(&self, player: PlayerId) -> Result<Vec<HeldArtifact>, RepoError>;
 }

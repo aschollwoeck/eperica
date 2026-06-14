@@ -3,28 +3,29 @@
 use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, AchievementRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder,
-    AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage, BattleApply,
-    BattleReportView, BoardScope, BuildRepository, CombatRepository, ConflictMetric,
+    AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage, ArtifactRepository,
+    BattleApply, BattleReportView, BoardScope, BuildRepository, CombatRepository, ConflictMetric,
     ConquestRepository, CultureRepository, DefenderReport, DiplomacyEntry, DueAttack, DueBuild,
     DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade,
-    DueTraining, DueUnitOrder, IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply,
-    MedalAward, MedalRepository, MedalSubjectKind, MedalView, Membership, MovementRepository,
-    MovementView, NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder,
-    NewUser, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
-    OutgoingInvite, PendingInvite, PlayerStats, QuestRepository, RankingRepository, RazedBuilding,
-    RepoError, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
-    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, StarvationRepository,
-    StationedGroup, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
-    UserRecord, VillageMarker,
+    DueTraining, DueUnitOrder, HeldArtifact, IncomingAttack, LeaderboardRow, LifecycleRepository,
+    LoyaltyApply, MedalAward, MedalRepository, MedalSubjectKind, MedalView, Membership,
+    MovementRepository, MovementView, NewBuildOrder, NewOasisReport, NewScoutReport,
+    NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
+    OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PendingInvite, PlayerStats,
+    QuestRepository, RankingRepository, RazedBuilding, RepoError, ResourceWrite, RosterEntry,
+    ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply, SettleOutcome,
+    SettleRepository, StarvationRepository, StationedGroup, TradeRepository, TradeView,
+    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 use eperica_domain::{
-    AchievementDef, AchievementId, AllianceId, AllianceRole, BuildTarget, BuildingKind,
-    BuildingSlot, Coordinate, DiplomacyStance, DiplomacyStatus, EconomyRules, GameSpeed,
-    MedalCategory, MovementKind, OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant,
-    QuestDef, QuestId, QuestProgress, QueueLane, ResourceAmounts, ResourceField, ResourceKind,
-    Reward, RightSet, ScoutTarget, StartingVillage, TileKind, Timestamp, TradeKind, Tribe,
-    UnitCounts, UnitId, UnitSpec, Village, VillageId, WorldId, WorldMap, capacities,
-    coordinates_within, deposit_capped, oasis_garrison, protection_expiry,
+    AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactId, ArtifactKind,
+    ArtifactScope, BuildTarget, BuildingKind, BuildingSlot, Coordinate, DiplomacyStance,
+    DiplomacyStatus, EconomyRules, GameSpeed, MedalCategory, MovementKind, OasisBonus, OasisRules,
+    PlayerId, PlayerProgress, Quadrant, QuestDef, QuestId, QuestProgress, QueueLane,
+    ResourceAmounts, ResourceField, ResourceKind, Reward, RightSet, ScoutTarget, StartingVillage,
+    TileKind, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
+    WorldId, WorldMap, capacities, coordinates_within, deposit_capped, oasis_garrison,
+    protection_expiry,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use std::collections::{HashMap, HashSet};
@@ -6037,6 +6038,197 @@ impl LifecycleRepository for PgAccountRepository {
     }
 }
 
+fn artifact_kind_str(k: ArtifactKind) -> &'static str {
+    match k {
+        ArtifactKind::Speed => "speed",
+        ArtifactKind::Storage => "storage",
+        ArtifactKind::Sustenance => "sustenance",
+        ArtifactKind::Trainer => "trainer",
+        ArtifactKind::Architect => "architect",
+        ArtifactKind::Eyes => "eyes",
+        ArtifactKind::Confuser => "confuser",
+        ArtifactKind::Fool => "fool",
+    }
+}
+
+fn parse_artifact_kind(s: &str) -> Result<ArtifactKind, RepoError> {
+    match s {
+        "speed" => Ok(ArtifactKind::Speed),
+        "storage" => Ok(ArtifactKind::Storage),
+        "sustenance" => Ok(ArtifactKind::Sustenance),
+        "trainer" => Ok(ArtifactKind::Trainer),
+        "architect" => Ok(ArtifactKind::Architect),
+        "eyes" => Ok(ArtifactKind::Eyes),
+        "confuser" => Ok(ArtifactKind::Confuser),
+        "fool" => Ok(ArtifactKind::Fool),
+        other => Err(RepoError::Backend(format!(
+            "unknown artifact kind: {other}"
+        ))),
+    }
+}
+
+fn artifact_scope_str(s: ArtifactScope) -> &'static str {
+    match s {
+        ArtifactScope::Small => "small",
+        ArtifactScope::Large => "large",
+        ArtifactScope::Unique => "unique",
+    }
+}
+
+fn parse_artifact_scope(s: &str) -> Result<ArtifactScope, RepoError> {
+    match s {
+        "small" => Ok(ArtifactScope::Small),
+        "large" => Ok(ArtifactScope::Large),
+        "unique" => Ok(ArtifactScope::Unique),
+        other => Err(RepoError::Backend(format!(
+            "unknown artifact scope: {other}"
+        ))),
+    }
+}
+
+fn artifact_from_row(r: &PgRow) -> Result<ArtifactDef, RepoError> {
+    Ok(ArtifactDef {
+        id: ArtifactId(r.try_get::<String, _>("id").map_err(backend)?),
+        kind: parse_artifact_kind(&r.try_get::<String, _>("kind").map_err(backend)?)?,
+        scope: parse_artifact_scope(&r.try_get::<String, _>("scope").map_err(backend)?)?,
+        magnitude: r.try_get("magnitude").map_err(backend)?,
+    })
+}
+
+#[async_trait]
+impl ArtifactRepository for PgAccountRepository {
+    async fn release_artifacts(
+        &self,
+        release_at: Timestamp,
+        now: Timestamp,
+        catalogue: &[ArtifactDef],
+        garrison_unit: &str,
+        garrison_base_count: i64,
+        garrison_per_index: i64,
+    ) -> Result<usize, RepoError> {
+        if now.0 < release_at.0 {
+            return Ok(0);
+        }
+        let world = Uuid::from_u128(self.world_id.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        // Idempotency (AC1): release happens at most once per world.
+        let existing: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM artifacts WHERE world_id = $1")
+                .bind(world)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(backend)?;
+        if existing > 0 {
+            tx.commit().await.map_err(backend)?;
+            return Ok(0);
+        }
+        // The synthetic Natar NPC owner (flagged out of boards/stats/sweep). Romans match the garrison.
+        let npc_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO users (id, username, email, password_hash, email_confirmed, tribe, is_npc) \
+             VALUES ($1, 'Natars', 'natars@system.local', '!', true, 'romans', true) \
+             ON CONFLICT (username) DO NOTHING",
+        )
+        .bind(npc_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let npc: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = 'Natars'")
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(backend)?;
+        // The reserved Natar tiles, in deterministic ring order (P6) — one per artifact.
+        let natar_tiles: Vec<Coordinate> = coordinates_within(self.map.radius())
+            .filter(|c| matches!(self.map.tile_at(*c), Some(TileKind::Natar)))
+            .take(catalogue.len())
+            .collect();
+        let mut released = 0usize;
+        for (i, def) in catalogue.iter().enumerate() {
+            let Some(coord) = natar_tiles.get(i) else {
+                break; // fewer reserved Natar tiles than artifacts — release what fits
+            };
+            let village_id = Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO villages (id, world_id, owner_id, x, y, tribe, is_natar) \
+                 VALUES ($1, $2, $3, $4, $5, 'romans', true)",
+            )
+            .bind(village_id)
+            .bind(world)
+            .bind(npc)
+            .bind(coord.x)
+            .bind(coord.y)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+            let count = garrison_base_count + garrison_per_index * i as i64;
+            sqlx::query(
+                "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, $2, $3)",
+            )
+            .bind(village_id)
+            .bind(garrison_unit)
+            .bind(i32::try_from(count).unwrap_or(i32::MAX))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+            sqlx::query(
+                "INSERT INTO artifacts \
+                 (id, world_id, kind, scope, magnitude, holder_village, origin_x, origin_y, released_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, to_timestamp($9::double precision / 1000.0))",
+            )
+            .bind(&def.id.0)
+            .bind(world)
+            .bind(artifact_kind_str(def.kind))
+            .bind(artifact_scope_str(def.scope))
+            .bind(def.magnitude)
+            .bind(village_id)
+            .bind(coord.x)
+            .bind(coord.y)
+            .bind(now.0)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+            released += 1;
+        }
+        tx.commit().await.map_err(backend)?;
+        Ok(released)
+    }
+
+    async fn artifact_at_village(
+        &self,
+        village: VillageId,
+    ) -> Result<Option<ArtifactDef>, RepoError> {
+        let row = sqlx::query(
+            "SELECT id, kind, scope, magnitude FROM artifacts WHERE holder_village = $1 LIMIT 1",
+        )
+        .bind(Uuid::from_u128(village.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        row.as_ref().map(artifact_from_row).transpose()
+    }
+
+    async fn held_by_player(&self, player: PlayerId) -> Result<Vec<HeldArtifact>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT a.id, a.kind, a.scope, a.magnitude, a.holder_village \
+             FROM artifacts a JOIN villages v ON v.id = a.holder_village \
+             WHERE v.owner_id = $1",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let holder: Uuid = r.try_get("holder_village").map_err(backend)?;
+                Ok(HeldArtifact {
+                    def: artifact_from_row(r)?,
+                    holder: VillageId(holder.as_u128()),
+                })
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6361,6 +6553,72 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(again.artifact_release_at, world.artifact_release_at);
+    }
+
+    /// 020 AC1/AC2/AC7: the artifact release is gated on the date, materializes Natar NPC villages +
+    /// garrisons + artifacts once, and is idempotent.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn artifact_release_materializes_once(pool: PgPool) {
+        let Setup { repo, .. } = setup(pool.clone()).await;
+        let cat = crate::artifact_catalogue().expect("catalogue");
+        let spec = eperica_application::ReleaseSpec {
+            catalogue: &cat.artifacts,
+            garrison_unit: &cat.garrison_unit,
+            garrison_base_count: cat.garrison_base_count,
+            garrison_per_index: cat.garrison_per_index,
+        };
+        let release_at = Timestamp(10_000_000_000_000);
+
+        // Before the date: nothing is released.
+        let n0 = eperica_application::process_due_artifact_release(
+            &repo,
+            Some(release_at),
+            Timestamp(1_000),
+            &spec,
+        )
+        .await
+        .unwrap();
+        assert_eq!(n0, 0);
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM artifacts")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "no artifacts before the release date");
+
+        // At/after the date: the full set materializes once.
+        let now = Timestamp(release_at.0 + 1);
+        let n =
+            eperica_application::process_due_artifact_release(&repo, Some(release_at), now, &spec)
+                .await
+                .unwrap();
+        assert_eq!(n, cat.artifacts.len(), "the whole set released");
+        let natar: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM villages WHERE is_natar AND world_id = $1")
+                .bind(Uuid::from_u128(repo.world_id.0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(natar as usize, n, "one Natar village per artifact");
+        let npc: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE is_npc")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(npc, 1, "one synthetic Natar owner");
+        let garrisoned: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM village_units u JOIN villages v ON v.id = u.village_id \
+             WHERE v.is_natar AND u.count > 0",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(garrisoned as usize, n, "every Natar village has a garrison");
+
+        // Idempotent: a second release is a no-op.
+        let again =
+            eperica_application::process_due_artifact_release(&repo, Some(release_at), now, &spec)
+                .await
+                .unwrap();
+        assert_eq!(again, 0, "release happens at most once");
     }
 
     /// 019 AC7/AC8: the abandonment sweep abandons an idle account — deleting its village (freeing the
