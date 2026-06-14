@@ -3969,3 +3969,169 @@ async fn notification_live_delivery_is_private(pool: sqlx::PgPool) {
         "Eve does not receive Bob's notification"
     );
 }
+
+/// Insert an alliance + add a player as a member with a role/rights bitset (bypassing the founding
+/// eligibility gate, which is not what these forum tests exercise).
+async fn seed_alliance(
+    pool: &sqlx::PgPool,
+    name: &str,
+    tag: &str,
+    founder: uuid::Uuid,
+) -> uuid::Uuid {
+    let aid = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO alliances (id, name, tag, founder_id, created_at) VALUES ($1,$2,$3,$4, now())",
+    )
+    .bind(aid)
+    .bind(name)
+    .bind(tag)
+    .bind(founder)
+    .execute(pool)
+    .await
+    .unwrap();
+    add_alliance_member(pool, aid, founder, "founder", 0).await;
+    aid
+}
+
+async fn add_alliance_member(
+    pool: &sqlx::PgPool,
+    alliance: uuid::Uuid,
+    player: uuid::Uuid,
+    role: &str,
+    rights: i32,
+) {
+    sqlx::query(
+        "INSERT INTO alliance_members (player_id, alliance_id, role, rights, joined_at) \
+         VALUES ($1,$2,$3,$4, now())",
+    )
+    .bind(player)
+    .bind(alliance)
+    .bind(role)
+    .bind(rights)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// 027 AC1–AC5/AC7: members read/post the alliance forum; non-members and other alliances are refused;
+/// an announcement without the Announce right is rejected.
+#[sqlx::test(migrations = "../../migrations")]
+async fn alliance_forum_flow_and_access(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (ca, alice) = register_client(&base, &pool, &unique("af_alice")).await;
+    let (cb, bob) = register_client(&base, &pool, &unique("af_bob")).await;
+    let (cc, _carol) = register_client(&base, &pool, &unique("af_carol")).await;
+    let (cd, dave) = register_client(&base, &pool, &unique("af_dave")).await;
+
+    // Alliance A: alice (founder, all rights), bob (plain member). Alliance B: dave (founder).
+    let a = seed_alliance(&pool, "Iron Pact", "IRON", alice).await;
+    add_alliance_member(&pool, a, bob, "member", 0).await;
+    seed_alliance(&pool, "Sun Order", "SUN", dave).await;
+
+    // Alice starts a thread → redirected to it.
+    let res = ca
+        .post(format!("{base}/alliance/forum/new"))
+        .form(&[("title", "Muster"), ("body", "Be online at 20:00")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+    let loc = res
+        .headers()
+        .get(LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let thread_id = loc.rsplit('/').next().unwrap().to_owned();
+
+    // Bob (same alliance) sees it in the list and can reply.
+    let list = cb
+        .get(format!("{base}/alliance/forum"))
+        .send()
+        .await
+        .unwrap();
+    assert!(list.text().await.unwrap().contains("Muster"));
+    let reply = cb
+        .post(format!("{base}/alliance/forum/{thread_id}/reply"))
+        .form(&[("body", "Confirmed")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reply.status().as_u16(), 303);
+    let thread = cb
+        .get(format!("{base}/alliance/forum/{thread_id}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(thread.contains("Be online at 20:00") && thread.contains("Confirmed"));
+
+    // Carol (no alliance) is refused the forum.
+    let carol = cc
+        .get(format!("{base}/alliance/forum"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(carol.status().as_u16(), 403);
+
+    // Dave (other alliance) cannot open alliance A's thread.
+    let cross = cd
+        .get(format!("{base}/alliance/forum/{thread_id}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cross.status().as_u16(), 404);
+
+    // Bob lacks the Announce right ⇒ a forged announcement post is rejected (server-enforced).
+    let forged = cb
+        .post(format!("{base}/alliance/forum/new"))
+        .form(&[("title", "Notice"), ("body", "x"), ("announcement", "1")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(forged.status().as_u16(), 403);
+
+    // Alice (founder, has Announce) can post an announcement; it is locked to replies.
+    let ann = ca
+        .post(format!("{base}/alliance/forum/new"))
+        .form(&[
+            ("title", "Rules"),
+            ("body", "Read them"),
+            ("announcement", "1"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ann.status().as_u16(), 303);
+    let ann_loc = ann
+        .headers()
+        .get(LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let ann_id = ann_loc.rsplit('/').next().unwrap();
+    let blocked = cb
+        .post(format!("{base}/alliance/forum/{ann_id}/reply"))
+        .form(&[("body", "me too")])
+        .send()
+        .await
+        .unwrap();
+    // The action guard / use-case rejects a reply to a locked thread (redirect back, no post added).
+    let ann_page = cb
+        .get(format!("{base}/alliance/forum/{ann_id}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !ann_page.contains("me too"),
+        "a locked thread takes no replies"
+    );
+    let _ = blocked;
+}

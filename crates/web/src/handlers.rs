@@ -6,14 +6,15 @@ use crate::templates::{
     AcademyRow, AcademyTemplate, AchievementRowView, ActiveView, AllianceStatsTemplate,
     AllianceTemplate, AlliedVillageView, ArtifactRowView, BuildRow, ChatLineView,
     CompletedQuestView, ConversationRow, ConversationTemplate, CurrentQuestView, DiploRowView,
-    ForceRow, GarrisonRow, HistoryPointView, IncomingView, IndexTemplate, LeaderboardRowView,
-    LeaderboardTemplate, LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MedalRowView,
-    MemberStatRow, MessagesTemplate, ModAccountTemplate, ModQueueTemplate, ModReportRow,
-    MovementRow, NotificationRowView, NotificationsTemplate, OasisRow, OutgoingInviteView,
-    PendingInviteView, PlayerStatsTemplate, ProfileTemplate, QuestsTemplate, QueueView,
-    RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate,
-    ReportsTemplate, RosterRowView, ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow,
-    SmithyTemplate, StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
+    ForceRow, ForumPostRow, ForumTemplate, ForumThreadRow, ForumThreadTemplate, GarrisonRow,
+    HistoryPointView, IncomingView, IndexTemplate, LeaderboardRowView, LeaderboardTemplate,
+    LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MedalRowView, MemberStatRow,
+    MessagesTemplate, ModAccountTemplate, ModQueueTemplate, ModReportRow, MovementRow,
+    NotificationRowView, NotificationsTemplate, OasisRow, OutgoingInviteView, PendingInviteView,
+    PlayerStatsTemplate, ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow,
+    RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, RosterRowView,
+    ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate,
+    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
     VillageTemplate, WonderStandingView, WonderTemplate,
 };
 use askama::Template;
@@ -25,22 +26,23 @@ use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
     AccountRepository, AchievementRepository, AllianceLeaderboardRow, AllianceRepository,
     ArtifactRepository, BattleReportView, BoardScope, BuildRepository, CombatRepository,
-    CommsError, ConflictMetric, ConquestRepository, DiplomacyCommand, LeaderboardRow, LoginError,
-    MedalRepository, MedalSubjectKind, ModerationError, ModerationRepository, MovementRepository,
-    OasisRepository, QuestRepository, RegisterCommand, RegisterError, ScoutIntel, ScoutReportView,
-    ScoutRepository, TradeRepository, TrainingRepository, UnitOrderKind, UnitRepository, Window,
-    WonderRepository, account_signals, alliance_conflict_leaderboard,
-    alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
-    climbers_leaderboard, conflict_leaderboard, conversation_list, disband_alliance, dm_key,
-    dm_pair_key, edit_bio, end_protection_if_established, evaluate_achievements, evaluate_quests,
-    expel_member, file_report, found_alliance, invite_player, leave_alliance, list_notifications,
-    load_culture, load_economy, map_viewport, mark_notifications_read, notif_key,
-    notification_unread, open_chat, open_dm, order_attack, order_build, order_oasis_attack,
-    order_oasis_recall, order_oasis_reinforce, order_reinforcement, order_research, order_return,
-    order_scout, order_settle, order_smithy_upgrade, order_trade, order_train, order_wonder_build,
-    parse_dm_key, player_statistics, population_history, population_leaderboard, register,
-    reinforcement_reports, resolve_report, respond_invite, review_queue, revoke_invite,
-    sanction_account, send_chat, send_dm, set_diplomacy, set_member_role, transfer_founder,
+    CommsError, ConflictMetric, ConquestRepository, DiplomacyCommand, ForumError, LeaderboardRow,
+    LoginError, MedalRepository, MedalSubjectKind, ModerationError, ModerationRepository,
+    MovementRepository, OasisRepository, QuestRepository, RegisterCommand, RegisterError,
+    ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository, TrainingRepository,
+    UnitOrderKind, UnitRepository, Window, WonderRepository, account_signals,
+    alliance_conflict_leaderboard, alliance_population_leaderboard, alliance_statistics,
+    alliance_view, authenticate, climbers_leaderboard, conflict_leaderboard, conversation_list,
+    disband_alliance, dm_key, dm_pair_key, edit_bio, end_protection_if_established,
+    evaluate_achievements, evaluate_quests, expel_member, file_report, found_alliance,
+    invite_player, leave_alliance, list_forum, list_notifications, load_culture, load_economy,
+    map_viewport, mark_notifications_read, notif_key, notification_unread, open_chat, open_dm,
+    open_thread, order_attack, order_build, order_oasis_attack, order_oasis_recall,
+    order_oasis_reinforce, order_reinforcement, order_research, order_return, order_scout,
+    order_settle, order_smithy_upgrade, order_trade, order_train, order_wonder_build, parse_dm_key,
+    player_statistics, population_history, population_leaderboard, register, reinforcement_reports,
+    reply, resolve_report, respond_invite, review_queue, revoke_invite, sanction_account,
+    send_chat, send_dm, set_diplomacy, set_member_role, start_thread, transfer_founder,
     unread_badge, view_profile, viewport_coords,
 };
 use eperica_domain::{
@@ -3610,6 +3612,128 @@ pub async fn alliance_diplomacy(
         tracing::warn!(error = %e, "diplomacy change rejected");
     }
     Redirect::to("/alliance").into_response()
+}
+
+// ---- Alliance forum (027) ----
+
+/// The alliance forum thread list (027 AC1, members only). Shows the announcement checkbox only when the
+/// viewer holds the `Announce` right.
+pub async fn forum_page(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+    let repo = state.accounts.as_ref();
+    let threads = match list_forum(repo, player).await {
+        Ok(t) => t,
+        Err(ForumError::NotAMember) => return forbidden(),
+        Err(e) => {
+            tracing::error!(error = %e, "forum list failed");
+            return server_error();
+        }
+    };
+    // Whether the viewer may post announcements (the Announce right).
+    let can_announce = match repo.alliance_of(player).await {
+        Ok(Some(m)) => eperica_domain::has_right(m.role, m.rights, AllianceRight::Announce),
+        _ => false,
+    };
+    let threads = threads
+        .into_iter()
+        .map(|t| ForumThreadRow {
+            id: t.id.to_string(),
+            title: t.title,
+            author: t.author_name,
+            announcement: t.announcement,
+            post_count: t.post_count,
+        })
+        .collect();
+    page(&ForumTemplate {
+        threads,
+        can_announce,
+    })
+}
+
+/// The new-thread form (027 AC2/AC4).
+#[derive(Deserialize)]
+pub struct NewThreadForm {
+    title: String,
+    body: String,
+    #[serde(default)]
+    announcement: Option<String>,
+}
+
+/// Start a forum thread (027 AC2/AC4, member; announcement needs `Announce`).
+pub async fn forum_new(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<NewThreadForm>,
+) -> Response {
+    let announcement = form.announcement.as_deref() == Some("1");
+    match start_thread(
+        state.accounts.as_ref(),
+        player,
+        &form.title,
+        &form.body,
+        announcement,
+        now(),
+    )
+    .await
+    {
+        Ok(id) => Redirect::to(&format!("/alliance/forum/{id}")).into_response(),
+        Err(ForumError::NotAMember | ForumError::MissingRight) => forbidden(),
+        Err(_) => Redirect::to("/alliance/forum").into_response(),
+    }
+}
+
+/// A single forum thread + its posts (027 AC1, members of the owning alliance only).
+pub async fn forum_thread_page(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Path(id): Path<String>,
+) -> Response {
+    let Ok(tid) = id.parse::<u128>() else {
+        return not_found();
+    };
+    match open_thread(state.accounts.as_ref(), player, tid).await {
+        Ok((head, posts)) => page(&ForumThreadTemplate {
+            thread_id: id,
+            title: head.title,
+            locked: head.announcement,
+            posts: posts
+                .into_iter()
+                .map(|p| ForumPostRow {
+                    author: p.author_name,
+                    body: p.body,
+                })
+                .collect(),
+        }),
+        Err(ForumError::NotAMember) => forbidden(),
+        Err(ForumError::NotFound) => not_found(),
+        Err(e) => {
+            tracing::error!(error = %e, "forum thread load failed");
+            server_error()
+        }
+    }
+}
+
+/// The reply form (027 AC3).
+#[derive(Deserialize)]
+pub struct ForumReplyForm {
+    body: String,
+}
+
+/// Reply to a forum thread (027 AC3, member; locked threads rejected).
+pub async fn forum_reply(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Path(id): Path<String>,
+    Form(form): Form<ForumReplyForm>,
+) -> Response {
+    let Ok(tid) = id.parse::<u128>() else {
+        return not_found();
+    };
+    match reply(state.accounts.as_ref(), player, tid, &form.body, now()).await {
+        Ok(_) => Redirect::to(&format!("/alliance/forum/{id}")).into_response(),
+        Err(ForumError::NotAMember) => forbidden(),
+        Err(ForumError::NotFound) => not_found(),
+        Err(_) => Redirect::to(&format!("/alliance/forum/{id}")).into_response(),
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------

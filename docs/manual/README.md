@@ -33,5 +33,6 @@ manual grows as the game does.
 - [Communication — messages & chat](communication.md) — WhatsApp-style conversations: direct messages and live global/alliance chat channels, with unread badges.
 - [Your profile & who's online](profiles-and-presence.md) — write a public bio and see other players' online / last-seen presence on profiles, leaderboards, conversations, and the map.
 - [Notifications & alerts](notifications.md) — the nav bell: live, private alerts for incoming attacks, battle reports, and new messages, with a feed you can revisit.
+- [The alliance forum](alliance-forum.md) — your alliance's private threaded discussion: start threads, reply, and post locked announcements (with the Announce right).
 
 *(More chapters arrive as those features ship.)*

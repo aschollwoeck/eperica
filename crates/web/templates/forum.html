@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Alliance forum</h1>
+  <p class="muted"><a href="/alliance">← Back to the alliance</a></p>
+
+  <h2>Threads</h2>
+  {% if threads.is_empty() %}
+  <p class="muted">No threads yet. Start one below.</p>
+  {% else %}
+  <ul class="conversations">
+    {% for t in threads %}
+    <li>
+      <a href="/alliance/forum/{{ t.id }}">
+        {% if t.announcement %}<span class="badge">Announcement</span>{% endif %}
+        <strong>{{ t.title }}</strong>
+        <span class="muted preview">by {{ t.author }} · {{ t.post_count }} post(s)</span>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <h2>Start a thread</h2>
+  <form method="post" action="/alliance/forum/new" class="send">
+    <input type="text" name="title" placeholder="Thread title" maxlength="120" autocomplete="off" required>
+    <textarea name="body" rows="3" placeholder="First post…" maxlength="2000" required></textarea>
+    {% if can_announce %}
+    <label><input type="checkbox" name="announcement" value="1"> Announcement (locked — no replies)</label>
+    {% endif %}
+    <button type="submit">Post</button>
+  </form>
+</section>
+{% endblock %}

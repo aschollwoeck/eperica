@@ -7,17 +7,18 @@ use eperica_application::{
     BattleApply, BattleReportView, BoardScope, BuildRepository, CombatRepository, CommsRepository,
     ConflictMetric, ConquestRepository, ConversationSummary, CultureRepository, DefenderReport,
     DiplomacyEntry, DueAttack, DueBuild, DueMovement, DueOasisAttack, DueOasisRegrow,
-    DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, HeldArtifact,
-    IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply, MedalAward, MedalRepository,
-    MedalSubjectKind, MedalView, Membership, MessageView, ModerationRepository, MovementRepository,
-    MovementView, NewBuildOrder, NewNotification, NewOasisReport, NewScoutReport, NewTrainingOrder,
-    NewUnitOrder, NewUser, NotificationRepository, NotificationView, OasisBattleApply,
-    OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite,
-    PendingInvite, PlayerStats, ProfileView, QuestRepository, RankingRepository, RazedBuilding,
-    RepoError, ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
-    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, StarvationRepository,
-    StationedGroup, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
-    UserRecord, VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
+    DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, ForumPost,
+    HeldArtifact, IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply, MedalAward,
+    MedalRepository, MedalSubjectKind, MedalView, Membership, MessageView, ModerationRepository,
+    MovementRepository, MovementView, NewBuildOrder, NewNotification, NewOasisReport,
+    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, NotificationRepository,
+    NotificationView, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository,
+    OasisState, OutgoingInvite, PendingInvite, PlayerStats, ProfileView, QuestRepository,
+    RankingRepository, RazedBuilding, RepoError, ReportView, ResourceWrite, RosterEntry,
+    ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply, SettleOutcome,
+    SettleRepository, StarvationRepository, StationedGroup, ThreadHead, ThreadSummary,
+    TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
+    VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactEffects,
@@ -4614,6 +4615,170 @@ impl AllianceRepository for PgAccountRepository {
         }
         Ok(out)
     }
+
+    // ---- Alliance forum (027) ----
+
+    async fn create_thread(
+        &self,
+        alliance: AllianceId,
+        author: PlayerId,
+        title: &str,
+        body: &str,
+        announcement: bool,
+        now: Timestamp,
+    ) -> Result<u128, RepoError> {
+        let thread_id = Uuid::new_v4();
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        sqlx::query(
+            "INSERT INTO alliance_threads \
+                (id, world_id, alliance_id, author_id, title, announcement, created_at, last_post_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7::double precision / 1000.0), \
+                     to_timestamp($7::double precision / 1000.0))",
+        )
+        .bind(thread_id)
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(Uuid::from_u128(alliance.0))
+        .bind(Uuid::from_u128(author.0))
+        .bind(title)
+        .bind(announcement)
+        .bind(now.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        sqlx::query(
+            "INSERT INTO alliance_posts (id, world_id, thread_id, author_id, body, created_at) \
+             VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0))",
+        )
+        .bind(Uuid::new_v4())
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(thread_id)
+        .bind(Uuid::from_u128(author.0))
+        .bind(body)
+        .bind(now.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(thread_id.as_u128())
+    }
+
+    async fn list_threads(
+        &self,
+        alliance: AllianceId,
+        limit: i64,
+    ) -> Result<Vec<ThreadSummary>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT t.id, t.title, u.username AS author_name, t.announcement, \
+                    (EXTRACT(EPOCH FROM t.last_post_at) * 1000)::bigint AS last_post_ms, \
+                    (SELECT count(*) FROM alliance_posts p WHERE p.thread_id = t.id) AS post_count \
+             FROM alliance_threads t JOIN users u ON u.id = t.author_id \
+             WHERE t.world_id = $1 AND t.alliance_id = $2 \
+             ORDER BY t.last_post_at DESC, t.id DESC LIMIT $3",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(Uuid::from_u128(alliance.0))
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let id: Uuid = r.try_get("id").map_err(backend)?;
+                Ok(ThreadSummary {
+                    id: id.as_u128(),
+                    title: r.try_get("title").map_err(backend)?,
+                    author_name: r.try_get("author_name").map_err(backend)?,
+                    announcement: r.try_get("announcement").map_err(backend)?,
+                    post_count: r.try_get("post_count").map_err(backend)?,
+                    last_post_ms: r.try_get("last_post_ms").map_err(backend)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn thread_head(&self, thread: u128) -> Result<Option<ThreadHead>, RepoError> {
+        let row = sqlx::query(
+            "SELECT alliance_id, title, announcement FROM alliance_threads \
+             WHERE world_id = $1 AND id = $2",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(Uuid::from_u128(thread))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        row.map(|r| {
+            let aid: Uuid = r.try_get("alliance_id").map_err(backend)?;
+            Ok(ThreadHead {
+                alliance: AllianceId(aid.as_u128()),
+                title: r.try_get("title").map_err(backend)?,
+                announcement: r.try_get("announcement").map_err(backend)?,
+            })
+        })
+        .transpose()
+    }
+
+    async fn add_post(
+        &self,
+        thread: u128,
+        author: PlayerId,
+        body: &str,
+        now: Timestamp,
+    ) -> Result<u128, RepoError> {
+        let post_id = Uuid::new_v4();
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        sqlx::query(
+            "INSERT INTO alliance_posts (id, world_id, thread_id, author_id, body, created_at) \
+             VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0))",
+        )
+        .bind(post_id)
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(Uuid::from_u128(thread))
+        .bind(Uuid::from_u128(author.0))
+        .bind(body)
+        .bind(now.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        sqlx::query(
+            "UPDATE alliance_threads SET last_post_at = to_timestamp($2::double precision / 1000.0) \
+             WHERE id = $1",
+        )
+        .bind(Uuid::from_u128(thread))
+        .bind(now.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(post_id.as_u128())
+    }
+
+    async fn list_posts(&self, thread: u128, limit: i64) -> Result<Vec<ForumPost>, RepoError> {
+        // Fetch the **newest** `limit` posts (so a long thread shows recent replies, not just the opening
+        // window), then return them oldest→newest for display.
+        let mut rows = sqlx::query(
+            "SELECT u.username AS author_name, p.body, \
+                    (EXTRACT(EPOCH FROM p.created_at) * 1000)::bigint AS created_ms \
+             FROM alliance_posts p JOIN users u ON u.id = p.author_id \
+             WHERE p.world_id = $1 AND p.thread_id = $2 \
+             ORDER BY p.created_at DESC, p.id DESC LIMIT $3",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(Uuid::from_u128(thread))
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.reverse();
+        rows.iter()
+            .map(|r| {
+                Ok(ForumPost {
+                    author_name: r.try_get("author_name").map_err(backend)?,
+                    body: r.try_get("body").map_err(backend)?,
+                    created_ms: r.try_get("created_ms").map_err(backend)?,
+                })
+            })
+            .collect()
+    }
 }
 
 // ---------------------------------------------------------------- settling (013)
@@ -7861,6 +8026,96 @@ mod tests {
                 Err(CommsError::Forbidden)
             ),
             "non-member cannot open the alliance channel"
+        );
+    }
+
+    /// 027 AC1–AC3: forum threads + posts round-trip; a reply bumps the thread's activity; `thread_head`
+    /// returns the owning alliance + announcement flag.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn alliance_forum_threads_and_posts(pool: PgPool) {
+        use eperica_domain::AllianceId;
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let founder = make_account(&repo, &template, "ffound").await;
+        // Seed an alliance + membership directly (founding has an eligibility gate not relevant here).
+        let alliance = AllianceId(Uuid::new_v4().as_u128());
+        sqlx::query(
+            "INSERT INTO alliances (id, name, tag, founder_id, created_at) \
+             VALUES ($1, 'Iron Pact', 'IRON', $2, now())",
+        )
+        .bind(Uuid::from_u128(alliance.0))
+        .bind(Uuid::from_u128(founder.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO alliance_members (player_id, alliance_id, role, rights, joined_at) \
+             VALUES ($1, $2, 'founder', 0, now())",
+        )
+        .bind(Uuid::from_u128(founder.0))
+        .bind(Uuid::from_u128(alliance.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let now = crate::now();
+
+        // Start an ordinary thread (+ first post) and an announcement.
+        let tid = repo
+            .create_thread(
+                alliance,
+                founder,
+                "Muster tonight",
+                "Be online at 20:00",
+                false,
+                now,
+            )
+            .await
+            .unwrap();
+        let aid_thread = repo
+            .create_thread(
+                alliance,
+                founder,
+                "Rules",
+                "Read the rules",
+                true,
+                Timestamp(now.0 + 1000),
+            )
+            .await
+            .unwrap();
+
+        let threads = repo.list_threads(alliance, 50).await.unwrap();
+        assert_eq!(threads.len(), 2);
+        // Most-recent first ⇒ the announcement (later) leads.
+        assert_eq!(threads[0].id, aid_thread);
+        assert!(threads[0].announcement);
+        assert_eq!(threads[0].post_count, 1);
+        assert!(threads.iter().any(|t| t.id == tid && !t.announcement));
+
+        // thread_head exposes the owner + flag.
+        let head = repo.thread_head(tid).await.unwrap().unwrap();
+        assert_eq!(head.alliance, alliance);
+        assert!(!head.announcement);
+        assert!(repo.thread_head(0).await.unwrap().is_none());
+
+        // A reply lands + bumps last_post_at so the ordinary thread now leads.
+        repo.add_post(tid, founder, "Confirmed", Timestamp(now.0 + 5000))
+            .await
+            .unwrap();
+        let posts = repo.list_posts(tid, 50).await.unwrap();
+        assert_eq!(posts.len(), 2);
+        assert_eq!(posts[0].body, "Be online at 20:00"); // oldest first
+        assert_eq!(posts[1].body, "Confirmed");
+        let threads = repo.list_threads(alliance, 50).await.unwrap();
+        assert_eq!(
+            threads[0].id, tid,
+            "the just-replied thread is now most-recent"
+        );
+
+        // Sanity: an unrelated alliance id sees nothing.
+        assert!(
+            repo.list_threads(AllianceId(0), 50)
+                .await
+                .unwrap()
+                .is_empty()
         );
     }
 

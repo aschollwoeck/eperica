@@ -14,6 +14,7 @@ pub mod comms;
 pub mod culture;
 pub mod economy;
 pub mod fairplay;
+pub mod forum;
 pub mod lifecycle;
 pub mod map;
 pub mod medals;
@@ -59,6 +60,9 @@ pub use fairplay::{
     AccountSignals, ModerationError, account_signals, check_rate_limit, file_report,
     resolve_report, review_queue, sanction_account,
 };
+pub use forum::{
+    ForumError, POST_LIMIT, THREAD_LIMIT, list_forum, open_thread, reply, start_thread,
+};
 pub use lifecycle::{end_protection_if_established, process_due_lifecycle};
 pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
 pub use medals::process_due_medal_settlement;
@@ -78,7 +82,7 @@ pub use ports::{
     CombatRepository, CommsRepository, ConflictMetric, ConquestRepository, ConquestTransfer,
     ConversationSummary, CultureRepository, DefenderContribution, DefenderReport, DiplomacyEntry,
     DueAttack, DueBuild, DueEvent, DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce,
-    DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, EventStore, HeldArtifact,
+    DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, EventStore, ForumPost, HeldArtifact,
     IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply, MedalAward, MedalRepository,
     MedalSubjectKind, MedalView, Membership, MessageView, ModerationRepository, MovementRepository,
     MovementView, NewBattleReport, NewBuildOrder, NewNotification, NewOasisReport, NewScoutReport,
@@ -87,9 +91,9 @@ pub use ports::{
     OutgoingInvite, PasswordHasher, PendingInvite, PlanCapture, PlayerStats, ProfileView,
     QuestRepository, RankingRepository, RazedBuilding, ReinforcementReturn, RepoError, ReportView,
     ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository,
-    SettleApply, SettleOutcome, SettleRepository, StarvationRepository, StationedGroup,
-    TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
-    VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
+    SettleApply, SettleOutcome, SettleRepository, StarvationRepository, StationedGroup, ThreadHead,
+    ThreadSummary, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
+    UserRecord, VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
 };
 pub use profile::{ProfileError, edit_bio, view_profile};
 pub use quests::evaluate_quests;
