@@ -7,11 +7,11 @@
 use eperica_domain::{
     AchievementDef, AchievementId, AchievementKind, AllianceRules, BuildRules, BuildingKind,
     BuildingSlot, CombatRules, CultureRules, DomainError, EconomyRules, FieldDistribution,
-    LevelSpec, LoyaltyRules, MapRules, MedalCategory, MedalRules, MerchantProfile, MerchantRules,
-    OasisBonus, OasisRules, QuestCondition, QuestDef, QuestId, QuestReward, RankingRules,
-    ResearchSpec, ResourceAmounts, ResourceField, ResourceKind, Reward, ScoutRules, SiegeKind,
-    SmithyRules, StartingVillage, TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec,
-    WallProfile, Weighted,
+    LevelSpec, LifecycleRules, LoyaltyRules, MapRules, MedalCategory, MedalRules, MerchantProfile,
+    MerchantRules, OasisBonus, OasisRules, QuestCondition, QuestDef, QuestId, QuestReward,
+    RankingRules, ResearchSpec, ResourceAmounts, ResourceField, ResourceKind, Reward, ScoutRules,
+    SiegeKind, SmithyRules, StartingVillage, TrainingRules, Tribe, UnitId, UnitRole, UnitRules,
+    UnitSpec, WallProfile, Weighted,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -86,6 +86,10 @@ const ACHIEVEMENTS_TOML: &str = include_str!(concat!(
 const QUESTS_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../specs/balance/quests.toml"
+));
+const LIFECYCLE_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/lifecycle.toml"
 ));
 
 /// Errors that can occur while loading balance data.
@@ -663,6 +667,37 @@ pub fn medal_rules() -> Result<MedalRules, BalanceError> {
         period_secs: dto.period_secs,
         per_category: dto.medals_per_category,
         categories,
+    })
+}
+
+#[derive(Deserialize)]
+struct LifecycleDto {
+    protection: ProtectionDto,
+    inactivity: InactivityDto,
+}
+
+#[derive(Deserialize)]
+struct ProtectionDto {
+    beginner_protection_secs: i64,
+    population_threshold: i64,
+}
+
+#[derive(Deserialize)]
+struct InactivityDto {
+    inactive_after_secs: i64,
+    abandon_after_secs: i64,
+    sweep_interval_secs: i64,
+}
+
+/// Load the account-lifecycle rules (019, P7) from `lifecycle.toml`.
+pub fn lifecycle_rules() -> Result<LifecycleRules, BalanceError> {
+    let dto: LifecycleDto = toml::from_str(LIFECYCLE_TOML)?;
+    Ok(LifecycleRules {
+        beginner_protection_secs: dto.protection.beginner_protection_secs,
+        protection_population_threshold: dto.protection.population_threshold,
+        inactive_after_secs: dto.inactivity.inactive_after_secs,
+        abandon_after_secs: dto.inactivity.abandon_after_secs,
+        sweep_interval_secs: dto.inactivity.sweep_interval_secs,
     })
 }
 
@@ -1510,6 +1545,20 @@ mod tests {
             eperica_domain::QuestCondition::BuildingLevel(BuildingKind::Warehouse, 1)
         );
         assert!(wh.reward.resources.wood > 0);
+    }
+
+    #[test]
+    fn loads_lifecycle_rules() {
+        // 019: the protection + inactivity timings load fail-fast and are positive.
+        let r = lifecycle_rules().expect("lifecycle rules load");
+        assert!(r.beginner_protection_secs > 0);
+        assert!(r.protection_population_threshold > 0);
+        assert!(r.inactive_after_secs > 0);
+        assert!(
+            r.abandon_after_secs > r.inactive_after_secs,
+            "abandon is later than inactive"
+        );
+        assert!(r.sweep_interval_secs > 0);
     }
 
     #[test]
