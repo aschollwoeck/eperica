@@ -5117,7 +5117,7 @@ impl RankingRepository for PgAccountRepository {
         let sql = format!(
             "SELECT u.id, u.username, SUM({pop})::bigint AS total \
              FROM villages v JOIN users u ON u.id = v.owner_id \
-             WHERE v.world_id = $1 AND {qf} AND u.abandoned_at IS NULL \
+             WHERE v.world_id = $1 AND {qf} AND u.abandoned_at IS NULL AND u.is_npc = false \
              GROUP BY u.id, u.username HAVING SUM({pop}) > 0 \
              ORDER BY total DESC, u.id ASC LIMIT $7"
         );
@@ -5150,7 +5150,7 @@ impl RankingRepository for PgAccountRepository {
              FROM {table} JOIN users u ON u.id = {pid} \
              WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
                AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) AND {qf} \
-               AND u.abandoned_at IS NULL \
+               AND u.abandoned_at IS NULL AND u.is_npc = false \
              GROUP BY u.id, u.username HAVING COALESCE(SUM({val}), 0) > 0 \
              ORDER BY total DESC, u.id ASC LIMIT $4"
         );
@@ -5180,7 +5180,7 @@ impl RankingRepository for PgAccountRepository {
              JOIN alliance_members am ON am.alliance_id = a.id \
              JOIN users u ON u.id = am.player_id \
              JOIN villages v ON v.owner_id = am.player_id AND v.world_id = $1 \
-             WHERE {qf} AND u.abandoned_at IS NULL \
+             WHERE {qf} AND u.abandoned_at IS NULL AND u.is_npc = false \
              GROUP BY a.id, a.name, a.tag HAVING COALESCE(SUM({pop}), 0) > 0 \
              ORDER BY total DESC, a.id ASC LIMIT $7"
         );
@@ -5217,7 +5217,7 @@ impl RankingRepository for PgAccountRepository {
                    WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
                      AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) \
                    GROUP BY {pid}) pv ON pv.pid = am.player_id \
-             WHERE {qf} AND u.abandoned_at IS NULL \
+             WHERE {qf} AND u.abandoned_at IS NULL AND u.is_npc = false \
              GROUP BY a.id, a.name, a.tag HAVING COALESCE(SUM(pv.val), 0) > 0 \
              ORDER BY total DESC, a.id ASC LIMIT $4"
         );
@@ -5239,12 +5239,13 @@ impl RankingRepository for PgAccountRepository {
     ) -> Result<Option<PlayerStats>, RepoError> {
         let pid = Uuid::from_u128(player.0);
         // 019 AC8: an abandoned account is hidden from its stat page (treated as not found).
-        let Some(name): Option<String> =
-            sqlx::query_scalar("SELECT username FROM users WHERE id = $1 AND abandoned_at IS NULL")
-                .bind(pid)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(backend)?
+        let Some(name): Option<String> = sqlx::query_scalar(
+            "SELECT username FROM users WHERE id = $1 AND abandoned_at IS NULL AND is_npc = false",
+        )
+        .bind(pid)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?
         else {
             return Ok(None);
         };
@@ -5717,7 +5718,7 @@ impl MedalRepository for PgAccountRepository {
              LEFT JOIN population_snapshots prev \
                ON prev.world_id = cur.world_id AND prev.player_id = cur.player_id AND prev.period = $2 \
              WHERE cur.world_id = $1 AND cur.period = $3 AND {delta} > 0 AND {qf} \
-               AND u.abandoned_at IS NULL \
+               AND u.abandoned_at IS NULL AND u.is_npc = false \
              ORDER BY {delta} DESC, cur.player_id ASC LIMIT $5"
         );
         let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(&sql)
@@ -6011,7 +6012,7 @@ impl LifecycleRepository for PgAccountRepository {
         // `FOR UPDATE` locks the rows so a concurrent `touch_activity` cannot make one active between
         // this read and the deletes below (it blocks until this transaction commits).
         let victims: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM users WHERE abandoned_at IS NULL \
+            "SELECT id FROM users WHERE abandoned_at IS NULL AND is_npc = false \
              AND last_activity < to_timestamp($1::double precision / 1000.0) FOR UPDATE",
         )
         .bind(cutoff.0)
@@ -6637,6 +6638,16 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(garrisoned as usize, n, "every Natar village has a garrison");
+
+        // AC2/AC8: Natar villages (NPC-owned) are excluded from the leaderboards.
+        let pop = repo
+            .population_board(&crate::economy_rules().unwrap(), BoardScope::World, 100)
+            .await
+            .unwrap();
+        assert!(
+            pop.is_empty(),
+            "Natar/NPC villages do not appear on the population board"
+        );
 
         // Idempotent: a second release is a no-op.
         let again =

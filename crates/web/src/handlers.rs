@@ -4,14 +4,14 @@ use crate::auth::{AuthUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
 use crate::templates::{
     AcademyRow, AcademyTemplate, AchievementRowView, ActiveView, AllianceStatsTemplate,
-    AllianceTemplate, AlliedVillageView, BuildRow, CompletedQuestView, CurrentQuestView,
-    DiploRowView, ForceRow, GarrisonRow, HistoryPointView, IncomingView, IndexTemplate,
-    LeaderboardRowView, LeaderboardTemplate, LoginTemplate, MapCellView, MapTemplate,
-    MarketTemplate, MedalRowView, MemberStatRow, MovementRow, OasisRow, OutgoingInviteView,
-    PendingInviteView, PlayerStatsTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow,
-    RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, RosterRowView,
-    ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate,
-    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
+    AllianceTemplate, AlliedVillageView, ArtifactRowView, BuildRow, CompletedQuestView,
+    CurrentQuestView, DiploRowView, ForceRow, GarrisonRow, HistoryPointView, IncomingView,
+    IndexTemplate, LeaderboardRowView, LeaderboardTemplate, LoginTemplate, MapCellView,
+    MapTemplate, MarketTemplate, MedalRowView, MemberStatRow, MovementRow, OasisRow,
+    OutgoingInviteView, PendingInviteView, PlayerStatsTemplate, QuestsTemplate, QueueView,
+    RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate,
+    ReportsTemplate, RosterRowView, ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow,
+    SmithyTemplate, StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
     VillageTemplate,
 };
 use askama::Template;
@@ -22,10 +22,10 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
     AccountRepository, AchievementRepository, AllianceLeaderboardRow, AllianceRepository,
-    BattleReportView, BoardScope, BuildRepository, CombatRepository, ConflictMetric,
-    ConquestRepository, DiplomacyCommand, LeaderboardRow, LoginError, MedalRepository,
-    MedalSubjectKind, MovementRepository, OasisRepository, QuestRepository, RegisterCommand,
-    RegisterError, ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository,
+    ArtifactRepository, BattleReportView, BoardScope, BuildRepository, CombatRepository,
+    ConflictMetric, ConquestRepository, DiplomacyCommand, LeaderboardRow, LoginError,
+    MedalRepository, MedalSubjectKind, MovementRepository, OasisRepository, QuestRepository,
+    RegisterCommand, RegisterError, ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository,
     TrainingRepository, UnitOrderKind, UnitRepository, Window, alliance_conflict_leaderboard,
     alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
     climbers_leaderboard, conflict_leaderboard, disband_alliance, end_protection_if_established,
@@ -463,6 +463,25 @@ pub async fn village(
         }
     };
 
+    // 020 AC8: the artifacts this player holds, with the holding village's coordinate.
+    let held = state
+        .accounts
+        .held_by_player(player)
+        .await
+        .unwrap_or_default();
+    let owned = state.accounts.villages_of(player).await.unwrap_or_default();
+    let artifacts: Vec<ArtifactRowView> = held
+        .iter()
+        .map(|h| ArtifactRowView {
+            label: artifact_label(&h.def),
+            holder: owned
+                .iter()
+                .find(|v| v.id == h.holder)
+                .map(|v| format!("({}|{})", v.coordinate.x, v.coordinate.y))
+                .unwrap_or_default(),
+        })
+        .collect();
+
     let economy = match load_economy(
         state.accounts.as_ref(),
         state.rules.as_ref(),
@@ -866,7 +885,29 @@ pub async fn village(
         fields,
         buildings,
         protection: protection_notice(protected_until, now()),
+        artifacts,
     })
+}
+
+/// A human label for a held artifact (020 AC8): "Speed (large) — ×2.0".
+fn artifact_label(def: &eperica_domain::ArtifactDef) -> String {
+    use eperica_domain::{ArtifactKind, ArtifactScope};
+    let kind = match def.kind {
+        ArtifactKind::Speed => "Speed",
+        ArtifactKind::Storage => "Storage",
+        ArtifactKind::Sustenance => "Sustenance",
+        ArtifactKind::Trainer => "Trainer",
+        ArtifactKind::Architect => "Architect",
+        ArtifactKind::Eyes => "Eyes",
+        ArtifactKind::Confuser => "Confuser",
+        ArtifactKind::Fool => "Fool",
+    };
+    let scope = match def.scope {
+        ArtifactScope::Small => "small",
+        ArtifactScope::Large => "large",
+        ArtifactScope::Unique => "unique",
+    };
+    format!("{kind} ({scope}) — ×{:.2}", def.magnitude)
 }
 
 /// A human notice of the remaining beginner's-protection window (019 AC9), or `None` once it has ended.
