@@ -14,6 +14,7 @@ pub mod comms;
 pub mod culture;
 pub mod economy;
 pub mod fairplay;
+pub mod forum;
 pub mod lifecycle;
 pub mod map;
 pub mod medals;
@@ -58,6 +59,9 @@ pub use economy::{VillageEconomy, load_economy, pick_village, select_village, se
 pub use fairplay::{
     AccountSignals, ModerationError, account_signals, check_rate_limit, file_report,
     resolve_report, review_queue, sanction_account,
+};
+pub use forum::{
+    ForumError, POST_LIMIT, THREAD_LIMIT, list_forum, open_thread, reply, start_thread,
 };
 pub use lifecycle::{end_protection_if_established, process_due_lifecycle};
 pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
