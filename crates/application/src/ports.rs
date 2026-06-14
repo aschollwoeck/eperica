@@ -1394,6 +1394,41 @@ pub struct RosterEntry {
     pub rights: RightSet,
 }
 
+/// One row of an alliance's forum thread list (027 AC1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadSummary {
+    pub id: u128,
+    pub title: String,
+    /// The thread starter's display name.
+    pub author_name: String,
+    /// A one-way announcement (locked to replies, 027 AC4).
+    pub announcement: bool,
+    /// Number of posts in the thread.
+    pub post_count: i64,
+    /// Most-recent activity (Unix-ms UTC).
+    pub last_post_ms: i64,
+}
+
+/// A forum thread's header (027) — used to access-check + lock-check before reading/replying.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadHead {
+    /// The alliance that owns the thread (must equal the viewer's for access, AC5).
+    pub alliance: AllianceId,
+    pub title: String,
+    /// Locked to replies when true (an announcement, AC3/AC4).
+    pub announcement: bool,
+}
+
+/// One post in a forum thread (027 AC1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForumPost {
+    /// The author's display name.
+    pub author_name: String,
+    pub body: String,
+    /// When posted (Unix-ms UTC).
+    pub created_ms: i64,
+}
+
 /// A pending invitation as seen by the **invited player** (015 AC3/AC11).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingInvite {
@@ -1664,6 +1699,67 @@ pub trait AllianceRepository: Send + Sync {
         &self,
         villages: &[VillageId],
     ) -> Result<Vec<IncomingAttack>, RepoError>;
+
+    // ---- Alliance forum (027). Default no-ops so non-forum fakes are untouched. ----
+
+    /// Start a thread in `alliance` with a `title` + first post `body`; returns the thread id. Sets
+    /// `last_post_at` to `now`.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn create_thread(
+        &self,
+        _alliance: AllianceId,
+        _author: PlayerId,
+        _title: &str,
+        _body: &str,
+        _announcement: bool,
+        _now: Timestamp,
+    ) -> Result<u128, RepoError> {
+        Ok(0)
+    }
+
+    /// An alliance's threads, most-recent activity first, capped at `limit` (027 AC1).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn list_threads(
+        &self,
+        _alliance: AllianceId,
+        _limit: i64,
+    ) -> Result<Vec<ThreadSummary>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// A thread's header (owning alliance + title + announcement flag), or `None` if it doesn't exist.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn thread_head(&self, _thread: u128) -> Result<Option<ThreadHead>, RepoError> {
+        Ok(None)
+    }
+
+    /// Append a post to a thread + bump its `last_post_at`; returns the post id (027 AC3).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn add_post(
+        &self,
+        _thread: u128,
+        _author: PlayerId,
+        _body: &str,
+        _now: Timestamp,
+    ) -> Result<u128, RepoError> {
+        Ok(0)
+    }
+
+    /// A thread's posts, oldest→newest, capped at `limit` (027 AC1).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn list_posts(&self, _thread: u128, _limit: i64) -> Result<Vec<ForumPost>, RepoError> {
+        Ok(Vec::new())
+    }
 }
 
 /// A claimed, due settle movement ready to resolve (013). Targets a free **valley tile**, not a village.
