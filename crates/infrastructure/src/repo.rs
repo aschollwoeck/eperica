@@ -7558,6 +7558,85 @@ mod tests {
         ));
     }
 
+    /// 021 AC6: the first alliance to a complete (level-100) Wonder is recorded as the winner exactly
+    /// once — a later completion does not overwrite it, and the world reads as ended.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn wonder_victory_records_first_alliance_once(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+
+        // A helper: a player in a fresh alliance whose village holds a level-`lvl` Wonder.
+        let with_wonder = async |tag: &str, lvl: i16| -> Uuid {
+            let player = make_account(&repo, &template, tag).await;
+            let village = repo.villages_of(player).await.unwrap()[0].id;
+            let alliance = Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO alliances (id, name, tag, founder_id) VALUES ($1, $2, $3, $4)",
+            )
+            .bind(alliance)
+            .bind(tag)
+            .bind(tag)
+            .bind(Uuid::from_u128(player.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO alliance_members (player_id, alliance_id, role) \
+                 VALUES ($1, $2, 'founder')",
+            )
+            .bind(Uuid::from_u128(player.0))
+            .bind(alliance)
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+                 VALUES ($1, 18, 'wonder', $2)",
+            )
+            .bind(Uuid::from_u128(village.0))
+            .bind(lvl)
+            .execute(&pool)
+            .await
+            .unwrap();
+            alliance
+        };
+
+        // No complete Wonder yet (only level 99): no victory.
+        let _alpha_partial = with_wonder("partial", 99).await;
+        assert!(
+            !eperica_application::process_due_wonder_victory(&repo, crate::now())
+                .await
+                .unwrap(),
+            "a level-99 Wonder does not win"
+        );
+        assert!(repo.world_ended().await.unwrap().is_none());
+
+        // First alliance to 100 wins.
+        let winner = with_wonder("winner", 100).await;
+        assert!(
+            eperica_application::process_due_wonder_victory(&repo, crate::now())
+                .await
+                .unwrap(),
+            "the first complete Wonder wins"
+        );
+        let outcome = repo.world_ended().await.unwrap().expect("the world is won");
+        assert_eq!(outcome.winner, AllianceId(winner.as_u128()));
+
+        // A later completion does not overwrite the recorded winner, and the check is idempotent.
+        let _latecomer = with_wonder("late", 100).await;
+        assert!(
+            !eperica_application::process_due_wonder_victory(&repo, crate::now())
+                .await
+                .unwrap(),
+            "a later complete Wonder does not win"
+        );
+        let again = repo.world_ended().await.unwrap().expect("still won");
+        assert_eq!(
+            again.winner,
+            AllianceId(winner.as_u128()),
+            "winner unchanged"
+        );
+    }
+
     /// 020 AC5: a winning attack from a Treasury village against a **player** holding an artifact steals
     /// it (the holder loses it; the attacker gains it).
     #[sqlx::test(migrations = "../../migrations")]

@@ -15,7 +15,7 @@ use eperica_infrastructure::{
     Argon2Hasher, PgAccountRepository, achievement_catalogue, alliance_rules, build_rules,
     combat_rules, culture_rules, economy_rules, ensure_world, lifecycle_rules, loyalty_rules,
     map_rules, merchant_rules, now, oasis_rules, quest_chain, ranking_rules, scout_rules,
-    starting_village, unit_rules,
+    starting_village, unit_rules, wonder_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -62,6 +62,7 @@ async fn spawn(pool: sqlx::PgPool) -> String {
         quest_chain: Arc::new(quest_chain().expect("quest chain")),
         lifecycle_rules: Arc::new(lifecycle_rules().expect("lifecycle rules")),
         merchant_rules: Arc::new(merchant_rules().expect("merchant rules")),
+        wonder_rules: Arc::new(wonder_rules().expect("wonder rules")),
         map,
         world: config,
         require_email_confirmation: false,
@@ -2902,5 +2903,83 @@ async fn village_shows_held_artifacts(pool: sqlx::PgPool) {
     assert!(
         body.contains("Speed (large)"),
         "the held artifact is listed"
+    );
+}
+
+/// 021 AC7: once the world is won, the server rejects mutating game actions (POSTs) but still serves
+/// reads and authentication, so players can log in to see the result.
+#[sqlx::test(migrations = "../../migrations")]
+async fn frozen_world_rejects_mutations(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let c = client();
+    let user = unique("freeze");
+    let email = format!("{user}@example.com");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // A read works while the world is open.
+    assert_ne!(
+        c.get(format!("{base}/village"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        403
+    );
+
+    // Win + freeze the world: record a winner alliance and `won_at`.
+    sqlx::query(
+        "INSERT INTO alliances (id, name, tag, founder_id) \
+         SELECT gen_random_uuid(), 'Winners', 'WIN', id FROM users LIMIT 1",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE worlds SET won_at = now(), winner_alliance_id = (SELECT id FROM alliances LIMIT 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // A mutating game action is now rejected (the guard runs before the handler).
+    let build = c
+        .post(format!("{base}/village/build"))
+        .form(&[("target", "field"), ("slot", "0")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(build.status().as_u16(), 403, "mutations are frozen");
+
+    // Reads still work...
+    assert_ne!(
+        c.get(format!("{base}/village"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        403,
+        "reads stay available after the round ends"
+    );
+    // ...and authentication is still allowed (not frozen).
+    assert_ne!(
+        c.post(format!("{base}/logout"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        403,
+        "logout stays available after the round ends"
     );
 }

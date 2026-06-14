@@ -8,10 +8,36 @@ pub mod state;
 pub mod templates;
 
 use axum::Router;
+use axum::extract::{Request, State};
+use axum::http::{Method, StatusCode};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use state::AppState;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
+
+/// Round-freeze guard (021 AC7): once the world has been won, the server rejects mutating game
+/// actions (`POST`s) — except authentication, so players can still log in to see the result. Reads
+/// stay fully available. Server-authoritative (P4): the freeze is enforced here, not in the client.
+async fn freeze_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    use eperica_application::WonderRepository;
+    let is_auth = matches!(req.uri().path(), "/login" | "/logout" | "/register");
+    if req.method() == Method::POST && !is_auth {
+        match state.accounts.world_ended().await {
+            Ok(Some(_)) => {
+                return (
+                    StatusCode::FORBIDDEN,
+                    "The round is over — the world has been won and is frozen.",
+                )
+                    .into_response();
+            }
+            Ok(None) => {}
+            Err(e) => tracing::error!(error = %e, "freeze guard failed to read world state"),
+        }
+    }
+    next.run(req).await
+}
 
 /// Build the application router for the given state.
 pub fn router(state: AppState) -> Router {
@@ -64,6 +90,10 @@ pub fn router(state: AppState) -> Router {
         .route("/stats/alliance/{id}", get(handlers::alliance_stats_page))
         .route("/styleguide", get(handlers::styleguide))
         .nest_service("/static", ServeDir::new("crates/web/static"))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            freeze_guard,
+        ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
