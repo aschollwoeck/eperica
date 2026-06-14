@@ -7,8 +7,8 @@ use crate::economy::settle_amounts;
 use crate::ports::{
     AccountRepository, ArtifactCapture, ArtifactRepository, BattleApply, CombatRepository,
     ConquestRepository, ConquestTransfer, CultureRepository, DefenderContribution, LoyaltyApply,
-    MovementRepository, NewBattleReport, NewScoutReport, RazedBuilding, ReinforcementReturn,
-    RepoError, ResourceWrite, UnitRepository,
+    MovementRepository, NewBattleReport, NewScoutReport, PlanCapture, RazedBuilding,
+    ReinforcementReturn, RepoError, ResourceWrite, UnitRepository, WonderRepository,
 };
 use crate::scouting::gather_intel;
 use eperica_domain::{
@@ -355,7 +355,11 @@ pub async fn process_due_combat<A, M, U, C>(
     treasury_levels: (u8, u8, u8),
 ) -> Result<Vec<VillageId>, RepoError>
 where
-    A: AccountRepository + CultureRepository + ConquestRepository + ArtifactRepository,
+    A: AccountRepository
+        + CultureRepository
+        + ConquestRepository
+        + ArtifactRepository
+        + WonderRepository,
     M: MovementRepository,
     U: UnitRepository,
     C: CombatRepository,
@@ -412,7 +416,11 @@ async fn resolve_one<A, M, U, C>(
     attack: &crate::ports::DueAttack,
 ) -> Result<Option<VillageId>, RepoError>
 where
-    A: AccountRepository + CultureRepository + ConquestRepository + ArtifactRepository,
+    A: AccountRepository
+        + CultureRepository
+        + ConquestRepository
+        + ArtifactRepository
+        + WonderRepository,
     M: MovementRepository,
     U: UnitRepository,
     C: CombatRepository,
@@ -812,6 +820,31 @@ where
         None
     };
 
+    // 021 AC2: a winning attack from a qualifying Treasury also captures a Wonder plan the target holds
+    // (a Natar vault or a beaten holder) — the same force-capture mechanic as an artifact. A plan
+    // requires the top (unique-tier) Treasury and an attacking village not already holding one.
+    let plan_capture = if outcome.attacker_won {
+        match accounts.plan_at_village(target.id).await? {
+            Some(plan_id) => {
+                let (_, _, unique) = treasury_levels;
+                let treasury = building_level(&home, BuildingKind::Treasury);
+                let home_holds = accounts.plan_at_village(home.id).await?.is_some();
+                if can_capture(treasury, unique, home_holds) {
+                    Some(PlanCapture {
+                        plan_id,
+                        from_village: target.id,
+                        to_village: home.id,
+                    })
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+
     combat
         .apply_battle(BattleApply {
             movement_id: attack.id,
@@ -856,6 +889,7 @@ where
             attack_points,
             defender_contributions,
             artifact_capture,
+            plan_capture,
         })
         .await?;
     Ok(Some(target.id))
@@ -999,6 +1033,9 @@ mod tests {
 
     // 020: the combat fake holds no artifacts (defaults: never captures) — exercises the no-transfer path.
     impl ArtifactRepository for FakeAccounts {}
+
+    #[async_trait]
+    impl WonderRepository for FakeAccounts {}
 
     #[derive(Clone)]
     struct Sent {

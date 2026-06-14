@@ -67,7 +67,7 @@ pub use ports::{
     Membership, MovementRepository, MovementView, NewBattleReport, NewBuildOrder, NewOasisReport,
     NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
     OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PasswordHasher,
-    PendingInvite, PlayerStats, QuestRepository, RankingRepository, RazedBuilding,
+    PendingInvite, PlanCapture, PlayerStats, QuestRepository, RankingRepository, RazedBuilding,
     ReinforcementReturn, RepoError, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel,
     ScoutReportView, ScoutRepository, SettleApply, SettleOutcome, SettleRepository,
     StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,

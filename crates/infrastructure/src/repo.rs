@@ -3087,6 +3087,18 @@ impl CombatRepository for PgAccountRepository {
             .await
             .map_err(backend)?;
         }
+        // 021 AC2: transfer a captured Wonder plan, guarded on the expected current holder (P5).
+        if let Some(cap) = &apply.plan_capture {
+            sqlx::query(
+                "UPDATE wonder_plans SET holder_village = $1 WHERE id = $2 AND holder_village = $3",
+            )
+            .bind(Uuid::from_u128(cap.to_village.0))
+            .bind(&cap.plan_id)
+            .bind(Uuid::from_u128(cap.from_village.0))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        }
         tx.commit().await.map_err(backend)?;
         Ok(())
     }
@@ -7223,6 +7235,159 @@ mod tests {
         assert_eq!(holder_b, Some(natar_b), "no Treasury ⇒ artifact not taken");
     }
 
+    /// 021 AC2: a winning attack from a top-Treasury village captures a Natar vault's Wonder plan;
+    /// an attacker without a Treasury wins but takes nothing.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn wonder_plan_captured_only_with_treasury(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            config,
+            world,
+        } = setup(pool.clone()).await;
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let units = crate::unit_rules().unwrap();
+        let rules = crate::wonder_rules().unwrap();
+        let cat = crate::artifact_catalogue().unwrap();
+        let spec = eperica_application::WonderReleaseSpec {
+            plan_count: rules.plan_count,
+            site_count: rules.site_count,
+            garrison_unit: &rules.garrison_unit,
+            garrison_base_count: rules.garrison_base_count,
+            garrison_per_index: rules.garrison_per_index,
+        };
+        let release_at = Timestamp(1_000_000_000_000);
+        eperica_application::process_due_wonder_release(
+            &repo,
+            Some(release_at),
+            Timestamp(release_at.0 + 1),
+            &spec,
+        )
+        .await
+        .unwrap();
+
+        // Two plan vaults; weaken their garrisons so an attack wins.
+        let plans: Vec<(String, Uuid, i32, i32)> = sqlx::query_as(
+            "SELECT p.id, p.holder_village, v.x, v.y FROM wonder_plans p \
+             JOIN villages v ON v.id = p.holder_village ORDER BY p.id LIMIT 2",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(plans.len() >= 2, "need two plan vaults to test both paths");
+        for (_, vid, _, _) in &plans {
+            sqlx::query("UPDATE village_units SET count = 1 WHERE village_id = $1")
+                .bind(vid)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let speed = config.speed;
+        let attack_vault = async |tag: &str,
+                                  treasury: Option<i16>,
+                                  tx: i32,
+                                  ty: i32|
+               -> VillageId {
+            let player = make_account(&repo, &template, tag).await;
+            let v = repo.villages_of(player).await.unwrap()[0].clone();
+            if let Some(level) = treasury {
+                sqlx::query(
+                    "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+                     VALUES ($1, 30, 'treasury', $2)",
+                )
+                .bind(Uuid::from_u128(v.id.0))
+                .bind(level)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+            sqlx::query(
+                "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'swordsman', 400)",
+            )
+            .bind(Uuid::from_u128(v.id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+            eperica_application::order_attack(
+                &repo,
+                &repo,
+                &repo,
+                &econ,
+                &units,
+                &map,
+                speed,
+                crate::now(),
+                player,
+                None,
+                Coordinate::new(tx, ty),
+                vec![(UnitId("swordsman".into()), 350)],
+                AttackMode::Attack,
+                None,
+                None,
+            )
+            .await
+            .expect("attack launches");
+            v.id
+        };
+
+        // With a top (unique-tier) Treasury: the plan is captured.
+        let unique = i16::from(cat.treasury_unique);
+        let (plan_a, _vault_a, ax, ay) = plans[0].clone();
+        let captor = attack_vault("planner", Some(unique), ax, ay).await;
+        // Without a Treasury: the attacker wins but takes nothing.
+        let (plan_b, vault_b, bx, by) = plans[1].clone();
+        attack_vault("planless", None, bx, by).await;
+
+        eperica_application::process_due_combat(
+            &repo,
+            &repo,
+            &repo,
+            &repo,
+            &econ,
+            &units,
+            &crate::combat_rules().unwrap(),
+            &crate::scout_rules().unwrap(),
+            &crate::culture_rules().unwrap(),
+            &crate::loyalty_rules().unwrap(),
+            &crate::ranking_rules().unwrap(),
+            &map,
+            speed,
+            world.seed as u64,
+            Timestamp(crate::now().0 + 100_000_000_000),
+            100,
+            (cat.treasury_small, cat.treasury_large, cat.treasury_unique),
+        )
+        .await
+        .unwrap();
+
+        // AC2: the Treasury attacker now holds plan A.
+        let holder_a: Option<Uuid> =
+            sqlx::query_scalar("SELECT holder_village FROM wonder_plans WHERE id = $1")
+                .bind(&plan_a)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            holder_a,
+            Some(Uuid::from_u128(captor.0)),
+            "plan captured with a Treasury"
+        );
+        // Plan B stayed in its Natar vault (no Treasury ⇒ no transfer).
+        let holder_b: Option<Uuid> =
+            sqlx::query_scalar("SELECT holder_village FROM wonder_plans WHERE id = $1")
+                .bind(&plan_b)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(holder_b, Some(vault_b), "no Treasury ⇒ plan not taken");
+    }
+
     /// 020 AC5: a winning attack from a Treasury village against a **player** holding an artifact steals
     /// it (the holder loses it; the attacker gains it).
     #[sqlx::test(migrations = "../../migrations")]
@@ -8307,6 +8472,7 @@ mod tests {
                 },
             ],
             artifact_capture: None,
+            plan_capture: None,
         })
         .await
         .expect("apply battle");
@@ -8540,6 +8706,7 @@ mod tests {
             attack_points: 0,
             defender_contributions: Vec::new(),
             artifact_capture: None,
+            plan_capture: None,
         })
         .await
         .expect("apply battle");
@@ -11992,6 +12159,7 @@ mod tests {
             attack_points: 0,
             defender_contributions: Vec::new(),
             artifact_capture: None,
+            plan_capture: None,
         };
         repo.apply_battle(apply.clone()).await.expect("conquest");
 
@@ -12386,6 +12554,7 @@ mod tests {
                 },
             ],
             artifact_capture: None,
+            plan_capture: None,
         })
         .await
         .expect("seed battle");
@@ -12860,6 +13029,7 @@ mod tests {
             attack_points: 50,
             defender_contributions: Vec::new(),
             artifact_capture: None,
+            plan_capture: None,
         })
         .await
         .expect("seed battle");

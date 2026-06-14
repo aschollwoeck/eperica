@@ -640,6 +640,9 @@ pub struct BattleApply {
     /// An artifact captured by this winning attack (020 AC4/AC5): its id moves to the attacking
     /// village in the battle transaction. `None` when nothing is captured.
     pub artifact_capture: Option<ArtifactCapture>,
+    /// A Wonder plan captured by this winning attack (021 AC2): its id moves to the attacking village
+    /// in the battle transaction (the same mechanic as an artifact). `None` when nothing is captured.
+    pub plan_capture: Option<PlanCapture>,
 }
 
 /// An artifact transferred by a winning attack (020): the artifact id and the attacking village it
@@ -650,6 +653,19 @@ pub struct ArtifactCapture {
     pub artifact_id: String,
     /// The village it was taken **from** (the target) — the transfer is guarded on this so a
     /// concurrent capture of the same artifact affects zero rows (exactly-once, P5).
+    pub from_village: VillageId,
+    /// The attacking village it moves to.
+    pub to_village: VillageId,
+}
+
+/// A Wonder plan transferred by a winning attack (021): the plan id and the attacking village it
+/// moves to. Mirrors [`ArtifactCapture`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanCapture {
+    /// The captured plan's id.
+    pub plan_id: String,
+    /// The village it was taken **from** (the target) — the transfer is guarded on this so a
+    /// concurrent capture affects zero rows (exactly-once, P5).
     pub from_village: VillageId,
     /// The attacking village it moves to.
     pub to_village: VillageId,
