@@ -1,6 +1,6 @@
 # Feature 023 — Performance & scale pass — Plan
 
-**Spec:** ./spec.md · **Status:** Reviewed
+**Spec:** ./spec.md · **Status:** Verified
 
 A measurement/tuning/tooling slice — almost no domain code. The work is a **reusable seeding library** +
 **scale-regression tests** (infrastructure), a re-runnable **`eperica-perf`** binary, **benches**, index
@@ -28,11 +28,15 @@ numbers.
 - **Concurrent claim (AC5):** two concurrent `claim_due` calls over one backlog; assert each event is
   claimed exactly once (the `FOR UPDATE SKIP LOCKED` guarantee).
 
-## Query/index tuning (AC4) — migration `0035`
+## Query/index tuning (AC4) — migration `0035` *only if a gap is found*
 
 - `EXPLAIN (ANALYZE)` the hot queries under the seeded world (board, `villages_of`/`village_by_id`, map
   `villages_at`, world/owner/coordinate filters, `scheduled_events(due_at, seq)` ordering). Add missing
-  indexes; fix any N+1; re-measure. Record before/after `EXPLAIN` for the report. Touch `db.rs` to embed.
+  indexes; fix any N+1; re-measure. Record before/after `EXPLAIN` for the report.
+- **Outcome (this pass):** the audit found the hot paths already index-backed (prior slices were
+  P11-diligent) — **no migration was needed**. The only seq scan is on the tiny `users` table; the
+  `population_board`'s O(villages) cost and the scheduler's per-event ack are recorded as future tuning
+  targets (a naive set-based board rewrite was tried and regressed, so it was reverted). See the 0025 report.
 
 ## Repeatable perf tool (`crates/perf` → bin `eperica-perf`)
 

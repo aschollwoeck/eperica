@@ -1,6 +1,6 @@
 # Feature 023 — Performance & scale pass
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 021 (the full game built — every hot path now exists to measure), and the whole stack (001–022)
 **Roadmap:** M8 · slice 023 · constitution **P11** (performance & timing first-class) + **P5** (horizontal scale) — the **launch-hardening capstone**: validate that the game holds its latency/throughput budgets at scale and that the architecture scales horizontally, before opening a real server.
 
