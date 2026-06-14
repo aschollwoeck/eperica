@@ -118,7 +118,7 @@ timed construction. Proves the entire architecture end-to-end on the smallest po
 
 | #   | Slice | Depends on | Delivers / proves | GDD |
 |-----|-------|-----------|-------------------|-----|
-| 020 | **Artifacts & Natar villages** — Natar NPC villages, artifact release schedule, capturing artifacts for bonuses. | 014, 015 | The end-game escalation (§11.3 step 1). | §11.3, §7.1 |
+| 020 ✅ | **Artifacts & Natar villages** — Natar NPC villages, artifact release schedule, capturing artifacts for bonuses. | 014, 015 | The end-game escalation (§11.3 step 1). | §11.3, §7.1 |
 | 021 | **Wonder of the World & victory** — WW building plans, Wonder construction to level 100, **alliance victory**, round lifecycle (start → arc → end → archive). | 020 | The win condition and seasonal shape (§11.3, §13.3). | §11.3, §13.3 |
 
 ▶ **Launch-complete** after 021: a world with a beginning, an arc, and a winner.

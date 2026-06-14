@@ -1,6 +1,6 @@
 # Feature 020 — Artifacts & Natar villages
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 006 (the map's reserved **Natar** tiles), 009/011 (combat — the attack that captures), 014 (the won-attack resolution path capture hooks into), 004/002 (units, production, capacity, upkeep — the sim hooks artifacts modify), 012 (oases — the template for an NPC target whose effect folds into the read), 001/013 (world clock + Treasury-bearing villages)
 **Roadmap:** M7 · slice 020 · GDD §11.3 (step 1) / §7.1 — the **end-game escalation**: at a configured date **artifacts** are released, held in **Natar** (NPC) villages, and **captured by attacking** them. Artifacts grant powerful bonuses to the holding village/account and can be **stolen** between players. (The Wonder of the World + victory is slice 021.)
 

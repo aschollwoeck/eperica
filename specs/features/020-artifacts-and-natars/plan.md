@@ -1,6 +1,6 @@
 # Feature 020 — Artifacts & Natar villages — Technical Plan
 
-**Status:** Reviewed
+**Status:** Verified
 **Spec:** ./spec.md
 
 The end-game's first phase: at a configured date, **Natar NPC villages** materialize holding **artifacts**;
