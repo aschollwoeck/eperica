@@ -7,12 +7,12 @@ advancing. Mirrors the 024 conversations UI; reuses the 015 `Announce` right + t
 
 ## Domain
 
-- [ ] **T1 — Thread-title validation (`domain/forum.rs`; P3).** `MAX_THREAD_TITLE` + `valid_thread_title`
+- [x] **T1 — Thread-title validation (`domain/forum.rs`; P3).** `MAX_THREAD_TITLE` + `valid_thread_title`
   (non-empty after trim, ≤ cap). **Unit tests:** empty/blank rejected, cap boundary (AC6).
 
 ## Persistence & ports
 
-- [ ] **T2 — Forum tables + repository (migration `0038`).** `alliance_threads` + `alliance_posts`.
+- [x] **T2 — Forum tables + repository (migration `0038`).** `alliance_threads` + `alliance_posts`.
   Extend `AllianceRepository` (default no-ops): `create_thread`, `list_threads`, `thread_head`, `add_post`,
   `list_posts`; `ThreadSummary` / `ThreadHead` / `ForumPost` in ports. **DB tests:** create thread (+first
   post) → list reflects it; `add_post` bumps `last_post_at`; `thread_head` returns owner + announcement
@@ -20,14 +20,14 @@ advancing. Mirrors the 024 conversations UI; reuses the 015 `Announce` right + t
 
 ## Use-cases
 
-- [ ] **T3 — Forum use-cases (`application/src/forum.rs`).** `list_forum`, `open_thread`, `start_thread`,
+- [x] **T3 — Forum use-cases (`application/src/forum.rs`).** `list_forum`, `open_thread`, `start_thread`,
   `reply`; `ForumError`. Member-gated; announcement requires `Announce`; locked threads reject replies;
   cross-alliance access is NotFound. **Tests (fakes):** non-member rejected; announcement right enforced;
   locked reply rejected; other-alliance thread NotFound; invalid title/body rejected (AC1–AC7).
 
 ## Web
 
-- [ ] **T4 — Forum pages + alliance link.** Routes `GET /alliance/forum`, `POST /alliance/forum/new`,
+- [x] **T4 — Forum pages + alliance link.** Routes `GET /alliance/forum`, `POST /alliance/forum/new`,
   `GET /alliance/forum/{id}`, `POST /alliance/forum/{id}/reply`; `forum.html` + `forum_thread.html`
   (announcement checkbox shown only with `Announce`; reply form hidden when locked); a Forum link on the
   alliance page. **Integration tests:** a member starts a thread + replies → both show; a non-member is

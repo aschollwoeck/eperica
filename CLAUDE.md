@@ -52,7 +52,7 @@ unread + a nav badge; sends reuse the 021/022 freeze/sanction/rate-limit guards)
 - **`specs/roadmap.md`** — dependency-ordered build order (slices 001 → end-game).
 - **`specs/social-and-meta-features.md`** — app-layer features (chat, profiles, UX) — not sim rules.
 - **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the active slice. Currently:
-  `026-notifications`.
+  `027-alliance-forum`.
 
 If behavior must change, **update the spec first**, then the code.
 
