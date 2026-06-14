@@ -1,6 +1,6 @@
 # Feature 021 — Wonder of the World & victory
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 020 (artifacts/Natar release + Treasury-gated capture — the template plans reuse), 014 (conquest — how an alliance takes a Wonder site), 015 (alliances — the victor + the plan-holding group), 003 (construction — the level-by-level build), 001 (world clock + lifecycle state)
 **Roadmap:** M7 · slice 021 · GDD §11.3 (steps 2–3) / §13.3 — the **launch capstone**: Wonder-of-the-World building plans appear, an alliance holds a plan and **conquers a Wonder site**, builds a **Wonder to level 100**, and the **first alliance to 100 wins the round** — which then **ends** (winner recorded, world frozen). After this slice a world has a beginning, an arc, and a winner.
 

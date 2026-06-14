@@ -1,6 +1,6 @@
 # Feature 021 — Wonder of the World & victory — Technical Plan
 
-**Status:** Reviewed
+**Status:** Verified
 **Spec:** ./spec.md
 
 The launch capstone. Reuses the slice's neighbours heavily: **plans capture via the 020 mechanic**,
