@@ -129,7 +129,7 @@ timed construction. Proves the entire architecture end-to-end on the smallest po
 
 | #   | Slice | Depends on | Delivers / proves | GDD |
 |-----|-------|-----------|-------------------|-----|
-| 022 | **Fair play & anti-cheat tooling** — rate limiting, multi-account/bot detection signals, reporting + review/sanction tools. | 016 | The enforcement surface for §12.5. | §12.5 |
+| 022 ✅ | **Fair play & anti-cheat tooling** — rate limiting, multi-account/bot detection signals, reporting + review/sanction tools. | 016 | The enforcement surface for §12.5. | §12.5 |
 | 023 | **Performance & scale pass** — load-test toward "thousands," query/index tuning, scheduler throughput, horizontal-scale validation (P5). | 021 | Validates the scale ambition before opening a real server. | constitution |
 
 ---

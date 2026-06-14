@@ -1,6 +1,6 @@
 # Feature 022 — Fair play & anti-cheat tooling
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 016 (ranking/stats — the account surface signals attach to), 019 (the abandoned-login block + activity throttle — the enforcement + tracking patterns), 021 (the round-freeze guard — the action-rejection pattern), 001 (auth/sessions, world clock, config)
 **Roadmap:** M8 · slice 022 · GDD §12.5 — the **enforcement surface** for fair play: a **Moderator** role, player **reporting → review → sanction**, server-side **rate limiting**, and reproducible **multi-account / bot detection signals**.
 
