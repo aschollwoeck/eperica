@@ -4,13 +4,14 @@ use crate::auth::{AuthUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
 use crate::templates::{
     AcademyRow, AcademyTemplate, AchievementRowView, ActiveView, AllianceStatsTemplate,
-    AllianceTemplate, AlliedVillageView, BuildRow, DiploRowView, ForceRow, GarrisonRow,
-    HistoryPointView, IncomingView, IndexTemplate, LeaderboardRowView, LeaderboardTemplate,
-    LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MedalRowView, MemberStatRow,
-    MovementRow, OasisRow, OutgoingInviteView, PendingInviteView, PlayerStatsTemplate, QueueView,
-    RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate,
-    ReportsTemplate, RosterRowView, ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow,
-    SmithyTemplate, StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
+    AllianceTemplate, AlliedVillageView, BuildRow, CompletedQuestView, CurrentQuestView,
+    DiploRowView, ForceRow, GarrisonRow, HistoryPointView, IncomingView, IndexTemplate,
+    LeaderboardRowView, LeaderboardTemplate, LoginTemplate, MapCellView, MapTemplate,
+    MarketTemplate, MedalRowView, MemberStatRow, MovementRow, OasisRow, OutgoingInviteView,
+    PendingInviteView, PlayerStatsTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow,
+    RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, RosterRowView,
+    ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate,
+    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
     VillageTemplate,
 };
 use askama::Template;
@@ -23,13 +24,13 @@ use eperica_application::{
     AccountRepository, AchievementRepository, AllianceLeaderboardRow, AllianceRepository,
     BattleReportView, BoardScope, BuildRepository, CombatRepository, ConflictMetric,
     ConquestRepository, DiplomacyCommand, LeaderboardRow, LoginError, MedalRepository,
-    MedalSubjectKind, MovementRepository, OasisRepository, RegisterCommand, RegisterError,
-    ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository, TrainingRepository,
-    UnitOrderKind, UnitRepository, Window, alliance_conflict_leaderboard,
+    MedalSubjectKind, MovementRepository, OasisRepository, QuestRepository, RegisterCommand,
+    RegisterError, ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository,
+    TrainingRepository, UnitOrderKind, UnitRepository, Window, alliance_conflict_leaderboard,
     alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
     climbers_leaderboard, conflict_leaderboard, disband_alliance, evaluate_achievements,
-    expel_member, found_alliance, invite_player, leave_alliance, load_culture, load_economy,
-    map_viewport, order_attack, order_build, order_oasis_attack, order_oasis_recall,
+    evaluate_quests, expel_member, found_alliance, invite_player, leave_alliance, load_culture,
+    load_economy, map_viewport, order_attack, order_build, order_oasis_attack, order_oasis_recall,
     order_oasis_reinforce, order_reinforcement, order_research, order_return, order_scout,
     order_settle, order_smithy_upgrade, order_trade, order_train, player_statistics,
     population_history, population_leaderboard, register, reinforcement_reports, respond_invite,
@@ -38,10 +39,10 @@ use eperica_application::{
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, Coordinate,
     DiplomacyStance, DiplomacyStatus, MedalCategory, MovementKind, OasisBonus, PlayerId, Quadrant,
-    QueueLane, ResearchDenied, ResourceAmounts, ResourceKind, RightSet, ScoutTarget, TileKind,
-    TradeKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, VillageId, can_afford,
-    can_research, can_upgrade, garrison_upkeep, per_unit_time_secs, queue_lane, regenerate_loyalty,
-    scaled_time_secs,
+    QuestReward, QueueLane, ResearchDenied, ResourceAmounts, ResourceKind, RightSet, ScoutTarget,
+    TileKind, TradeKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, VillageId,
+    can_afford, can_research, can_upgrade, current_quest, garrison_upkeep, per_unit_time_secs,
+    queue_lane, regenerate_loyalty, scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
@@ -205,6 +206,33 @@ fn achievement_label(id: &str) -> &'static str {
         "population_1000" => "Reached 1000 population",
         "research_all_units" => "Researched every unit of your tribe",
         _ => "Achievement",
+    }
+}
+
+/// A human-readable summary of a quest reward (018): resources, culture, and any troop grant.
+fn quest_reward_label(reward: &QuestReward) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let r = &reward.resources;
+    for (amount, name) in [
+        (r.wood, "wood"),
+        (r.clay, "clay"),
+        (r.iron, "iron"),
+        (r.crop, "crop"),
+    ] {
+        if amount > 0 {
+            parts.push(format!("{amount} {name}"));
+        }
+    }
+    if reward.culture > 0 {
+        parts.push(format!("{} culture", reward.culture));
+    }
+    if let Some((unit, count)) = &reward.troops {
+        parts.push(format!("{count}× {}", unit.0));
+    }
+    if parts.is_empty() {
+        "none".to_owned()
+    } else {
+        parts.join(", ")
     }
 }
 
@@ -387,6 +415,19 @@ pub async fn village(
     .await
     {
         tracing::error!(error = %e, "achievement evaluation failed");
+    }
+
+    // 018: lazily complete any onboarding quests now satisfied (server-authoritative, idempotent,
+    // stage-gated). Best-effort — a failure here must not break the village view.
+    if let Err(e) = evaluate_quests(
+        state.accounts.as_ref(),
+        state.rules.as_ref(),
+        state.quest_chain.as_ref(),
+        player,
+    )
+    .await
+    {
+        tracing::error!(error = %e, "quest evaluation failed");
     }
 
     let economy = match load_economy(
@@ -2370,6 +2411,63 @@ pub async fn player_stats_page(
             .into_iter()
             .map(|(period, population)| HistoryPointView { period, population })
             .collect(),
+    })
+}
+
+/// The player's onboarding quests (018 AC8, Player only): the current quest with its reward, the
+/// completed list, and the all-done state. Evaluates lazily on view (server-authoritative,
+/// idempotent) so newly-satisfied quests are completed before rendering.
+pub async fn quests_page(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+    // Lazily complete anything now satisfied — best-effort, must not break the page.
+    if let Err(e) = evaluate_quests(
+        state.accounts.as_ref(),
+        state.rules.as_ref(),
+        state.quest_chain.as_ref(),
+        player,
+    )
+    .await
+    {
+        tracing::error!(error = %e, "quest evaluation failed");
+    }
+    let repo = state.accounts.as_ref();
+    let completed = match repo.completed_quests(player).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "completed quests lookup failed");
+            return server_error();
+        }
+    };
+    let villages = match repo.villages_of(player).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "villages lookup failed");
+            return server_error();
+        }
+    };
+    // Capital (else first) village — only used for the nav back-link.
+    let village_id = villages
+        .iter()
+        .find(|v| v.is_capital)
+        .or_else(|| villages.first())
+        .map(|v| v.id.0.to_string())
+        .unwrap_or_default();
+    let chain = state.quest_chain.as_ref();
+    let current = current_quest(chain, &completed).map(|q| CurrentQuestView {
+        description: q.description.clone(),
+        reward: quest_reward_label(&q.reward),
+    });
+    // Completed quests in chain order, with their descriptions.
+    let done: Vec<CompletedQuestView> = chain
+        .iter()
+        .filter(|q| completed.contains(&q.id))
+        .map(|q| CompletedQuestView {
+            description: q.description.clone(),
+        })
+        .collect();
+    page(&QuestsTemplate {
+        village_id,
+        current,
+        completed: done,
     })
 }
 

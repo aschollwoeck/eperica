@@ -12,10 +12,12 @@ siege/loot, oases, settling, and conquest slices (001–014) are built — miles
 conflict layer) and into M5 (the multi-village layer: culture points, settlers, founding villages, the
 capital, and conquest) — plus the **alliances** (015) and **ranking, leaderboards & statistics** (016: population/attack/
 defence/raider boards + alliance aggregates, quadrant/window filters, stat pages, faithful per-defender
-battle reports + shared defence points) slices. The **medals & achievements** slice (017: a weekly
-medal settlement — the first recurring due-event — population snapshots, permanent medals, milestone
-achievements with rewards, and the 016-deferred top-climbers board + population-over-time) is in
-progress (M6).
+battle reports + shared defence points) and **medals & achievements** (017: a weekly medal settlement —
+the first recurring due-event — population snapshots, permanent medals, milestone achievements with
+rewards, and the 016-deferred top-climbers board + population-over-time) slices. The **quests &
+onboarding** slice (018: a finite, stage-gated quest chain that walks new players through the core loop,
+server-evaluated from persisted state with exactly-once resource/culture/troop rewards) is in progress
+(M6).
 
 ## Read the specs first — they are the source of truth
 
@@ -29,7 +31,7 @@ progress (M6).
 - **`specs/roadmap.md`** — dependency-ordered build order (slices 001 → end-game).
 - **`specs/social-and-meta-features.md`** — app-layer features (chat, profiles, UX) — not sim rules.
 - **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the active slice. Currently:
-  `017-medals-and-achievements`.
+  `018-quests-and-onboarding`.
 
 If behavior must change, **update the spec first**, then the code.
 

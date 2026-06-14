@@ -8,9 +8,10 @@ use eperica_domain::{
     AchievementDef, AchievementId, AchievementKind, AllianceRules, BuildRules, BuildingKind,
     BuildingSlot, CombatRules, CultureRules, DomainError, EconomyRules, FieldDistribution,
     LevelSpec, LoyaltyRules, MapRules, MedalCategory, MedalRules, MerchantProfile, MerchantRules,
-    OasisBonus, OasisRules, RankingRules, ResearchSpec, ResourceAmounts, ResourceField,
-    ResourceKind, Reward, ScoutRules, SiegeKind, SmithyRules, StartingVillage, TrainingRules,
-    Tribe, UnitId, UnitRole, UnitRules, UnitSpec, WallProfile, Weighted,
+    OasisBonus, OasisRules, QuestCondition, QuestDef, QuestId, QuestReward, RankingRules,
+    ResearchSpec, ResourceAmounts, ResourceField, ResourceKind, Reward, ScoutRules, SiegeKind,
+    SmithyRules, StartingVillage, TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec,
+    WallProfile, Weighted,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -82,6 +83,10 @@ const ACHIEVEMENTS_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../specs/balance/achievements.toml"
 ));
+const QUESTS_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/quests.toml"
+));
 
 /// Errors that can occur while loading balance data.
 #[derive(Debug, thiserror::Error)]
@@ -104,6 +109,12 @@ pub enum BalanceError {
     /// An unknown achievement kind appeared in the data (017).
     #[error("unknown achievement kind: {0}")]
     UnknownAchievementKind(String),
+    /// An unknown quest condition kind appeared in the data (018).
+    #[error("unknown quest condition kind: {0}")]
+    UnknownQuestCondition(String),
+    /// A quest id appeared more than once in the chain (018) — ids must be unique (the completion PK).
+    #[error("duplicate quest id: {0}")]
+    DuplicateQuestId(String),
     /// The parsed data did not form a valid domain template.
     #[error(transparent)]
     Domain(DomainError),
@@ -719,6 +730,101 @@ pub fn achievement_catalogue() -> Result<Vec<AchievementDef>, BalanceError> {
                 kind: parse_achievement_kind(&a.kind)?,
                 threshold: a.threshold,
                 reward: parse_reward(&a.reward),
+            })
+        })
+        .collect()
+}
+
+#[derive(Deserialize)]
+struct QuestsDto {
+    quests: Vec<QuestDto>,
+}
+
+#[derive(Deserialize)]
+struct QuestDto {
+    id: String,
+    description: String,
+    condition: QuestConditionDto,
+    #[serde(default)]
+    reward: QuestRewardDto,
+}
+
+#[derive(Deserialize)]
+struct QuestConditionDto {
+    kind: String,
+    #[serde(default)]
+    level: u8,
+    building: Option<String>,
+    #[serde(default)]
+    population: i64,
+}
+
+#[derive(Deserialize, Default)]
+struct QuestRewardDto {
+    #[serde(default)]
+    wood: i64,
+    #[serde(default)]
+    clay: i64,
+    #[serde(default)]
+    iron: i64,
+    #[serde(default)]
+    crop: i64,
+    #[serde(default)]
+    culture: i64,
+    troop_unit: Option<String>,
+    troop_count: Option<u32>,
+}
+
+fn parse_quest_condition(dto: &QuestConditionDto) -> Result<QuestCondition, BalanceError> {
+    Ok(match dto.kind.as_str() {
+        "field_level" => QuestCondition::FieldLevel(dto.level),
+        "building_level" => {
+            let building = dto.building.as_deref().ok_or_else(|| {
+                BalanceError::UnknownQuestCondition("building_level: no building".into())
+            })?;
+            QuestCondition::BuildingLevel(parse_building(building)?, dto.level)
+        }
+        "train_troops" => QuestCondition::TrainTroops,
+        "send_raid" => QuestCondition::SendRaid,
+        "population" => QuestCondition::Population(dto.population),
+        other => return Err(BalanceError::UnknownQuestCondition(other.to_owned())),
+    })
+}
+
+fn quest_reward(dto: &QuestRewardDto) -> QuestReward {
+    QuestReward {
+        resources: ResourceAmounts {
+            wood: dto.wood,
+            clay: dto.clay,
+            iron: dto.iron,
+            crop: dto.crop,
+        },
+        culture: dto.culture,
+        troops: match (&dto.troop_unit, dto.troop_count) {
+            (Some(unit), Some(count)) => Some((UnitId(unit.clone()), count)),
+            _ => None,
+        },
+    }
+}
+
+/// Load the ordered onboarding quest chain (018) from the embedded balance data.
+///
+/// # Errors
+/// Returns [`BalanceError`] if the data cannot be parsed or names an unknown condition/building.
+pub fn quest_chain() -> Result<Vec<QuestDef>, BalanceError> {
+    let dto: QuestsDto = toml::from_str(QUESTS_TOML)?;
+    let mut seen = std::collections::HashSet::with_capacity(dto.quests.len());
+    dto.quests
+        .iter()
+        .map(|q| {
+            if !seen.insert(q.id.as_str()) {
+                return Err(BalanceError::DuplicateQuestId(q.id.clone()));
+            }
+            Ok(QuestDef {
+                id: QuestId(q.id.clone()),
+                description: q.description.clone(),
+                condition: parse_quest_condition(&q.condition)?,
+                reward: quest_reward(&q.reward),
             })
         })
         .collect()
@@ -1386,6 +1492,24 @@ mod tests {
             .find(|a| a.kind == AchievementKind::SecondVillage)
             .expect("second-village achievement");
         assert_eq!(second.reward, Reward::Culture(50));
+    }
+
+    #[test]
+    fn loads_quest_chain() {
+        // 018: the ordered onboarding chain loads fail-fast with the seed data.
+        let chain = quest_chain().expect("quest chain load");
+        assert_eq!(chain.first().expect("first quest").id.0, "upgrade_field");
+        assert!(chain.len() >= 5);
+        // The warehouse quest carries a building-level condition.
+        let wh = chain
+            .iter()
+            .find(|q| q.id.0 == "build_warehouse")
+            .expect("warehouse quest");
+        assert_eq!(
+            wh.condition,
+            eperica_domain::QuestCondition::BuildingLevel(BuildingKind::Warehouse, 1)
+        );
+        assert!(wh.reward.resources.wood > 0);
     }
 
     #[test]

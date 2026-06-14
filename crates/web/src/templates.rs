@@ -720,3 +720,25 @@ pub struct AllianceStatsTemplate {
     pub members: Vec<MemberStatRow>,
     pub medals: Vec<MedalRowView>,
 }
+
+/// The player's current (next-to-complete) onboarding quest (018 AC8): what to do + its reward.
+pub struct CurrentQuestView {
+    pub description: String,
+    pub reward: String,
+}
+
+/// One completed onboarding quest on the quests page (018 AC8).
+pub struct CompletedQuestView {
+    pub description: String,
+}
+
+#[derive(Template)]
+#[template(path = "quests.html")]
+pub struct QuestsTemplate {
+    /// The player's village id (for the nav back-links). The first/capital village.
+    pub village_id: String,
+    /// The current quest, or `None` when the whole chain is done (the tapered-off state).
+    pub current: Option<CurrentQuestView>,
+    /// Quests already completed, in chain order.
+    pub completed: Vec<CompletedQuestView>,
+}
