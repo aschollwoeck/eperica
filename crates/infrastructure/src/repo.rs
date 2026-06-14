@@ -501,8 +501,8 @@ impl AccountRepository for PgAccountRepository {
     async fn villages_of(&self, owner: PlayerId) -> Result<Vec<Village>, RepoError> {
         let owner_uuid = Uuid::from_u128(owner.0);
         let village_rows = sqlx::query(
-            "SELECT id, x, y, tribe, is_capital, is_natar FROM villages WHERE owner_id = $1 \
-             ORDER BY created_at, id",
+            "SELECT id, x, y, tribe, is_capital, is_natar, is_wonder_site FROM villages \
+             WHERE owner_id = $1 ORDER BY created_at, id",
         )
         .bind(owner_uuid)
         .fetch_all(&self.pool)
@@ -519,6 +519,7 @@ impl AccountRepository for PgAccountRepository {
             let tribe_raw: Option<String> = r.try_get("tribe").map_err(backend)?;
             let is_capital: bool = r.try_get("is_capital").map_err(backend)?;
             let is_natar: bool = r.try_get("is_natar").map_err(backend)?;
+            let is_wonder_site: bool = r.try_get("is_wonder_site").map_err(backend)?;
 
             let field_rows = sqlx::query(
                 "SELECT resource_type, level FROM village_fields WHERE village_id = $1 ORDER BY slot",
@@ -569,6 +570,7 @@ impl AccountRepository for PgAccountRepository {
                 oasis_bonus: self.village_oasis_bonus(vid_typed).await?,
                 is_capital,
                 is_natar,
+                is_wonder_site,
                 artifact_effects: artifact_effects_from(&held, vid_typed, is_natar),
             });
         }
@@ -578,7 +580,8 @@ impl AccountRepository for PgAccountRepository {
     async fn village_by_id(&self, village: VillageId) -> Result<Option<Village>, RepoError> {
         let vid = Uuid::from_u128(village.0);
         let Some(r) = sqlx::query(
-            "SELECT owner_id, x, y, tribe, is_capital, is_natar FROM villages WHERE id = $1",
+            "SELECT owner_id, x, y, tribe, is_capital, is_natar, is_wonder_site \
+             FROM villages WHERE id = $1",
         )
         .bind(vid)
         .fetch_optional(&self.pool)
@@ -593,6 +596,7 @@ impl AccountRepository for PgAccountRepository {
         let tribe_raw: Option<String> = r.try_get("tribe").map_err(backend)?;
         let is_capital: bool = r.try_get("is_capital").map_err(backend)?;
         let is_natar: bool = r.try_get("is_natar").map_err(backend)?;
+        let is_wonder_site: bool = r.try_get("is_wonder_site").map_err(backend)?;
 
         let field_rows = sqlx::query(
             "SELECT resource_type, level FROM village_fields WHERE village_id = $1 ORDER BY slot",
@@ -639,6 +643,7 @@ impl AccountRepository for PgAccountRepository {
             oasis_bonus: self.village_oasis_bonus(village).await?,
             is_capital,
             is_natar,
+            is_wonder_site,
             artifact_effects: self
                 .artifact_effects_for(PlayerId(owner.as_u128()), village, is_natar)
                 .await?,

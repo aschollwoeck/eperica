@@ -127,6 +127,9 @@ pub struct Village {
     /// Whether this is a **Natar NPC** village (020) — an artifact vault, not ownable (conquest never
     /// transfers it) and excluded from boards/stats.
     pub is_natar: bool,
+    /// Whether this Natar village is a **Wonder construction site** (021) — unlike an artifact vault, a
+    /// site **is** conquerable, so an alliance can take it and build the Wonder of the World on it.
+    pub is_wonder_site: bool,
     /// The artifact effects in force for this village (020) — its own small holdings plus the
     /// account's large/unique, aggregated on read (the oasis-bonus pattern). `NONE` for no holdings
     /// (and for Natar/NPC villages, which never benefit from the artifacts they guard).
@@ -156,8 +159,16 @@ impl Village {
             oasis_bonus: OasisBonus::default(),
             is_capital: false,
             is_natar: false,
+            is_wonder_site: false,
             artifact_effects: ArtifactEffects::NONE,
         }
+    }
+
+    /// Whether this village can be **conquered** (ownership transferred by an administrator attack).
+    /// A capital is immune (013/014 AC5) and a Natar artifact vault is never ownable (020 AC2), but a
+    /// Natar **Wonder site** is conquerable so an alliance can take it and build the Wonder (021 AC3).
+    pub fn is_conquerable(&self) -> bool {
+        !self.is_capital && (!self.is_natar || self.is_wonder_site)
     }
 }
 
@@ -220,6 +231,30 @@ mod tests {
         let kinds: Vec<_> = v.buildings.iter().map(|b| b.kind).collect();
         assert!(kinds.contains(&BuildingKind::MainBuilding));
         assert!(kinds.contains(&BuildingKind::RallyPoint));
+    }
+
+    #[test]
+    fn conquerability_follows_capital_natar_and_wonder_site() {
+        let mut v = Village::found(
+            VillageId(1),
+            PlayerId(1),
+            Coordinate::new(0, 0),
+            Tribe::Romans,
+            FieldDistribution::new(4, 4, 4, 6).unwrap(),
+            &balanced_template(),
+        );
+        // A normal village is conquerable (014).
+        assert!(v.is_conquerable());
+        // A capital is immune (014 AC5).
+        v.is_capital = true;
+        assert!(!v.is_conquerable());
+        v.is_capital = false;
+        // An artifact vault (Natar, not a site) is never ownable (020 AC2).
+        v.is_natar = true;
+        assert!(!v.is_conquerable());
+        // A Natar Wonder site IS conquerable (021 AC3).
+        v.is_wonder_site = true;
+        assert!(v.is_conquerable());
     }
 
     #[test]

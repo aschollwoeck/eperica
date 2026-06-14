@@ -715,8 +715,9 @@ where
             )
             .await?;
             let has_slot = attacker_view.used_slots < attacker_view.allowed_villages;
-            // 020 AC2: a Natar village is never ownable — treat it like a capital (no transfer).
-            let unconquerable = target.is_capital || target.is_natar;
+            // 020 AC2 / 021 AC3: a capital and an artifact vault are never ownable, but a Natar **Wonder
+            // site** is conquerable (so an alliance can take it and build the Wonder).
+            let unconquerable = !target.is_conquerable();
             let oc = conquest_outcome(loyalty_now, drop, unconquerable, has_slot);
             let apply: Option<LoyaltyApply> = if oc.transferred {
                 let loser_view = load_culture(
@@ -898,6 +899,7 @@ mod tests {
             oasis_bonus: Default::default(),
             is_capital: false,
             is_natar: false,
+            is_wonder_site: false,
             artifact_effects: eperica_domain::ArtifactEffects::NONE,
         }
     }
@@ -1670,6 +1672,91 @@ mod tests {
             (Some(100), Some(100)),
             "the capital's loyalty is unchanged before == after"
         );
+    }
+
+    // 020 AC2 / 021 AC3: an artifact vault (Natar, not a site) is immune to conquest — like a capital,
+    // an administrator strike leaves its loyalty untouched — while a Natar **Wonder site** is treated as
+    // conquerable, so the same strike drops its loyalty (the first step toward taking it).
+    #[tokio::test]
+    async fn wonder_site_is_conquerable_but_artifact_vault_is_not() {
+        let loyalty = LoyaltyRules {
+            starting_loyalty: 100,
+            post_conquest_loyalty: 25,
+            regen_per_hour: 2,
+            drop_min: 20,
+            drop_max: 30,
+            administrator_ids: vec!["u1".to_owned()],
+        };
+        let strike = async |is_wonder_site: bool| {
+            let mut target = village(2, 2, Coordinate::new(3, 4));
+            target.is_natar = true;
+            target.is_wonder_site = is_wonder_site;
+            let acc = accounts(Vec::new(), Some(target));
+            let cb = FakeCombat::default();
+            *cb.due.lock().unwrap() = vec![DueAttack {
+                id: 7,
+                kind: MovementKind::Attack,
+                owner: PlayerId(1),
+                home_village: VillageId(1),
+                target_village: VillageId(2),
+                origin: Coordinate::new(0, 0),
+                dest: Coordinate::new(3, 4),
+                arrive_at: Timestamp(1_000_000),
+                troops: vec![(UnitId("u0".into()), 50), (UnitId("u1".into()), 2)],
+                scout_target: None,
+                catapult_target: None,
+            }];
+            let mv = FakeMovements {
+                reinforcements: Vec::new(),
+            };
+            process_due_combat(
+                &acc,
+                &mv,
+                &FakeUnits,
+                &cb,
+                &economy_rules(),
+                &unit_rules(),
+                &combat_rules(),
+                &ScoutRules { loss_exponent: 1.5 },
+                &culture_rules(),
+                &loyalty,
+                &ranking_rules(),
+                &map(),
+                GameSpeed::new(1.0).unwrap(),
+                42,
+                Timestamp(1_000_000),
+                100,
+                (3, 6, 10),
+            )
+            .await
+            .unwrap();
+            cb.applied.lock().unwrap().clone().expect("applied")
+        };
+
+        // The artifact vault is immune: loyalty unchanged, never conquered.
+        let vault = strike(false).await;
+        assert!(
+            vault.loyalty.is_none(),
+            "an artifact vault is unconquerable"
+        );
+        assert!(!vault.report.conquered);
+        assert_eq!(
+            (vault.report.loyalty_before, vault.report.loyalty_after),
+            (Some(100), Some(100)),
+            "a vault's loyalty is untouched"
+        );
+
+        // The Wonder site is conquerable: the admin strike drops its loyalty.
+        let site = strike(true).await;
+        match site.loyalty {
+            Some(LoyaltyApply::Reduced { new_loyalty }) => {
+                assert!(
+                    new_loyalty < 100,
+                    "a Wonder site's loyalty falls: {new_loyalty}"
+                );
+            }
+            other => panic!("expected a Wonder site's loyalty to drop, got {other:?}"),
+        }
     }
 
     /// 011 AC1: an attack carrying catapults persists a valid target; the Wall/Rally Point is
