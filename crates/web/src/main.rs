@@ -110,6 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         merchant_rules: merchants,
         wonder_rules: Arc::clone(&wonder),
         fair_play_rules: Arc::clone(&fair_play),
+        trust_proxy: env_flag("TRUST_PROXY"),
         map,
         world: config.world,
         require_email_confirmation: env_flag("REQUIRE_EMAIL_CONFIRMATION"),

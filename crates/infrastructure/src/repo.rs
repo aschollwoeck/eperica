@@ -810,6 +810,10 @@ impl AccountRepository for PgAccountRepository {
 /// when older than this (5 minutes). An implementation constant, not game balance.
 const ACTIVITY_THROTTLE_MS: i64 = 5 * 60 * 1000;
 
+/// How long fixed-window `rate_limits` rows are retained (24h) before `bump_rate` prunes them — bounds
+/// the table (P11) while keeping recent history for the inhuman-action-rate detection signal (022).
+const RATE_LIMIT_RETENTION_SECS: i64 = 24 * 60 * 60;
+
 fn lane_str(lane: QueueLane) -> &'static str {
     match lane {
         QueueLane::All => "all",
@@ -6798,10 +6802,15 @@ impl ModerationRepository for PgAccountRepository {
     }
 
     async fn peak_action_count(&self, subject: PlayerId) -> Result<u32, RepoError> {
+        // Bounded to the retained window (older rows are pruned in `bump_rate`) — a recent burst is what
+        // the inhuman-rate signal cares about (P11: no full-history scan).
         let peak: Option<i32> = sqlx::query_scalar(
-            "SELECT MAX(count) FROM rate_limits WHERE subject = $1 AND action = 'action'",
+            "SELECT MAX(count) FROM rate_limits \
+             WHERE subject = $1 AND action = 'action' \
+               AND window_start >= now() - make_interval(secs => $2::double precision)",
         )
         .bind(subject.0.to_string())
+        .bind(RATE_LIMIT_RETENTION_SECS as f64)
         .fetch_one(&self.pool)
         .await
         .map_err(backend)?;
@@ -6828,6 +6837,18 @@ impl ModerationRepository for PgAccountRepository {
         .bind(action)
         .bind(window_start_secs as f64)
         .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        // Prune this subject/action's windows older than the retention bound, so the table stays small
+        // (P11) while keeping recent history for the detection signal. Targeted by the PK prefix index.
+        sqlx::query(
+            "DELETE FROM rate_limits WHERE subject = $1 AND action = $2 \
+             AND window_start < to_timestamp($3::double precision)",
+        )
+        .bind(subject)
+        .bind(action)
+        .bind((window_start_secs - RATE_LIMIT_RETENTION_SECS) as f64)
+        .execute(&self.pool)
         .await
         .map_err(backend)?;
         Ok(u32::try_from(count).unwrap_or(u32::MAX))

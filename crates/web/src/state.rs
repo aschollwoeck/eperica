@@ -45,6 +45,9 @@ pub struct AppState {
     pub wonder_rules: Arc<WonderRules>,
     /// Fair-play balance rules (rate limits, suspension default, detection thresholds — 022).
     pub fair_play_rules: Arc<FairPlayRules>,
+    /// Whether to trust the `X-Forwarded-For`/`X-Real-IP` headers for the client IP (022) — only when
+    /// behind a known proxy. When `false` the spoofable headers are ignored and the peer address is used.
+    pub trust_proxy: bool,
     /// The world's seeded map for the map view and placement (006).
     pub map: Arc<WorldMap>,
     /// World configuration (speed, radius — P7).

@@ -34,18 +34,32 @@ async fn session_player(
     Some(PlayerId(id))
 }
 
-/// The client IP for rate-limit/detection keying: the first `X-Forwarded-For` hop (proxy), then
-/// `X-Real-IP`, then `fallback` (the peer address at register, or `"unknown"`).
-pub(crate) fn client_ip(headers: &axum::http::HeaderMap, fallback: &str) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .or_else(|| headers.get("x-real-ip").and_then(|v| v.to_str().ok()))
-        .unwrap_or(fallback)
-        .to_owned()
+/// The client IP for rate-limit/detection keying. Behind a trusted proxy (`trust_proxy`), prefer the
+/// first `X-Forwarded-For` hop then `X-Real-IP`; otherwise those headers are **spoofable** and ignored,
+/// and the `peer` socket address is used (022 — server-authoritative attribution, P4).
+pub(crate) fn client_ip(headers: &axum::http::HeaderMap, peer: &str, trust_proxy: bool) -> String {
+    if trust_proxy
+        && let Some(ip) = headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.split(',').next())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .or_else(|| headers.get("x-real-ip").and_then(|v| v.to_str().ok()))
+    {
+        return ip.to_owned();
+    }
+    peer.to_owned()
+}
+
+/// The peer socket IP from the request's `ConnectInfo` extension (set by
+/// `into_make_service_with_connect_info`), or `"unknown"` if absent.
+fn peer_ip(parts: &axum::http::request::Parts) -> String {
+    parts
+        .extensions
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|ci| ci.0.ip().to_string())
+        .unwrap_or_else(|| "unknown".to_owned())
 }
 
 /// Server-authoritative rate-limit guard (022 AC6, P4/P5): each mutating `POST` is counted in a
@@ -62,11 +76,8 @@ async fn rate_limit_guard(State(state): State<AppState>, req: Request, next: Nex
     let by_ip = matches!(path, "/login" | "/register");
     let (mut parts, body) = req.into_parts();
     let (subject, action, limit) = if by_ip {
-        (
-            client_ip(&parts.headers, "unknown"),
-            "login",
-            rules.login_limit_per_window,
-        )
+        let ip = client_ip(&parts.headers, &peer_ip(&parts), state.trust_proxy);
+        (ip, "login", rules.login_limit_per_window)
     } else {
         match session_player(&mut parts, &state).await {
             Some(p) => (p.0.to_string(), "action", rules.rate_limit_per_window),

@@ -64,6 +64,8 @@ async fn spawn(pool: sqlx::PgPool) -> String {
         merchant_rules: Arc::new(merchant_rules().expect("merchant rules")),
         wonder_rules: Arc::new(wonder_rules().expect("wonder rules")),
         fair_play_rules: Arc::new(fair_play_rules().expect("fair-play rules")),
+        // Tests trust the forwarded headers so they can control the client IP deterministically.
+        trust_proxy: true,
         map,
         world: config,
         require_email_confirmation: false,
@@ -3187,6 +3189,21 @@ async fn login_attempts_are_rate_limited(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert_eq!(over.status().as_u16(), 429, "over the limit is rejected");
+
+    // Per-IP isolation: a different client IP (distinct X-Forwarded-For, trusted in tests) has its own
+    // budget and is not affected by the first IP exhausting theirs.
+    let other = c
+        .post(format!("{base}/login"))
+        .header("x-forwarded-for", "198.51.100.42")
+        .form(&[("username", "ghost"), ("password", "nope")])
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(
+        other.status().as_u16(),
+        429,
+        "a different IP has an independent login budget"
+    );
 }
 
 /// 022 AC1–AC4/AC9: a player reports an account; a non-moderator is denied /mod; a moderator sees the

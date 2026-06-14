@@ -339,17 +339,21 @@ pub async fn register_submit(
     )
     .await
     {
-        Ok(_) if state.require_email_confirmation => page(&LoginTemplate {
-            error: Some("Account created. Confirm your email, then log in.".to_owned()),
-        }),
         Ok(user) => {
-            // Capture the registration IP — the shared-IP detection key (022, P4 server-side).
-            let ip = crate::client_ip(&headers, &peer.ip().to_string());
+            // Capture the registration IP — the shared-IP detection key (022, P4 server-side) — for
+            // every created account, whether or not email confirmation gates the first login.
+            let ip = crate::client_ip(&headers, &peer.ip().to_string(), state.trust_proxy);
             if let Err(e) = state.accounts.record_registration_ip(user.id, &ip).await {
                 tracing::error!(error = %e, "failed to record registration IP");
             }
-            let jar = jar.add(auth_cookie(user.id.0));
-            (jar, Redirect::to("/village")).into_response()
+            if state.require_email_confirmation {
+                page(&LoginTemplate {
+                    error: Some("Account created. Confirm your email, then log in.".to_owned()),
+                })
+            } else {
+                let jar = jar.add(auth_cookie(user.id.0));
+                (jar, Redirect::to("/village")).into_response()
+            }
         }
         Err(RegisterError::Invalid(message)) => page(&RegisterTemplate {
             error: Some(message),
@@ -2590,7 +2594,7 @@ pub async fn mod_account(
     Path(id): Path<String>,
 ) -> Response {
     let Some(subject) = id.trim().parse::<u128>().ok().map(PlayerId) else {
-        return server_error();
+        return (StatusCode::BAD_REQUEST, "invalid account id").into_response();
     };
     let signals = match account_signals(
         state.accounts.as_ref(),
