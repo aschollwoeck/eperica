@@ -884,6 +884,41 @@ pub struct NotificationsTemplate {
     pub notifications: Vec<NotificationRowView>,
 }
 
+/// One row in the alliance forum thread list (027 AC1).
+pub struct ForumThreadRow {
+    pub id: String,
+    pub title: String,
+    pub author: String,
+    pub announcement: bool,
+    pub post_count: i64,
+}
+
+#[derive(Template)]
+#[template(path = "forum.html")]
+pub struct ForumTemplate {
+    /// Threads, most-recent activity first.
+    pub threads: Vec<ForumThreadRow>,
+    /// Whether the viewer may start an announcement (holds the `Announce` right).
+    pub can_announce: bool,
+}
+
+/// One post in a forum thread (027 AC1).
+pub struct ForumPostRow {
+    pub author: String,
+    pub body: String,
+}
+
+#[derive(Template)]
+#[template(path = "forum_thread.html")]
+pub struct ForumThreadTemplate {
+    /// The thread id (for the reply form action).
+    pub thread_id: String,
+    pub title: String,
+    /// A locked (announcement) thread hides the reply form.
+    pub locked: bool,
+    pub posts: Vec<ForumPostRow>,
+}
+
 /// One rendered line in a conversation (024 AC2).
 pub struct ChatLineView {
     /// Sender display name.
