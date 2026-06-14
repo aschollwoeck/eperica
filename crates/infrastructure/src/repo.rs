@@ -5967,7 +5967,7 @@ mod tests {
         BoardScope, ConflictMetric, ConquestTransfer, DefenderContribution, NewBattleReport,
         ReinforcementReturn,
     };
-    use eperica_domain::{EconomyRules, GameSpeed, WorldConfig, is_protected};
+    use eperica_domain::{AttackMode, EconomyRules, GameSpeed, WorldConfig, is_protected};
 
     /// The resources row's last-settled time — the snapshot orders must be computed from.
     async fn snapshot(repo: &PgAccountRepository, village: VillageId) -> Timestamp {
@@ -6118,6 +6118,148 @@ mod tests {
             .unwrap();
         let rec = repo.find_user_by_id(player).await.unwrap().unwrap();
         assert!(rec.abandoned, "the sweep flag surfaces on the user record");
+    }
+
+    /// 019 AC2/AC3: a protected player cannot be attacked (no movement created); once a player attacks,
+    /// their own protection ends. Drives the real `order_attack` use-case against the Pg repo.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn protection_blocks_attack_and_attacking_ends_it(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            config,
+            world,
+            ..
+        } = setup(pool.clone()).await;
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let units = crate::unit_rules().unwrap();
+        let attacker = make_account(&repo, &template, "atk").await;
+        let target = make_account(&repo, &template, "tgt").await;
+        let atk_v = repo.villages_of(attacker).await.unwrap()[0].clone();
+        let tgt_v = repo.villages_of(target).await.unwrap()[0].clone();
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 50)",
+        )
+        .bind(Uuid::from_u128(atk_v.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let now = crate::now();
+        let troops = vec![(UnitId("phalanx".into()), 10)];
+
+        // AC2: the fresh target is protected ⇒ the attack is rejected and no movement is created.
+        let res = eperica_application::order_attack(
+            &repo,
+            &repo,
+            &repo,
+            &econ,
+            &units,
+            &map,
+            config.speed,
+            now,
+            attacker,
+            None,
+            tgt_v.coordinate,
+            troops.clone(),
+            AttackMode::Raid,
+            None,
+            None,
+        )
+        .await;
+        assert!(
+            matches!(res, Err(eperica_application::CombatError::TargetProtected)),
+            "a protected target is rejected, got {res:?}"
+        );
+        let moves: i64 = sqlx::query_scalar("SELECT count(*) FROM troop_movements")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(moves, 0, "no movement is created for a rejected attack");
+
+        // End the target's protection ⇒ the same attack now launches.
+        repo.end_protection(target, now).await.unwrap();
+        eperica_application::order_attack(
+            &repo,
+            &repo,
+            &repo,
+            &econ,
+            &units,
+            &map,
+            config.speed,
+            now,
+            attacker,
+            None,
+            tgt_v.coordinate,
+            troops,
+            AttackMode::Raid,
+            None,
+            None,
+        )
+        .await
+        .expect("attack launches against an unprotected target");
+        let moves: i64 = sqlx::query_scalar("SELECT count(*) FROM troop_movements")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(moves, 1, "the launched attack created a movement");
+
+        // AC3: launching the attack ended the attacker's own protection.
+        assert!(
+            !is_protected(repo.protection_of(attacker).await.unwrap(), crate::now()),
+            "attacking ended the attacker's protection"
+        );
+    }
+
+    /// 019 AC4: protection ends early once the player is established (population ≥ threshold), via the
+    /// lazy `end_protection_if_established`; it does not re-arm.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn protection_ends_at_population_threshold(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let rules = crate::lifecycle_rules().unwrap();
+        let player = make_account(&repo, &template, "grow").await;
+        let v = repo.villages_of(player).await.unwrap()[0].clone();
+        let now = crate::now();
+
+        // A fresh village is far below the threshold ⇒ protection stays.
+        assert!(
+            !eperica_application::end_protection_if_established(&repo, &econ, &rules, player, now)
+                .await
+                .unwrap()
+        );
+        assert!(is_protected(repo.protection_of(player).await.unwrap(), now));
+
+        // Grow population past the threshold (max-level fields), then it ends on evaluation.
+        sqlx::query("UPDATE village_fields SET level = 10 WHERE village_id = $1")
+            .bind(Uuid::from_u128(v.id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            eperica_application::end_protection_if_established(&repo, &econ, &rules, player, now)
+                .await
+                .unwrap(),
+            "an established player's protection ends"
+        );
+        assert!(!is_protected(
+            repo.protection_of(player).await.unwrap(),
+            now
+        ));
+        // Idempotent: a second evaluation does nothing.
+        assert!(
+            !eperica_application::end_protection_if_established(&repo, &econ, &rules, player, now)
+                .await
+                .unwrap()
+        );
     }
 
     /// 007 AC1/AC4/AC5: a reinforcement debits the source garrison, arrives once (crash-resume
