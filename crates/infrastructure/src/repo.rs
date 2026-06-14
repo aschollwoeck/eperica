@@ -2597,7 +2597,8 @@ fn report_from_row(r: &PgRow) -> Result<BattleReportView, RepoError> {
 /// The `SELECT` of a battle report joined to player names + village coordinates (inbox/detail).
 const REPORT_SELECT: &str = "SELECT br.id, \
     (EXTRACT(EPOCH FROM br.occurred_at) * 1000)::bigint AS occurred_ms, br.kind, \
-    au.username AS attacker_name, av.x AS ax, av.y AS ay, \
+    au.username AS attacker_name, COALESCE(av.x, br.attacker_x) AS ax, \
+    COALESCE(av.y, br.attacker_y) AS ay, \
     COALESCE(du.username, br.defender_label) AS defender_name, \
     COALESCE(dv.x, br.defender_x) AS dx, COALESCE(dv.y, br.defender_y) AS dy, \
     br.attacker_player, br.defender_player, br.attacker_won, br.luck, br.morale, \
@@ -2608,7 +2609,7 @@ const REPORT_SELECT: &str = "SELECT br.id, \
     br.loyalty_before, br.loyalty_after, br.conquered \
     FROM battle_reports br \
     JOIN users au ON au.id = br.attacker_player \
-    JOIN villages av ON av.id = br.attacker_village \
+    LEFT JOIN villages av ON av.id = br.attacker_village \
     LEFT JOIN users du ON du.id = br.defender_player \
     LEFT JOIN villages dv ON dv.id = br.defender_village";
 
@@ -2778,9 +2779,10 @@ impl CombatRepository for PgAccountRepository {
               attacker_forces, attacker_losses, defender_forces, defender_losses, \
               scouted, scout_target, loot_wood, loot_clay, loot_iron, loot_crop, \
               razed_building, razed_before, razed_after, \
-              loyalty_before, loyalty_after, conquered, attack_points) \
+              loyalty_before, loyalty_after, conquered, attack_points, \
+              attacker_x, attacker_y, defender_x, defender_y) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, \
-                     $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)",
+                     $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)",
         )
         .bind(report_id)
         .bind(movement_kind_str(r.kind))
@@ -2810,6 +2812,11 @@ impl CombatRepository for PgAccountRepository {
         .bind(r.loyalty_after.and_then(|v| i16::try_from(v).ok()))
         .bind(r.conquered)
         .bind(apply.attack_points)
+        // 019: fallback coords so the report stays readable if a village is later deleted.
+        .bind(apply.attacker_origin.x)
+        .bind(apply.attacker_origin.y)
+        .bind(apply.target_coord.x)
+        .bind(apply.target_coord.y)
         .execute(&mut *tx)
         .await
         .map_err(backend)?;
@@ -3133,9 +3140,11 @@ async fn insert_oasis_report(
          (id, kind, attacker_player, attacker_village, defender_player, defender_village, \
           defender_x, defender_y, defender_label, \
           attacker_won, luck, morale, wall_before, wall_after, \
-          attacker_forces, attacker_losses, defender_forces, defender_losses) \
+          attacker_forces, attacker_losses, defender_forces, defender_losses, \
+          attacker_x, attacker_y) \
          VALUES ($1, 'oasis_attack', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0, 0, \
-                 $12, $13, $14, $15)",
+                 $12, $13, $14, $15, \
+                 (SELECT x FROM villages WHERE id = $3), (SELECT y FROM villages WHERE id = $3))",
     )
     .bind(Uuid::new_v4())
     .bind(Uuid::from_u128(r.attacker_player.0))
@@ -5090,7 +5099,7 @@ impl RankingRepository for PgAccountRepository {
         let sql = format!(
             "SELECT u.id, u.username, SUM({pop})::bigint AS total \
              FROM villages v JOIN users u ON u.id = v.owner_id \
-             WHERE v.world_id = $1 AND {qf} \
+             WHERE v.world_id = $1 AND {qf} AND u.abandoned_at IS NULL \
              GROUP BY u.id, u.username HAVING SUM({pop}) > 0 \
              ORDER BY total DESC, u.id ASC LIMIT $7"
         );
@@ -5123,6 +5132,7 @@ impl RankingRepository for PgAccountRepository {
              FROM {table} JOIN users u ON u.id = {pid} \
              WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
                AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) AND {qf} \
+               AND u.abandoned_at IS NULL \
              GROUP BY u.id, u.username HAVING COALESCE(SUM({val}), 0) > 0 \
              ORDER BY total DESC, u.id ASC LIMIT $4"
         );
@@ -5183,11 +5193,12 @@ impl RankingRepository for PgAccountRepository {
             "SELECT a.id, a.name, a.tag, COALESCE(SUM(pv.val), 0)::bigint AS total \
              FROM alliances a \
              JOIN alliance_members am ON am.alliance_id = a.id \
+             JOIN users u ON u.id = am.player_id \
              JOIN (SELECT {pid} AS pid, SUM({val}) AS val FROM {table} \
                    WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
                      AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) \
                    GROUP BY {pid}) pv ON pv.pid = am.player_id \
-             WHERE {qf} \
+             WHERE {qf} AND u.abandoned_at IS NULL \
              GROUP BY a.id, a.name, a.tag HAVING COALESCE(SUM(pv.val), 0) > 0 \
              ORDER BY total DESC, a.id ASC LIMIT $4"
         );
@@ -6434,10 +6445,11 @@ mod tests {
         assert!(again.is_empty(), "no further periods to settle");
     }
 
-    /// 019 AC8: an abandoned account is excluded from the leaderboards and its stat page, while a live
-    /// account is retained.
+    /// 019 AC8: an abandoned account is excluded from the leaderboards (by a read-time filter, not by
+    /// destroying rows) and its stat page 404s — while a still-active opponent **keeps** its battle
+    /// report and ranking points (P6 audit retention).
     #[sqlx::test(migrations = "../../migrations")]
-    async fn abandoned_excluded_from_boards_and_stats(pool: PgPool) {
+    async fn abandoned_excluded_but_opponent_history_preserved(pool: PgPool) {
         let Setup {
             repo,
             econ,
@@ -6448,40 +6460,42 @@ mod tests {
         let live = make_account(&repo, &template, "lboard").await;
         let gone_v = repo.villages_of(gone).await.unwrap()[0].clone();
         let live_v = repo.villages_of(live).await.unwrap()[0].clone();
-        // A resolved raid gives `gone` attack points (so it shows on the attack board).
-        sqlx::query(
-            "INSERT INTO battle_reports (id, kind, attacker_player, attacker_village, \
-             defender_player, defender_village, attacker_won, luck, morale, wall_before, \
-             wall_after, attacker_forces, attacker_losses, defender_forces, defender_losses, \
-             attack_points) VALUES ($1,'raid',$2,$3,$4,$5,true,0,0,0,0,'{}','{}','{}','{}',50)",
-        )
-        .bind(Uuid::new_v4())
-        .bind(Uuid::from_u128(gone.0))
-        .bind(Uuid::from_u128(gone_v.id.0))
-        .bind(Uuid::from_u128(live.0))
-        .bind(Uuid::from_u128(live_v.id.0))
-        .execute(&pool)
-        .await
-        .unwrap();
+        // Two resolved raids (with fallback coords): each side scores attack points against the other.
+        let report = async |attacker: PlayerId, av: &Village, defender: PlayerId, dv: &Village| {
+            sqlx::query(
+                "INSERT INTO battle_reports (id, kind, attacker_player, attacker_village, \
+                 defender_player, defender_village, attacker_won, luck, morale, wall_before, \
+                 wall_after, attacker_forces, attacker_losses, defender_forces, defender_losses, \
+                 attack_points, attacker_x, attacker_y, defender_x, defender_y) \
+                 VALUES ($1,'raid',$2,$3,$4,$5,true,0,0,0,0,'{}','{}','{}','{}',50,$6,$7,$8,$9)",
+            )
+            .bind(Uuid::new_v4())
+            .bind(Uuid::from_u128(attacker.0))
+            .bind(Uuid::from_u128(av.id.0))
+            .bind(Uuid::from_u128(defender.0))
+            .bind(Uuid::from_u128(dv.id.0))
+            .bind(av.coordinate.x)
+            .bind(av.coordinate.y)
+            .bind(dv.coordinate.x)
+            .bind(dv.coordinate.y)
+            .execute(&pool)
+            .await
+            .unwrap();
+        };
+        report(gone, &gone_v, live, &live_v).await; // gone raids live
+        report(live, &live_v, gone, &gone_v).await; // live raids gone
 
-        // Before abandonment: `gone` is on the population + attack boards and has a stat page.
-        let on_pop = |b: &[LeaderboardRow], p: PlayerId| b.iter().any(|r| r.player == p);
-        let pop = repo
-            .population_board(&econ, BoardScope::World, 100)
-            .await
-            .unwrap();
-        assert!(on_pop(&pop, gone) && on_pop(&pop, live));
-        let atk = repo
-            .conflict_board(ConflictMetric::Attack, BoardScope::World, None, None, 100)
-            .await
-            .unwrap();
-        assert!(
-            on_pop(&atk, gone),
-            "gone is on the attack board before abandonment"
-        );
+        let on = |b: &[LeaderboardRow], p: PlayerId| b.iter().any(|r| r.player == p);
+        let attack_board = async || {
+            repo.conflict_board(ConflictMetric::Attack, BoardScope::World, None, None, 100)
+                .await
+                .unwrap()
+        };
+        // Before: both are on the attack + population boards.
+        assert!(on(&attack_board().await, gone) && on(&attack_board().await, live));
         assert!(repo.player_stats(&econ, gone).await.unwrap().is_some());
 
-        // Abandon `gone` (idle past the cutoff).
+        // Abandon `gone` (idle past the cutoff) — deletes its village, keeps its (now NULL-village) row.
         sqlx::query("UPDATE users SET last_activity = to_timestamp(1) WHERE id = $1")
             .bind(Uuid::from_u128(gone.0))
             .execute(&pool)
@@ -6492,34 +6506,35 @@ mod tests {
             1
         );
 
-        // After: `gone` is gone from the boards and its stat page 404s; `live` remains.
+        // `gone` is excluded everywhere; its stat page 404s.
         let pop = repo
             .population_board(&econ, BoardScope::World, 100)
             .await
             .unwrap();
         assert!(
-            !on_pop(&pop, gone),
+            !on(&pop, gone),
             "abandoned account left the population board"
         );
+        assert!(on(&pop, live), "the live account remains");
         assert!(
-            on_pop(&pop, live),
-            "the live account remains on the population board"
-        );
-        let atk = repo
-            .conflict_board(ConflictMetric::Attack, BoardScope::World, None, None, 100)
-            .await
-            .unwrap();
-        assert!(
-            !on_pop(&atk, gone),
-            "abandoned account left the attack board"
+            !on(&attack_board().await, gone),
+            "abandoned left the attack board"
         );
         assert!(
             repo.player_stats(&econ, gone).await.unwrap().is_none(),
             "stat page 404s"
         );
+
+        // AC8/P6: the opponent KEEPS its report and points (history was not destroyed).
         assert!(
-            repo.player_stats(&econ, live).await.unwrap().is_some(),
-            "live stat page remains"
+            on(&attack_board().await, live),
+            "live keeps its attack points"
+        );
+        assert!(repo.player_stats(&econ, live).await.unwrap().is_some());
+        let live_reports = repo.reports_for(live, 100).await.unwrap();
+        assert!(
+            !live_reports.is_empty(),
+            "the opponent's battle report survived the abandonment"
         );
     }
 

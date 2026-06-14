@@ -126,11 +126,15 @@ target's protection, and villages are removed via the existing delete path.
 
 ## Notes / open risks
 
-- **Village deletion cascade.** Deleting an abandoned player's villages cascades **village-scoped** child
-  rows, including `battle_reports`/`scout_reports` tied to those villages (FK `ON DELETE CASCADE`) and any
-  in-flight movements to/from them. This is **faithful** (the village is gone) and accepted; the long
-  abandon threshold makes in-flight collisions rare. The **`users` row is kept**, so reports referencing the
-  *player* (and FKs like `alliances.founder_id`) never dangle — this is exactly why we soft-delete.
+- **Village deletion preserves battle history (AC8/P6).** Deleting an abandoned player's villages cascades
+  most **village-scoped** child rows (resources/buildings/fields/units, in-flight movements, scout intel),
+  but **battle reports survive**: migration `0030` makes `battle_reports.attacker_village`/`defender_village`
+  and `battle_defenders.village_id` **`ON DELETE SET NULL`**, and the report carries fallback coordinates
+  (`attacker_x/y`, plus the existing `defender_x/y`) so it stays readable with a deleted village. So a
+  still-active opponent keeps its report **and its ranking points** when the other party is abandoned —
+  abandoning one account never rewrites another's history. The **`users` row is kept** too (FKs like
+  `alliances.founder_id` never dangle). Boards/stat pages then exclude abandoned accounts by a **read-time
+  `abandoned_at IS NULL` filter**, not by destroying rows.
 - **Alliance membership of an abandoned account** — left attached in this slice (safe: the user row is
   retained, so no FK breaks; a villageless retired member is cosmetic). Founder-transfer/auto-leave on
   abandonment is **deferred** (noted in spec open questions).

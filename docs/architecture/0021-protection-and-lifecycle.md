@@ -38,12 +38,17 @@ thresholds and the sweep cadence are config.
   transaction**: record the watermark (`ON CONFLICT DO NOTHING` — the claim guard), then for every live
   account past the cutoff delete its villages and flag it abandoned. Idempotent: a recorded period is a
   no-op, and already-abandoned accounts are excluded regardless (AC7).
-- **Abandonment is a soft-delete (AC8).** The villages are **hard-deleted** — freeing the valley tiles for
-  resettlement (the map renews) and cascading their village-scoped child rows — but the **`users` row is
-  retained** and flagged `abandoned_at`. This is deliberate: many tables reference `users(id)` **without**
-  `ON DELETE CASCADE` (`battle_reports`, `scout_reports`, `alliances.founder_id`, …), so hard-deleting the
-  account would fail or orphan history; keeping the row preserves referential integrity and auditability
-  (P6). An abandoned account **cannot log in** (`LoginError::Abandoned`) and is hidden from rankings.
+- **Abandonment is a soft-delete that preserves history (AC8/P6).** The villages are **hard-deleted** —
+  freeing the valley tiles for resettlement (the map renews) and cascading their village-scoped child rows
+  (resources/buildings/fields/units, in-flight movements, scout intel) — but the **`users` row is
+  retained** and flagged `abandoned_at`, and **battle reports survive**. Migration `0030` makes
+  `battle_reports.attacker_village`/`defender_village` and `battle_defenders.village_id`
+  **`ON DELETE SET NULL`**, with fallback coordinates stored on the report (`attacker_x/y` + the existing
+  `defender_x/y`) so it stays readable once a village is gone. This matters because reports are **shared**
+  rows: cascade-deleting them would erase a still-active opponent's report and ranking points, retroactively
+  rewriting their standings. Boards and stat pages instead exclude abandoned accounts by a **read-time
+  `abandoned_at IS NULL` filter** (not by destroying rows). An abandoned account **cannot log in**
+  (`LoginError::Abandoned`).
 
 ## Persistence (migration 0029)
 - `users` += `protected_until timestamptz NULL`, `last_activity timestamptz NOT NULL DEFAULT now()`,
@@ -56,9 +61,10 @@ thresholds and the sweep cadence are config.
   `abandon_after_secs`, `sweep_interval_secs`. Loaded fail-fast via `lifecycle_rules()`.
 
 ## Consequences
-- Deleting an abandoned player's villages cascades **village-scoped** reports and any in-flight movements
-  to/from them — faithful (the village is gone) and accepted; the long abandon threshold makes in-flight
-  collisions rare.
+- Deleting an abandoned player's villages cascades their resources/buildings/units and any in-flight
+  movements to/from them (faithful — the village is gone; the long abandon threshold makes in-flight
+  collisions rare), but **battle reports and defender contributions are preserved** (`SET NULL`), so
+  rankings and report inboxes of still-active players are untouched.
 - **Alliance membership of an abandoned account is left attached** in this slice (safe — the user row is
   retained, so no FK breaks; a villageless retired member is cosmetic). Founder-transfer / auto-leave on
   abandonment is deferred.

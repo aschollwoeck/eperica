@@ -150,9 +150,12 @@ player can set them.
   for periodic work.
 - **Stage 1 (inactive) is derived, not stored (P1).** Computed from `last_activity` on read — for map
   greying and any farmable indicator — so there is no per-entity tick and no flag to keep in sync.
-- **Stage 2 (abandonment) is a soft-delete of the account + hard-delete of its villages.** Villages gone ⇒
-  valleys freed (the map renews); `users` row kept ⇒ battle-report history stays valid (P6); account flagged
-  `abandoned_at`, which blocks login and hides it from rankings.
+- **Stage 2 (abandonment) is a soft-delete of the account + hard-delete of its villages, preserving battle
+  history.** Villages gone ⇒ valleys freed (the map renews); `users` row kept; **battle reports + defender
+  contributions survive** (their village references become `ON DELETE SET NULL`, with fallback coordinates
+  on the report) so a still-active opponent keeps its report and ranking points (P6) — abandoning one
+  account never rewrites another's standings. The account is flagged `abandoned_at`, which blocks login and
+  excludes it from boards/stat pages via a **read-time filter** (not by destroying rows).
 - **Protection scales by speed; thresholds/cadence are config (P7).** `protected_until` uses
   `scaled(beginner_protection_secs)`; the population threshold ends protection lazily on the authenticated
   view (same hook style as 017/018). Attacking ends protection in the attack use-case itself.
@@ -163,7 +166,9 @@ player can set them.
   `inactive_after_secs`, `abandon_after_secs`, `sweep_interval_secs`. Loaded fail-fast like the other rules.
 - **New persistence.** `users` gains `protected_until timestamptz NULL`, `last_activity timestamptz NOT
   NULL DEFAULT now()`, `abandoned_at timestamptz NULL`. New `inactivity_sweeps (world_id, period, swept_at,
-  abandoned_count, PRIMARY KEY (world_id, period))` is the sweep watermark.
+  abandoned_count, PRIMARY KEY (world_id, period))` is the sweep watermark. Migration `0030` makes the
+  `battle_reports`/`battle_defenders` village references `ON DELETE SET NULL` and adds `attacker_x/y`
+  fallback coordinates so reports outlive a deleted village.
 
 ## Open questions
 
