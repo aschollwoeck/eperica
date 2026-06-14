@@ -1,9 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="panel">
-  <h1>{{ name }}</h1>
+  <h1>{{ name }}
+    {% if online %}<span class="presence presence--online" title="Online">● online</span>
+    {% else %}<span class="presence presence--away" title="{{ presence_label }}">○ {{ presence_label }}</span>{% endif %}
+  </h1>
   <p class="muted"><a href="/leaderboard">← Leaderboards</a>
     · <a href="/messages/with/{{ subject_id }}">Message</a></p>
+
+  {% if !bio.is_empty() %}
+  <p class="bio">{{ bio }}</p>
+  {% endif %}
+
   <ul class="stats">
     <li>Population: <strong>{{ population }}</strong></li>
     <li>Attack points: <strong>{{ attack_points }}</strong></li>

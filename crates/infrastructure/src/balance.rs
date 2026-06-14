@@ -701,6 +701,12 @@ pub fn medal_rules() -> Result<MedalRules, BalanceError> {
 struct LifecycleDto {
     protection: ProtectionDto,
     inactivity: InactivityDto,
+    presence: PresenceDto,
+}
+
+#[derive(Deserialize)]
+struct PresenceDto {
+    online_secs: i64,
 }
 
 #[derive(Deserialize)]
@@ -725,6 +731,7 @@ pub fn lifecycle_rules() -> Result<LifecycleRules, BalanceError> {
         inactive_after_secs: dto.inactivity.inactive_after_secs,
         abandon_after_secs: dto.inactivity.abandon_after_secs,
         sweep_interval_secs: dto.inactivity.sweep_interval_secs,
+        presence_online_secs: dto.presence.online_secs,
     })
 }
 

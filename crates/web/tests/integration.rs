@@ -3570,3 +3570,265 @@ async fn dm_stream_is_private_to_the_pair(pool: sqlx::PgPool) {
         "Eve (not a party) must NOT receive the DM"
     );
 }
+
+/// 025 AC2: the owner edits their bio and it appears on their public stats page; a freshly-active
+/// player reads as "online".
+#[sqlx::test(migrations = "../../migrations")]
+async fn profile_bio_edit_shows_on_public_page(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let owner = client();
+    let name = unique("bio");
+    owner
+        .post(format!("{base}/register"))
+        .form(&[
+            ("username", name.as_str()),
+            ("email", format!("{name}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // Save a bio (owner-scoped, redirects back to /profile).
+    let res = owner
+        .post(format!("{base}/profile/bio"))
+        .form(&[("bio", "Hail from the north!")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+
+    // The owner's own profile shows it.
+    let mine = owner.get(format!("{base}/profile")).send().await.unwrap();
+    assert!(mine.text().await.unwrap().contains("Hail from the north!"));
+
+    // A visitor sees it on the public stats page, and the active owner reads as online.
+    let pid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind(&name)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let visitor = client();
+    let stats = visitor
+        .get(format!("{base}/stats/player/{}", pid.as_u128()))
+        .send()
+        .await
+        .unwrap();
+    let body = stats.text().await.unwrap();
+    assert!(body.contains("Hail from the north!"), "bio is public");
+    assert!(
+        body.contains("online"),
+        "a just-active player reads as online"
+    );
+}
+
+/// 025 AC2: editing is owner-scoped — one player's edit never touches another's bio.
+#[sqlx::test(migrations = "../../migrations")]
+async fn profile_bio_edit_is_owner_scoped(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let alice = client();
+    let bob = client();
+    for (c, n) in [(&alice, "alice_bio"), (&bob, "bob_bio")] {
+        let name = unique(n);
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", name.as_str()),
+                ("email", format!("{name}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", "gauls"),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+    // Alice sets a bio; Bob's stays empty (each POST keys off the session player only).
+    alice
+        .post(format!("{base}/profile/bio"))
+        .form(&[("bio", "Alice was here")])
+        .send()
+        .await
+        .unwrap();
+    let bobs = bob.get(format!("{base}/profile")).send().await.unwrap();
+    assert!(
+        !bobs.text().await.unwrap().contains("Alice was here"),
+        "Bob's bio is untouched by Alice's edit"
+    );
+}
+
+/// 025 AC6 (Visitor role): an unauthenticated bio edit is refused — redirected to login, with no
+/// effect on anyone's stored bio.
+#[sqlx::test(migrations = "../../migrations")]
+async fn profile_bio_edit_requires_login(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let anon = client();
+    let res = anon
+        .post(format!("{base}/profile/bio"))
+        .form(&[("bio", "anonymous graffiti")])
+        .send()
+        .await
+        .unwrap();
+    // The auth extractor redirects to /login; the bio is never written.
+    assert_eq!(res.status().as_u16(), 303);
+    assert_eq!(
+        res.headers().get(LOCATION).unwrap().to_str().unwrap(),
+        "/login"
+    );
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE bio = $1")
+        .bind("anonymous graffiti")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "no bio was persisted by the anonymous POST");
+}
+
+/// 025: presence reads as "last seen" once the configured window has elapsed; the presence-touch
+/// middleware refreshes `last_activity` on real navigation but NOT on the background unread poll.
+#[sqlx::test(migrations = "../../migrations")]
+async fn presence_last_seen_and_touch_excludes_pollers(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let player = client();
+    let name = unique("seen");
+    player
+        .post(format!("{base}/register"))
+        .form(&[
+            ("username", name.as_str()),
+            ("email", format!("{name}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // Push last_activity well past the 600s online window.
+    let stale = "UPDATE users SET last_activity = now() - interval '2 hours' WHERE username = $1";
+    sqlx::query(stale).bind(&name).execute(&pool).await.unwrap();
+
+    // A visitor (whose own touch does not affect the subject) sees "last seen".
+    let pid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind(&name)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let visitor = client();
+    let stats = visitor
+        .get(format!("{base}/stats/player/{}", pid.as_u128()))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        stats.text().await.unwrap().contains("last seen"),
+        "an idle player reads as last seen"
+    );
+
+    // Re-stale, then hit the unread poller: it must NOT refresh activity.
+    sqlx::query(stale).bind(&name).execute(&pool).await.unwrap();
+    let before: i64 = sqlx::query_scalar(
+        "SELECT (EXTRACT(EPOCH FROM last_activity)*1000)::bigint FROM users WHERE username = $1",
+    )
+    .bind(&name)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    player
+        .get(format!("{base}/messages/unread"))
+        .send()
+        .await
+        .unwrap();
+    let after_poll: i64 = sqlx::query_scalar(
+        "SELECT (EXTRACT(EPOCH FROM last_activity)*1000)::bigint FROM users WHERE username = $1",
+    )
+    .bind(&name)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        before, after_poll,
+        "the unread poll does not touch presence"
+    );
+
+    // Real navigation DOES refresh it.
+    player.get(format!("{base}/village")).send().await.unwrap();
+    let after_nav: i64 = sqlx::query_scalar(
+        "SELECT (EXTRACT(EPOCH FROM last_activity)*1000)::bigint FROM users WHERE username = $1",
+    )
+    .bind(&name)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(after_nav > before, "navigation refreshes presence");
+}
+
+/// 025 AC4: the population leaderboard renders a presence indicator for player rows; a freshly-active
+/// player reads as online.
+#[sqlx::test(migrations = "../../migrations")]
+async fn leaderboard_rows_show_presence(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let name = unique("lbpres");
+    register_client(&base, &pool, &name).await;
+    let visitor = client();
+    let body = visitor
+        .get(format!("{base}/leaderboard"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains(&name), "the player is listed");
+    assert!(
+        body.contains("presence--online"),
+        "a just-active player shows an online presence indicator"
+    );
+}
+
+/// 025 AC4: a DM conversation surfaces the other party's presence on the list and the thread header.
+#[sqlx::test(migrations = "../../migrations")]
+async fn dm_surfaces_other_party_presence(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let alice = unique("apres");
+    let bob = unique("bpres");
+    let (ca, _aid) = register_client(&base, &pool, &alice).await;
+    let (_cb, bid) = register_client(&base, &pool, &bob).await;
+
+    // Alice DMs Bob, then views her conversation list + the thread header.
+    ca.post(format!("{base}/messages/send"))
+        .form(&[
+            ("conversation", format!("dm:{bid}").as_str()),
+            ("body", "hi bob"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let list = ca
+        .get(format!("{base}/messages"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        list.contains("presence--"),
+        "the DM thread shows Bob's presence in the list"
+    );
+    let header = ca
+        .get(format!("{base}/messages/c/dm:{bid}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        header.contains("presence--"),
+        "the DM header shows Bob's presence"
+    );
+
+    // The global channel is present too (sanity) — channels carry no single presence.
+    assert!(
+        list.contains("Global"),
+        "the global channel is listed (sanity)"
+    );
+}

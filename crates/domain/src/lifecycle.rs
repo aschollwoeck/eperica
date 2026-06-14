@@ -21,6 +21,8 @@ pub struct LifecycleRules {
     pub abandon_after_secs: i64,
     /// The abandonment-sweep cadence / period length (real-time seconds).
     pub sweep_interval_secs: i64,
+    /// Presence "online" window (real-time seconds): active within this ⇒ shown online (025, P7).
+    pub presence_online_secs: i64,
 }
 
 /// Whether a player is currently under beginner's protection: a protection instant exists and is still

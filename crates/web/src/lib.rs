@@ -34,6 +34,31 @@ async fn session_player(
     Some(PlayerId(id))
 }
 
+/// Presence-touch guard (025): on a logged-in request, refresh the player's `last_activity` (throttled in
+/// the repo) so presence reflects real navigation. Excludes static assets and the background pollers
+/// (the unread-badge poll + the SSE stream) so an idle open tab is not perpetually "online" — which also
+/// preserves the 019 inactivity/abandonment signal that reads the same `last_activity`.
+async fn presence_touch(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    use eperica_application::AccountRepository;
+    let path = req.uri().path();
+    let background = path.starts_with("/static")
+        || path == "/messages/unread"
+        || path.starts_with("/messages/stream");
+    if background {
+        return next.run(req).await;
+    }
+    let (mut parts, body) = req.into_parts();
+    if let Some(player) = session_player(&mut parts, &state).await
+        && let Err(e) = state
+            .accounts
+            .touch_activity(player, Timestamp(now().0))
+            .await
+    {
+        tracing::error!(error = %e, "presence touch failed");
+    }
+    next.run(Request::from_parts(parts, body)).await
+}
+
 /// The client IP for rate-limit/detection keying. Behind a trusted proxy (`trust_proxy`), prefer the
 /// first `X-Forwarded-For` hop then `X-Real-IP`; otherwise those headers are **spoofable** and ignored,
 /// and the `peer` socket address is used (022 — server-authoritative attribution, P4).
@@ -211,6 +236,8 @@ pub fn router(state: AppState) -> Router {
         .route("/wonder/build", post(handlers::wonder_build_submit))
         .route("/stats/player/{id}", get(handlers::player_stats_page))
         .route("/stats/alliance/{id}", get(handlers::alliance_stats_page))
+        .route("/profile", get(handlers::profile_page))
+        .route("/profile/bio", post(handlers::profile_bio_submit))
         .route("/report", post(handlers::report_submit))
         .route("/mod", get(handlers::mod_queue))
         .route("/mod/account/{id}", get(handlers::mod_account))
@@ -225,6 +252,10 @@ pub fn router(state: AppState) -> Router {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             rate_limit_guard,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            presence_touch,
         ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)

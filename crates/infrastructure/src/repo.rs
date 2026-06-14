@@ -12,11 +12,12 @@ use eperica_application::{
     MedalSubjectKind, MedalView, Membership, MessageView, ModerationRepository, MovementRepository,
     MovementView, NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder,
     NewUser, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
-    OutgoingInvite, PendingInvite, PlayerStats, QuestRepository, RankingRepository, RazedBuilding,
-    RepoError, ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
-    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, StarvationRepository,
-    StationedGroup, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
-    UserRecord, VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
+    OutgoingInvite, PendingInvite, PlayerStats, ProfileView, QuestRepository, RankingRepository,
+    RazedBuilding, RepoError, ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel,
+    ScoutReportView, ScoutRepository, SettleApply, SettleOutcome, SettleRepository,
+    StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
+    UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome, WonderRepository,
+    WonderStanding,
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactEffects,
@@ -808,6 +809,36 @@ impl AccountRepository for PgAccountRepository {
         .await
         .map_err(backend)?;
         Ok(())
+    }
+
+    async fn set_bio(&self, player: PlayerId, bio: &str) -> Result<(), RepoError> {
+        sqlx::query("UPDATE users SET bio = $2 WHERE id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .bind(bio)
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn profile_of(&self, player: PlayerId) -> Result<Option<ProfileView>, RepoError> {
+        let row = sqlx::query(
+            "SELECT username, bio, (EXTRACT(EPOCH FROM last_activity) * 1000)::bigint AS last_ms \
+             FROM users WHERE id = $1",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        row.map(|r| {
+            Ok::<_, RepoError>(ProfileView {
+                player,
+                name: r.try_get("username").map_err(backend)?,
+                bio: r.try_get("bio").map_err(backend)?,
+                last_activity: Timestamp(r.try_get("last_ms").map_err(backend)?),
+            })
+        })
+        .transpose()
     }
 }
 
@@ -5159,7 +5190,8 @@ fn population_board_sql(qf: &str) -> String {
               ON bp.kind = vb.building_type AND bp.lvl = vb.level \
             WHERE v.world_id = $1 GROUP BY v.owner_id \
          ) \
-         SELECT u.id, u.username, (COALESCE(f.pop, 0) + COALESCE(b.pop, 0))::bigint AS total \
+         SELECT u.id, u.username, (COALESCE(f.pop, 0) + COALESCE(b.pop, 0))::bigint AS total, \
+                (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity \
          FROM users u \
          LEFT JOIN field_pop f ON f.oid = u.id \
          LEFT JOIN bldg_pop b ON b.oid = u.id \
@@ -5218,7 +5250,7 @@ impl RankingRepository for PgAccountRepository {
     ) -> Result<Vec<LeaderboardRow>, RepoError> {
         let (fields, kinds, levels, pops) = population_arrays(econ);
         let sql = population_board_sql(&quadrant_filter("u.id", "$6"));
-        let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(&sql)
+        let rows: Vec<(Uuid, String, i64, i64)> = sqlx::query_as(&sql)
             .bind(Uuid::from_u128(self.world_id.0))
             .bind(&fields)
             .bind(&kinds)
@@ -5243,15 +5275,16 @@ impl RankingRepository for PgAccountRepository {
         let (table, val, pid, occ) = conflict_source(metric);
         let qf = quadrant_filter(pid, "$3");
         let sql = format!(
-            "SELECT u.id, u.username, COALESCE(SUM({val}), 0)::bigint AS total \
+            "SELECT u.id, u.username, COALESCE(SUM({val}), 0)::bigint AS total, \
+                    (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity \
              FROM {table} JOIN users u ON u.id = {pid} \
              WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
                AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) AND {qf} \
                AND u.abandoned_at IS NULL AND u.is_npc = false \
-             GROUP BY u.id, u.username HAVING COALESCE(SUM({val}), 0) > 0 \
+             GROUP BY u.id, u.username, u.last_activity HAVING COALESCE(SUM({val}), 0) > 0 \
              ORDER BY total DESC, u.id ASC LIMIT $4"
         );
-        let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(&sql)
+        let rows: Vec<(Uuid, String, i64, i64)> = sqlx::query_as(&sql)
             .bind(since.map(|t| t.0 as f64))
             .bind(until.map(|t| t.0 as f64))
             .bind(scope_code(scope))
@@ -5489,11 +5522,12 @@ impl RankingRepository for PgAccountRepository {
 }
 
 /// Map a `(id, name, value)` row to a [`LeaderboardRow`].
-fn leaderboard_row((id, name, value): (Uuid, String, i64)) -> LeaderboardRow {
+fn leaderboard_row((id, name, value, last_activity): (Uuid, String, i64, i64)) -> LeaderboardRow {
     LeaderboardRow {
         player: PlayerId(id.as_u128()),
         name,
         value,
+        last_activity: Timestamp(last_activity),
     }
 }
 
@@ -5809,7 +5843,8 @@ impl MedalRepository for PgAccountRepository {
         let qf = quadrant_filter("cur.player_id", "$4");
         let delta = CLIMBER_DELTA;
         let sql = format!(
-            "SELECT u.id, u.username, {delta}::bigint AS delta \
+            "SELECT u.id, u.username, {delta}::bigint AS delta, \
+                    (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity \
              FROM population_snapshots cur \
              JOIN users u ON u.id = cur.player_id \
              LEFT JOIN population_snapshots prev \
@@ -5818,7 +5853,7 @@ impl MedalRepository for PgAccountRepository {
                AND u.abandoned_at IS NULL AND u.is_npc = false \
              ORDER BY {delta} DESC, cur.player_id ASC LIMIT $5"
         );
-        let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(&sql)
+        let rows: Vec<(Uuid, String, i64, i64)> = sqlx::query_as(&sql)
             .bind(Uuid::from_u128(self.world_id.0))
             .bind(prev)
             .bind(period)
@@ -6978,6 +7013,7 @@ impl CommsRepository for PgAccountRepository {
              ) \
              SELECT l.other, u.username, l.body, \
                     (EXTRACT(EPOCH FROM l.created_at) * 1000)::bigint AS last_ms, \
+                    (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS other_last_activity, \
                     (SELECT count(*) FROM mine m WHERE m.other = l.other AND m.sender_id <> $1 \
                        AND m.created_at > COALESCE( \
                             (SELECT last_read_at FROM conversation_reads \
@@ -7000,6 +7036,7 @@ impl CommsRepository for PgAccountRepository {
                     last_body: r.try_get("body").map_err(backend)?,
                     last_ms: r.try_get("last_ms").map_err(backend)?,
                     unread: r.try_get("unread").map_err(backend)?,
+                    other_last_activity: r.try_get("other_last_activity").map_err(backend)?,
                 })
             })
             .collect()
@@ -7650,6 +7687,49 @@ mod tests {
             ),
             "non-member cannot open the alliance channel"
         );
+    }
+
+    /// 025 AC1/AC2/AC3: a profile's bio round-trips via the edit use-case (invalid rejected), and presence
+    /// is derived from the persisted last_activity.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn profile_bio_and_presence(pool: PgPool) {
+        use eperica_application::{ProfileError, edit_bio, view_profile};
+        use eperica_domain::{Presence, presence};
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let player = make_account(&repo, &template, "prof").await;
+
+        // Fresh profile: empty bio, a recent last_activity (set at spawn).
+        let p = view_profile(&repo, player).await.unwrap();
+        assert_eq!(p.bio, "");
+        assert!(p.name.starts_with("prof"));
+
+        // Edit the bio (trimmed); a too-long bio is rejected.
+        edit_bio(&repo, player, "  Founder of the Iron Pact.  ")
+            .await
+            .unwrap();
+        assert_eq!(
+            view_profile(&repo, player).await.unwrap().bio,
+            "Founder of the Iron Pact."
+        );
+        assert!(matches!(
+            edit_bio(&repo, player, &"x".repeat(5000)).await,
+            Err(ProfileError::Invalid)
+        ));
+
+        // Presence: a freshly-active account is Online; a stale last_activity reads LastSeen.
+        let now = crate::now();
+        let fresh = view_profile(&repo, player).await.unwrap();
+        assert_eq!(presence(fresh.last_activity, now, 600), Presence::Online);
+        sqlx::query("UPDATE users SET last_activity = now() - interval '1 hour' WHERE id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let stale = view_profile(&repo, player).await.unwrap();
+        assert!(matches!(
+            presence(stale.last_activity, now, 600),
+            Presence::LastSeen(_)
+        ));
     }
 
     /// 022 AC1–AC5: a player reports an account; a duplicate open report + a self-report are rejected; a
@@ -9027,6 +9107,7 @@ mod tests {
             inactive_after_secs: 1,
             abandon_after_secs: 1,
             sweep_interval_secs: 10,
+            presence_online_secs: 600,
         };
         let world_start = Timestamp(0);
         let now = Timestamp(60_000); // period 6 ⇒ periods 0..=5 are complete

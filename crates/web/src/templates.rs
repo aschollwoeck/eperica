@@ -658,6 +658,11 @@ pub struct LeaderboardRowView {
     /// Link to the entity's statistics page.
     pub href: String,
     pub value: i64,
+    /// 025 presence: whether to render an indicator at all (player rows yes, alliance rows no),
+    /// the online flag, and a human label ("online" / "last seen …").
+    pub has_presence: bool,
+    pub online: bool,
+    pub presence_label: String,
 }
 
 #[derive(Template)]
@@ -708,11 +713,23 @@ pub struct HistoryPointView {
 }
 
 #[derive(Template)]
+#[template(path = "profile.html")]
+pub struct ProfileTemplate {
+    /// The owner's current bio (editable).
+    pub bio: String,
+}
+
+#[derive(Template)]
 #[template(path = "player_stats.html")]
 pub struct PlayerStatsTemplate {
     /// The viewed player's id (for the report action — 022 AC2).
     pub subject_id: String,
     pub name: String,
+    /// The player's profile bio (025; empty if unset).
+    pub bio: String,
+    /// Presence indicator (025): online flag + a human label.
+    pub online: bool,
+    pub presence_label: String,
     pub population: i64,
     pub attack_points: i64,
     pub defense_points: i64,
@@ -835,6 +852,10 @@ pub struct ConversationRow {
     pub last_body: String,
     /// Unread count for the viewer.
     pub unread: i64,
+    /// 025 presence (DM rows only): whether to show an indicator, the online flag + a human label.
+    pub has_presence: bool,
+    pub online: bool,
+    pub presence_label: String,
 }
 
 #[derive(Template)]
@@ -861,6 +882,10 @@ pub struct ConversationTemplate {
     pub key: String,
     /// Display title.
     pub title: String,
+    /// 025 presence (DM headers only): whether to show an indicator, the online flag + a human label.
+    pub has_presence: bool,
+    pub online: bool,
+    pub presence_label: String,
     /// History (oldest→newest).
     pub lines: Vec<ChatLineView>,
 }

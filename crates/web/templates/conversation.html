@@ -1,7 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="panel">
-  <h1>{{ title }}</h1>
+  <h1>{{ title }}
+    {% if has_presence %}
+    {% if online %}<span class="presence presence--online" title="Online">● online</span>
+    {% else %}<span class="presence presence--away" title="{{ presence_label }}">○ {{ presence_label }}</span>{% endif %}
+    {% endif %}
+  </h1>
   <p class="muted"><a href="/messages">← All conversations</a></p>
 
   <ul class="messages" id="messages">
