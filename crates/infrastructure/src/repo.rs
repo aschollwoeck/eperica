@@ -6673,6 +6673,16 @@ impl ModerationRepository for PgAccountRepository {
         Ok(())
     }
 
+    async fn record_registration_ip(&self, player: PlayerId, ip: &str) -> Result<(), RepoError> {
+        sqlx::query("UPDATE users SET registration_ip = $2 WHERE id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .bind(ip)
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
     async fn file_report(
         &self,
         reporter: PlayerId,

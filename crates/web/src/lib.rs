@@ -35,8 +35,8 @@ async fn session_player(
 }
 
 /// The client IP for rate-limit/detection keying: the first `X-Forwarded-For` hop (proxy), then
-/// `X-Real-IP`, then a fixed `"unknown"` bucket. (The peer address is folded in at register, T7.)
-fn client_ip(headers: &axum::http::HeaderMap) -> String {
+/// `X-Real-IP`, then `fallback` (the peer address at register, or `"unknown"`).
+pub(crate) fn client_ip(headers: &axum::http::HeaderMap, fallback: &str) -> String {
     headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
@@ -44,7 +44,7 @@ fn client_ip(headers: &axum::http::HeaderMap) -> String {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .or_else(|| headers.get("x-real-ip").and_then(|v| v.to_str().ok()))
-        .unwrap_or("unknown")
+        .unwrap_or(fallback)
         .to_owned()
 }
 
@@ -63,7 +63,7 @@ async fn rate_limit_guard(State(state): State<AppState>, req: Request, next: Nex
     let (mut parts, body) = req.into_parts();
     let (subject, action, limit) = if by_ip {
         (
-            client_ip(&parts.headers),
+            client_ip(&parts.headers, "unknown"),
             "login",
             rules.login_limit_per_window,
         )
@@ -194,6 +194,11 @@ pub fn router(state: AppState) -> Router {
         .route("/wonder/build", post(handlers::wonder_build_submit))
         .route("/stats/player/{id}", get(handlers::player_stats_page))
         .route("/stats/alliance/{id}", get(handlers::alliance_stats_page))
+        .route("/report", post(handlers::report_submit))
+        .route("/mod", get(handlers::mod_queue))
+        .route("/mod/account/{id}", get(handlers::mod_account))
+        .route("/mod/resolve", post(handlers::mod_resolve_submit))
+        .route("/mod/sanction", post(handlers::mod_sanction_submit))
         .route("/styleguide", get(handlers::styleguide))
         .nest_service("/static", ServeDir::new("crates/web/static"))
         .layer(axum::middleware::from_fn_with_state(

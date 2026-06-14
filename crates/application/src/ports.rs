@@ -2661,6 +2661,15 @@ pub trait ModerationRepository: Send + Sync {
         Ok(())
     }
 
+    /// Record the registration IP for an account (022) — the shared-IP detection key, captured at
+    /// register. Idempotent (last write wins).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn record_registration_ip(&self, _player: PlayerId, _ip: &str) -> Result<(), RepoError> {
+        Ok(())
+    }
+
     /// File a report of `subject` by `reporter` with a reason + note (022 AC2). Returns `true` if a new
     /// open report was created, `false` if a duplicate **open** report already existed (collapsed).
     ///

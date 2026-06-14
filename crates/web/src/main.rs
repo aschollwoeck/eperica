@@ -62,6 +62,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.world.speed,
     );
 
+    // 022: designate the operator's moderators (idempotent, P7) from the MODERATORS env list.
+    bootstrap_moderators(&accounts).await;
+
     // Background scheduler (P1) — processes due events, builds, unit orders, training, starvation.
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let scheduler = Scheduler::new(
@@ -117,12 +120,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "Eperica web listening");
 
-    axum::serve(listener, router(state))
-        .with_graceful_shutdown(shutdown_signal(shutdown_tx))
-        .await?;
+    axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal(shutdown_tx))
+    .await?;
 
     let _ = scheduler_handle.await;
     Ok(())
+}
+
+/// Grant the elevated Moderator role (022 AC1) to the operator-configured `MODERATORS` usernames
+/// (comma-separated), idempotently at startup. Unknown names are logged and skipped.
+async fn bootstrap_moderators(accounts: &PgAccountRepository) {
+    use eperica_infrastructure::application::{AccountRepository, ModerationRepository};
+    let Ok(list) = std::env::var("MODERATORS") else {
+        return;
+    };
+    for name in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        match accounts.find_user_by_username(name).await {
+            Ok(Some(u)) => {
+                if let Err(e) = accounts.set_moderator(u.id, true).await {
+                    tracing::error!(error = %e, moderator = name, "failed to grant moderator");
+                } else {
+                    tracing::info!(moderator = name, "granted moderator role");
+                }
+            }
+            Ok(None) => tracing::warn!(moderator = name, "MODERATORS lists an unknown username"),
+            Err(e) => tracing::error!(error = %e, moderator = name, "moderator lookup failed"),
+        }
+    }
 }
 
 /// Initialize structured tracing (P11 observability).

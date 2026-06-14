@@ -7,16 +7,17 @@ use crate::templates::{
     AllianceTemplate, AlliedVillageView, ArtifactRowView, BuildRow, CompletedQuestView,
     CurrentQuestView, DiploRowView, ForceRow, GarrisonRow, HistoryPointView, IncomingView,
     IndexTemplate, LeaderboardRowView, LeaderboardTemplate, LoginTemplate, MapCellView,
-    MapTemplate, MarketTemplate, MedalRowView, MemberStatRow, MovementRow, OasisRow,
-    OutgoingInviteView, PendingInviteView, PlayerStatsTemplate, QuestsTemplate, QueueView,
-    RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate,
-    ReportsTemplate, RosterRowView, ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow,
-    SmithyTemplate, StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
+    MapTemplate, MarketTemplate, MedalRowView, MemberStatRow, ModAccountTemplate, ModQueueTemplate,
+    ModReportRow, MovementRow, OasisRow, OutgoingInviteView, PendingInviteView,
+    PlayerStatsTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate,
+    ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, RosterRowView,
+    ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate,
+    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
     VillageTemplate, WonderStandingView, WonderTemplate,
 };
 use askama::Template;
 use axum::Form;
-use axum::extract::{Query, State};
+use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
@@ -24,26 +25,29 @@ use eperica_application::{
     AccountRepository, AchievementRepository, AllianceLeaderboardRow, AllianceRepository,
     ArtifactRepository, BattleReportView, BoardScope, BuildRepository, CombatRepository,
     ConflictMetric, ConquestRepository, DiplomacyCommand, LeaderboardRow, LoginError,
-    MedalRepository, MedalSubjectKind, MovementRepository, OasisRepository, QuestRepository,
-    RegisterCommand, RegisterError, ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository,
-    TrainingRepository, UnitOrderKind, UnitRepository, Window, WonderRepository,
-    alliance_conflict_leaderboard, alliance_population_leaderboard, alliance_statistics,
-    alliance_view, authenticate, climbers_leaderboard, conflict_leaderboard, disband_alliance,
-    end_protection_if_established, evaluate_achievements, evaluate_quests, expel_member,
-    found_alliance, invite_player, leave_alliance, load_culture, load_economy, map_viewport,
-    order_attack, order_build, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
+    MedalRepository, MedalSubjectKind, ModerationError, ModerationRepository, MovementRepository,
+    OasisRepository, QuestRepository, RegisterCommand, RegisterError, ScoutIntel, ScoutReportView,
+    ScoutRepository, TradeRepository, TrainingRepository, UnitOrderKind, UnitRepository, Window,
+    WonderRepository, account_signals, alliance_conflict_leaderboard,
+    alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
+    climbers_leaderboard, conflict_leaderboard, disband_alliance, end_protection_if_established,
+    evaluate_achievements, evaluate_quests, expel_member, file_report, found_alliance,
+    invite_player, leave_alliance, load_culture, load_economy, map_viewport, order_attack,
+    order_build, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
     order_reinforcement, order_research, order_return, order_scout, order_settle,
     order_smithy_upgrade, order_trade, order_train, order_wonder_build, player_statistics,
-    population_history, population_leaderboard, register, reinforcement_reports, respond_invite,
-    revoke_invite, set_diplomacy, set_member_role, transfer_founder, viewport_coords,
+    population_history, population_leaderboard, register, reinforcement_reports, resolve_report,
+    respond_invite, review_queue, revoke_invite, sanction_account, set_diplomacy, set_member_role,
+    transfer_founder, viewport_coords,
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, Coordinate,
     DiplomacyStance, DiplomacyStatus, MedalCategory, MovementKind, OasisBonus, PlayerId, Quadrant,
-    QuestReward, QueueLane, ResearchDenied, ResourceAmounts, ResourceKind, RightSet, ScoutTarget,
-    TileKind, TradeKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, VillageId,
-    can_afford, can_research, can_upgrade, current_quest, garrison_upkeep, is_inactive,
-    per_unit_time_secs, queue_lane, regenerate_loyalty, scaled_time_secs,
+    QuestReward, QueueLane, ReportReason, ResearchDenied, ResourceAmounts, ResourceKind, RightSet,
+    SanctionKind, ScoutTarget, TileKind, TradeKind, Tribe, UnitId, UnitRole, UnitRules,
+    UpgradeDenied, Village, VillageId, can_afford, can_research, can_upgrade, current_quest,
+    garrison_upkeep, is_inactive, per_unit_time_secs, queue_lane, regenerate_loyalty,
+    scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
@@ -189,6 +193,11 @@ fn server_error() -> Response {
     (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
 }
 
+/// 403 for a non-moderator reaching a moderator-only surface (022 AC1, P4).
+fn forbidden() -> Response {
+    (StatusCode::FORBIDDEN, "Moderators only.").into_response()
+}
+
 fn not_found() -> Response {
     (StatusCode::NOT_FOUND, "not found").into_response()
 }
@@ -310,6 +319,8 @@ pub struct RegisterForm {
 /// Handle registration (AC1, AC3). On success (no confirmation required) logs the user in.
 pub async fn register_submit(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     jar: PrivateCookieJar,
     Form(form): Form<RegisterForm>,
 ) -> Response {
@@ -332,6 +343,11 @@ pub async fn register_submit(
             error: Some("Account created. Confirm your email, then log in.".to_owned()),
         }),
         Ok(user) => {
+            // Capture the registration IP — the shared-IP detection key (022, P4 server-side).
+            let ip = crate::client_ip(&headers, &peer.ip().to_string());
+            if let Err(e) = state.accounts.record_registration_ip(user.id, &ip).await {
+                tracing::error!(error = %e, "failed to record registration IP");
+            }
             let jar = jar.add(auth_cookie(user.id.0));
             (jar, Redirect::to("/village")).into_response()
         }
@@ -2536,6 +2552,206 @@ pub struct WonderBuildForm {
     village: Option<String>,
 }
 
+/// The moderator review queue (022 AC3/AC9) — open reports, oldest first. Moderator-gated.
+pub async fn mod_queue(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+    let reports = match review_queue(
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        player,
+        100,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(ModerationError::NotAuthorized) => return forbidden(),
+        Err(e) => {
+            tracing::error!(error = %e, "review queue failed");
+            return server_error();
+        }
+    };
+    let rows = reports
+        .into_iter()
+        .map(|r| ModReportRow {
+            id: r.id.to_string(),
+            reporter_name: r.reporter_name,
+            subject_id: r.subject.0.to_string(),
+            subject_name: r.subject_name,
+            reason: report_reason_label(r.reason),
+            note: r.note,
+        })
+        .collect();
+    page(&ModQueueTemplate { reports: rows })
+}
+
+/// The moderator account-inspect page (022 AC7/AC9) — sanction status + detection signals. Gated.
+pub async fn mod_account(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Path(id): Path<String>,
+) -> Response {
+    let Some(subject) = id.trim().parse::<u128>().ok().map(PlayerId) else {
+        return server_error();
+    };
+    let signals = match account_signals(
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.fair_play_rules.as_ref(),
+        player,
+        subject,
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(ModerationError::NotAuthorized) => return forbidden(),
+        Err(e) => {
+            tracing::error!(error = %e, "account signals failed");
+            return server_error();
+        }
+    };
+    let user = match state.accounts.find_user_by_id(subject).await {
+        Ok(Some(u)) => u,
+        Ok(None) => return server_error(),
+        Err(e) => {
+            tracing::error!(error = %e, "subject lookup failed");
+            return server_error();
+        }
+    };
+    let now = now();
+    page(&ModAccountTemplate {
+        subject_id: subject.0.to_string(),
+        username: user.username,
+        banned: user.banned_at.is_some(),
+        suspended: user.suspended_until.is_some_and(|u| now.0 < u.0),
+        ip_association_count: signals.ip_association_count,
+        shared_ip_flagged: signals.shared_ip_flagged,
+        peak_action_count: signals.peak_action_count,
+        inhuman_action_rate: signals.inhuman_action_rate,
+    })
+}
+
+/// Resolve a report (+ optional sanction) from the queue (022 AC4). Moderator-gated.
+pub async fn mod_resolve_submit(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<ResolveForm>,
+) -> Response {
+    let Some(report_id) = form.report_id.trim().parse::<u128>().ok() else {
+        return Redirect::to("/mod").into_response();
+    };
+    let sanction = form
+        .sanction
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .and_then(SanctionKind::parse);
+    match resolve_report(
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.fair_play_rules.as_ref(),
+        player,
+        report_id,
+        now(),
+        &form.resolution,
+        sanction,
+        None,
+    )
+    .await
+    {
+        Ok(_) => Redirect::to("/mod").into_response(),
+        Err(ModerationError::NotAuthorized) => forbidden(),
+        Err(e) => {
+            tracing::error!(error = %e, "resolve report failed");
+            server_error()
+        }
+    }
+}
+
+/// Apply a sanction directly from the account-inspect page (022 AC4). Moderator-gated.
+pub async fn mod_sanction_submit(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<SanctionForm>,
+) -> Response {
+    let Some(subject) = form.subject.trim().parse::<u128>().ok().map(PlayerId) else {
+        return Redirect::to("/mod").into_response();
+    };
+    let Some(kind) = SanctionKind::parse(&form.kind) else {
+        return Redirect::to(&format!("/mod/account/{}", subject.0)).into_response();
+    };
+    match sanction_account(
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.fair_play_rules.as_ref(),
+        player,
+        subject,
+        now(),
+        kind,
+        None,
+    )
+    .await
+    {
+        Ok(()) => Redirect::to(&format!("/mod/account/{}", subject.0)).into_response(),
+        Err(ModerationError::NotAuthorized) => forbidden(),
+        Err(e) => {
+            tracing::error!(error = %e, "sanction failed");
+            server_error()
+        }
+    }
+}
+
+/// A player reports another account (022 AC2). Redirects back to the subject's stats page.
+pub async fn report_submit(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<ReportForm>,
+) -> Response {
+    let Some(subject) = form.subject.trim().parse::<u128>().ok().map(PlayerId) else {
+        return Redirect::to("/leaderboard").into_response();
+    };
+    let reason = ReportReason::parse(&form.reason).unwrap_or(ReportReason::Other);
+    let note = form.note.unwrap_or_default();
+    if let Err(e) = file_report(state.accounts.as_ref(), player, subject, reason, &note).await {
+        // A self-report or backend error is non-fatal — just return to the page.
+        tracing::warn!(error = %e, "report rejected");
+    }
+    Redirect::to(&format!("/stats/player/{}", subject.0)).into_response()
+}
+
+/// Label a report reason for display.
+fn report_reason_label(reason: ReportReason) -> String {
+    match reason {
+        ReportReason::Pushing => "Pushing / multi-account",
+        ReportReason::Botting => "Botting",
+        ReportReason::Abuse => "Abuse",
+        ReportReason::Other => "Other",
+    }
+    .to_owned()
+}
+
+/// The resolve-report form (022 AC4).
+#[derive(Deserialize)]
+pub struct ResolveForm {
+    report_id: String,
+    resolution: String,
+    #[serde(default)]
+    sanction: Option<String>,
+}
+
+/// The direct-sanction form (022 AC4).
+#[derive(Deserialize)]
+pub struct SanctionForm {
+    subject: String,
+    kind: String,
+}
+
+/// The player report form (022 AC2).
+#[derive(Deserialize)]
+pub struct ReportForm {
+    subject: String,
+    reason: String,
+    #[serde(default)]
+    note: Option<String>,
+}
+
 /// Public player statistics page (016 AC9).
 pub async fn player_stats_page(
     State(state): State<AppState>,
@@ -2583,6 +2799,7 @@ pub async fn player_stats_page(
         .collect();
     achievements.sort_by(|a, b| a.label.cmp(&b.label));
     page(&PlayerStatsTemplate {
+        subject_id: pid.to_string(),
         name: s.name,
         population: s.population,
         attack_points: s.attack_points,

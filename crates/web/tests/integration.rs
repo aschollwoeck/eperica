@@ -73,7 +73,12 @@ async fn spawn(pool: sqlx::PgPool) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        axum::serve(listener, router(state)).await.unwrap();
+        axum::serve(
+            listener,
+            router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     format!("http://{addr}")
 }
@@ -3182,4 +3187,115 @@ async fn login_attempts_are_rate_limited(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert_eq!(over.status().as_u16(), 429, "over the limit is rejected");
+}
+
+/// 022 AC1–AC4/AC9: a player reports an account; a non-moderator is denied /mod; a moderator sees the
+/// report, resolves it with a ban, and the subject is then blocked from acting.
+#[sqlx::test(migrations = "../../migrations")]
+async fn moderation_report_to_sanction_flow(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+
+    // Three logged-in clients: reporter, subject, moderator.
+    let register = async |name: &str| -> reqwest::Client {
+        let c = client();
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", name),
+                ("email", &format!("{name}@example.com")),
+                ("password", "secret12"),
+                ("tribe", "gauls"),
+            ])
+            .send()
+            .await
+            .unwrap();
+        c
+    };
+    let reporter = unique("reporter");
+    let subject = unique("subject");
+    let moderator = unique("mod");
+    let cr = register(&reporter).await;
+    let cs = register(&subject).await;
+    let cm = register(&moderator).await;
+
+    let subject_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind(&subject)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_moderator = true WHERE username = $1")
+        .bind(&moderator)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The reporter files a report.
+    cr.post(format!("{base}/report"))
+        .form(&[
+            ("subject", subject_id.as_u128().to_string().as_str()),
+            ("reason", "botting"),
+            ("note", "scripts all night"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // AC1/AC3: a non-moderator is denied the queue; the moderator sees the report.
+    assert_eq!(
+        cr.get(format!("{base}/mod"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        403
+    );
+    let queue = cm
+        .get(format!("{base}/mod"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(queue.contains(&subject), "the report shows the subject");
+
+    // AC4: the moderator resolves the report with a ban.
+    let report_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM reports WHERE status = 'open'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    cm.post(format!("{base}/mod/resolve"))
+        .form(&[
+            ("report_id", report_id.as_u128().to_string().as_str()),
+            ("resolution", "confirmed"),
+            ("sanction", "ban"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // The subject is now blocked from acting (AC5) and the queue is empty (AC4).
+    let blocked = cs
+        .post(format!("{base}/village/build"))
+        .form(&[("table", "field"), ("slot", "0")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        blocked.status().as_u16(),
+        403,
+        "the banned subject cannot act"
+    );
+    let queue2 = cm
+        .get(format!("{base}/mod"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !queue2.contains(&subject),
+        "the resolved report left the queue"
+    );
 }

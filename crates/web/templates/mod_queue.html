@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Moderation — review queue</h1>
+  <p class="muted"><a href="/village">← Back to the village</a></p>
+
+  {% if reports.is_empty() %}
+  <p class="muted">No open reports.</p>
+  {% else %}
+  <table class="table">
+    <thead>
+      <tr><th>Reported account</th><th>Reason</th><th>Note</th><th>Reporter</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for r in reports %}
+      <tr>
+        <td><a href="/mod/account/{{ r.subject_id }}">{{ r.subject_name }}</a></td>
+        <td>{{ r.reason }}</td>
+        <td>{{ r.note }}</td>
+        <td class="muted">{{ r.reporter_name }}</td>
+        <td>
+          <form method="post" action="/mod/resolve" class="inline">
+            <input type="hidden" name="report_id" value="{{ r.id }}">
+            <input type="text" name="resolution" placeholder="resolution note" required>
+            <select name="sanction">
+              <option value="">Dismiss (no sanction)</option>
+              <option value="warn">Warn</option>
+              <option value="suspend">Suspend</option>
+              <option value="ban">Ban</option>
+            </select>
+            <button type="submit">Resolve</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endblock %}
