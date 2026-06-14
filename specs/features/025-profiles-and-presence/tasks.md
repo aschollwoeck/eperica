@@ -28,7 +28,7 @@ advancing. Presence derives from the existing 019 `last_activity` — no new act
 
 ## Surfaces
 
-- [ ] **T4 — Presence on leaderboard, conversations & map.** `LeaderboardRow` + the conversations read carry
+- [x] **T4 — Presence on leaderboard, conversations & map.** `LeaderboardRow` + the conversations read carry
   `last_activity`; a shared template helper renders the presence indicator on leaderboard rows, the
   conversations list + DM header, and map markers (markers already carry it). **Tests:** the board/conversation
   reads include the activity timestamp; a presence indicator renders (AC4).
