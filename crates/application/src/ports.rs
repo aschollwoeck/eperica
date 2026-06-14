@@ -7,10 +7,10 @@ use async_trait::async_trait;
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, BuildTarget,
     BuildingKind, Coordinate, DiplomacyStance, DiplomacyStatus, EconomyRules, EventKind,
-    MedalCategory, MovementKind, OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant,
-    QuestDef, QuestId, QuestProgress, QueueLane, ReportReason, ResourceAmounts, RightSet,
-    SanctionKind, ScoutTarget, StartingVillage, Timestamp, TradeKind, Tribe, UnitCounts, UnitId,
-    UnitSpec, Village, VillageId,
+    MedalCategory, MovementKind, NotificationKind, OasisBonus, OasisRules, PlayerId,
+    PlayerProgress, Quadrant, QuestDef, QuestId, QuestProgress, QueueLane, ReportReason,
+    ResourceAmounts, RightSet, SanctionKind, ScoutTarget, StartingVillage, Timestamp, TradeKind,
+    Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
 };
 use std::collections::HashSet;
 
@@ -2928,5 +2928,78 @@ pub trait CommsRepository: Send + Sync {
     /// [`RepoError::Backend`] on storage failure.
     async fn dm_total_unread(&self, _player: PlayerId) -> Result<i64, RepoError> {
         Ok(0)
+    }
+}
+
+/// A notification to persist (026): the recipient + the kind + an optional deep-link reference + a short
+/// pre-rendered body. Built at the event-commit sites; `record`ed in bulk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewNotification {
+    /// The recipient (the notification is private to them).
+    pub player: PlayerId,
+    /// The kind (its stable token is persisted).
+    pub kind: NotificationKind,
+    /// Optional pointer the UI dereferences (`report` / `dm` / `village`), with its id/coords.
+    pub ref_kind: Option<String>,
+    pub ref_id: Option<String>,
+    /// A short pre-rendered detail line for the feed.
+    pub body: String,
+}
+
+/// A persisted notification as shown in the feed (026 AC4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationView {
+    pub id: u128,
+    pub kind: NotificationKind,
+    pub ref_kind: Option<String>,
+    pub ref_id: Option<String>,
+    pub body: String,
+    /// When recorded (Unix-ms UTC).
+    pub created_ms: i64,
+    /// Whether the recipient has read it.
+    pub read: bool,
+}
+
+/// Persistence for notifications (026): a per-player feed delivered live via `LISTEN/NOTIFY`. Default
+/// no-ops so non-notification fakes are untouched.
+#[async_trait]
+pub trait NotificationRepository: Send + Sync {
+    /// Persist a batch of notifications and emit a per-recipient `pg_notify('notifications', …)` live nudge
+    /// in the same statement (persist-then-notify; the row is the source of truth, 026 AC6). A no-op for an
+    /// empty batch.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn record(&self, _notes: &[NewNotification], _now: Timestamp) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// `player`'s notifications, most-recent first, capped at `limit` (026 AC4).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn list(
+        &self,
+        _player: PlayerId,
+        _limit: i64,
+    ) -> Result<Vec<NotificationView>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// `player`'s unread notification count — the nav bell (026 AC4).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn unread_count(&self, _player: PlayerId) -> Result<i64, RepoError> {
+        Ok(0)
+    }
+
+    /// Mark all of `player`'s unread notifications read at `now` (026 AC5). Owner-scoped by the `player`
+    /// argument — a player can only ever clear their own.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn mark_read(&self, _player: PlayerId, _now: Timestamp) -> Result<(), RepoError> {
+        Ok(())
     }
 }

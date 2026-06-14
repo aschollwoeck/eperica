@@ -10,24 +10,24 @@ use eperica_application::{
     DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, HeldArtifact,
     IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply, MedalAward, MedalRepository,
     MedalSubjectKind, MedalView, Membership, MessageView, ModerationRepository, MovementRepository,
-    MovementView, NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder,
-    NewUser, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
-    OutgoingInvite, PendingInvite, PlayerStats, ProfileView, QuestRepository, RankingRepository,
-    RazedBuilding, RepoError, ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel,
-    ScoutReportView, ScoutRepository, SettleApply, SettleOutcome, SettleRepository,
-    StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
-    UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome, WonderRepository,
-    WonderStanding,
+    MovementView, NewBuildOrder, NewNotification, NewOasisReport, NewScoutReport, NewTrainingOrder,
+    NewUnitOrder, NewUser, NotificationRepository, NotificationView, OasisBattleApply,
+    OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite,
+    PendingInvite, PlayerStats, ProfileView, QuestRepository, RankingRepository, RazedBuilding,
+    RepoError, ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
+    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, StarvationRepository,
+    StationedGroup, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
+    UserRecord, VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactEffects,
     ArtifactId, ArtifactKind, ArtifactScope, BuildTarget, BuildingKind, BuildingSlot, Coordinate,
     DiplomacyStance, DiplomacyStatus, EconomyRules, GameSpeed, MedalCategory, MovementKind,
-    OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant, QuestDef, QuestId, QuestProgress,
-    QueueLane, ReportReason, ResourceAmounts, ResourceField, ResourceKind, Reward, RightSet,
-    SanctionKind, ScoutTarget, StartingVillage, TileKind, Timestamp, TradeKind, Tribe, UnitCounts,
-    UnitId, UnitSpec, Village, VillageId, WorldId, WorldMap, aggregate_effects, capacities,
-    coordinates_within, deposit_capped, oasis_garrison, protection_expiry,
+    NotificationKind, OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant, QuestDef,
+    QuestId, QuestProgress, QueueLane, ReportReason, ResourceAmounts, ResourceField, ResourceKind,
+    Reward, RightSet, SanctionKind, ScoutTarget, StartingVillage, TileKind, Timestamp, TradeKind,
+    Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId, WorldId, WorldMap, aggregate_effects,
+    capacities, coordinates_within, deposit_capped, oasis_garrison, protection_expiry,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use std::collections::{HashMap, HashSet};
@@ -7178,6 +7178,121 @@ impl CommsRepository for PgAccountRepository {
     }
 }
 
+/// Map a notifications row to a [`NotificationView`] (unrecognised kinds are skipped by the caller).
+fn notification_from_row(r: &PgRow) -> Result<Option<NotificationView>, RepoError> {
+    let id: Uuid = r.try_get("id").map_err(backend)?;
+    let kind_str: String = r.try_get("kind").map_err(backend)?;
+    let Some(kind) = NotificationKind::parse(&kind_str) else {
+        return Ok(None);
+    };
+    Ok(Some(NotificationView {
+        id: id.as_u128(),
+        kind,
+        ref_kind: r.try_get("ref_kind").map_err(backend)?,
+        ref_id: r.try_get("ref_id").map_err(backend)?,
+        body: r.try_get("body").map_err(backend)?,
+        created_ms: r.try_get("created_ms").map_err(backend)?,
+        read: r
+            .try_get::<Option<bool>, _>("read")
+            .map_err(backend)?
+            .unwrap_or(false),
+    }))
+}
+
+#[async_trait]
+impl NotificationRepository for PgAccountRepository {
+    async fn record(&self, notes: &[NewNotification], now: Timestamp) -> Result<(), RepoError> {
+        if notes.is_empty() {
+            return Ok(());
+        }
+        // Bulk insert via UNNEST, then a per-recipient pg_notify in the same statement (persist-then-notify,
+        // 026 AC6). The live key is the recipient's private `notif:<uuid>` — a player can only ever subscribe
+        // to their own, so no cross-player leak.
+        let ids: Vec<Uuid> = notes.iter().map(|_| Uuid::new_v4()).collect();
+        let players: Vec<Uuid> = notes.iter().map(|n| Uuid::from_u128(n.player.0)).collect();
+        let kinds: Vec<String> = notes.iter().map(|n| n.kind.as_str().to_owned()).collect();
+        let ref_kinds: Vec<Option<String>> = notes.iter().map(|n| n.ref_kind.clone()).collect();
+        let ref_ids: Vec<Option<String>> = notes.iter().map(|n| n.ref_id.clone()).collect();
+        let bodies: Vec<String> = notes.iter().map(|n| n.body.clone()).collect();
+        sqlx::query(
+            "WITH ins AS ( \
+                INSERT INTO notifications \
+                    (id, world_id, player_id, kind, ref_kind, ref_id, body, created_at) \
+                SELECT u.id, $1, u.player_id, u.kind, u.ref_kind, u.ref_id, u.body, \
+                       to_timestamp($8::double precision / 1000.0) \
+                FROM unnest($2::uuid[], $3::uuid[], $4::text[], $5::text[], $6::text[], $7::text[]) \
+                     AS u(id, player_id, kind, ref_kind, ref_id, body) \
+                RETURNING player_id, kind \
+             ) \
+             SELECT pg_notify('notifications', json_build_object( \
+                'key', 'notif:' || player_id::text, \
+                'kind', kind \
+             )::text) FROM ins",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(&ids)
+        .bind(&players)
+        .bind(&kinds)
+        .bind(&ref_kinds)
+        .bind(&ref_ids)
+        .bind(&bodies)
+        .bind(now.0)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn list(&self, player: PlayerId, limit: i64) -> Result<Vec<NotificationView>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, kind, ref_kind, ref_id, body, \
+                    (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ms, \
+                    (read_at IS NOT NULL) AS read \
+             FROM notifications WHERE world_id = $1 AND player_id = $2 \
+             ORDER BY created_at DESC LIMIT $3",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(Uuid::from_u128(player.0))
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(rows
+            .iter()
+            .map(notification_from_row)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect())
+    }
+
+    async fn unread_count(&self, player: PlayerId) -> Result<i64, RepoError> {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM notifications \
+             WHERE world_id = $1 AND player_id = $2 AND read_at IS NULL",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(Uuid::from_u128(player.0))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)
+    }
+
+    async fn mark_read(&self, player: PlayerId, now: Timestamp) -> Result<(), RepoError> {
+        sqlx::query(
+            "UPDATE notifications SET read_at = to_timestamp($3::double precision / 1000.0) \
+             WHERE world_id = $1 AND player_id = $2 AND read_at IS NULL",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(Uuid::from_u128(player.0))
+        .bind(now.0)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7687,6 +7802,74 @@ mod tests {
             ),
             "non-member cannot open the alliance channel"
         );
+    }
+
+    /// 026 AC4/AC5: notifications record → list/unread reflect them; `mark_read` clears only the caller's.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn notifications_record_list_and_mark_read(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let a = make_account(&repo, &template, "alice").await;
+        let b = make_account(&repo, &template, "bob").await;
+        let now = crate::now();
+
+        // Record two for Alice, one for Bob, in one batch.
+        repo.record(
+            &[
+                NewNotification {
+                    player: a,
+                    kind: NotificationKind::NewMessage,
+                    ref_kind: Some("dm".to_owned()),
+                    ref_id: Some(Uuid::from_u128(b.0).to_string()),
+                    body: "msg".to_owned(),
+                },
+                NewNotification {
+                    player: a,
+                    kind: NotificationKind::IncomingAttack,
+                    ref_kind: Some("village".to_owned()),
+                    ref_id: Some("1|2".to_owned()),
+                    body: "arrives soon".to_owned(),
+                },
+                NewNotification {
+                    player: b,
+                    kind: NotificationKind::BattleReport,
+                    ref_kind: Some("report".to_owned()),
+                    ref_id: Some(Uuid::new_v4().to_string()),
+                    body: String::new(),
+                },
+            ],
+            now,
+        )
+        .await
+        .unwrap();
+
+        // Alice sees both of hers (and only hers), all unread.
+        let alice_feed = repo.list(a, 50).await.unwrap();
+        assert_eq!(alice_feed.len(), 2);
+        assert!(
+            alice_feed
+                .iter()
+                .any(|n| n.kind == NotificationKind::IncomingAttack)
+        );
+        assert!(
+            alice_feed
+                .iter()
+                .any(|n| n.kind == NotificationKind::NewMessage)
+        );
+        assert!(alice_feed.iter().all(|n| !n.read));
+        assert_eq!(repo.unread_count(a).await.unwrap(), 2);
+        assert_eq!(repo.unread_count(b).await.unwrap(), 1);
+
+        // Alice marks read — her count drops to 0, Bob's is untouched.
+        NotificationRepository::mark_read(&repo, a, crate::now())
+            .await
+            .unwrap();
+        assert_eq!(repo.unread_count(a).await.unwrap(), 0);
+        assert_eq!(repo.unread_count(b).await.unwrap(), 1);
+        assert!(repo.list(a, 50).await.unwrap().iter().all(|n| n.read));
+
+        // An empty batch is a no-op.
+        repo.record(&[], crate::now()).await.unwrap();
+        assert_eq!(repo.list(a, 50).await.unwrap().len(), 2);
     }
 
     /// 025 AC1/AC2/AC3: a profile's bio round-trips via the edit use-case (invalid rejected), and presence
