@@ -3135,4 +3135,25 @@ pub trait NotificationRepository: Send + Sync {
     async fn mark_read(&self, _player: PlayerId, _now: Timestamp) -> Result<(), RepoError> {
         Ok(())
     }
+
+    /// The kinds `player` has **muted** (029) — absent kinds are enabled (default-on). Defaults to empty.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn muted_kinds(&self, _player: PlayerId) -> Result<Vec<NotificationKind>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Mute (`muted = true`) or un-mute a notification kind for `player` (029) — idempotent. Owner-scoped.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn set_mute(
+        &self,
+        _player: PlayerId,
+        _kind: NotificationKind,
+        _muted: bool,
+    ) -> Result<(), RepoError> {
+        Ok(())
+    }
 }
