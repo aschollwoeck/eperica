@@ -9027,6 +9027,7 @@ mod tests {
             inactive_after_secs: 1,
             abandon_after_secs: 1,
             sweep_interval_secs: 10,
+            presence_online_secs: 600,
         };
         let world_start = Timestamp(0);
         let now = Timestamp(60_000); // period 6 ⇒ periods 0..=5 are complete

@@ -17,3 +17,8 @@ inactive_after_secs = 604800
 abandon_after_secs = 2592000
 # The abandonment-sweep cadence / period length (real time). 1 day.
 sweep_interval_secs = 86400
+
+[presence]
+# Active within this many seconds (real time) ⇒ shown "online" (025). 10 minutes — comfortably above the
+# 5-minute activity-touch throttle so an actively-browsing player reliably reads as online.
+online_secs = 600
