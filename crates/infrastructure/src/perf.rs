@@ -23,6 +23,11 @@ pub struct SeedSummary {
 ///
 /// Returns a [`SeedSummary`] of the world's resulting perf-player + village counts.
 ///
+/// Re-running with the **same** `players` tops up cleanly (idempotent). Re-running with a **different**
+/// `players` on the same database changes the placement `width`, so a new player's tile can collide with an
+/// earlier run's village and be skipped (leaving that user without a village) — for a clean run, use a
+/// fresh database. The returned counts always reflect the real state, so measurements stay honest.
+///
 /// # Errors
 /// Returns [`sqlx::Error`] on a storage failure.
 pub async fn seed_world(

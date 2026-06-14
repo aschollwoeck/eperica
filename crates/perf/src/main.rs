@@ -126,11 +126,12 @@ async fn measure(args: &[String]) -> Result<(), BoxErr> {
         sqlx::query_scalar("SELECT id FROM users WHERE username = 'perf_1'")
             .fetch_optional(&pool)
             .await?;
-    let total_players =
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM users WHERE is_npc = false")
-            .fetch_one(&pool)
-            .await?;
-    println!("\nworld has {total_players} players; best-of-{iters} hot-path latency:");
+    let total_players = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM users WHERE is_npc = false AND username LIKE 'perf\\_%'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    println!("\nworld has {total_players} perf players; best-of-{iters} hot-path latency:");
 
     let board = bench(iters, || async {
         repo.population_board(&econ, BoardScope::World, 100)

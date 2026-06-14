@@ -7206,6 +7206,35 @@ mod tests {
         );
     }
 
+    /// 023 AC3 (determinism): a claim takes the **earliest** due events in `(due_at, seq)` order — every
+    /// claimed (`processing`) event has a lower `seq` than every still-`pending` one, so same-instant
+    /// ordering is deterministic (P6/P11), not left to scheduling chance.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn claim_takes_earliest_in_due_order(pool: PgPool) {
+        use eperica_application::EventStore;
+        let _ = setup(pool.clone()).await;
+        crate::perf::seed_heartbeats(&pool, 200).await.unwrap();
+        let store = crate::PgEventStore::new(pool.clone());
+        // Claim a strict subset (all share due_at = now()-1s, so only seq breaks the tie).
+        let claimed = store.claim_due(crate::now(), 50).await.unwrap();
+        assert_eq!(claimed.len(), 50);
+
+        let max_claimed: i64 =
+            sqlx::query_scalar("SELECT max(seq) FROM scheduled_events WHERE status = 'processing'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let min_pending: i64 =
+            sqlx::query_scalar("SELECT min(seq) FROM scheduled_events WHERE status = 'pending'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            max_claimed < min_pending,
+            "the claim took the earliest events by seq ({max_claimed} < {min_pending})"
+        );
+    }
+
     /// 023 AC5: two scheduler instances claiming the same backlog process each event **exactly once** —
     /// the `FOR UPDATE SKIP LOCKED` guarantee that makes the scheduler horizontally scalable (P5).
     #[sqlx::test(migrations = "../../migrations")]
