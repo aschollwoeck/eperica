@@ -15,11 +15,13 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "syn
 tower-http = { version = "0.6", features = ["trace", "fs"] }
 askama = "0.12"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-stream = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["cookies"] }
+reqwest = { version = "0.12", default-features = false, features = ["cookies", "stream"] }
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls",

@@ -7,7 +7,7 @@ use eperica_domain::{
     LifecycleRules, LoyaltyRules, MerchantRules, QuestDef, RankingRules, StartingVillage,
     UnitRules, WonderRules, WorldConfig, WorldMap,
 };
-use eperica_infrastructure::{Argon2Hasher, PgAccountRepository};
+use eperica_infrastructure::{Argon2Hasher, ChatHub, PgAccountRepository};
 use std::sync::Arc;
 
 /// Cloneable handler state. Repositories are shared via `Arc`; no per-request state lives here.
@@ -48,6 +48,8 @@ pub struct AppState {
     /// Whether to trust the `X-Forwarded-For`/`X-Real-IP` headers for the client IP (022) — only when
     /// behind a known proxy. When `false` the spoofable headers are ignored and the peer address is used.
     pub trust_proxy: bool,
+    /// Live chat fan-out hub (024) — SSE handlers subscribe; a background listener publishes.
+    pub chat_hub: Arc<ChatHub>,
     /// The world's seeded map for the map view and placement (006).
     pub map: Arc<WorldMap>,
     /// World configuration (speed, radius — P7).

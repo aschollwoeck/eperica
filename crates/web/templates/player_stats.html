@@ -2,7 +2,8 @@
 {% block content %}
 <section class="panel">
   <h1>{{ name }}</h1>
-  <p class="muted"><a href="/leaderboard">← Leaderboards</a></p>
+  <p class="muted"><a href="/leaderboard">← Leaderboards</a>
+    · <a href="/messages/with/{{ subject_id }}">Message</a></p>
   <ul class="stats">
     <li>Population: <strong>{{ population }}</strong></li>
     <li>Attack points: <strong>{{ attack_points }}</strong></li>

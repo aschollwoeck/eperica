@@ -4,16 +4,17 @@ use crate::auth::{AuthUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
 use crate::templates::{
     AcademyRow, AcademyTemplate, AchievementRowView, ActiveView, AllianceStatsTemplate,
-    AllianceTemplate, AlliedVillageView, ArtifactRowView, BuildRow, CompletedQuestView,
-    CurrentQuestView, DiploRowView, ForceRow, GarrisonRow, HistoryPointView, IncomingView,
-    IndexTemplate, LeaderboardRowView, LeaderboardTemplate, LoginTemplate, MapCellView,
-    MapTemplate, MarketTemplate, MedalRowView, MemberStatRow, ModAccountTemplate, ModQueueTemplate,
-    ModReportRow, MovementRow, OasisRow, OutgoingInviteView, PendingInviteView,
-    PlayerStatsTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate,
-    ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, RosterRowView,
-    ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate,
-    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
-    VillageTemplate, WonderStandingView, WonderTemplate,
+    AllianceTemplate, AlliedVillageView, ArtifactRowView, BuildRow, ChatLineView,
+    CompletedQuestView, ConversationRow, ConversationTemplate, CurrentQuestView, DiploRowView,
+    ForceRow, GarrisonRow, HistoryPointView, IncomingView, IndexTemplate, LeaderboardRowView,
+    LeaderboardTemplate, LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MedalRowView,
+    MemberStatRow, MessagesTemplate, ModAccountTemplate, ModQueueTemplate, ModReportRow,
+    MovementRow, OasisRow, OutgoingInviteView, PendingInviteView, PlayerStatsTemplate,
+    QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow,
+    ReportRow, ReportTemplate, ReportsTemplate, RosterRowView, ScoutReportTemplate,
+    ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate, StyleGuideTemplate, TrainRow,
+    TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate, WonderStandingView,
+    WonderTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -24,30 +25,31 @@ use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
     AccountRepository, AchievementRepository, AllianceLeaderboardRow, AllianceRepository,
     ArtifactRepository, BattleReportView, BoardScope, BuildRepository, CombatRepository,
-    ConflictMetric, ConquestRepository, DiplomacyCommand, LeaderboardRow, LoginError,
+    CommsError, ConflictMetric, ConquestRepository, DiplomacyCommand, LeaderboardRow, LoginError,
     MedalRepository, MedalSubjectKind, ModerationError, ModerationRepository, MovementRepository,
     OasisRepository, QuestRepository, RegisterCommand, RegisterError, ScoutIntel, ScoutReportView,
     ScoutRepository, TradeRepository, TrainingRepository, UnitOrderKind, UnitRepository, Window,
     WonderRepository, account_signals, alliance_conflict_leaderboard,
     alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
-    climbers_leaderboard, conflict_leaderboard, disband_alliance, end_protection_if_established,
-    evaluate_achievements, evaluate_quests, expel_member, file_report, found_alliance,
-    invite_player, leave_alliance, load_culture, load_economy, map_viewport, order_attack,
-    order_build, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
-    order_reinforcement, order_research, order_return, order_scout, order_settle,
-    order_smithy_upgrade, order_trade, order_train, order_wonder_build, player_statistics,
-    population_history, population_leaderboard, register, reinforcement_reports, resolve_report,
-    respond_invite, review_queue, revoke_invite, sanction_account, set_diplomacy, set_member_role,
-    transfer_founder, viewport_coords,
+    climbers_leaderboard, conflict_leaderboard, conversation_list, disband_alliance, dm_key,
+    end_protection_if_established, evaluate_achievements, evaluate_quests, expel_member,
+    file_report, found_alliance, invite_player, leave_alliance, load_culture, load_economy,
+    map_viewport, open_chat, open_dm, order_attack, order_build, order_oasis_attack,
+    order_oasis_recall, order_oasis_reinforce, order_reinforcement, order_research, order_return,
+    order_scout, order_settle, order_smithy_upgrade, order_trade, order_train, order_wonder_build,
+    parse_dm_key, player_statistics, population_history, population_leaderboard, register,
+    reinforcement_reports, resolve_report, respond_invite, review_queue, revoke_invite,
+    sanction_account, send_chat, send_dm, set_diplomacy, set_member_role, transfer_founder,
+    unread_badge, viewport_coords,
 };
 use eperica_domain::{
-    AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, Coordinate,
-    DiplomacyStance, DiplomacyStatus, MedalCategory, MovementKind, OasisBonus, PlayerId, Quadrant,
-    QuestReward, QueueLane, ReportReason, ResearchDenied, ResourceAmounts, ResourceKind, RightSet,
-    SanctionKind, ScoutTarget, TileKind, TradeKind, Tribe, UnitId, UnitRole, UnitRules,
-    UpgradeDenied, Village, VillageId, can_afford, can_research, can_upgrade, current_quest,
-    garrison_upkeep, is_inactive, per_unit_time_secs, queue_lane, regenerate_loyalty,
-    scaled_time_secs,
+    AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, ChatChannel,
+    Coordinate, DiplomacyStance, DiplomacyStatus, MedalCategory, MovementKind, OasisBonus,
+    PlayerId, Quadrant, QuestReward, QueueLane, ReportReason, ResearchDenied, ResourceAmounts,
+    ResourceKind, RightSet, SanctionKind, ScoutTarget, TileKind, TradeKind, Tribe, UnitId,
+    UnitRole, UnitRules, UpgradeDenied, Village, VillageId, can_access_channel, can_afford,
+    can_research, can_upgrade, current_quest, garrison_upkeep, is_inactive, per_unit_time_secs,
+    queue_lane, regenerate_loyalty, scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
@@ -3505,4 +3507,219 @@ pub async fn alliance_diplomacy(
         tracing::warn!(error = %e, "diplomacy change rejected");
     }
     Redirect::to("/alliance").into_response()
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Communication: conversations (DMs + chat channels) — 024.
+// ---------------------------------------------------------------------------------------------------
+
+/// The viewer's alliance, if any (for channel-access checks).
+async fn viewer_alliance(state: &AppState, player: PlayerId) -> Option<AllianceId> {
+    state
+        .accounts
+        .alliance_of(player)
+        .await
+        .ok()
+        .flatten()
+        .map(|m| m.alliance)
+}
+
+/// The conversations list (024 AC3).
+pub async fn messages(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+    match conversation_list(state.accounts.as_ref(), state.accounts.as_ref(), player).await {
+        Ok(list) => page(&MessagesTemplate {
+            conversations: list
+                .into_iter()
+                .map(|c| ConversationRow {
+                    key: c.key,
+                    title: c.title,
+                    last_body: c.last_body,
+                    unread: c.unread,
+                })
+                .collect(),
+        }),
+        Err(e) => {
+            tracing::error!(error = %e, "conversation list failed");
+            server_error()
+        }
+    }
+}
+
+/// A single conversation: history + send box + live region (024 AC2).
+pub async fn conversation(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Path(key): Path<String>,
+) -> Response {
+    let now = now();
+    // Resolve the title + load history, access-checked, depending on the key kind.
+    let (title, history) = if let Some(other) = parse_dm_key(&key) {
+        let title = match state.accounts.find_user_by_id(other).await {
+            Ok(Some(u)) => u.username,
+            _ => return not_found(),
+        };
+        match open_dm(state.accounts.as_ref(), player, other, 100, now).await {
+            Ok(h) => (title, h),
+            Err(e) => return comms_error_response(e),
+        }
+    } else if let Some(channel) = ChatChannel::parse(&key) {
+        let title = channel_title(&state, channel).await;
+        match open_chat(
+            state.accounts.as_ref(),
+            state.accounts.as_ref(),
+            player,
+            &key,
+            100,
+            now,
+        )
+        .await
+        {
+            Ok(h) => (title, h),
+            Err(e) => return comms_error_response(e),
+        }
+    } else {
+        return not_found();
+    };
+    let lines = history
+        .into_iter()
+        .map(|m| ChatLineView {
+            sender: m.sender_name,
+            body: m.body,
+            mine: m.sender == player,
+        })
+        .collect();
+    page(&ConversationTemplate { key, title, lines })
+}
+
+/// Display title for a channel (the alliance name, or "Global").
+async fn channel_title(state: &AppState, channel: ChatChannel) -> String {
+    match channel {
+        ChatChannel::Global => "Global".to_owned(),
+        ChatChannel::Alliance(a) => state
+            .accounts
+            .alliance_summary(a)
+            .await
+            .ok()
+            .flatten()
+            .map_or_else(|| "Alliance".to_owned(), |(name, _)| name),
+    }
+}
+
+/// Map a comms error to a response (Forbidden → 403; otherwise 500).
+fn comms_error_response(e: CommsError) -> Response {
+    match e {
+        CommsError::Forbidden => forbidden(),
+        other => {
+            tracing::error!(error = %other, "conversation failed");
+            server_error()
+        }
+    }
+}
+
+/// Send into a conversation (024 AC1) — a DM or a channel, depending on the key.
+pub async fn messages_send(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<SendForm>,
+) -> Response {
+    let result = if let Some(other) = parse_dm_key(&form.conversation) {
+        send_dm(
+            state.accounts.as_ref(),
+            state.accounts.as_ref(),
+            player,
+            other,
+            &form.body,
+            now(),
+        )
+        .await
+        .map(|_| ())
+    } else {
+        send_chat(
+            state.accounts.as_ref(),
+            state.accounts.as_ref(),
+            player,
+            &form.conversation,
+            &form.body,
+            now(),
+        )
+        .await
+        .map(|_| ())
+    };
+    if let Err(e) = result {
+        tracing::warn!(error = %e, "send rejected");
+    }
+    Redirect::to(&format!("/messages/c/{}", form.conversation)).into_response()
+}
+
+/// Open (or start) the DM with a player from their profile (024 AC9).
+pub async fn messages_with(AuthUser(_player): AuthUser, Path(id): Path<String>) -> Response {
+    match id.trim().parse::<u128>() {
+        Ok(other) => {
+            Redirect::to(&format!("/messages/c/{}", dm_key(PlayerId(other)))).into_response()
+        }
+        Err(_) => Redirect::to("/messages").into_response(),
+    }
+}
+
+/// The viewer's total unread (the nav badge polls this — 024 AC4).
+pub async fn messages_unread(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+) -> Response {
+    let n = unread_badge(state.accounts.as_ref(), state.accounts.as_ref(), player)
+        .await
+        .unwrap_or(0);
+    (StatusCode::OK, n.to_string()).into_response()
+}
+
+/// Live SSE stream for one conversation (024 AC6). Access-checked; emits new lines as they arrive.
+pub async fn messages_stream(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Path(key): Path<String>,
+) -> Response {
+    // Access: a DM key is the viewer's own thread (always allowed); a channel needs membership.
+    let allowed = if parse_dm_key(&key).is_some() {
+        true
+    } else if let Some(channel) = ChatChannel::parse(&key) {
+        can_access_channel(channel, viewer_alliance(&state, player).await)
+    } else {
+        false
+    };
+    if !allowed {
+        return forbidden();
+    }
+
+    let mut rx = state.chat_hub.subscribe();
+    let want = key;
+    let stream = async_stream::stream! {
+        loop {
+            match rx.recv().await {
+                Ok(msg) if msg.keys.contains(&want) => {
+                    let data = serde_json::json!({
+                        "sender": msg.sender_name,
+                        "body": msg.body,
+                        "ts": msg.created_ms,
+                    })
+                    .to_string();
+                    yield Ok::<_, std::convert::Infallible>(
+                        axum::response::sse::Event::default().data(data),
+                    );
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    };
+    axum::response::sse::Sse::new(stream)
+        .keep_alive(axum::response::sse::KeepAlive::default())
+        .into_response()
+}
+
+/// The send form (024).
+#[derive(Deserialize)]
+pub struct SendForm {
+    conversation: String,
+    body: String,
 }

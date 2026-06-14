@@ -6907,9 +6907,20 @@ impl CommsRepository for PgAccountRepository {
         now: Timestamp,
     ) -> Result<u128, RepoError> {
         let id = Uuid::new_v4();
+        // Insert + notify in one statement: the row is the source of truth, the NOTIFY is the live nudge
+        // (024). The payload carries both parties' viewer-relative keys so each side's stream matches.
         sqlx::query(
-            "INSERT INTO direct_messages (id, world_id, sender_id, recipient_id, body, created_at) \
-             VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0))",
+            "WITH ins AS ( \
+                INSERT INTO direct_messages (id, world_id, sender_id, recipient_id, body, created_at) \
+                VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0)) \
+                RETURNING created_at \
+             ) \
+             SELECT pg_notify('comms', json_build_object( \
+                'keys', json_build_array('dm:' || $3::text, 'dm:' || $4::text), \
+                'sender_name', (SELECT username FROM users WHERE id = $3), \
+                'body', $5::text, \
+                'created_ms', (EXTRACT(EPOCH FROM (SELECT created_at FROM ins)) * 1000)::bigint \
+             )::text)",
         )
         .bind(id)
         .bind(Uuid::from_u128(self.world_id.0))
@@ -6998,9 +7009,20 @@ impl CommsRepository for PgAccountRepository {
         now: Timestamp,
     ) -> Result<u128, RepoError> {
         let id = Uuid::new_v4();
+        // Insert + notify in one statement (024): the channel line persists and is nudged live to the
+        // channel key's subscribers.
         sqlx::query(
-            "INSERT INTO chat_messages (id, world_id, channel, sender_id, body, created_at) \
-             VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0))",
+            "WITH ins AS ( \
+                INSERT INTO chat_messages (id, world_id, channel, sender_id, body, created_at) \
+                VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0)) \
+                RETURNING created_at \
+             ) \
+             SELECT pg_notify('comms', json_build_object( \
+                'keys', json_build_array($3::text), \
+                'sender_name', (SELECT username FROM users WHERE id = $4), \
+                'body', $5::text, \
+                'created_ms', (EXTRACT(EPOCH FROM (SELECT created_at FROM ins)) * 1000)::bigint \
+             )::text)",
         )
         .bind(id)
         .bind(Uuid::from_u128(self.world_id.0))

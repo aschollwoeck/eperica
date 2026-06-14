@@ -824,3 +824,43 @@ pub struct ModAccountTemplate {
     pub peak_action_count: u32,
     pub inhuman_action_rate: bool,
 }
+
+/// A row in the conversations list (024 AC3).
+pub struct ConversationRow {
+    /// Conversation key (`dm:<uuid>` / `global` / `alliance:<id>`).
+    pub key: String,
+    /// Display title (other player's name, or channel name).
+    pub title: String,
+    /// Last-message preview (empty if none yet).
+    pub last_body: String,
+    /// Unread count for the viewer.
+    pub unread: i64,
+}
+
+#[derive(Template)]
+#[template(path = "messages.html")]
+pub struct MessagesTemplate {
+    /// Conversations, newest-activity first.
+    pub conversations: Vec<ConversationRow>,
+}
+
+/// One rendered line in a conversation (024 AC2).
+pub struct ChatLineView {
+    /// Sender display name.
+    pub sender: String,
+    /// Body.
+    pub body: String,
+    /// Whether the viewer sent it (for alignment/styling).
+    pub mine: bool,
+}
+
+#[derive(Template)]
+#[template(path = "conversation.html")]
+pub struct ConversationTemplate {
+    /// The conversation key (used by the send form + SSE stream URL).
+    pub key: String,
+    /// Display title.
+    pub title: String,
+    /// History (oldest→newest).
+    pub lines: Vec<ChatLineView>,
+}
