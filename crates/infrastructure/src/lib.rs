@@ -9,6 +9,7 @@ pub mod balance;
 pub mod config;
 pub mod db;
 pub mod event_store;
+pub mod perf;
 pub mod repo;
 pub mod security;
 pub mod world;

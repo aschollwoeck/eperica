@@ -7080,6 +7080,84 @@ mod tests {
         ));
     }
 
+    /// 023 AC1/AC2: in a large seeded world the hot read paths (population board, `villages_of`, map
+    /// viewport, player stats) stay within their latency budgets (best-of-N). Catches an order-of-magnitude
+    /// regression (e.g. a new sequential scan), not micro-jitter.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn scale_hot_reads_within_budget(pool: PgPool) {
+        let Setup {
+            repo, econ, world, ..
+        } = setup(pool.clone()).await;
+        // Seed a large world via the shared seeder (AC1).
+        let players = 1000u32;
+        let summary = crate::perf::seed_world(&pool, world.id, players)
+            .await
+            .expect("seed");
+        assert!(
+            summary.players >= i64::from(players),
+            "all perf players seeded"
+        );
+        assert!(summary.villages >= i64::from(players), "a village each");
+
+        // A seeded player for the per-player reads.
+        let pid_uuid: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = 'perf_1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let pid = PlayerId(pid_uuid.as_u128());
+
+        // A realistic map viewport overlapping the seeded block.
+        let w = crate::perf::seed_block_width(players).min(31);
+        let viewport: Vec<Coordinate> = (0..w)
+            .flat_map(|x| (0..w).map(move |y| Coordinate::new(x, y)))
+            .collect();
+
+        // best-of-5 wall-clock for each hot path.
+        let mut board_best = std::time::Duration::MAX;
+        let mut vof_best = std::time::Duration::MAX;
+        let mut map_best = std::time::Duration::MAX;
+        let mut stats_best = std::time::Duration::MAX;
+        for _ in 0..5 {
+            let t = std::time::Instant::now();
+            repo.population_board(&econ, BoardScope::World, 100)
+                .await
+                .unwrap();
+            board_best = board_best.min(t.elapsed());
+
+            let t = std::time::Instant::now();
+            repo.villages_of(pid).await.unwrap();
+            vof_best = vof_best.min(t.elapsed());
+
+            let t = std::time::Instant::now();
+            repo.villages_at(&viewport).await.unwrap();
+            map_best = map_best.min(t.elapsed());
+
+            let t = std::time::Instant::now();
+            eperica_application::player_statistics(&repo, &econ, pid)
+                .await
+                .unwrap();
+            stats_best = stats_best.min(t.elapsed());
+        }
+
+        // Generous best-of-5 ceilings (local PG is far faster; a seq-scan regression blows past these).
+        assert!(
+            board_best.as_millis() < 1000,
+            "population board over {players} players too slow: {board_best:?}"
+        );
+        assert!(
+            vof_best.as_millis() < 250,
+            "villages_of too slow: {vof_best:?}"
+        );
+        assert!(
+            map_best.as_millis() < 500,
+            "map viewport too slow: {map_best:?}"
+        );
+        assert!(
+            stats_best.as_millis() < 500,
+            "player stats too slow: {stats_best:?}"
+        );
+    }
+
     /// 022 AC1–AC5: a player reports an account; a duplicate open report + a self-report are rejected; a
     /// non-moderator cannot review; a moderator reviews and resolves with a ban (idempotently).
     #[sqlx::test(migrations = "../../migrations")]
