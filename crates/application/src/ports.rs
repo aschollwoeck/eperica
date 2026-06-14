@@ -23,6 +23,9 @@ pub struct VillageMarker {
     pub owner_name: String,
     /// The owner's alliance **tag**, if they are in one (public, §7.3; 015 AC11).
     pub alliance_tag: Option<String>,
+    /// The owner's last activity (Unix-ms) — the map view derives the **inactive/farmable** flag from
+    /// it via [`eperica_domain::is_inactive`] (019 AC6).
+    pub owner_last_activity: Timestamp,
 }
 
 /// Details for a new account to be created.

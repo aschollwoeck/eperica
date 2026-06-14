@@ -28,21 +28,22 @@ use eperica_application::{
     RegisterError, ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository,
     TrainingRepository, UnitOrderKind, UnitRepository, Window, alliance_conflict_leaderboard,
     alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
-    climbers_leaderboard, conflict_leaderboard, disband_alliance, evaluate_achievements,
-    evaluate_quests, expel_member, found_alliance, invite_player, leave_alliance, load_culture,
-    load_economy, map_viewport, order_attack, order_build, order_oasis_attack, order_oasis_recall,
-    order_oasis_reinforce, order_reinforcement, order_research, order_return, order_scout,
-    order_settle, order_smithy_upgrade, order_trade, order_train, player_statistics,
-    population_history, population_leaderboard, register, reinforcement_reports, respond_invite,
-    revoke_invite, set_diplomacy, set_member_role, transfer_founder, viewport_coords,
+    climbers_leaderboard, conflict_leaderboard, disband_alliance, end_protection_if_established,
+    evaluate_achievements, evaluate_quests, expel_member, found_alliance, invite_player,
+    leave_alliance, load_culture, load_economy, map_viewport, order_attack, order_build,
+    order_oasis_attack, order_oasis_recall, order_oasis_reinforce, order_reinforcement,
+    order_research, order_return, order_scout, order_settle, order_smithy_upgrade, order_trade,
+    order_train, player_statistics, population_history, population_leaderboard, register,
+    reinforcement_reports, respond_invite, revoke_invite, set_diplomacy, set_member_role,
+    transfer_founder, viewport_coords,
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, Coordinate,
     DiplomacyStance, DiplomacyStatus, MedalCategory, MovementKind, OasisBonus, PlayerId, Quadrant,
     QuestReward, QueueLane, ResearchDenied, ResourceAmounts, ResourceKind, RightSet, ScoutTarget,
     TileKind, TradeKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, VillageId,
-    can_afford, can_research, can_upgrade, current_quest, garrison_upkeep, per_unit_time_secs,
-    queue_lane, regenerate_loyalty, scaled_time_secs,
+    can_afford, can_research, can_upgrade, current_quest, garrison_upkeep, is_inactive,
+    per_unit_time_secs, queue_lane, regenerate_loyalty, scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
@@ -432,6 +433,31 @@ pub async fn village(
     {
         tracing::error!(error = %e, "quest evaluation failed");
     }
+
+    // 019: this authenticated view is the activity signal (throttled), and the natural place to end
+    // beginner's protection once the player is established. Best-effort.
+    if let Err(e) = state.accounts.touch_activity(player, now()).await {
+        tracing::error!(error = %e, "activity touch failed");
+    }
+    if let Err(e) = end_protection_if_established(
+        state.accounts.as_ref(),
+        state.rules.as_ref(),
+        state.lifecycle_rules.as_ref(),
+        player,
+        now(),
+    )
+    .await
+    {
+        tracing::error!(error = %e, "protection threshold check failed");
+    }
+    // The remaining protection window, if any, for the view.
+    let protected_until = match state.accounts.protection_of(player).await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(error = %e, "protection lookup failed");
+            None
+        }
+    };
 
     let economy = match load_economy(
         state.accounts.as_ref(),
@@ -835,7 +861,30 @@ pub async fn village(
         oases,
         fields,
         buildings,
+        protection: protection_notice(protected_until, now()),
     })
+}
+
+/// A human notice of the remaining beginner's-protection window (019 AC9), or `None` once it has ended.
+fn protection_notice(
+    protected_until: Option<eperica_domain::Timestamp>,
+    now: eperica_domain::Timestamp,
+) -> Option<String> {
+    let until = protected_until?;
+    let remaining_secs = (until.0 - now.0) / 1000;
+    if remaining_secs <= 0 {
+        return None;
+    }
+    let label = if remaining_secs >= 86_400 {
+        format!("{} day(s)", remaining_secs / 86_400)
+    } else if remaining_secs >= 3_600 {
+        format!("{} hour(s)", remaining_secs / 3_600)
+    } else {
+        format!("{} minute(s)", (remaining_secs / 60).max(1))
+    };
+    Some(format!(
+        "Under beginner's protection — you cannot be attacked for about {label}."
+    ))
 }
 
 /// The viewport half-extent: the map view shows a `(2·HALF + 1)`-square grid.
@@ -956,6 +1005,16 @@ pub async fn map(
                             class.push_str(" map-grid__cell--capital");
                         }
                         glyph = "★";
+                        // 019 AC6: an inactive owner's village is farmable — grey it and flag it.
+                        let inactive = is_inactive(
+                            marker.owner_last_activity,
+                            now(),
+                            state.lifecycle_rules.inactive_after_secs,
+                            state.world.speed,
+                        );
+                        if inactive {
+                            class.push_str(" map-grid__cell--inactive");
+                        }
                         // Alliance membership is public (§7.3): show the owner's alliance tag if any.
                         let tag = marker
                             .alliance_tag
@@ -963,11 +1022,12 @@ pub async fn map(
                             .map(|t| format!(" [{t}]"))
                             .unwrap_or_default();
                         label = format!(
-                            "{} — {}{}{} ({}|{})",
+                            "{} — {}{}{}{} ({}|{})",
                             base_label,
                             marker.owner_name,
                             tag,
                             if is_capital { " (capital)" } else { "" },
+                            if inactive { " (inactive)" } else { "" },
                             coord.x,
                             coord.y
                         );

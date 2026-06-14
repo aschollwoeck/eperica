@@ -3,6 +3,10 @@
 <section class="panel">
   <h1>{{ username }}'s village{% if is_capital %} <span class="badge">★ Capital</span>{% endif %}</h1>
 
+  {% if let Some(notice) = protection %}
+  <p class="alert alert--success">🛡 {{ notice }}</p>
+  {% endif %}
+
   {% if villages.len() > 1 %}
   <p class="muted">Your villages:
     {% for v in villages %}

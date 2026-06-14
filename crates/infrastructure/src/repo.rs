@@ -661,7 +661,8 @@ impl AccountRepository for PgAccountRepository {
         let ys: Vec<i32> = coords.iter().map(|c| c.y).collect();
         // Exact match on the requested tiles via the (world_id, x, y) unique index.
         let rows = sqlx::query(
-            "SELECT v.x, v.y, u.username, al.tag AS alliance_tag \
+            "SELECT v.x, v.y, u.username, al.tag AS alliance_tag, \
+             (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity_ms \
              FROM villages v JOIN users u ON u.id = v.owner_id \
              LEFT JOIN alliance_members am ON am.player_id = v.owner_id \
              LEFT JOIN alliances al ON al.id = am.alliance_id \
@@ -679,10 +680,12 @@ impl AccountRepository for PgAccountRepository {
                 let y: i32 = r.try_get("y").map_err(backend)?;
                 let owner_name: String = r.try_get("username").map_err(backend)?;
                 let alliance_tag: Option<String> = r.try_get("alliance_tag").map_err(backend)?;
+                let last_activity_ms: i64 = r.try_get("last_activity_ms").map_err(backend)?;
                 Ok(VillageMarker {
                     coordinate: Coordinate::new(x, y),
                     owner_name,
                     alliance_tag,
+                    owner_last_activity: Timestamp(last_activity_ms),
                 })
             })
             .collect()

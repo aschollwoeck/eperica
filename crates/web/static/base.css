@@ -127,6 +127,8 @@ a { color: var(--c-gold); }
 .map-grid__cell--natar { background: color-mix(in srgb, var(--c-danger) 25%, transparent); }
 .map-grid__cell--village { font-weight: 700; color: var(--c-gold); }
 .map-grid__cell--self { outline: 2px solid var(--c-gold); outline-offset: -2px; }
+/* 019: an inactive (farmable) owner's village is greyed. */
+.map-grid__cell--inactive { color: var(--c-ink-muted); opacity: 0.6; }
 .map-controls { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
 
 .alert { padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); border: 1px solid; }
