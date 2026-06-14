@@ -2494,3 +2494,114 @@ pub trait ArtifactRepository: Send + Sync {
         Ok(Vec::new())
     }
 }
+
+/// One alliance's Wonder progress (021) — for the race board (T8) and the victory check (T7).
+#[derive(Debug, Clone, PartialEq)]
+pub struct WonderStanding {
+    /// The alliance whose member holds the highest Wonder.
+    pub alliance: AllianceId,
+    /// The alliance tag (display).
+    pub tag: String,
+    /// The alliance name (display).
+    pub name: String,
+    /// Its highest Wonder level across its members' sites (0..=100).
+    pub level: u8,
+}
+
+/// The round's recorded outcome (021 AC6) — the winning alliance and when it won.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WonderOutcome {
+    /// The first alliance to a complete Wonder.
+    pub winner: AllianceId,
+    /// When victory was recorded.
+    pub won_at: Timestamp,
+}
+
+/// Persistence for the end-game Wonder of the World, its plans + conquerable sites, and the round
+/// result (021). Default no-ops/empties so non-Wonder fakes need not implement it.
+#[async_trait]
+pub trait WonderRepository: Send + Sync {
+    /// Materialize the Wonder release **once** (021 AC1): if `now ≥ release_at` and nothing has been
+    /// released yet, ensure the synthetic Natar owner, place `site_count` **conquerable** Wonder-site
+    /// Natar villages and `plan_count` capturable plan vaults (each garrisoned, on reserved Natar tiles
+    /// in seeded ring order). Returns the count materialized (0 if not due or already released).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    #[allow(clippy::too_many_arguments)]
+    async fn release_wonder(
+        &self,
+        release_at: Timestamp,
+        now: Timestamp,
+        plan_count: u32,
+        site_count: u32,
+        garrison_unit: &str,
+        garrison_base_count: i64,
+        garrison_per_index: i64,
+    ) -> Result<usize, RepoError> {
+        let _ = (
+            release_at,
+            now,
+            plan_count,
+            site_count,
+            garrison_unit,
+            garrison_base_count,
+            garrison_per_index,
+        );
+        Ok(0)
+    }
+
+    /// The id of the Wonder plan a village currently holds, if any (021). Defaults to none.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn plan_at_village(&self, _village: VillageId) -> Result<Option<String>, RepoError> {
+        Ok(None)
+    }
+
+    /// Whether any member of `alliance` currently holds a Wonder plan (gates construction, 021 AC4).
+    /// Defaults to `false`.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn alliance_holds_plan(&self, _alliance: AllianceId) -> Result<bool, RepoError> {
+        Ok(false)
+    }
+
+    /// The Wonder level built at `village` (0 if none). Defaults to 0.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn wonder_level(&self, _village: VillageId) -> Result<u8, RepoError> {
+        Ok(0)
+    }
+
+    /// The alliances with Wonder progress, highest first (021 AC9). Defaults to empty.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn top_wonders(&self) -> Result<Vec<WonderStanding>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// The round outcome if the world has been won, else `None` (021 AC6/AC7). Defaults to `None`.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn world_ended(&self) -> Result<Option<WonderOutcome>, RepoError> {
+        Ok(None)
+    }
+
+    /// Record `winner` as the round's victor at `won_at` **once** (021 AC6): no-op if already won.
+    /// Returns `true` if this call recorded the victory. Defaults to `false` (no-op).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn record_victory(
+        &self,
+        _winner: AllianceId,
+        _won_at: Timestamp,
+    ) -> Result<bool, RepoError> {
+        Ok(false)
+    }
+}

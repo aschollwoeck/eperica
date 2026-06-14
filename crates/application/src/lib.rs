@@ -27,6 +27,7 @@ pub mod settling;
 pub mod starvation;
 pub mod trade;
 pub mod units;
+pub mod wonder;
 
 #[cfg(test)]
 mod tests;
@@ -70,7 +71,8 @@ pub use ports::{
     ReinforcementReturn, RepoError, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel,
     ScoutReportView, ScoutRepository, SettleApply, SettleOutcome, SettleRepository,
     StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
-    UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome, WonderRepository,
+    WonderStanding,
 };
 pub use quests::evaluate_quests;
 pub use ranking::{
@@ -88,3 +90,4 @@ pub use units::{
     ResearchError, TrainError, UpgradeError, order_research, order_smithy_upgrade, order_train,
     process_due_training, process_due_unit_orders,
 };
+pub use wonder::{WonderReleaseSpec, process_due_wonder_release, process_due_wonder_victory};

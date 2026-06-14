@@ -15,7 +15,8 @@ use eperica_application::{
     QuestRepository, RankingRepository, RazedBuilding, RepoError, ResourceWrite, RosterEntry,
     ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply, SettleOutcome,
     SettleRepository, StarvationRepository, StationedGroup, TradeRepository, TradeView,
-    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome,
+    WonderRepository, WonderStanding,
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactEffects,
@@ -6307,6 +6308,266 @@ impl ArtifactRepository for PgAccountRepository {
     }
 }
 
+#[async_trait]
+impl WonderRepository for PgAccountRepository {
+    #[allow(clippy::too_many_arguments)]
+    async fn release_wonder(
+        &self,
+        release_at: Timestamp,
+        now: Timestamp,
+        plan_count: u32,
+        site_count: u32,
+        garrison_unit: &str,
+        garrison_base_count: i64,
+        garrison_per_index: i64,
+    ) -> Result<usize, RepoError> {
+        if now.0 < release_at.0 {
+            return Ok(0);
+        }
+        let world = Uuid::from_u128(self.world_id.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        // Idempotency (AC1): the Wonder release happens at most once per world.
+        let existing: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM wonder_plans WHERE world_id = $1")
+                .bind(world)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(backend)?;
+        let existing_sites: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM villages WHERE is_wonder_site AND world_id = $1",
+        )
+        .bind(world)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if existing > 0 || existing_sites > 0 {
+            tx.commit().await.map_err(backend)?;
+            return Ok(0);
+        }
+        // The synthetic Natar NPC owner (shared with the artifact release, 020). Romans match the garrison.
+        let npc_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO users (id, username, email, password_hash, email_confirmed, tribe, is_npc) \
+             VALUES ($1, 'Natars', 'natars@system.local', '!', true, 'romans', true) \
+             ON CONFLICT (username) DO NOTHING",
+        )
+        .bind(npc_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let npc: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = 'Natars'")
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(backend)?;
+        // Reserved Natar tiles not already taken by the artifact release (placed earlier) — deterministic
+        // ring order (P6). Sites first, then plan vaults.
+        let occupied: HashSet<(i32, i32)> =
+            sqlx::query("SELECT x, y FROM villages WHERE world_id = $1")
+                .bind(world)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(backend)?
+                .iter()
+                .map(|r| {
+                    Ok::<_, RepoError>((
+                        r.try_get::<i32, _>("x").map_err(backend)?,
+                        r.try_get::<i32, _>("y").map_err(backend)?,
+                    ))
+                })
+                .collect::<Result<_, _>>()?;
+        let needed = site_count as usize + plan_count as usize;
+        let free_tiles: Vec<Coordinate> = coordinates_within(self.map.radius())
+            .filter(|c| matches!(self.map.tile_at(*c), Some(TileKind::Natar)))
+            .filter(|c| !occupied.contains(&(c.x, c.y)))
+            .take(needed)
+            .collect();
+
+        // Place a garrisoned Natar village; `is_site` marks it conquerable (a Wonder construction site).
+        let place = async |tx: &mut sqlx::PgConnection,
+                           coord: &Coordinate,
+                           index: i64,
+                           is_site: bool|
+               -> Result<Uuid, RepoError> {
+            let village_id = Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO villages (id, world_id, owner_id, x, y, tribe, is_natar, is_wonder_site) \
+                 VALUES ($1, $2, $3, $4, $5, 'romans', true, $6)",
+            )
+            .bind(village_id)
+            .bind(world)
+            .bind(npc)
+            .bind(coord.x)
+            .bind(coord.y)
+            .bind(is_site)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+            // A developed Main Building gives the Natar village a population, so attacking it is a normal
+            // battle (not a morale-crushed strike against an empty village).
+            sqlx::query(
+                "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+                 VALUES ($1, 0, 'main_building', 10)",
+            )
+            .bind(village_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+            let count = garrison_base_count + garrison_per_index * index;
+            sqlx::query(
+                "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, $2, $3)",
+            )
+            .bind(village_id)
+            .bind(garrison_unit)
+            .bind(i32::try_from(count).unwrap_or(i32::MAX))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+            Ok(village_id)
+        };
+
+        let mut materialized = 0usize;
+        let mut index = 0i64;
+        // Conquerable Wonder construction sites.
+        for _ in 0..site_count as usize {
+            let Some(coord) = free_tiles.get(materialized) else {
+                break; // fewer free Natar tiles than requested — release what fits
+            };
+            place(&mut tx, coord, index, true).await?;
+            materialized += 1;
+            index += 1;
+        }
+        // Capturable plan vaults (not conquerable — taken by force, 020 mechanic).
+        for p in 0..plan_count as usize {
+            let Some(coord) = free_tiles.get(materialized) else {
+                break;
+            };
+            let vault = place(&mut tx, coord, index, false).await?;
+            sqlx::query(
+                "INSERT INTO wonder_plans \
+                 (id, world_id, holder_village, origin_x, origin_y, released_at) \
+                 VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0))",
+            )
+            .bind(format!("wonder-plan-{world}-{p}"))
+            .bind(world)
+            .bind(vault)
+            .bind(coord.x)
+            .bind(coord.y)
+            .bind(now.0)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+            materialized += 1;
+            index += 1;
+        }
+        tx.commit().await.map_err(backend)?;
+        Ok(materialized)
+    }
+
+    async fn plan_at_village(&self, village: VillageId) -> Result<Option<String>, RepoError> {
+        sqlx::query_scalar("SELECT id FROM wonder_plans WHERE holder_village = $1 LIMIT 1")
+            .bind(Uuid::from_u128(village.0))
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(backend)
+    }
+
+    async fn alliance_holds_plan(&self, alliance: AllianceId) -> Result<bool, RepoError> {
+        sqlx::query_scalar(
+            "SELECT EXISTS( \
+               SELECT 1 FROM wonder_plans p \
+               JOIN villages v ON v.id = p.holder_village \
+               JOIN alliance_members m ON m.player_id = v.owner_id \
+               WHERE m.alliance_id = $1)",
+        )
+        .bind(Uuid::from_u128(alliance.0))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)
+    }
+
+    async fn wonder_level(&self, village: VillageId) -> Result<u8, RepoError> {
+        let level: Option<i32> = sqlx::query_scalar(
+            "SELECT level FROM village_buildings WHERE village_id = $1 AND building_type = 'wonder'",
+        )
+        .bind(Uuid::from_u128(village.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(level.unwrap_or(0).clamp(0, i32::from(u8::MAX)) as u8)
+    }
+
+    async fn top_wonders(&self) -> Result<Vec<WonderStanding>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT a.id AS alliance_id, a.tag, a.name, MAX(vb.level) AS lvl \
+             FROM alliance_members m \
+             JOIN alliances a ON a.id = m.alliance_id \
+             JOIN villages v ON v.owner_id = m.player_id AND v.world_id = $1 \
+             JOIN village_buildings vb ON vb.village_id = v.id AND vb.building_type = 'wonder' \
+             GROUP BY a.id, a.tag, a.name \
+             ORDER BY lvl DESC, a.tag ASC",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let id: Uuid = r.try_get("alliance_id").map_err(backend)?;
+                let lvl: i32 = r.try_get("lvl").map_err(backend)?;
+                Ok(WonderStanding {
+                    alliance: AllianceId(id.as_u128()),
+                    tag: r.try_get("tag").map_err(backend)?,
+                    name: r.try_get("name").map_err(backend)?,
+                    level: lvl.clamp(0, i32::from(u8::MAX)) as u8,
+                })
+            })
+            .collect()
+    }
+
+    async fn world_ended(&self) -> Result<Option<WonderOutcome>, RepoError> {
+        let row = sqlx::query(
+            "SELECT winner_alliance_id, (EXTRACT(EPOCH FROM won_at) * 1000)::bigint AS won_ms \
+             FROM worlds WHERE id = $1",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        let Some(row) = row else { return Ok(None) };
+        let winner: Option<Uuid> = row.try_get("winner_alliance_id").map_err(backend)?;
+        let won_ms: Option<i64> = row.try_get("won_ms").map_err(backend)?;
+        match (winner, won_ms) {
+            (Some(w), Some(ms)) => Ok(Some(WonderOutcome {
+                winner: AllianceId(w.as_u128()),
+                won_at: Timestamp(ms),
+            })),
+            _ => Ok(None),
+        }
+    }
+
+    async fn record_victory(
+        &self,
+        winner: AllianceId,
+        won_at: Timestamp,
+    ) -> Result<bool, RepoError> {
+        // Guarded (AC6): records the winner only while the round is still open, so the first complete
+        // Wonder wins and a later one cannot overwrite it.
+        let affected = sqlx::query(
+            "UPDATE worlds \
+             SET winner_alliance_id = $1, won_at = to_timestamp($2::double precision / 1000.0) \
+             WHERE id = $3 AND won_at IS NULL",
+        )
+        .bind(Uuid::from_u128(winner.0))
+        .bind(won_at.0)
+        .bind(Uuid::from_u128(self.world_id.0))
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?
+        .rows_affected();
+        Ok(affected > 0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6716,6 +6977,91 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(again, 0, "release happens at most once");
+    }
+
+    /// 021 AC1/AC8: the Wonder release is gated on the date, materializes `site_count` conquerable
+    /// sites + `plan_count` capturable plan vaults (garrisoned, NPC-owned) once, and is idempotent.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn wonder_release_materializes_plans_and_sites(pool: PgPool) {
+        let Setup { repo, .. } = setup(pool.clone()).await;
+        let rules = crate::wonder_rules().expect("wonder rules");
+        let spec = eperica_application::WonderReleaseSpec {
+            plan_count: rules.plan_count,
+            site_count: rules.site_count,
+            garrison_unit: &rules.garrison_unit,
+            garrison_base_count: rules.garrison_base_count,
+            garrison_per_index: rules.garrison_per_index,
+        };
+        let release_at = Timestamp(10_000_000_000_000);
+
+        // Before the date: nothing releases.
+        let n0 = eperica_application::process_due_wonder_release(
+            &repo,
+            Some(release_at),
+            Timestamp(1_000),
+            &spec,
+        )
+        .await
+        .unwrap();
+        assert_eq!(n0, 0);
+        let sites0: i64 = sqlx::query_scalar("SELECT count(*) FROM villages WHERE is_wonder_site")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sites0, 0, "no Wonder sites before the release date");
+
+        // At/after the date: plans + sites materialize once.
+        let now = Timestamp(release_at.0 + 1);
+        let n =
+            eperica_application::process_due_wonder_release(&repo, Some(release_at), now, &spec)
+                .await
+                .unwrap();
+        let expected = rules.plan_count as usize + rules.site_count as usize;
+        assert_eq!(n, expected, "all plans + sites released");
+
+        let sites: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM villages WHERE is_wonder_site AND world_id = $1",
+        )
+        .bind(Uuid::from_u128(repo.world_id.0))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(sites as u32, rules.site_count, "one Natar village per site");
+
+        let plans: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM wonder_plans WHERE world_id = $1")
+                .bind(Uuid::from_u128(repo.world_id.0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(plans as u32, rules.plan_count, "one plan per vault");
+
+        // Every released Natar village is garrisoned.
+        let garrisoned: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM village_units u JOIN villages v ON v.id = u.village_id \
+             WHERE v.is_natar AND u.count > 0",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            garrisoned as usize, expected,
+            "every Natar village garrisoned"
+        );
+
+        // The synthetic Natar owner exists (shared with the artifact release).
+        let npc: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE is_npc")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(npc, 1, "one synthetic Natar owner");
+
+        // Idempotent: a second release is a no-op.
+        let again =
+            eperica_application::process_due_wonder_release(&repo, Some(release_at), now, &spec)
+                .await
+                .unwrap();
+        assert_eq!(again, 0, "the Wonder release happens at most once");
     }
 
     /// 020 AC4: a winning attack from a Treasury village claims a Natar village's artifact; an
