@@ -29,5 +29,6 @@ manual grows as the game does.
 - [Protection & a living world](protection-and-lifecycle.md) — beginner's protection from attack at the start, and how inactive accounts become farmable and eventually free up the map.
 - [Artifacts & the Natars](artifacts.md) — the end-game's first phase: powerful artifacts released into Natar NPC villages, captured (and stolen) by force from a Treasury village.
 - [The Wonder of the World & victory](wonder-and-victory.md) — the end-game's finale: capture Wonder plans, conquer a Wonder site, build the Wonder to level 100, and win the round for your alliance.
+- [Fair play & moderation](fair-play-and-moderation.md) — reporting cheats, sanctions (warn/suspend/ban), rate limiting, and the moderator tools + detection signals that keep a world clean.
 
 *(More chapters arrive as those features ship.)*
