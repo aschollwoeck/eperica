@@ -6504,7 +6504,8 @@ impl WonderRepository for PgAccountRepository {
 
     async fn wonder_level(&self, village: VillageId) -> Result<u8, RepoError> {
         let level: Option<i32> = sqlx::query_scalar(
-            "SELECT level FROM village_buildings WHERE village_id = $1 AND building_type = 'wonder'",
+            "SELECT level::int FROM village_buildings \
+             WHERE village_id = $1 AND building_type = 'wonder'",
         )
         .bind(Uuid::from_u128(village.0))
         .fetch_optional(&self.pool)
@@ -6515,7 +6516,7 @@ impl WonderRepository for PgAccountRepository {
 
     async fn top_wonders(&self) -> Result<Vec<WonderStanding>, RepoError> {
         let rows = sqlx::query(
-            "SELECT a.id AS alliance_id, a.tag, a.name, MAX(vb.level) AS lvl \
+            "SELECT a.id AS alliance_id, a.tag, a.name, MAX(vb.level)::int AS lvl \
              FROM alliance_members m \
              JOIN alliances a ON a.id = m.alliance_id \
              JOIN villages v ON v.owner_id = m.player_id AND v.world_id = $1 \
@@ -7386,6 +7387,175 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(holder_b, Some(vault_b), "no Treasury ⇒ plan not taken");
+    }
+
+    /// 021 AC4/AC5: a Wonder build is gated (site control + alliance-holds-plan + level < 100), then
+    /// advances one level through the ordinary build queue; an order at 100 is rejected.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn wonder_build_gated_and_advances(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let units = crate::unit_rules().unwrap();
+        let build_rules = crate::build_rules().unwrap();
+        let speed = GameSpeed::new(1.0).unwrap();
+        let rules = crate::wonder_rules().unwrap();
+        let spec = eperica_application::WonderReleaseSpec {
+            plan_count: rules.plan_count,
+            site_count: rules.site_count,
+            garrison_unit: &rules.garrison_unit,
+            garrison_base_count: rules.garrison_base_count,
+            garrison_per_index: rules.garrison_per_index,
+        };
+
+        let player = make_account(&repo, &template, "wbuild").await;
+        let home = repo.villages_of(player).await.unwrap()[0].id;
+
+        // Release the Wonder, then "conquer" a site into the player's hands.
+        let release_at = Timestamp(1_000_000_000_000);
+        eperica_application::process_due_wonder_release(
+            &repo,
+            Some(release_at),
+            Timestamp(release_at.0 + 1),
+            &spec,
+        )
+        .await
+        .unwrap();
+        let site: Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE is_wonder_site LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE villages SET owner_id = $1, is_natar = false WHERE id = $2")
+            .bind(Uuid::from_u128(player.0))
+            .bind(site)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let now = crate::now();
+        sqlx::query(
+            "INSERT INTO village_resources (village_id, wood, clay, iron, crop, updated_at) \
+             VALUES ($1, 100000000, 100000000, 100000000, 100000000, \
+                     to_timestamp($2::double precision / 1000.0))",
+        )
+        .bind(site)
+        .bind(now.0 as f64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Storage so the site can actually hold the Wonder's cost (else compute_economy caps it).
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+             VALUES ($1, 16, 'warehouse', 10), ($1, 17, 'granary', 10)",
+        )
+        .bind(site)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let site_id = VillageId(site.as_u128());
+
+        let order = async |sel: VillageId| -> Result<(), eperica_application::WonderError> {
+            eperica_application::order_wonder_build(
+                &repo,
+                &repo,
+                &repo,
+                &repo,
+                &repo,
+                &econ,
+                &build_rules,
+                &units,
+                speed,
+                crate::now(),
+                player,
+                Some(sel),
+            )
+            .await
+        };
+
+        // Gate: a non-site village is rejected.
+        assert!(matches!(
+            order(home).await,
+            Err(eperica_application::WonderError::NotASite)
+        ));
+        // Gate: controlling the site but in no alliance is rejected.
+        assert!(matches!(
+            order(site_id).await,
+            Err(eperica_application::WonderError::NoAlliance)
+        ));
+
+        // Put the player in an alliance (direct rows — bypassing the Embassy gate, irrelevant here).
+        let alliance = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO alliances (id, name, tag, founder_id) VALUES ($1, 'A', 'AAA', $2)",
+        )
+        .bind(alliance)
+        .bind(Uuid::from_u128(player.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO alliance_members (player_id, alliance_id, role) VALUES ($1, $2, 'founder')",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .bind(alliance)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Gate: the alliance holds no plan yet.
+        assert!(matches!(
+            order(site_id).await,
+            Err(eperica_application::WonderError::NoPlan)
+        ));
+
+        // Hand a plan to the player's home village (so their alliance holds one).
+        sqlx::query(
+            "UPDATE wonder_plans SET holder_village = $1 \
+             WHERE id = (SELECT id FROM wonder_plans LIMIT 1)",
+        )
+        .bind(Uuid::from_u128(home.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Accepted: all gates pass, a Wonder build is enqueued on the site.
+        order(site_id).await.expect("the Wonder build is accepted");
+        let active = repo.active_builds(site_id).await.unwrap();
+        assert_eq!(active.len(), 1, "a Wonder build is queued");
+        assert_eq!(active[0].target_level, 1);
+
+        // It advances one level once due.
+        eperica_application::process_due_builds(
+            &repo,
+            &repo,
+            &repo,
+            &crate::culture_rules().unwrap(),
+            Timestamp(crate::now().0 + 1_000_000_000_000),
+            100,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            repo.wonder_level(site_id).await.unwrap(),
+            1,
+            "the Wonder is now level 1"
+        );
+
+        // AC5: an order at level 100 is rejected.
+        sqlx::query(
+            "UPDATE village_buildings SET level = 100 \
+             WHERE village_id = $1 AND building_type = 'wonder'",
+        )
+        .bind(site)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(matches!(
+            order(site_id).await,
+            Err(eperica_application::WonderError::AlreadyComplete)
+        ));
     }
 
     /// 020 AC5: a winning attack from a Treasury village against a **player** holding an artifact steals

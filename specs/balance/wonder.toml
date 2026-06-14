@@ -4,12 +4,14 @@
 # Wonder date.
 
 [wonder]
-# Level-1 construction cost; each further level multiplies by cost_ratio.
-base_cost = { wood = 50000, clay = 50000, iron = 50000, crop = 40000 }
-cost_ratio = 1.10
+# Level-1 construction cost; each further level multiplies by cost_ratio. The curve is bounded so even
+# the level-100 cost stays within a maxed Warehouse/Granary (12 000 in this economy), keeping every
+# level affordable: 1500 · 1.02^99 ≈ 10 650 < 12 000 (crop 1200 · 1.02^99 ≈ 8 520). All tunable (P7).
+base_cost = { wood = 1500, clay = 1500, iron = 1500, crop = 1200 }
+cost_ratio = 1.02
 # Level-1 construction time (base seconds, speed-scaled by the build path); ×time_ratio per level.
 base_time_secs = 7200
-time_ratio = 1.06
+time_ratio = 1.04
 # How many capturable plans + conquerable sites release.
 plan_count = 3
 site_count = 2

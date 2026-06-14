@@ -90,4 +90,7 @@ pub use units::{
     ResearchError, TrainError, UpgradeError, order_research, order_smithy_upgrade, order_train,
     process_due_training, process_due_unit_orders,
 };
-pub use wonder::{WonderReleaseSpec, process_due_wonder_release, process_due_wonder_victory};
+pub use wonder::{
+    WonderError, WonderReleaseSpec, order_wonder_build, process_due_wonder_release,
+    process_due_wonder_victory,
+};
