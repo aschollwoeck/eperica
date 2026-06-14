@@ -22,6 +22,7 @@ pub mod loyalty;
 pub mod map;
 pub mod medals;
 pub mod movement;
+pub mod notification;
 pub mod oasis;
 pub mod presence;
 pub mod quest;
@@ -80,6 +81,7 @@ pub use loyalty::{
 pub use map::{FieldDistribution, MapRules, OasisBonus, TileKind, Weighted, WorldMap};
 pub use medals::{MedalCategory, MedalRules, period_index, period_start, rank_top};
 pub use movement::{MovementKind, slowest_speed, travel_time_secs, travel_time_secs_floored};
+pub use notification::NotificationKind;
 pub use oasis::{OasisRules, oasis_garrison, regrow_step};
 pub use presence::{MAX_BIO, Presence, presence, valid_bio};
 pub use quest::{

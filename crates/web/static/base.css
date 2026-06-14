@@ -163,6 +163,11 @@ a { color: var(--c-gold); }
   font-weight: 700;
 }
 
+/* 026: notifications feed — unread rows stand out until viewed. */
+.notifications { list-style: none; padding: 0; }
+.notifications li { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--c-border); }
+.notifications li.unread { background: var(--c-panel-alt); font-weight: 600; }
+
 /* 025: presence indicator — a small online/away marker next to a player's name. */
 .presence { font-size: 0.85rem; margin-left: var(--space-2); white-space: nowrap; }
 .presence--online { color: #3fb950; }

@@ -865,6 +865,25 @@ pub struct MessagesTemplate {
     pub conversations: Vec<ConversationRow>,
 }
 
+/// One row in the notifications feed (026 AC4).
+pub struct NotificationRowView {
+    /// Kind label ("Incoming attack" / "Battle report" / "New message").
+    pub label: String,
+    /// A short detail line (may be empty).
+    pub body: String,
+    /// Deep-link to the referenced entity (empty if none).
+    pub href: String,
+    /// Whether it was already read (for styling).
+    pub read: bool,
+}
+
+#[derive(Template)]
+#[template(path = "notifications.html")]
+pub struct NotificationsTemplate {
+    /// Notifications, most-recent first.
+    pub notifications: Vec<NotificationRowView>,
+}
+
 /// One rendered line in a conversation (024 AC2).
 pub struct ChatLineView {
     /// Sender display name.

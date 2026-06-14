@@ -9,11 +9,11 @@ use crate::templates::{
     ForceRow, GarrisonRow, HistoryPointView, IncomingView, IndexTemplate, LeaderboardRowView,
     LeaderboardTemplate, LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MedalRowView,
     MemberStatRow, MessagesTemplate, ModAccountTemplate, ModQueueTemplate, ModReportRow,
-    MovementRow, OasisRow, OutgoingInviteView, PendingInviteView, PlayerStatsTemplate,
-    ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate,
-    ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, RosterRowView,
-    ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate,
-    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
+    MovementRow, NotificationRowView, NotificationsTemplate, OasisRow, OutgoingInviteView,
+    PendingInviteView, PlayerStatsTemplate, ProfileTemplate, QuestsTemplate, QueueView,
+    RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate,
+    ReportsTemplate, RosterRowView, ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow,
+    SmithyTemplate, StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
     VillageTemplate, WonderStandingView, WonderTemplate,
 };
 use askama::Template;
@@ -33,8 +33,9 @@ use eperica_application::{
     alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
     climbers_leaderboard, conflict_leaderboard, conversation_list, disband_alliance, dm_key,
     dm_pair_key, edit_bio, end_protection_if_established, evaluate_achievements, evaluate_quests,
-    expel_member, file_report, found_alliance, invite_player, leave_alliance, load_culture,
-    load_economy, map_viewport, open_chat, open_dm, order_attack, order_build, order_oasis_attack,
+    expel_member, file_report, found_alliance, invite_player, leave_alliance, list_notifications,
+    load_culture, load_economy, map_viewport, mark_notifications_read, notif_key,
+    notification_unread, open_chat, open_dm, order_attack, order_build, order_oasis_attack,
     order_oasis_recall, order_oasis_reinforce, order_reinforcement, order_research, order_return,
     order_scout, order_settle, order_smithy_upgrade, order_trade, order_train, order_wonder_build,
     parse_dm_key, player_statistics, population_history, population_leaderboard, register,
@@ -1919,6 +1920,7 @@ pub async fn rally_send(
                     AttackMode::Attack
                 };
                 if let Err(e) = order_attack(
+                    state.accounts.as_ref(),
                     state.accounts.as_ref(),
                     state.accounts.as_ref(),
                     state.accounts.as_ref(),
@@ -3860,4 +3862,98 @@ pub async fn messages_stream(
 pub struct SendForm {
     conversation: String,
     body: String,
+}
+
+/// Deep-link for a notification's referenced entity (026), or empty when there's nothing to link to.
+fn notification_href(ref_kind: Option<&str>, ref_id: Option<&str>) -> String {
+    match (ref_kind, ref_id) {
+        (Some("report"), Some(id)) => format!("/reports/{id}"),
+        (Some("dm"), Some(other)) => format!("/messages/c/dm:{other}"),
+        (Some("village"), Some(coord)) => match coord.split_once('|') {
+            Some((x, y)) => format!("/map?x={x}&y={y}"),
+            None => String::new(),
+        },
+        _ => String::new(),
+    }
+}
+
+/// The notifications feed (026 AC4/AC5, Player only). Renders most-recent first and marks the player's
+/// notifications read on view (owner-scoped) so the bell clears.
+pub async fn notifications_page(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+) -> Response {
+    let repo = state.accounts.as_ref();
+    let list = match list_notifications(repo, player).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!(error = %e, "notifications list failed");
+            return server_error();
+        }
+    };
+    // Viewing marks them read (026 AC5). Best-effort — a failure must not break the page.
+    if let Err(e) = mark_notifications_read(repo, player, now()).await {
+        tracing::error!(error = %e, "marking notifications read failed");
+    }
+    let notifications = list
+        .into_iter()
+        .map(|n| NotificationRowView {
+            label: n.kind.label().to_owned(),
+            href: notification_href(n.ref_kind.as_deref(), n.ref_id.as_deref()),
+            body: n.body,
+            read: n.read,
+        })
+        .collect();
+    page(&NotificationsTemplate { notifications })
+}
+
+/// The player's unread notification count — the nav bell polls this (026 AC4).
+pub async fn notifications_unread(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+) -> Response {
+    let n = notification_unread(state.accounts.as_ref(), player)
+        .await
+        .unwrap_or(0);
+    (StatusCode::OK, n.to_string()).into_response()
+}
+
+/// Explicit mark-all-read (026 AC5, owner-scoped).
+pub async fn notifications_read(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+) -> Response {
+    if let Err(e) = mark_notifications_read(state.accounts.as_ref(), player, now()).await {
+        tracing::error!(error = %e, "mark-all-read failed");
+        return server_error();
+    }
+    Redirect::to("/notifications").into_response()
+}
+
+/// Live SSE stream for the logged-in player's notification bell (026 AC6). Subscribed on the player's
+/// **private** key `notif:<uuid>` — a player can only ever receive their own (no cross-player leak, P4).
+pub async fn notifications_stream(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+) -> Response {
+    let want = notif_key(player);
+    let mut rx = state.notification_hub.subscribe();
+    let stream = async_stream::stream! {
+        loop {
+            match rx.recv().await {
+                Ok(n) if n.key == want => {
+                    let data = serde_json::json!({ "kind": n.kind }).to_string();
+                    yield Ok::<_, std::convert::Infallible>(
+                        axum::response::sse::Event::default().data(data),
+                    );
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    };
+    axum::response::sse::Sse::new(stream)
+        .keep_alive(axum::response::sse::KeepAlive::default())
+        .into_response()
 }

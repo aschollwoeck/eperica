@@ -18,6 +18,7 @@ pub mod lifecycle;
 pub mod map;
 pub mod medals;
 pub mod movement;
+pub mod notification;
 pub mod oasis;
 pub mod ports;
 pub mod profile;
@@ -62,6 +63,10 @@ pub use lifecycle::{end_protection_if_established, process_due_lifecycle};
 pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
 pub use medals::process_due_medal_settlement;
 pub use movement::{MovementError, order_reinforcement, order_return, process_due_movements};
+pub use notification::{
+    FEED_LIMIT, NotificationError, list_notifications, mark_notifications_read, notif_key,
+    notification_unread, notify_incoming_attack, notify_new_message,
+};
 pub use oasis::{
     OasisError, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
     process_due_oasis_combat, process_due_oasis_regrow, process_due_oasis_reinforce,
@@ -76,15 +81,15 @@ pub use ports::{
     DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, EventStore, HeldArtifact,
     IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply, MedalAward, MedalRepository,
     MedalSubjectKind, MedalView, Membership, MessageView, ModerationRepository, MovementRepository,
-    MovementView, NewBattleReport, NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder,
-    NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership, OasisReinforceOutcome,
-    OasisRepository, OasisState, OutgoingInvite, PasswordHasher, PendingInvite, PlanCapture,
-    PlayerStats, ProfileView, QuestRepository, RankingRepository, RazedBuilding,
-    ReinforcementReturn, RepoError, ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel,
-    ScoutReportView, ScoutRepository, SettleApply, SettleOutcome, SettleRepository,
-    StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
-    UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome, WonderRepository,
-    WonderStanding,
+    MovementView, NewBattleReport, NewBuildOrder, NewNotification, NewOasisReport, NewScoutReport,
+    NewTrainingOrder, NewUnitOrder, NewUser, NotificationRepository, NotificationView,
+    OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
+    OutgoingInvite, PasswordHasher, PendingInvite, PlanCapture, PlayerStats, ProfileView,
+    QuestRepository, RankingRepository, RazedBuilding, ReinforcementReturn, RepoError, ReportView,
+    ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository,
+    SettleApply, SettleOutcome, SettleRepository, StarvationRepository, StationedGroup,
+    TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
+    VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
 };
 pub use profile::{ProfileError, edit_bio, view_profile};
 pub use quests::evaluate_quests;
