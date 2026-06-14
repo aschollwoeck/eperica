@@ -86,6 +86,7 @@ fn building_label(kind: BuildingKind) -> &'static str {
         BuildingKind::TownHall => "Town Hall",
         BuildingKind::Palace => "Palace",
         BuildingKind::Treasury => "Treasury",
+        BuildingKind::Wonder => "Wonder of the World",
     }
 }
 
@@ -109,6 +110,7 @@ fn building_kind_id(kind: BuildingKind) -> &'static str {
         BuildingKind::TownHall => "town_hall",
         BuildingKind::Palace => "palace",
         BuildingKind::Treasury => "treasury",
+        BuildingKind::Wonder => "wonder",
     }
 }
 
@@ -133,6 +135,7 @@ fn building_slot(kind: BuildingKind) -> u8 {
         BuildingKind::Palace => 15,
         BuildingKind::Embassy => 16,
         BuildingKind::Treasury => 17,
+        BuildingKind::Wonder => 18,
     }
 }
 
@@ -156,6 +159,7 @@ fn parse_building_kind(s: Option<&str>) -> Option<BuildingKind> {
         Some("residence") => Some(BuildingKind::Residence),
         Some("palace") => Some(BuildingKind::Palace),
         Some("treasury") => Some(BuildingKind::Treasury),
+        Some("wonder") => Some(BuildingKind::Wonder),
         _ => None,
     }
 }

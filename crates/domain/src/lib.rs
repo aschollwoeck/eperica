@@ -28,6 +28,7 @@ pub mod scouting;
 pub mod trade;
 pub mod units;
 pub mod village;
+pub mod wonder;
 pub mod world;
 
 pub use achievements::{
@@ -93,6 +94,7 @@ pub use village::{
     BuildingSlot, PlayerId, RESOURCE_FIELD_COUNT, ResourceField, StartingVillage, Tribe, Village,
     VillageId,
 };
+pub use wonder::{MAX_WONDER_LEVEL, WonderRules, wonder_complete, wonder_level_spec};
 pub use world::{
     Coordinate, GameSpeed, Quadrant, WorldConfig, WorldId, coordinates_within, quadrant,
     toroidal_distance,

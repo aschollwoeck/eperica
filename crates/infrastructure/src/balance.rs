@@ -12,6 +12,7 @@ use eperica_domain::{
     QuestCondition, QuestDef, QuestId, QuestReward, RankingRules, ResearchSpec, ResourceAmounts,
     ResourceField, ResourceKind, Reward, ScoutRules, SiegeKind, SmithyRules, StartingVillage,
     TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec, WallProfile, Weighted,
+    WonderRules, wonder_level_spec,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -94,6 +95,10 @@ const LIFECYCLE_TOML: &str = include_str!(concat!(
 const ARTIFACTS_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../specs/balance/artifacts.toml"
+));
+const WONDER_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/wonder.toml"
 ));
 
 /// Errors that can occur while loading balance data.
@@ -217,6 +222,7 @@ fn parse_building(name: &str) -> Result<BuildingKind, BalanceError> {
         "town_hall" => Ok(BuildingKind::TownHall),
         "palace" => Ok(BuildingKind::Palace),
         "treasury" => Ok(BuildingKind::Treasury),
+        "wonder" => Ok(BuildingKind::Wonder),
         other => Err(BalanceError::UnknownBuilding(other.to_owned())),
     }
 }
@@ -414,6 +420,10 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
             prerequisites.insert(kind, pr);
         }
     }
+    // 021: the Wonder's 100-level construction curve is generated from `wonder.toml` (no 100-line table)
+    // and merged in, so the Wonder reuses the whole 003 build path. No building prerequisite — the gate
+    // (site control + held plan) lives in `order_wonder_build`.
+    buildings.insert(BuildingKind::Wonder, wonder_level_spec(&wonder_rules()?));
     Ok(BuildRules {
         field: level_spec(&dto.field.spec),
         field_max_level: dto.field.max_level,
@@ -812,6 +822,44 @@ pub fn artifact_catalogue() -> Result<ArtifactCatalogue, BalanceError> {
         garrison_unit: dto.garrison.unit,
         garrison_base_count: dto.garrison.base_count,
         garrison_per_index: dto.garrison.per_index,
+    })
+}
+
+#[derive(Deserialize)]
+struct WonderDto {
+    wonder: WonderInnerDto,
+}
+
+#[derive(Deserialize)]
+struct WonderInnerDto {
+    base_cost: AmountsDto,
+    cost_ratio: f64,
+    base_time_secs: i64,
+    time_ratio: f64,
+    plan_count: u32,
+    site_count: u32,
+    garrison: GarrisonDto,
+}
+
+/// Load the Wonder-of-the-World rules (021, P7) from `wonder.toml`.
+pub fn wonder_rules() -> Result<WonderRules, BalanceError> {
+    let dto: WonderDto = toml::from_str(WONDER_TOML)?;
+    let w = dto.wonder;
+    Ok(WonderRules {
+        base_cost: ResourceAmounts {
+            wood: w.base_cost.wood,
+            clay: w.base_cost.clay,
+            iron: w.base_cost.iron,
+            crop: w.base_cost.crop,
+        },
+        cost_ratio: w.cost_ratio,
+        base_time_secs: w.base_time_secs,
+        time_ratio: w.time_ratio,
+        plan_count: w.plan_count,
+        site_count: w.site_count,
+        garrison_unit: w.garrison.unit,
+        garrison_base_count: w.garrison.base_count,
+        garrison_per_index: w.garrison.per_index,
     })
 }
 
@@ -1679,6 +1727,20 @@ mod tests {
                 "scope {scope:?} present"
             );
         }
+    }
+
+    #[test]
+    fn loads_wonder_rules_and_curve() {
+        // 021: the Wonder rules load and generate a 100-level construction curve in BuildRules.
+        let w = wonder_rules().expect("wonder rules load");
+        assert!(w.cost_ratio > 1.0 && w.time_ratio > 1.0);
+        assert!(w.plan_count > 0 && w.site_count > 0);
+        let rules = build_rules().expect("build rules");
+        let spec = rules
+            .buildings
+            .get(&eperica_domain::BuildingKind::Wonder)
+            .expect("wonder in build rules");
+        assert_eq!(spec.max_level(), eperica_domain::MAX_WONDER_LEVEL);
     }
 
     #[test]
