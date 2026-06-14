@@ -1,6 +1,6 @@
 # Feature 019 — Protection & lifecycle — Technical Plan
 
-**Status:** Reviewed
+**Status:** Verified
 **Spec:** ./spec.md
 
 Two server-authoritative account-lifecycle mechanics: **beginner's protection** (a speed-scaled attack
@@ -78,10 +78,11 @@ target's protection, and villages are removed via the existing delete path.
 - `LifecycleRepository` (new port + impl):
   - `latest_swept_period() -> Option<i64>` — `MAX(period) FROM inactivity_sweeps WHERE world_id = $w`.
   - `sweep_abandoned(period, cutoff) -> usize` — **one transaction**: insert the watermark row (`ON CONFLICT
-    DO NOTHING`), select non-abandoned users with `last_activity < cutoff`, `DELETE FROM villages WHERE
-    owner_id = ANY(...)` (cascades village-scoped child rows — resources/buildings/fields/units/movements/
-    village-tied reports — freeing the valleys), `UPDATE users SET abandoned_at = now()`; record the count;
-    commit together. Idempotent (already-abandoned excluded; re-settle of a period is a no-op).
+    DO NOTHING`), select non-abandoned users with `last_activity < cutoff` (`FOR UPDATE`), `DELETE FROM
+    villages WHERE owner_id = ANY(...)` (cascades resources/buildings/fields/units/movements — but **not**
+    battle reports, which are `SET NULL`; see Notes — freeing the valleys), `UPDATE users SET abandoned_at
+    = now()`; record the count; commit together. Idempotent (already-abandoned excluded; re-settle of a
+    period is a no-op).
 - The `villages_at` / map-marker read joins the owner's `last_activity` + `abandoned_at` so the viewport can
   mark **inactive** villages (derived via `is_inactive`).
 

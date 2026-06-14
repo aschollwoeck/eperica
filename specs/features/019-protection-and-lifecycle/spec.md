@@ -1,6 +1,6 @@
 # Feature 019 — Protection & lifecycle
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 009/011 (combat — the attack the protection gates), 002 (population — the early-end threshold), 001 (accounts/world — `users`, registration, the world clock), 006/015 (map valleys + villages — freed on abandonment), 016/017 (the population read + the state-driven recurring due-event pattern this reuses)
 **Roadmap:** M6 · slice 019 · GDD §12.2–12.3 — a **live, fair, self-renewing world**: **beginner's protection** shields new players from attack for a (speed-scaled) window so they aren't spawn-camped, and an **inactivity lifecycle** turns long-abandoned accounts into farmable, then map-reclaimable, valleys.
 

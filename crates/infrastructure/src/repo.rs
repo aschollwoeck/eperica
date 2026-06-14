@@ -5160,8 +5160,9 @@ impl RankingRepository for PgAccountRepository {
             "SELECT a.id, a.name, a.tag, COALESCE(SUM({pop}), 0)::bigint AS total \
              FROM alliances a \
              JOIN alliance_members am ON am.alliance_id = a.id \
+             JOIN users u ON u.id = am.player_id \
              JOIN villages v ON v.owner_id = am.player_id AND v.world_id = $1 \
-             WHERE {qf} \
+             WHERE {qf} AND u.abandoned_at IS NULL \
              GROUP BY a.id, a.name, a.tag HAVING COALESCE(SUM({pop}), 0) > 0 \
              ORDER BY total DESC, a.id ASC LIMIT $7"
         );
