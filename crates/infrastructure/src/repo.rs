@@ -4753,12 +4753,14 @@ impl AllianceRepository for PgAccountRepository {
     }
 
     async fn list_posts(&self, thread: u128, limit: i64) -> Result<Vec<ForumPost>, RepoError> {
-        let rows = sqlx::query(
+        // Fetch the **newest** `limit` posts (so a long thread shows recent replies, not just the opening
+        // window), then return them oldest→newest for display.
+        let mut rows = sqlx::query(
             "SELECT u.username AS author_name, p.body, \
                     (EXTRACT(EPOCH FROM p.created_at) * 1000)::bigint AS created_ms \
              FROM alliance_posts p JOIN users u ON u.id = p.author_id \
              WHERE p.world_id = $1 AND p.thread_id = $2 \
-             ORDER BY p.created_at ASC, p.id ASC LIMIT $3",
+             ORDER BY p.created_at DESC, p.id DESC LIMIT $3",
         )
         .bind(Uuid::from_u128(self.world_id.0))
         .bind(Uuid::from_u128(thread))
@@ -4766,6 +4768,7 @@ impl AllianceRepository for PgAccountRepository {
         .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
+        rows.reverse();
         rows.iter()
             .map(|r| {
                 Ok(ForumPost {
