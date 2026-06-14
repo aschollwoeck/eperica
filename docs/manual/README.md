@@ -25,5 +25,6 @@ manual grows as the game does.
 - [Alliances & diplomacy](alliances.md) — build an Embassy, found or join an alliance, hold roles & rights, set diplomacy, and defend together with shared visibility and incoming-attack warnings.
 - [Ranking & statistics](ranking-and-statistics.md) — leaderboards (population, attack/defence/raider, alliances) filterable by quadrant and time window, public stat pages, and the points you earn defending allies.
 - [Medals & achievements](medals-and-achievements.md) — weekly medals for topping a category, one-time milestone achievements with rewards, the top-climbers board, and population over time.
+- [Quests & onboarding](quests-and-onboarding.md) — a guided starter quest chain that walks you through the core loop and rewards each step with resources, culture, and troops.
 
 *(More chapters arrive as those features ship.)*
