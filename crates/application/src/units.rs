@@ -376,7 +376,7 @@ pub async fn order_train<A, U, T, S>(
     count: u32,
 ) -> Result<(), TrainError>
 where
-    A: AccountRepository,
+    A: AccountRepository + crate::ports::ArtifactRepository,
     U: UnitRepository,
     T: TrainingRepository,
     S: crate::ports::StarvationRepository,
@@ -416,16 +416,16 @@ where
         .iter()
         .find(|b| b.kind == spec.trained_in)
         .map_or(0, |b| b.level);
+    // 020 AC6: a Trainer artifact (account-wide) speeds training.
+    let effects = crate::artifact::account_effects(accounts, owner).await?;
+    let base_per_unit =
+        per_unit_time_secs(spec.train_secs, building_level, &unit_rules.training, speed);
+    let per_unit_secs = ((base_per_unit as f64) * effects.training).round().max(1.0) as i64;
     let order = NewTrainingOrder {
         building: spec.trained_in,
         unit,
         count,
-        per_unit_secs: per_unit_time_secs(
-            spec.train_secs,
-            building_level,
-            &unit_rules.training,
-            speed,
-        ),
+        per_unit_secs,
     };
     training
         .start_training(village.id, settled, settled_from, now, order)
@@ -773,6 +773,9 @@ mod tests {
             Ok(None)
         }
     }
+
+    // 020: no artifacts in the training tests (defaults apply); they assert base training times.
+    impl crate::ports::ArtifactRepository for FakeAccounts {}
 
     #[derive(Default)]
     struct FakeUnits {

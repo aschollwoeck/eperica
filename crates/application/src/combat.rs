@@ -433,6 +433,12 @@ where
             ));
         }
     };
+    // 020 AC6: the artifact effects each side brings — attacker's Eyes (scout power) + the defender's
+    // Architect (building durability) and Confuser (scout defence).
+    let attacker_effects =
+        crate::artifact::village_effects(accounts, attack.owner, home.id).await?;
+    let defender_effects =
+        crate::artifact::village_effects(accounts, target.owner, target.id).await?;
 
     // Attacker pools (Smithy-scaled).
     let atk_roster = home.tribe.map_or(&[][..], |t| unit_rules.roster(t));
@@ -508,12 +514,14 @@ where
             .filter(|(id, _)| !is_scout(id))
             .cloned()
             .collect();
-        let attacker_power = scouting_power(scouts, atk_roster);
+        // Eyes sharpens the attacker's scouts; Confuser hardens the defender against scouting (020).
+        let attacker_power = scouting_power(scouts, atk_roster) * attacker_effects.scout_power;
         let mut defender_power = scouting_power(&garrison, def_roster);
         for group in &reinforcements {
             let group_roster = group.home_tribe.map_or(&[][..], |t| unit_rules.roster(t));
             defender_power += scouting_power(&group.troops, group_roster);
         }
+        defender_power *= defender_effects.scout_defense;
         let espionage = resolve_scouting(attacker_power, defender_power, scout_rules);
         let (scouts_after, esp_loss) = apply_losses(scouts, espionage.attacker_loss_frac);
         // Then the main battle's attacker fraction hits the non-scouts and the espionage survivors.
@@ -540,7 +548,9 @@ where
 
     // Catapults (011 AC2): surviving catapults raze a building when the attacker prevails.
     let razed = if outcome.attacker_won {
-        let cat_power = catapult_power(&survivors, atk_roster, &atk_levels, combat_rules);
+        // Architect (defender) toughens buildings against catapults — less effective siege power (020).
+        let cat_power = catapult_power(&survivors, atk_roster, &atk_levels, combat_rules)
+            * defender_effects.durability;
         pick_razed_target(
             &target,
             attack.catapult_target,

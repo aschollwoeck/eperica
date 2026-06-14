@@ -67,7 +67,7 @@ pub async fn order_reinforcement<A, M, S>(
     troops: Vec<(UnitId, u32)>,
 ) -> Result<(), MovementError>
 where
-    A: AccountRepository,
+    A: AccountRepository + crate::ports::ArtifactRepository,
     M: MovementRepository,
     S: StarvationRepository,
 {
@@ -108,7 +108,10 @@ where
         return Err(MovementError::EmptyComposition);
     };
     let distance = map.distance(home.coordinate, dest.coordinate);
-    let secs = travel_time_secs_floored(distance, slowest, speed);
+    // 020 AC6: a Speed artifact (sending village/account) shortens the reinforcement's travel.
+    let effects = crate::artifact::village_effects(accounts, owner, home.id).await?;
+    let secs = ((travel_time_secs_floored(distance, slowest, speed) as f64) / effects.troop_speed)
+        .round() as i64;
     let arrive = Timestamp(now.0 + secs * 1000);
 
     movements
@@ -468,6 +471,9 @@ mod tests {
             Ok(self.target.clone())
         }
     }
+
+    // 020: this fake holds no artifacts (defaults apply); the movement tests assert base travel times.
+    impl crate::ports::ArtifactRepository for FakeAccounts {}
 
     #[derive(Clone)]
     struct Sent {
