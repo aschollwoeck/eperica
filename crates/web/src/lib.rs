@@ -86,6 +86,7 @@ pub fn router(state: AppState) -> Router {
         .route("/reports/scout/{id}", get(handlers::scout_report_detail))
         .route("/reports/{id}", get(handlers::report_detail))
         .route("/leaderboard", get(handlers::leaderboard))
+        .route("/wonder", get(handlers::wonder))
         .route("/stats/player/{id}", get(handlers::player_stats_page))
         .route("/stats/alliance/{id}", get(handlers::alliance_stats_page))
         .route("/styleguide", get(handlers::styleguide))

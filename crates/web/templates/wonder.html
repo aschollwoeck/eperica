@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Wonder of the World</h1>
+  <p class="muted"><a href="/village">← Back to the village</a></p>
+
+  {% match winner %}
+  {% when Some with ((name, tag)) %}
+  <div class="banner banner--victory">
+    <strong>The round is over.</strong>
+    {{ name }} [{{ tag }}] has completed the Wonder of the World and won the world.
+    The world is now frozen.
+  </div>
+  {% when None %}
+  <p class="muted">
+    The first alliance to raise a Wonder of the World to level {{ max_level }} wins the round.
+  </p>
+  {% endmatch %}
+
+  {% if standings.is_empty() %}
+  <p class="muted">No alliance has begun building the Wonder yet.</p>
+  {% else %}
+  <table class="table">
+    <thead>
+      <tr><th>#</th><th>Alliance</th><th>Tag</th><th>Wonder level</th></tr>
+    </thead>
+    <tbody>
+      {% for s in standings %}
+      <tr>
+        <td class="muted">{{ s.rank }}</td>
+        <td>{{ s.name }}</td>
+        <td class="muted">{{ s.tag }}</td>
+        <td>{{ s.level }} / {{ max_level }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endblock %}

@@ -2983,3 +2983,108 @@ async fn frozen_world_rejects_mutations(pool: sqlx::PgPool) {
         "logout stays available after the round ends"
     );
 }
+
+/// 021 AC9: the Wonder race page lists alliances by their Wonder level.
+#[sqlx::test(migrations = "../../migrations")]
+async fn wonder_race_page_shows_progress(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let c = client();
+    let user = unique("race");
+    let email = format!("{user}@example.com");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // The player founds an alliance and raises a Wonder to level 5 on their village.
+    sqlx::query(
+        "INSERT INTO alliances (id, name, tag, founder_id) \
+         SELECT gen_random_uuid(), 'Racers', 'RAC', id FROM users WHERE username = $1",
+    )
+    .bind(&user)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO alliance_members (player_id, alliance_id, role) \
+         SELECT u.id, a.id, 'founder' FROM users u, alliances a \
+         WHERE u.username = $1 AND a.tag = 'RAC'",
+    )
+    .bind(&user)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         SELECT v.id, 18, 'wonder', 5 FROM villages v JOIN users u ON u.id = v.owner_id \
+         WHERE u.username = $1",
+    )
+    .bind(&user)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let body = c
+        .get(format!("{base}/wonder"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("Racers"), "the alliance is listed");
+    assert!(body.contains("5 / 100"), "its Wonder progress shows");
+}
+
+/// 021 AC6/AC9: once won, the Wonder page shows the winner banner.
+#[sqlx::test(migrations = "../../migrations")]
+async fn wonder_winner_banner_shows_when_won(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let c = client();
+    let user = unique("won");
+    let email = format!("{user}@example.com");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO alliances (id, name, tag, founder_id) \
+         SELECT gen_random_uuid(), 'Champions', 'CHM', id FROM users WHERE username = $1",
+    )
+    .bind(&user)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE worlds SET won_at = now(), winner_alliance_id = (SELECT id FROM alliances LIMIT 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let body = c
+        .get(format!("{base}/wonder"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains("The round is over"),
+        "the winner banner shows"
+    );
+    assert!(body.contains("Champions"), "the winning alliance is named");
+}

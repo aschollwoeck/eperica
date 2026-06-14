@@ -12,7 +12,7 @@ use crate::templates::{
     RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate,
     ReportsTemplate, RosterRowView, ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow,
     SmithyTemplate, StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
-    VillageTemplate,
+    VillageTemplate, WonderStandingView, WonderTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -26,16 +26,16 @@ use eperica_application::{
     ConflictMetric, ConquestRepository, DiplomacyCommand, LeaderboardRow, LoginError,
     MedalRepository, MedalSubjectKind, MovementRepository, OasisRepository, QuestRepository,
     RegisterCommand, RegisterError, ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository,
-    TrainingRepository, UnitOrderKind, UnitRepository, Window, alliance_conflict_leaderboard,
-    alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
-    climbers_leaderboard, conflict_leaderboard, disband_alliance, end_protection_if_established,
-    evaluate_achievements, evaluate_quests, expel_member, found_alliance, invite_player,
-    leave_alliance, load_culture, load_economy, map_viewport, order_attack, order_build,
-    order_oasis_attack, order_oasis_recall, order_oasis_reinforce, order_reinforcement,
-    order_research, order_return, order_scout, order_settle, order_smithy_upgrade, order_trade,
-    order_train, player_statistics, population_history, population_leaderboard, register,
-    reinforcement_reports, respond_invite, revoke_invite, set_diplomacy, set_member_role,
-    transfer_founder, viewport_coords,
+    TrainingRepository, UnitOrderKind, UnitRepository, Window, WonderRepository,
+    alliance_conflict_leaderboard, alliance_population_leaderboard, alliance_statistics,
+    alliance_view, authenticate, climbers_leaderboard, conflict_leaderboard, disband_alliance,
+    end_protection_if_established, evaluate_achievements, evaluate_quests, expel_member,
+    found_alliance, invite_player, leave_alliance, load_culture, load_economy, map_viewport,
+    order_attack, order_build, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
+    order_reinforcement, order_research, order_return, order_scout, order_settle,
+    order_smithy_upgrade, order_trade, order_train, player_statistics, population_history,
+    population_leaderboard, register, reinforcement_reports, respond_invite, revoke_invite,
+    set_diplomacy, set_member_role, transfer_founder, viewport_coords,
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, Coordinate,
@@ -844,8 +844,12 @@ pub async fn village(
         }
     };
 
+    // The round-over notice (021 AC7) — best-effort; a lookup error must not break the village view.
+    let world_won = matches!(state.accounts.world_ended().await, Ok(Some(_)));
+
     page(&VillageTemplate {
         username: user.username,
+        world_won,
         village_id: village.id.0.to_string(),
         is_capital: village.is_capital,
         loyalty,
@@ -2446,6 +2450,47 @@ pub async fn leaderboard(
         windowed,
         value_label,
         rows,
+    })
+}
+
+/// The Wonder-of-the-World race page (021 AC9): the alliances by Wonder level, plus the winner banner
+/// once the round is won.
+pub async fn wonder(State(state): State<AppState>) -> Response {
+    let repo = state.accounts.as_ref();
+    let winner = match repo.world_ended().await {
+        Ok(Some(outcome)) => match repo.alliance_summary(outcome.winner).await {
+            Ok(summary) => summary,
+            Err(e) => {
+                tracing::error!(error = %e, "winner alliance lookup failed");
+                return server_error();
+            }
+        },
+        Ok(None) => None,
+        Err(e) => {
+            tracing::error!(error = %e, "world-ended lookup failed");
+            return server_error();
+        }
+    };
+    let standings = match repo.top_wonders().await {
+        Ok(s) => s
+            .into_iter()
+            .enumerate()
+            .map(|(i, s)| WonderStandingView {
+                rank: i + 1,
+                name: s.name,
+                tag: s.tag,
+                level: s.level,
+            })
+            .collect(),
+        Err(e) => {
+            tracing::error!(error = %e, "wonder standings query failed");
+            return server_error();
+        }
+    };
+    page(&WonderTemplate {
+        winner,
+        max_level: eperica_domain::MAX_WONDER_LEVEL,
+        standings,
     })
 }
 

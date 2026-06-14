@@ -31,6 +31,7 @@ mod tests {
     fn village(crop_rate: i64) -> VillageTemplate {
         VillageTemplate {
             username: "player".to_owned(),
+            world_won: false,
             village_id: "1".to_owned(),
             is_capital: false,
             loyalty: 100,
@@ -468,6 +469,8 @@ pub struct VillageSwitchRow {
 pub struct VillageTemplate {
     /// Owner's username.
     pub username: String,
+    /// Whether the world has been won (021 AC7) — shows a victory notice + freeze warning.
+    pub world_won: bool,
     /// The shown village's id (carried into action forms + nav links so they target it, AC11).
     pub village_id: String,
     /// Whether the shown village is the player's capital (badged; raises its field cap, AC9/AC10).
@@ -756,4 +759,27 @@ pub struct QuestsTemplate {
     pub current: Option<CurrentQuestView>,
     /// Quests already completed, in chain order.
     pub completed: Vec<CompletedQuestView>,
+}
+
+/// One alliance's row on the Wonder race board (021 AC9).
+pub struct WonderStandingView {
+    /// 1-based rank by Wonder level.
+    pub rank: usize,
+    /// Alliance name.
+    pub name: String,
+    /// Alliance tag.
+    pub tag: String,
+    /// Its highest Wonder level (0..=100).
+    pub level: u8,
+}
+
+#[derive(Template)]
+#[template(path = "wonder.html")]
+pub struct WonderTemplate {
+    /// The winning alliance `(name, tag)` once the round is won; `None` while it is ongoing (021 AC6).
+    pub winner: Option<(String, String)>,
+    /// The level a Wonder must reach to win (100).
+    pub max_level: u8,
+    /// The race standings, highest Wonder first.
+    pub standings: Vec<WonderStandingView>,
 }

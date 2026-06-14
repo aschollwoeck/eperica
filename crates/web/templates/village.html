@@ -3,6 +3,11 @@
 <section class="panel">
   <h1>{{ username }}'s village{% if is_capital %} <span class="badge">★ Capital</span>{% endif %}</h1>
 
+  {% if world_won %}
+  <p class="alert alert--success">🏆 The Wonder of the World is complete — the round is over and the
+    world is frozen. <a href="/wonder">See the result →</a></p>
+  {% endif %}
+
   {% if let Some(notice) = protection %}
   <p class="alert alert--success">🛡 {{ notice }}</p>
   {% endif %}
