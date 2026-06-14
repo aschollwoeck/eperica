@@ -2760,3 +2760,138 @@ pub trait ModerationRepository: Send + Sync {
         Ok(0)
     }
 }
+
+/// One message line in a conversation (024) — a DM line or a channel line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageView {
+    /// Message id.
+    pub id: u128,
+    /// Sender identity + display name.
+    pub sender: PlayerId,
+    pub sender_name: String,
+    /// Body text.
+    pub body: String,
+    /// When sent (Unix-ms UTC).
+    pub created_ms: i64,
+}
+
+/// A row in the conversations list (024 AC3): a DM thread or a channel, with its latest line + unread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConversationSummary {
+    /// The viewer-relative key (`dm:<other>` / `global` / `alliance:<id>`).
+    pub key: String,
+    /// Display title (the other player's name, or the channel name).
+    pub title: String,
+    /// The latest message's body + time (empty/0 if the thread has no messages yet).
+    pub last_body: String,
+    pub last_ms: i64,
+    /// Unread count for the viewer.
+    pub unread: i64,
+}
+
+/// Persistence for conversations (024): direct messages, channel chat, and per-viewer read state. Default
+/// no-ops so non-comms fakes are untouched.
+#[async_trait]
+pub trait CommsRepository: Send + Sync {
+    /// Persist a direct message (validation/recipient checks are the use-case's). Returns its id.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn send_dm(
+        &self,
+        _sender: PlayerId,
+        _recipient: PlayerId,
+        _body: &str,
+        _now: Timestamp,
+    ) -> Result<u128, RepoError> {
+        Ok(0)
+    }
+
+    /// The DM thread between `viewer` and `other` (both directions), oldest→newest, last `limit`.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn dm_history(
+        &self,
+        _viewer: PlayerId,
+        _other: PlayerId,
+        _limit: i64,
+    ) -> Result<Vec<MessageView>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// `viewer`'s DM threads (one per other party), each with the latest line + unread, newest first.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn dm_threads(&self, _viewer: PlayerId) -> Result<Vec<ConversationSummary>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Persist a channel message (access checks are the use-case's). Returns its id.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn post_chat(
+        &self,
+        _channel_key: &str,
+        _sender: PlayerId,
+        _body: &str,
+        _now: Timestamp,
+    ) -> Result<u128, RepoError> {
+        Ok(0)
+    }
+
+    /// A channel's recent history, oldest→newest, last `limit`.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn chat_history(
+        &self,
+        _channel_key: &str,
+        _limit: i64,
+    ) -> Result<Vec<MessageView>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// The latest line + time of a channel (for the conversations list), or `None` if empty.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn channel_latest(&self, _channel_key: &str) -> Result<Option<(String, i64)>, RepoError> {
+        Ok(None)
+    }
+
+    /// Advance `player`'s read watermark for `conversation` to `now` (024 AC4).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn mark_read(
+        &self,
+        _player: PlayerId,
+        _conversation: &str,
+        _now: Timestamp,
+    ) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// Unread count for `player` in a channel `conversation` (messages after their watermark not their own).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn channel_unread(
+        &self,
+        _player: PlayerId,
+        _channel_key: &str,
+    ) -> Result<i64, RepoError> {
+        Ok(0)
+    }
+
+    /// `player`'s total unread across **all** their DM threads, in one query (the nav badge, 024 AC4).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn dm_total_unread(&self, _player: PlayerId) -> Result<i64, RepoError> {
+        Ok(0)
+    }
+}

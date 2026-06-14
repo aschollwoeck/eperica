@@ -12,10 +12,10 @@ use eperica_domain::{
     Coordinate, GameSpeed, TileKind, Timestamp, WorldConfig, WorldMap, coordinates_within,
 };
 use eperica_infrastructure::{
-    Argon2Hasher, PgAccountRepository, achievement_catalogue, alliance_rules, build_rules,
+    Argon2Hasher, ChatHub, PgAccountRepository, achievement_catalogue, alliance_rules, build_rules,
     combat_rules, culture_rules, economy_rules, ensure_world, fair_play_rules, lifecycle_rules,
     loyalty_rules, map_rules, merchant_rules, now, oasis_rules, quest_chain, ranking_rules,
-    scout_rules, starting_village, unit_rules, wonder_rules,
+    run_chat_listener, scout_rules, starting_village, unit_rules, wonder_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -66,6 +66,11 @@ async fn spawn(pool: sqlx::PgPool) -> String {
         fair_play_rules: Arc::new(fair_play_rules().expect("fair-play rules")),
         // Tests trust the forwarded headers so they can control the client IP deterministically.
         trust_proxy: true,
+        chat_hub: {
+            let hub = ChatHub::new();
+            tokio::spawn(run_chat_listener(pool.clone(), hub.clone()));
+            hub
+        },
         map,
         world: config,
         require_email_confirmation: false,
@@ -3314,5 +3319,254 @@ async fn moderation_report_to_sanction_flow(pool: sqlx::PgPool) {
     assert!(
         !queue2.contains(&subject),
         "the resolved report left the queue"
+    );
+}
+
+/// Register a logged-in client for `name`; returns (client, the account's uuid).
+async fn register_client(
+    base: &str,
+    pool: &sqlx::PgPool,
+    name: &str,
+) -> (reqwest::Client, uuid::Uuid) {
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", name),
+            ("email", &format!("{name}@example.com")),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind(name)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    (c, id)
+}
+
+/// 024 AC2–AC4: a DM appears for both parties; opening it clears the recipient's unread.
+#[sqlx::test(migrations = "../../migrations")]
+async fn dm_conversation_flow(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let alice = unique("alice");
+    let bob = unique("bob");
+    let (ca, _aid) = register_client(&base, &pool, &alice).await;
+    let (cb, bid) = register_client(&base, &pool, &bob).await;
+    let (_ca2, aid) = (&ca, {
+        sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM users WHERE username = $1")
+            .bind(&alice)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    });
+
+    // Alice DMs Bob (key uses Bob's uuid).
+    ca.post(format!("{base}/messages/send"))
+        .form(&[
+            ("conversation", format!("dm:{bid}").as_str()),
+            ("body", "hello bob"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // Bob's unread badge shows 1, and his conversation list contains the thread with Alice.
+    let unread = cb
+        .get(format!("{base}/messages/unread"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(unread.trim(), "1", "bob has one unread");
+    let list = cb
+        .get(format!("{base}/messages"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(list.contains(&alice), "alice's thread is listed for bob");
+
+    // Bob opens the thread (key uses Alice's uuid) → sees the message; unread clears.
+    let convo = cb
+        .get(format!("{base}/messages/c/dm:{aid}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(convo.contains("hello bob"), "bob sees the message");
+    let unread2 = cb
+        .get(format!("{base}/messages/unread"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(unread2.trim(), "0", "opening clears unread");
+}
+
+/// 024 AC5: the global channel is open; a non-member alliance channel is forbidden.
+#[sqlx::test(migrations = "../../migrations")]
+async fn chat_channel_access(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (c, _id) = register_client(&base, &pool, &unique("chatter")).await;
+
+    // Global: post + read works.
+    c.post(format!("{base}/messages/send"))
+        .form(&[("conversation", "global"), ("body", "gg all")])
+        .send()
+        .await
+        .unwrap();
+    let g = c
+        .get(format!("{base}/messages/c/global"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(g.status().as_u16(), 200);
+    assert!(g.text().await.unwrap().contains("gg all"));
+
+    // A non-member alliance channel is forbidden (read + stream).
+    assert_eq!(
+        c.get(format!("{base}/messages/c/alliance:999"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        403
+    );
+    assert_eq!(
+        c.get(format!("{base}/messages/stream/alliance:999"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        403
+    );
+}
+
+/// 024 AC6/AC8: a posted message is delivered live over the SSE stream (LISTEN/NOTIFY round-trip).
+#[sqlx::test(migrations = "../../migrations")]
+async fn chat_live_delivery(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (listener, _l) = register_client(&base, &pool, &unique("listener")).await;
+    let (poster, _p) = register_client(&base, &pool, &unique("poster")).await;
+
+    // Open the global SSE stream and start reading it.
+    let mut resp = listener
+        .get(format!("{base}/messages/stream/global"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+
+    // Give the handler a moment to subscribe, then post a message.
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    poster
+        .post(format!("{base}/messages/send"))
+        .form(&[("conversation", "global"), ("body", "live ping")])
+        .send()
+        .await
+        .unwrap();
+
+    // The SSE stream should carry the message within a couple of seconds.
+    let got = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut acc = String::new();
+        while let Some(chunk) = resp.chunk().await.unwrap() {
+            acc.push_str(&String::from_utf8_lossy(&chunk));
+            if acc.contains("live ping") {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+    assert!(got, "the live message arrived over SSE");
+
+    // And it persisted.
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM chat_messages WHERE channel = 'global'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 1, "the chat message persisted");
+}
+
+/// 024 AC5 (privacy): a third party cannot wiretap a DM live stream — the canonical pair key means only
+/// the two parties' streams match. The actual recipient does receive it live.
+#[sqlx::test(migrations = "../../migrations")]
+async fn dm_stream_is_private_to_the_pair(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (eve, _e) = register_client(&base, &pool, &unique("eve")).await; // the wiretapper
+    let (xavier, _x) = register_client(&base, &pool, &unique("xavier")).await; // the recipient
+    let (zoe, _z) = register_client(&base, &pool, &unique("zoe")).await; // the sender
+    let xid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username LIKE 'xavier%'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let zid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username LIKE 'zoe%'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Eve tries to wiretap Xavier by streaming her "conversation with Xavier"; Xavier streams his with Zoe.
+    let mut eve_stream = eve
+        .get(format!("{base}/messages/stream/dm:{xid}"))
+        .send()
+        .await
+        .unwrap();
+    let mut xav_stream = xavier
+        .get(format!("{base}/messages/stream/dm:{zid}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(eve_stream.status().as_u16(), 200);
+    assert_eq!(xav_stream.status().as_u16(), 200);
+
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    // Zoe DMs Xavier.
+    zoe.post(format!("{base}/messages/send"))
+        .form(&[
+            ("conversation", format!("dm:{xid}").as_str()),
+            ("body", "private secret"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    let received = async |resp: &mut reqwest::Response, secs: u64| -> bool {
+        tokio::time::timeout(std::time::Duration::from_secs(secs), async {
+            let mut acc = String::new();
+            while let Some(chunk) = resp.chunk().await.unwrap() {
+                acc.push_str(&String::from_utf8_lossy(&chunk));
+                if acc.contains("private secret") {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false)
+    };
+
+    // The recipient receives it live...
+    assert!(
+        received(&mut xav_stream, 5).await,
+        "Xavier (a party) receives the DM"
+    );
+    // ...the wiretapper does not.
+    assert!(
+        !received(&mut eve_stream, 1).await,
+        "Eve (not a party) must NOT receive the DM"
     );
 }

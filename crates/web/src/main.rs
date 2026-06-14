@@ -5,11 +5,12 @@
 use axum_extra::extract::cookie::Key;
 use eperica_domain::WorldMap;
 use eperica_infrastructure::{
-    AppConfig, Argon2Hasher, PgAccountRepository, PgEventStore, Scheduler, achievement_catalogue,
-    alliance_rules, artifact_catalogue, build_rules, combat_rules, create_pool, culture_rules,
-    economy_rules, ensure_world_with_release, fair_play_rules, lifecycle_rules, loyalty_rules,
-    map_rules, medal_rules, merchant_rules, oasis_rules, quest_chain, ranking_rules,
-    run_migrations, scout_rules, starting_village, unit_rules, wonder_rules,
+    AppConfig, Argon2Hasher, ChatHub, PgAccountRepository, PgEventStore, Scheduler,
+    achievement_catalogue, alliance_rules, artifact_catalogue, build_rules, combat_rules,
+    create_pool, culture_rules, economy_rules, ensure_world_with_release, fair_play_rules,
+    lifecycle_rules, loyalty_rules, map_rules, medal_rules, merchant_rules, oasis_rules,
+    quest_chain, ranking_rules, run_chat_listener, run_migrations, scout_rules, starting_village,
+    unit_rules, wonder_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -65,6 +66,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 022: designate the operator's moderators (idempotent, P7) from the MODERATORS env list.
     bootstrap_moderators(&accounts).await;
 
+    // 024: live chat fan-out — one Postgres listener per process feeds the in-memory hub.
+    let chat_hub = ChatHub::new();
+    tokio::spawn(run_chat_listener(pool.clone(), chat_hub.clone()));
+
     // Background scheduler (P1) — processes due events, builds, unit orders, training, starvation.
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let scheduler = Scheduler::new(
@@ -111,6 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         wonder_rules: Arc::clone(&wonder),
         fair_play_rules: Arc::clone(&fair_play),
         trust_proxy: env_flag("TRUST_PROXY"),
+        chat_hub,
         map,
         world: config.world,
         require_email_confirmation: env_flag("REQUIRE_EMAIL_CONFIRMATION"),

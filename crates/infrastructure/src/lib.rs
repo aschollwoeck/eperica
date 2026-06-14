@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod balance;
+pub mod comms_live;
 pub mod config;
 pub mod db;
 pub mod event_store;
@@ -23,6 +24,7 @@ pub use balance::{
     loyalty_rules, map_rules, medal_rules, merchant_rules, oasis_rules, quest_chain, ranking_rules,
     scout_rules, starting_village, unit_rules, wonder_rules,
 };
+pub use comms_live::{ChatHub, LiveMessage, run_chat_listener};
 pub use config::{AppConfig, ConfigError};
 pub use db::{MIGRATOR, create_pool, run_migrations};
 pub use event_store::{PgEventStore, Scheduler, now};

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>{{ title }}</h1>
+  <p class="muted"><a href="/messages">← All conversations</a></p>
+
+  <ul class="messages" id="messages">
+    {% for l in lines %}
+    <li class="{% if l.mine %}mine{% else %}theirs{% endif %}">
+      <span class="muted sender">{{ l.sender }}:</span> {{ l.body }}
+    </li>
+    {% endfor %}
+  </ul>
+
+  <form method="post" action="/messages/send" class="send">
+    <input type="hidden" name="conversation" value="{{ key }}">
+    <input type="text" name="body" placeholder="Message…" maxlength="2000" autocomplete="off" required>
+    <button type="submit">Send</button>
+  </form>
+
+  <script>
+    // Live updates (024): append new lines from the SSE stream for this conversation.
+    (function () {
+      var list = document.getElementById("messages");
+      var es = new EventSource("/messages/stream/{{ key }}");
+      es.onmessage = function (e) {
+        try {
+          var m = JSON.parse(e.data);
+          var li = document.createElement("li");
+          li.className = "theirs";
+          li.innerHTML = '<span class="muted sender"></span> ';
+          li.querySelector(".sender").textContent = m.sender + ":";
+          li.appendChild(document.createTextNode(m.body));
+          list.appendChild(li);
+          li.scrollIntoView();
+        } catch (_) {}
+      };
+    })();
+  </script>
+</section>
+{% endblock %}

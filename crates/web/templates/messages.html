@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Messages</h1>
+  <p class="muted"><a href="/village">← Back to the village</a></p>
+
+  {% if conversations.is_empty() %}
+  <p class="muted">No conversations yet. Open a player's profile to message them.</p>
+  {% else %}
+  <ul class="conversations">
+    {% for c in conversations %}
+    <li>
+      <a href="/messages/c/{{ c.key }}">
+        <strong>{{ c.title }}</strong>
+        {% if c.unread > 0 %}<span class="badge">{{ c.unread }}</span>{% endif %}
+        <span class="muted preview">{{ c.last_body }}</span>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endblock %}

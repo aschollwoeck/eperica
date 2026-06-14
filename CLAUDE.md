@@ -34,8 +34,11 @@ freeze-guard chokepoints; DB-backed rate limiting (429); and reproducible, advis
 shared registration-IP association + inhuman action-rate — surfaced to moderators). The **performance &
 scale** slice (023, the M8 launch-hardening capstone: a reusable large-world seeder feeding both CI scale
 guards and a re-runnable `eperica-perf` seed/measure/load tool, criterion hot-path benches, a query/index
-audit, and a scale + P5 horizontal-scale report — measurement & tuning only, no gameplay change) is in
-progress (M8).
+audit, and a scale + P5 horizontal-scale report — measurement & tuning only, no gameplay change), closing
+the dependency-ordered roadmap. App-layer social/meta features are then pulled in as needed; the first is
+the **communication** slice (024: WhatsApp-style conversations — direct-message threads + global/alliance
+chat channels, persisted and delivered live via SSE + Postgres `LISTEN/NOTIFY`, with per-conversation
+unread + a nav badge; sends reuse the 021/022 freeze/sanction/rate-limit guards) is in progress.
 
 ## Read the specs first — they are the source of truth
 
@@ -49,7 +52,7 @@ progress (M8).
 - **`specs/roadmap.md`** — dependency-ordered build order (slices 001 → end-game).
 - **`specs/social-and-meta-features.md`** — app-layer features (chat, profiles, UX) — not sim rules.
 - **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the active slice. Currently:
-  `023-performance-and-scale`.
+  `024-messaging-and-chat`.
 
 If behavior must change, **update the spec first**, then the code.
 

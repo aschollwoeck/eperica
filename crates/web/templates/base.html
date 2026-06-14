@@ -10,11 +10,27 @@
 <body>
   <header class="topbar">
     <a class="topbar__brand" href="/">Eperica</a>
-    <nav class="topbar__nav"><a href="/leaderboard">Leaderboards</a> <a href="/wonder">Wonder</a></nav>
+    <nav class="topbar__nav"><a href="/leaderboard">Leaderboards</a> <a href="/wonder">Wonder</a> <a href="/messages">Messages <span id="unread-badge" class="badge" hidden></span></a></nav>
   </header>
   <main class="container">
     {% block content %}{% endblock %}
   </main>
   <footer class="footer">Eperica — a faithful Travian-style strategy MMO</footer>
+  <script>
+    // Poll the total unread for the Messages nav badge (024). Best-effort; ignored when logged out.
+    (function () {
+      var badge = document.getElementById("unread-badge");
+      if (!badge) return;
+      function refresh() {
+        fetch("/messages/unread").then(function (r) { return r.ok ? r.text() : "0"; })
+          .then(function (t) {
+            var n = parseInt(t, 10) || 0;
+            if (n > 0) { badge.textContent = n; badge.hidden = false; } else { badge.hidden = true; }
+          }).catch(function () {});
+      }
+      refresh();
+      setInterval(refresh, 20000);
+    })();
+  </script>
 </body>
 </html>
