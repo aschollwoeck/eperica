@@ -67,10 +67,64 @@ fn building_level(village: &Village, kind: BuildingKind) -> u8 {
 /// Validates max level, prerequisites, and affordability, then settles resources, debits the cost,
 /// and enqueues a build order completing after the (speed- and Main-Building-scaled) build time.
 ///
+/// The **Wonder of the World** (021) is rejected here — it is built only through the gated
+/// [`crate::wonder::order_wonder_build`] (site control + held plan), never the generic build path (P4).
+///
 /// # Errors
 /// See [`BuildError`].
 #[allow(clippy::too_many_arguments)]
 pub async fn order_build<A, B, S>(
+    accounts: &A,
+    builds: &B,
+    starvation: &S,
+    economy_rules: &EconomyRules,
+    build_rules: &BuildRules,
+    unit_rules: &UnitRules,
+    speed: GameSpeed,
+    now: Timestamp,
+    owner: PlayerId,
+    selected: Option<eperica_domain::VillageId>,
+    target: BuildTarget,
+) -> Result<(), BuildError>
+where
+    A: AccountRepository,
+    B: BuildRepository,
+    S: crate::ports::StarvationRepository,
+{
+    // The Wonder is never buildable through the generic path (it has no gate here) — only via
+    // `order_wonder_build`, which enforces site control + held plan (021 AC4, P4).
+    if matches!(
+        target,
+        BuildTarget::Building {
+            kind: BuildingKind::Wonder,
+            ..
+        }
+    ) {
+        return Err(BuildError::NotFound);
+    }
+    place_build_order(
+        accounts,
+        builds,
+        starvation,
+        economy_rules,
+        build_rules,
+        unit_rules,
+        speed,
+        now,
+        owner,
+        selected,
+        target,
+    )
+    .await
+}
+
+/// Settle + enqueue a build order, with the common validation (max level, prerequisites, exclusivity,
+/// affordability). Shared by [`order_build`] and the gated Wonder flow ([`crate::wonder::order_wonder_build`]).
+///
+/// # Errors
+/// See [`BuildError`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn place_build_order<A, B, S>(
     accounts: &A,
     builds: &B,
     starvation: &S,
@@ -288,6 +342,7 @@ mod tests {
             oasis_bonus: Default::default(),
             is_capital: false,
             is_natar: false,
+            is_wonder_site: false,
             artifact_effects: eperica_domain::ArtifactEffects::NONE,
         }
     }
@@ -671,6 +726,27 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err, BuildError::MaxLevel);
+    }
+
+    #[tokio::test]
+    async fn generic_build_path_rejects_the_wonder() {
+        // 021 AC4 (P4): the Wonder is never buildable through the generic build path — only via the gated
+        // order_wonder_build. A crafted request to build it here is rejected outright.
+        let accounts = FakeAccounts {
+            village: make_village(0, true),
+            stored: amounts(1_000_000),
+        };
+        let err = order(
+            &accounts,
+            &FakeBuilds::default(),
+            BuildTarget::Building {
+                slot: 18,
+                kind: BuildingKind::Wonder,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, BuildError::NotFound);
     }
 
     #[tokio::test]

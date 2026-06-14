@@ -28,6 +28,9 @@ town_hall = [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14]
 residence = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11]
 palace = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11]
 treasury = [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14]
+# The Wonder of the World (021) is built to level 100; population clamps at the last listed value for
+# higher levels (it is the largest building in the world).
+wonder = [0, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32]
 
 # Storage capacity by building level (index 0 = base, i.e. no Warehouse/Granary built).
 [capacity]

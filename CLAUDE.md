@@ -23,7 +23,12 @@ villages back to the map and soft-deletes the account) slices, closing M6. The *
 villages** slice (020, M7 end-game: at a configured date the reserved Natar tiles materialize into NPC
 villages — ordinary villages owned by a synthetic NPC, reusing the combat engine — each holding one of the
 full Travian artifact set (8 types × small/large/unique); a winning attack from a Treasury village
-captures/steals an artifact, whose effects fold into the sim reads by scope) is in progress (M7).
+captures/steals an artifact, whose effects fold into the sim reads by scope). The **Wonder of the World &
+victory** slice (021, the M7 launch capstone: a second release of capturable Wonder plans + conquerable
+Natar Wonder sites; an alliance that controls a site and holds a plan builds the Wonder — an ordinary
+`BuildingKind` raised through the 003 queue to level 100; the first alliance to 100 wins the round, which
+the server then freezes — reusing 020 plan capture, 014 site conquest, and the 003 build queue) is in
+progress (M7).
 
 ## Read the specs first — they are the source of truth
 
@@ -37,7 +42,7 @@ captures/steals an artifact, whose effects fold into the sim reads by scope) is 
 - **`specs/roadmap.md`** — dependency-ordered build order (slices 001 → end-game).
 - **`specs/social-and-meta-features.md`** — app-layer features (chat, profiles, UX) — not sim rules.
 - **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the active slice. Currently:
-  `020-artifacts-and-natars`.
+  `021-wonder-and-victory`.
 
 If behavior must change, **update the spec first**, then the code.
 

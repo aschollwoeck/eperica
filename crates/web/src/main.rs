@@ -9,7 +9,7 @@ use eperica_infrastructure::{
     alliance_rules, artifact_catalogue, build_rules, combat_rules, create_pool, culture_rules,
     economy_rules, ensure_world_with_release, lifecycle_rules, loyalty_rules, map_rules,
     medal_rules, merchant_rules, oasis_rules, quest_chain, ranking_rules, run_migrations,
-    scout_rules, starting_village, unit_rules,
+    scout_rules, starting_village, unit_rules, wonder_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -23,9 +23,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::from_env()?;
     let pool = create_pool(&config.database_url).await?;
     run_migrations(&pool).await?;
-    let world =
-        ensure_world_with_release(&pool, &config.world, config.artifact_release_offset_secs)
-            .await?;
+    let world = ensure_world_with_release(
+        &pool,
+        &config.world,
+        config.artifact_release_offset_secs,
+        config.wonder_release_offset_secs,
+    )
+    .await?;
     let rules = Arc::new(economy_rules()?);
     let units = Arc::new(unit_rules()?);
     let merchants = Arc::new(merchant_rules()?);
@@ -40,6 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let quests = Arc::new(quest_chain()?);
     let lifecycle = Arc::new(lifecycle_rules()?);
     let artifacts = Arc::new(artifact_catalogue()?);
+    let wonder = Arc::new(wonder_rules()?);
     let template = Arc::new(starting_village()?);
     let map = Arc::new(WorldMap::new(
         world.seed as u64,
@@ -79,6 +84,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         world.seed as u64,
         world.created_at,
         world.artifact_release_at,
+        Arc::clone(&wonder),
+        world.wonder_release_at,
     );
     let scheduler_handle = tokio::spawn(scheduler.run(shutdown_rx));
 
@@ -97,6 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         quest_chain: quests,
         lifecycle_rules: lifecycle,
         merchant_rules: merchants,
+        wonder_rules: Arc::clone(&wonder),
         map,
         world: config.world,
         require_email_confirmation: env_flag("REQUIRE_EMAIL_CONFIRMATION"),

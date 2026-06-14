@@ -15,7 +15,7 @@ use eperica_infrastructure::{
     Argon2Hasher, PgAccountRepository, achievement_catalogue, alliance_rules, build_rules,
     combat_rules, culture_rules, economy_rules, ensure_world, lifecycle_rules, loyalty_rules,
     map_rules, merchant_rules, now, oasis_rules, quest_chain, ranking_rules, scout_rules,
-    starting_village, unit_rules,
+    starting_village, unit_rules, wonder_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -62,6 +62,7 @@ async fn spawn(pool: sqlx::PgPool) -> String {
         quest_chain: Arc::new(quest_chain().expect("quest chain")),
         lifecycle_rules: Arc::new(lifecycle_rules().expect("lifecycle rules")),
         merchant_rules: Arc::new(merchant_rules().expect("merchant rules")),
+        wonder_rules: Arc::new(wonder_rules().expect("wonder rules")),
         map,
         world: config,
         require_email_confirmation: false,
@@ -2903,4 +2904,195 @@ async fn village_shows_held_artifacts(pool: sqlx::PgPool) {
         body.contains("Speed (large)"),
         "the held artifact is listed"
     );
+}
+
+/// 021 AC7: once the world is won, the server rejects mutating game actions (POSTs) but still serves
+/// reads and authentication, so players can log in to see the result.
+#[sqlx::test(migrations = "../../migrations")]
+async fn frozen_world_rejects_mutations(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let c = client();
+    let user = unique("freeze");
+    let email = format!("{user}@example.com");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // A read works while the world is open.
+    assert_ne!(
+        c.get(format!("{base}/village"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        403
+    );
+
+    // Win + freeze the world: record a winner alliance and `won_at`.
+    sqlx::query(
+        "INSERT INTO alliances (id, name, tag, founder_id) \
+         SELECT gen_random_uuid(), 'Winners', 'WIN', id FROM users LIMIT 1",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE worlds SET won_at = now(), winner_alliance_id = (SELECT id FROM alliances LIMIT 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // A mutating game action is now rejected (the guard runs before the handler).
+    let build = c
+        .post(format!("{base}/village/build"))
+        .form(&[("target", "field"), ("slot", "0")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(build.status().as_u16(), 403, "mutations are frozen");
+
+    // Reads still work...
+    assert_ne!(
+        c.get(format!("{base}/village"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        403,
+        "reads stay available after the round ends"
+    );
+    // ...and authentication is still allowed (not frozen).
+    assert_ne!(
+        c.post(format!("{base}/logout"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        403,
+        "logout stays available after the round ends"
+    );
+}
+
+/// 021 AC9: the Wonder race page lists alliances by their Wonder level.
+#[sqlx::test(migrations = "../../migrations")]
+async fn wonder_race_page_shows_progress(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let c = client();
+    let user = unique("race");
+    let email = format!("{user}@example.com");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // The player founds an alliance and raises a Wonder to level 5 on their village.
+    sqlx::query(
+        "INSERT INTO alliances (id, name, tag, founder_id) \
+         SELECT gen_random_uuid(), 'Racers', 'RAC', id FROM users WHERE username = $1",
+    )
+    .bind(&user)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO alliance_members (player_id, alliance_id, role) \
+         SELECT u.id, a.id, 'founder' FROM users u, alliances a \
+         WHERE u.username = $1 AND a.tag = 'RAC'",
+    )
+    .bind(&user)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE villages SET is_wonder_site = true \
+         WHERE owner_id = (SELECT id FROM users WHERE username = $1)",
+    )
+    .bind(&user)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         SELECT v.id, 18, 'wonder', 5 FROM villages v JOIN users u ON u.id = v.owner_id \
+         WHERE u.username = $1",
+    )
+    .bind(&user)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let body = c
+        .get(format!("{base}/wonder"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("Racers"), "the alliance is listed");
+    assert!(body.contains("5 / 100"), "its Wonder progress shows");
+}
+
+/// 021 AC6/AC9: once won, the Wonder page shows the winner banner.
+#[sqlx::test(migrations = "../../migrations")]
+async fn wonder_winner_banner_shows_when_won(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let c = client();
+    let user = unique("won");
+    let email = format!("{user}@example.com");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO alliances (id, name, tag, founder_id) \
+         SELECT gen_random_uuid(), 'Champions', 'CHM', id FROM users WHERE username = $1",
+    )
+    .bind(&user)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE worlds SET won_at = now(), winner_alliance_id = (SELECT id FROM alliances LIMIT 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let body = c
+        .get(format!("{base}/wonder"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains("The round is over"),
+        "the winner banner shows"
+    );
+    assert!(body.contains("Champions"), "the winning alliance is named");
 }

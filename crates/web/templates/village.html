@@ -3,6 +3,23 @@
 <section class="panel">
   <h1>{{ username }}'s village{% if is_capital %} <span class="badge">★ Capital</span>{% endif %}</h1>
 
+  {% if world_won %}
+  <p class="alert alert--success">🏆 The Wonder of the World is complete — the round is over and the
+    world is frozen. <a href="/wonder">See the result →</a></p>
+  {% endif %}
+
+  {% if is_wonder_site %}
+  <div class="panel panel--inset">
+    <p>This is a <strong>Wonder of the World</strong> construction site. If your alliance holds a Wonder
+      plan, you can raise the Wonder here, one level at a time, toward victory.</p>
+    <form method="post" action="/wonder/build">
+      <input type="hidden" name="village" value="{{ village_id }}">
+      <button type="submit">Build the Wonder</button>
+    </form>
+    <p class="muted"><a href="/wonder">Wonder race standings →</a></p>
+  </div>
+  {% endif %}
+
   {% if let Some(notice) = protection %}
   <p class="alert alert--success">🛡 {{ notice }}</p>
   {% endif %}

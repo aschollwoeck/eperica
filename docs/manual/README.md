@@ -28,5 +28,6 @@ manual grows as the game does.
 - [Quests & onboarding](quests-and-onboarding.md) — a guided starter quest chain that walks you through the core loop and rewards each step with resources, culture, and troops.
 - [Protection & a living world](protection-and-lifecycle.md) — beginner's protection from attack at the start, and how inactive accounts become farmable and eventually free up the map.
 - [Artifacts & the Natars](artifacts.md) — the end-game's first phase: powerful artifacts released into Natar NPC villages, captured (and stolen) by force from a Treasury village.
+- [The Wonder of the World & victory](wonder-and-victory.md) — the end-game's finale: capture Wonder plans, conquer a Wonder site, build the Wonder to level 100, and win the round for your alliance.
 
 *(More chapters arrive as those features ship.)*

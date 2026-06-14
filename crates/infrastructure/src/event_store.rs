@@ -7,7 +7,8 @@ use eperica_application::{
     process_due_builds, process_due_combat, process_due_lifecycle, process_due_medal_settlement,
     process_due_movements, process_due_oasis_combat, process_due_oasis_regrow,
     process_due_oasis_reinforce, process_due_scouts, process_due_settles, process_due_starvation,
-    process_due_trades, process_due_training, process_due_unit_orders, sync_starvation_checks,
+    process_due_trades, process_due_training, process_due_unit_orders, process_due_wonder_release,
+    process_due_wonder_victory, sync_starvation_checks,
 };
 use eperica_domain::{
     CombatRules, CultureRules, EconomyRules, EventKind, GameSpeed, LifecycleRules, LoyaltyRules,
@@ -161,6 +162,10 @@ pub struct Scheduler {
     world_start: Timestamp,
     /// The artifact-release instant (020), or `None` if not scheduled.
     artifact_release_at: Option<Timestamp>,
+    /// The Wonder rules (021): the release plan/site counts + garrison.
+    wonder_rules: Arc<eperica_domain::WonderRules>,
+    /// The Wonder-release instant (021), or `None` if not scheduled.
+    wonder_release_at: Option<Timestamp>,
     poll_interval: Duration,
 }
 
@@ -190,6 +195,8 @@ impl Scheduler {
         world_seed: u64,
         world_start: Timestamp,
         artifact_release_at: Option<Timestamp>,
+        wonder_rules: Arc<eperica_domain::WonderRules>,
+        wonder_release_at: Option<Timestamp>,
     ) -> Self {
         Self {
             store,
@@ -212,6 +219,8 @@ impl Scheduler {
             world_seed,
             world_start,
             artifact_release_at,
+            wonder_rules,
+            wonder_release_at,
             poll_interval: Duration::from_millis(200),
         }
     }
@@ -450,6 +459,34 @@ impl Scheduler {
                 Ok(n) if n > 0 => tracing::info!(released = n, "scheduler released artifacts"),
                 Ok(_) => {}
                 Err(e) => tracing::error!(error = %e, "scheduler artifact release failed"),
+            }
+            // 021: the one-time Wonder release — materialize conquerable sites + capturable plans once
+            // the world reaches its Wonder date (idempotent, state-driven).
+            let wonder_spec = eperica_application::WonderReleaseSpec {
+                plan_count: self.wonder_rules.plan_count,
+                site_count: self.wonder_rules.site_count,
+                garrison_unit: &self.wonder_rules.garrison_unit,
+                garrison_base_count: self.wonder_rules.garrison_base_count,
+                garrison_per_index: self.wonder_rules.garrison_per_index,
+            };
+            match process_due_wonder_release(
+                &self.builds,
+                self.wonder_release_at,
+                now(),
+                &wonder_spec,
+            )
+            .await
+            {
+                Ok(n) if n > 0 => tracing::info!(released = n, "scheduler released the Wonder"),
+                Ok(_) => {}
+                Err(e) => tracing::error!(error = %e, "scheduler Wonder release failed"),
+            }
+            // 021: the round-victory check — when an alliance completes a Wonder (level 100), record the
+            // winner once and freeze the world (idempotent).
+            match process_due_wonder_victory(&self.builds, now()).await {
+                Ok(true) => tracing::info!("the world has been won — the round is frozen"),
+                Ok(false) => {}
+                Err(e) => tracing::error!(error = %e, "scheduler Wonder victory check failed"),
             }
             // Standalone scout missions (010): no village garrison changes at resolution, so there is
             // nothing to re-sync here (surviving scouts re-sync home when their return arrives).

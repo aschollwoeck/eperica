@@ -43,4 +43,7 @@ pub enum BuildingKind {
     /// Required to hold an **artifact** (020, GDD §6/§11.3); its level gates which artifact scopes a
     /// village may hold. One artifact per village.
     Treasury,
+    /// The **Wonder of the World** (021, GDD §11.3): built only at a conquered Natar Wonder site while
+    /// the alliance holds a plan; the first alliance to raise it to level 100 wins the round.
+    Wonder,
 }
