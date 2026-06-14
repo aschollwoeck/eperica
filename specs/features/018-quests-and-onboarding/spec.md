@@ -1,6 +1,6 @@
 # Feature 018 — Quests & onboarding
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 005 (training — the "train troops" quest; the early core loop quests bootstrap), 003 (construction — the "upgrade a field / build the warehouse" quests), 009/011 (combat — the "send a raid" quest), 013 (settling — the capital that receives quest rewards; culture for CP rewards), 002 (resources/population — the population quest + resource rewards), 001 (accounts/world), 017 (the reward/credit + lazy-evaluation patterns this reuses)
 **Roadmap:** M6 · slice 018 · GDD §12.1 — the **new-player bootstrap**: a **stage-gated quest chain** walks a fresh player through the core loop (upgrade a field → build the warehouse → train troops → send a raid → …), granting **rewards** (resources, culture, sometimes a few troops) on completion to accelerate the slow early game. Quests are **server-evaluated** from persisted state, completed **once**, and **taper off** — the chain is finite, not a perpetual task list.
 

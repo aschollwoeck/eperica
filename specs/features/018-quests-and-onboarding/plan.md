@@ -1,6 +1,6 @@
 # Feature 018 — Quests & onboarding — Technical Plan
 
-**Status:** Reviewed
+**Status:** Verified
 **Spec:** ./spec.md
 
 The new-player bootstrap: a **stage-gated quest chain** evaluated server-side from persisted state, with
