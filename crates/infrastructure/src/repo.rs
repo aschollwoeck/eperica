@@ -7171,6 +7171,62 @@ mod tests {
         assert!(check(next_window).await.is_ok(), "a new window resets");
     }
 
+    /// 022 AC7/AC8: the detection signals are reproducible from persisted state — the shared-IP count
+    /// counts accounts on the same registration IP, and the inhuman-action-rate flag trips at the
+    /// threshold; both are moderator-gated.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn detection_signals_are_reproducible(pool: PgPool) {
+        use eperica_application::ModerationError;
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let rules = crate::fair_play_rules().unwrap();
+        let moderator = make_account(&repo, &template, "mod").await;
+        repo.set_moderator(moderator, true).await.unwrap();
+        let a = make_account(&repo, &template, "shared_a").await;
+        let b = make_account(&repo, &template, "shared_b").await;
+        let c = make_account(&repo, &template, "shared_c").await;
+
+        // Three accounts share one registration IP.
+        for p in [a, b, c] {
+            sqlx::query("UPDATE users SET registration_ip = '203.0.113.7' WHERE id = $1")
+                .bind(Uuid::from_u128(p.0))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        // A non-moderator is denied.
+        assert!(matches!(
+            eperica_application::account_signals(&repo, &repo, &rules, a, b).await,
+            Err(ModerationError::NotAuthorized)
+        ));
+
+        // The shared-IP signal counts all three and flags (threshold 3).
+        let sig = eperica_application::account_signals(&repo, &repo, &rules, moderator, a)
+            .await
+            .unwrap();
+        assert_eq!(sig.ip_association_count, 3);
+        assert!(sig.shared_ip_flagged);
+        // No action tally yet ⇒ no inhuman-rate flag.
+        assert_eq!(sig.peak_action_count, 0);
+        assert!(!sig.inhuman_action_rate);
+
+        // Seed a window action tally at the inhuman threshold for account `a`.
+        sqlx::query(
+            "INSERT INTO rate_limits (subject, action, window_start, count) \
+             VALUES ($1, 'action', now(), $2)",
+        )
+        .bind(a.0.to_string())
+        .bind(i32::try_from(rules.inhuman_rate_threshold).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let sig = eperica_application::account_signals(&repo, &repo, &rules, moderator, a)
+            .await
+            .unwrap();
+        assert_eq!(sig.peak_action_count, rules.inhuman_rate_threshold);
+        assert!(sig.inhuman_action_rate, "the inhuman-rate flag trips");
+    }
+
     /// 019 AC2/AC3: a protected player cannot be attacked (no movement created); once a player attacks,
     /// their own protection ends. Drives the real `order_attack` use-case against the Pg repo.
     #[sqlx::test(migrations = "../../migrations")]
