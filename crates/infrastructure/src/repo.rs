@@ -2944,8 +2944,9 @@ impl CombatRepository for PgAccountRepository {
 
         // 026 AC2: notify the attacker + each distinct defending participant that their report is ready —
         // in the report transaction (so a notification is never orphaned), with the live `notif:<uuid>`
-        // nudge fired on commit. `note` is a data-modifying CTE (always executed); the SELECT does the
-        // NOTIFY.
+        // nudge fired on commit. One bulk insert + per-recipient pg_notify in a single statement
+        // (the same shape as `record`), so a heavily-reinforced battle stays one round-trip (P11). The
+        // feed links to `/reports/{id}` (parses a u128), so the ref_id is the report id in that form.
         let mut recipients: Vec<Uuid> = vec![Uuid::from_u128(r.attacker_player.0)];
         for c in &apply.defender_contributions {
             let d = Uuid::from_u128(c.player.0);
@@ -2953,27 +2954,27 @@ impl CombatRepository for PgAccountRepository {
                 recipients.push(d);
             }
         }
-        for rcpt in recipients {
-            sqlx::query(
-                "WITH note AS ( \
-                    INSERT INTO notifications \
-                        (id, world_id, player_id, kind, ref_kind, ref_id, body, created_at) \
-                    VALUES ($1, $2, $3, 'battle_report', 'report', $4::text, '', \
-                            to_timestamp($5::double precision / 1000.0)) \
-                 ) \
-                 SELECT pg_notify('notifications', json_build_object( \
-                    'key', 'notif:' || $3::text, 'kind', 'battle_report')::text)",
-            )
-            .bind(Uuid::new_v4())
-            .bind(Uuid::from_u128(self.world_id.0))
-            .bind(rcpt)
-            // The feed links to `/reports/{id}`, which parses a u128 — store the report id in that form.
-            .bind(report_id.as_u128().to_string())
-            .bind(apply.battle_at.0)
-            .execute(&mut *tx)
-            .await
-            .map_err(backend)?;
-        }
+        let note_ids: Vec<Uuid> = recipients.iter().map(|_| Uuid::new_v4()).collect();
+        sqlx::query(
+            "WITH ins AS ( \
+                INSERT INTO notifications \
+                    (id, world_id, player_id, kind, ref_kind, ref_id, body, created_at) \
+                SELECT u.id, $1, u.player_id, 'battle_report', 'report', $4, '', \
+                       to_timestamp($5::double precision / 1000.0) \
+                FROM unnest($2::uuid[], $3::uuid[]) AS u(id, player_id) \
+                RETURNING player_id \
+             ) \
+             SELECT pg_notify('notifications', json_build_object( \
+                'key', 'notif:' || player_id::text, 'kind', 'battle_report')::text) FROM ins",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(&note_ids)
+        .bind(&recipients)
+        .bind(report_id.as_u128().to_string())
+        .bind(apply.battle_at.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
 
         // The scouter-facing intel report from scouts that rode the attack (010), if any.
         if let Some(report) = &apply.scout_report {
@@ -7295,7 +7296,7 @@ impl NotificationRepository for PgAccountRepository {
                     (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ms, \
                     (read_at IS NOT NULL) AS read \
              FROM notifications WHERE world_id = $1 AND player_id = $2 \
-             ORDER BY created_at DESC LIMIT $3",
+             ORDER BY created_at DESC, id DESC LIMIT $3",
         )
         .bind(Uuid::from_u128(self.world_id.0))
         .bind(Uuid::from_u128(player.0))

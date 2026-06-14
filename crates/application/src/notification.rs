@@ -3,7 +3,7 @@
 //! keyed by the session player, so a player only ever touches their own notifications.
 
 use crate::ports::{NewNotification, NotificationRepository, NotificationView, RepoError};
-use eperica_domain::{Coordinate, NotificationKind, PlayerId, Timestamp, VillageId};
+use eperica_domain::{Coordinate, NotificationKind, PlayerId, Timestamp};
 use uuid::Uuid;
 
 /// Page size for the notifications feed (P11 — a bounded read).
@@ -82,7 +82,6 @@ pub async fn notify_incoming_attack<N>(
     notifs: &N,
     attacker: PlayerId,
     defender: PlayerId,
-    target: VillageId,
     target_coord: Coordinate,
     arrive: Timestamp,
     now: Timestamp,
@@ -96,6 +95,7 @@ where
     let note = NewNotification {
         player: defender,
         kind: NotificationKind::IncomingAttack,
+        // The map deep-link uses the target coordinates (`/map?x&y`).
         ref_kind: Some("village".to_owned()),
         ref_id: Some(format!("{}|{}", target_coord.x, target_coord.y)),
         body: format!(
@@ -105,7 +105,6 @@ where
             ((arrive.0 - now.0).max(0)) / 1000
         ),
     };
-    let _ = target; // the coord carries the human reference; the id is retained for future deep-links.
     notifs.record(&[note], now).await?;
     Ok(())
 }
@@ -177,7 +176,6 @@ mod tests {
             &notifs,
             pid(1),
             pid(1),
-            VillageId(9),
             coord,
             Timestamp(5000),
             Timestamp(0),
@@ -191,7 +189,6 @@ mod tests {
             &notifs,
             pid(1),
             pid(2),
-            VillageId(9),
             coord,
             Timestamp(5000),
             Timestamp(0),

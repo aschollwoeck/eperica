@@ -304,7 +304,6 @@ where
         notifs,
         owner,
         dest.owner,
-        dest.id,
         dest.coordinate,
         arrive,
         now,
