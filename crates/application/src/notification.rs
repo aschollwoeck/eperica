@@ -9,6 +9,13 @@ use uuid::Uuid;
 /// Page size for the notifications feed (P11 — a bounded read).
 pub const FEED_LIMIT: i64 = 50;
 
+/// The per-player live routing key for the notifications stream (026): `notif:<uuid>`. A player can only
+/// derive (and thus subscribe to) their own, so the stream is private by construction (P4). Must match the
+/// key the repository's `record`/hooks emit on the `notifications` channel.
+pub fn notif_key(player: PlayerId) -> String {
+    format!("notif:{}", Uuid::from_u128(player.0))
+}
+
 /// Why a notification action failed (026).
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum NotificationError {

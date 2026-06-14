@@ -7,7 +7,7 @@ use eperica_domain::{
     LifecycleRules, LoyaltyRules, MerchantRules, QuestDef, RankingRules, StartingVillage,
     UnitRules, WonderRules, WorldConfig, WorldMap,
 };
-use eperica_infrastructure::{Argon2Hasher, ChatHub, PgAccountRepository};
+use eperica_infrastructure::{Argon2Hasher, ChatHub, NotificationHub, PgAccountRepository};
 use std::sync::Arc;
 
 /// Cloneable handler state. Repositories are shared via `Arc`; no per-request state lives here.
@@ -50,6 +50,9 @@ pub struct AppState {
     pub trust_proxy: bool,
     /// Live chat fan-out hub (024) — SSE handlers subscribe; a background listener publishes.
     pub chat_hub: Arc<ChatHub>,
+    /// Live notification fan-out hub (026) — the per-player bell stream subscribes; a background listener
+    /// publishes `notif:<uuid>` nudges.
+    pub notification_hub: Arc<NotificationHub>,
     /// The world's seeded map for the map view and placement (006).
     pub map: Arc<WorldMap>,
     /// World configuration (speed, radius — P7).

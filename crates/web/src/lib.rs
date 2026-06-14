@@ -43,7 +43,9 @@ async fn presence_touch(State(state): State<AppState>, req: Request, next: Next)
     let path = req.uri().path();
     let background = path.starts_with("/static")
         || path == "/messages/unread"
-        || path.starts_with("/messages/stream");
+        || path.starts_with("/messages/stream")
+        || path == "/notifications/unread"
+        || path == "/notifications/stream";
     if background {
         return next.run(req).await;
     }
@@ -232,6 +234,10 @@ pub fn router(state: AppState) -> Router {
         .route("/messages/with/{id}", get(handlers::messages_with))
         .route("/messages/c/{key}", get(handlers::conversation))
         .route("/messages/stream/{key}", get(handlers::messages_stream))
+        .route("/notifications", get(handlers::notifications_page))
+        .route("/notifications/unread", get(handlers::notifications_unread))
+        .route("/notifications/read", post(handlers::notifications_read))
+        .route("/notifications/stream", get(handlers::notifications_stream))
         .route("/wonder", get(handlers::wonder))
         .route("/wonder/build", post(handlers::wonder_build_submit))
         .route("/stats/player/{id}", get(handlers::player_stats_page))

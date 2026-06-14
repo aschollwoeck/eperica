@@ -10,7 +10,7 @@
 <body>
   <header class="topbar">
     <a class="topbar__brand" href="/">Eperica</a>
-    <nav class="topbar__nav"><a href="/leaderboard">Leaderboards</a> <a href="/wonder">Wonder</a> <a href="/messages">Messages <span id="unread-badge" class="badge" hidden></span></a> <a href="/profile">Profile</a></nav>
+    <nav class="topbar__nav"><a href="/leaderboard">Leaderboards</a> <a href="/wonder">Wonder</a> <a href="/notifications" title="Notifications">🔔 <span id="notif-badge" class="badge" hidden></span></a> <a href="/messages">Messages <span id="unread-badge" class="badge" hidden></span></a> <a href="/profile">Profile</a></nav>
   </header>
   <main class="container">
     {% block content %}{% endblock %}
@@ -30,6 +30,26 @@
       }
       refresh();
       setInterval(refresh, 20000);
+    })();
+
+    // Notifications bell (026): poll the unread count, and refresh promptly when a live nudge arrives
+    // over SSE. Best-effort; the count is authoritative from the poll.
+    (function () {
+      var badge = document.getElementById("notif-badge");
+      if (!badge) return;
+      function refresh() {
+        fetch("/notifications/unread").then(function (r) { return r.ok ? r.text() : "0"; })
+          .then(function (t) {
+            var n = parseInt(t, 10) || 0;
+            if (n > 0) { badge.textContent = n; badge.hidden = false; } else { badge.hidden = true; }
+          }).catch(function () {});
+      }
+      refresh();
+      setInterval(refresh, 20000);
+      try {
+        var es = new EventSource("/notifications/stream");
+        es.onmessage = function () { refresh(); };
+      } catch (_) {}
     })();
   </script>
 </body>

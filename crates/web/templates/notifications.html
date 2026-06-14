@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Notifications</h1>
+  <p class="muted"><a href="/village">← Back to the village</a></p>
+
+  {% if notifications.is_empty() %}
+  <p class="muted">No notifications yet. You'll be alerted here about incoming attacks, battle reports, and new messages.</p>
+  {% else %}
+  <ul class="notifications">
+    {% for n in notifications %}
+    <li class="{% if !n.read %}unread{% endif %}">
+      {% if !n.href.is_empty() %}<a href="{{ n.href }}">{% endif %}
+      <strong>{{ n.label }}</strong>
+      {% if !n.body.is_empty() %}<span class="muted preview">{{ n.body }}</span>{% endif %}
+      {% if !n.href.is_empty() %}</a>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endblock %}

@@ -12,10 +12,11 @@ use eperica_domain::{
     Coordinate, GameSpeed, TileKind, Timestamp, WorldConfig, WorldMap, coordinates_within,
 };
 use eperica_infrastructure::{
-    Argon2Hasher, ChatHub, PgAccountRepository, achievement_catalogue, alliance_rules, build_rules,
-    combat_rules, culture_rules, economy_rules, ensure_world, fair_play_rules, lifecycle_rules,
-    loyalty_rules, map_rules, merchant_rules, now, oasis_rules, quest_chain, ranking_rules,
-    run_chat_listener, scout_rules, starting_village, unit_rules, wonder_rules,
+    Argon2Hasher, ChatHub, NotificationHub, PgAccountRepository, achievement_catalogue,
+    alliance_rules, build_rules, combat_rules, culture_rules, economy_rules, ensure_world,
+    fair_play_rules, lifecycle_rules, loyalty_rules, map_rules, merchant_rules, now, oasis_rules,
+    quest_chain, ranking_rules, run_chat_listener, run_notification_listener, scout_rules,
+    starting_village, unit_rules, wonder_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -69,6 +70,11 @@ async fn spawn(pool: sqlx::PgPool) -> String {
         chat_hub: {
             let hub = ChatHub::new();
             tokio::spawn(run_chat_listener(pool.clone(), hub.clone()));
+            hub
+        },
+        notification_hub: {
+            let hub = NotificationHub::new();
+            tokio::spawn(run_notification_listener(pool.clone(), hub.clone()));
             hub
         },
         map,
@@ -3830,5 +3836,136 @@ async fn dm_surfaces_other_party_presence(pool: sqlx::PgPool) {
     assert!(
         list.contains("Global"),
         "the global channel is listed (sanity)"
+    );
+}
+
+/// 026 AC3/AC4/AC5: a DM gives the recipient an unread notification + a feed entry; opening the feed
+/// clears the bell. Notifications are private to the recipient.
+#[sqlx::test(migrations = "../../migrations")]
+async fn notifications_feed_bell_and_privacy(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let alice = unique("anotif");
+    let bob = unique("bnotif");
+    let carol = unique("cnotif");
+    let (ca, _aid) = register_client(&base, &pool, &alice).await;
+    let (cb, bid) = register_client(&base, &pool, &bob).await;
+    let (cc, _cid) = register_client(&base, &pool, &carol).await;
+
+    // Alice DMs Bob → Bob has one unread notification; Carol (uninvolved) has none.
+    ca.post(format!("{base}/messages/send"))
+        .form(&[
+            ("conversation", format!("dm:{bid}").as_str()),
+            ("body", "knock knock"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let bob_unread = |c: &reqwest::Client| {
+        let c = c.clone();
+        let base = base.clone();
+        async move {
+            c.get(format!("{base}/notifications/unread"))
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(
+        bob_unread(&cb).await.trim(),
+        "1",
+        "bob has one notification"
+    );
+    assert_eq!(
+        bob_unread(&cc).await.trim(),
+        "0",
+        "carol gets none of bob's notifications (private)"
+    );
+
+    // Bob opens the feed → sees the entry, and the bell clears.
+    let feed = cb
+        .get(format!("{base}/notifications"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(feed.contains("New message"), "the feed shows the alert");
+    assert_eq!(
+        bob_unread(&cb).await.trim(),
+        "0",
+        "viewing the feed cleared the bell"
+    );
+
+    // An anonymous request is redirected to login (no notifications for a Visitor).
+    let anon = client();
+    let res = anon
+        .get(format!("{base}/notifications/unread"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+    assert_eq!(
+        res.headers().get(LOCATION).unwrap().to_str().unwrap(),
+        "/login"
+    );
+}
+
+/// 026 AC6: a new notification reaches the recipient's bell stream live, and only theirs.
+#[sqlx::test(migrations = "../../migrations")]
+async fn notification_live_delivery_is_private(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let alice = unique("alive");
+    let bob = unique("blive");
+    let eve = unique("elive");
+    let (ca, _aid) = register_client(&base, &pool, &alice).await;
+    let (cb, bid) = register_client(&base, &pool, &bob).await;
+    let (ce, _eid) = register_client(&base, &pool, &eve).await;
+
+    // Bob and Eve both open their bell streams.
+    let mut bob_stream = cb
+        .get(format!("{base}/notifications/stream"))
+        .send()
+        .await
+        .unwrap();
+    let mut eve_stream = ce
+        .get(format!("{base}/notifications/stream"))
+        .send()
+        .await
+        .unwrap();
+
+    // Alice DMs Bob.
+    ca.post(format!("{base}/messages/send"))
+        .form(&[
+            ("conversation", format!("dm:{bid}").as_str()),
+            ("body", "live ping"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    let got_event = async |resp: &mut reqwest::Response, secs: u64| -> bool {
+        tokio::time::timeout(std::time::Duration::from_secs(secs), async {
+            while let Some(chunk) = resp.chunk().await.unwrap() {
+                if String::from_utf8_lossy(&chunk).contains("new_message") {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false)
+    };
+
+    assert!(
+        got_event(&mut bob_stream, 5).await,
+        "Bob's bell receives the live notification"
+    );
+    assert!(
+        !got_event(&mut eve_stream, 1).await,
+        "Eve does not receive Bob's notification"
     );
 }
