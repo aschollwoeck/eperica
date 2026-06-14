@@ -16,6 +16,7 @@ pub mod medals;
 pub mod movement;
 pub mod oasis;
 pub mod ports;
+pub mod quests;
 pub mod ranking;
 pub mod register;
 pub mod scheduler;
@@ -66,6 +67,7 @@ pub use ports::{
     StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
     UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
+pub use quests::evaluate_quests;
 pub use ranking::{
     RankingError, Window, alliance_conflict_leaderboard, alliance_population_leaderboard,
     alliance_statistics, climbers_leaderboard, conflict_leaderboard, player_statistics,

@@ -7,7 +7,7 @@ use eperica_domain::WorldMap;
 use eperica_infrastructure::{
     AppConfig, Argon2Hasher, PgAccountRepository, PgEventStore, Scheduler, achievement_catalogue,
     alliance_rules, build_rules, combat_rules, create_pool, culture_rules, economy_rules,
-    ensure_world, loyalty_rules, map_rules, medal_rules, merchant_rules, oasis_rules,
+    ensure_world, loyalty_rules, map_rules, medal_rules, merchant_rules, oasis_rules, quest_chain,
     ranking_rules, run_migrations, scout_rules, starting_village, unit_rules,
 };
 use eperica_web::router;
@@ -34,6 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ranking = Arc::new(ranking_rules()?);
     let medals = Arc::new(medal_rules()?);
     let achievements = Arc::new(achievement_catalogue()?);
+    let quests = Arc::new(quest_chain()?);
     let template = Arc::new(starting_village()?);
     let map = Arc::new(WorldMap::new(
         world.seed as u64,
@@ -83,6 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         alliance_rules: Arc::new(alliance_rules()?),
         ranking_rules: ranking,
         achievement_catalogue: achievements,
+        quest_chain: quests,
         merchant_rules: merchants,
         map,
         world: config.world,

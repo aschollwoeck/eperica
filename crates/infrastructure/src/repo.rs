@@ -11507,6 +11507,147 @@ mod tests {
         assert_eq!(troops2, 7, "troops not re-added");
     }
 
+    /// 018 AC5/AC6: `evaluate_quests` over the seed chain completes each quest only at its
+    /// triggering action (the stage-gate holds the rest), a resumable prefix completes in order in
+    /// one pass, and the finished chain short-circuits to nothing.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn evaluate_quests_gates_and_cascades(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let chain = crate::quest_chain().expect("quest chain");
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let run = async |player| {
+            eperica_application::evaluate_quests(&repo, &econ, &chain, player)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|q| q.0)
+                .collect::<Vec<_>>()
+        };
+
+        let (player, v) = account("q").await;
+        let vid = Uuid::from_u128(v.id.0);
+
+        // Fresh village (fields lvl 0, no warehouse, no troops, no raid, pop 3): nothing is met.
+        assert!(run(player).await.is_empty());
+
+        // Each quest completes only at its action — the gate holds the rest from completing early.
+        sqlx::query("UPDATE village_fields SET level = 2 WHERE village_id = $1 AND slot = 0")
+            .bind(vid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(run(player).await.as_slice(), ["upgrade_field"]);
+
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+             VALUES ($1, 20, 'warehouse', 1)",
+        )
+        .bind(vid)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(run(player).await.as_slice(), ["build_warehouse"]);
+
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 1)",
+        )
+        .bind(vid)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(run(player).await.as_slice(), ["train_troops"]);
+        let cp: i64 = sqlx::query_scalar("SELECT value FROM player_culture WHERE player_id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cp, 50, "train_troops' 50 CP reward landed");
+
+        let (foe, foe_v) = account("foe").await;
+        sqlx::query(
+            "INSERT INTO battle_reports (id, kind, attacker_player, attacker_village, \
+             defender_player, defender_village, attacker_won, luck, morale, wall_before, \
+             wall_after, attacker_forces, attacker_losses, defender_forces, defender_losses) \
+             VALUES ($1,'raid',$2,$3,$4,$5,true,0,0,0,0,'{}','{}','{}','{}')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(Uuid::from_u128(player.0))
+        .bind(vid)
+        .bind(Uuid::from_u128(foe.0))
+        .bind(Uuid::from_u128(foe_v.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(run(player).await.as_slice(), ["send_raid"]);
+
+        // Raise all fields to push population past the 50 threshold (lvl 10 ⇒ 11 pop each).
+        sqlx::query("UPDATE village_fields SET level = 10 WHERE village_id = $1")
+            .bind(vid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(run(player).await.as_slice(), ["grow_population"]);
+        let cp2: i64 = sqlx::query_scalar("SELECT value FROM player_culture WHERE player_id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cp2, 150, "grow_population added its 100 CP (50 + 100)");
+
+        // The finished chain short-circuits to nothing.
+        assert!(run(player).await.is_empty());
+
+        // AC6: a resumable prefix completes in order in one pass, stopping at the first unmet quest.
+        let (p2, v2) = account("p2").await;
+        let v2id = Uuid::from_u128(v2.id.0);
+        sqlx::query("UPDATE village_fields SET level = 2 WHERE village_id = $1 AND slot = 0")
+            .bind(v2id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+             VALUES ($1, 20, 'warehouse', 1)",
+        )
+        .bind(v2id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 1)",
+        )
+        .bind(v2id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            run(p2).await.as_slice(),
+            ["upgrade_field", "build_warehouse", "train_troops"],
+            "the satisfied prefix completes in order, then stops at the unmet send_raid",
+        );
+    }
+
     /// 017 AC10: the count-based predicates — `defensive_wins` (100 lost-defence battles) and
     /// `research_all_units` (every researchable unit of the tribe) — grant at their crossing.
     #[sqlx::test(migrations = "../../migrations")]

@@ -28,8 +28,8 @@ use eperica_application::{
     UnitOrderKind, UnitRepository, Window, alliance_conflict_leaderboard,
     alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
     climbers_leaderboard, conflict_leaderboard, disband_alliance, evaluate_achievements,
-    expel_member, found_alliance, invite_player, leave_alliance, load_culture, load_economy,
-    map_viewport, order_attack, order_build, order_oasis_attack, order_oasis_recall,
+    evaluate_quests, expel_member, found_alliance, invite_player, leave_alliance, load_culture,
+    load_economy, map_viewport, order_attack, order_build, order_oasis_attack, order_oasis_recall,
     order_oasis_reinforce, order_reinforcement, order_research, order_return, order_scout,
     order_settle, order_smithy_upgrade, order_trade, order_train, player_statistics,
     population_history, population_leaderboard, register, reinforcement_reports, respond_invite,
@@ -387,6 +387,19 @@ pub async fn village(
     .await
     {
         tracing::error!(error = %e, "achievement evaluation failed");
+    }
+
+    // 018: lazily complete any onboarding quests now satisfied (server-authoritative, idempotent,
+    // stage-gated). Best-effort — a failure here must not break the village view.
+    if let Err(e) = evaluate_quests(
+        state.accounts.as_ref(),
+        state.rules.as_ref(),
+        state.quest_chain.as_ref(),
+        player,
+    )
+    .await
+    {
+        tracing::error!(error = %e, "quest evaluation failed");
     }
 
     let economy = match load_economy(
