@@ -20,6 +20,7 @@ pub mod medals;
 pub mod movement;
 pub mod oasis;
 pub mod ports;
+pub mod profile;
 pub mod quests;
 pub mod ranking;
 pub mod register;
@@ -78,12 +79,14 @@ pub use ports::{
     MovementView, NewBattleReport, NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder,
     NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership, OasisReinforceOutcome,
     OasisRepository, OasisState, OutgoingInvite, PasswordHasher, PendingInvite, PlanCapture,
-    PlayerStats, QuestRepository, RankingRepository, RazedBuilding, ReinforcementReturn, RepoError,
-    ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
-    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, StarvationRepository,
-    StationedGroup, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
-    UserRecord, VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
+    PlayerStats, ProfileView, QuestRepository, RankingRepository, RazedBuilding,
+    ReinforcementReturn, RepoError, ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel,
+    ScoutReportView, ScoutRepository, SettleApply, SettleOutcome, SettleRepository,
+    StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
+    UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome, WonderRepository,
+    WonderStanding,
 };
+pub use profile::{ProfileError, edit_bio, view_profile};
 pub use quests::evaluate_quests;
 pub use ranking::{
     RankingError, Window, alliance_conflict_leaderboard, alliance_population_leaderboard,

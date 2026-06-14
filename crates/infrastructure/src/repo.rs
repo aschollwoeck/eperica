@@ -12,11 +12,12 @@ use eperica_application::{
     MedalSubjectKind, MedalView, Membership, MessageView, ModerationRepository, MovementRepository,
     MovementView, NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder,
     NewUser, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
-    OutgoingInvite, PendingInvite, PlayerStats, QuestRepository, RankingRepository, RazedBuilding,
-    RepoError, ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
-    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, StarvationRepository,
-    StationedGroup, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
-    UserRecord, VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
+    OutgoingInvite, PendingInvite, PlayerStats, ProfileView, QuestRepository, RankingRepository,
+    RazedBuilding, RepoError, ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel,
+    ScoutReportView, ScoutRepository, SettleApply, SettleOutcome, SettleRepository,
+    StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
+    UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome, WonderRepository,
+    WonderStanding,
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactEffects,
@@ -808,6 +809,36 @@ impl AccountRepository for PgAccountRepository {
         .await
         .map_err(backend)?;
         Ok(())
+    }
+
+    async fn set_bio(&self, player: PlayerId, bio: &str) -> Result<(), RepoError> {
+        sqlx::query("UPDATE users SET bio = $2 WHERE id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .bind(bio)
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn profile_of(&self, player: PlayerId) -> Result<Option<ProfileView>, RepoError> {
+        let row = sqlx::query(
+            "SELECT username, bio, (EXTRACT(EPOCH FROM last_activity) * 1000)::bigint AS last_ms \
+             FROM users WHERE id = $1",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        row.map(|r| {
+            Ok::<_, RepoError>(ProfileView {
+                player,
+                name: r.try_get("username").map_err(backend)?,
+                bio: r.try_get("bio").map_err(backend)?,
+                last_activity: Timestamp(r.try_get("last_ms").map_err(backend)?),
+            })
+        })
+        .transpose()
     }
 }
 
@@ -7650,6 +7681,49 @@ mod tests {
             ),
             "non-member cannot open the alliance channel"
         );
+    }
+
+    /// 025 AC1/AC2/AC3: a profile's bio round-trips via the edit use-case (invalid rejected), and presence
+    /// is derived from the persisted last_activity.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn profile_bio_and_presence(pool: PgPool) {
+        use eperica_application::{ProfileError, edit_bio, view_profile};
+        use eperica_domain::{Presence, presence};
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let player = make_account(&repo, &template, "prof").await;
+
+        // Fresh profile: empty bio, a recent last_activity (set at spawn).
+        let p = view_profile(&repo, player).await.unwrap();
+        assert_eq!(p.bio, "");
+        assert!(p.name.starts_with("prof"));
+
+        // Edit the bio (trimmed); a too-long bio is rejected.
+        edit_bio(&repo, player, "  Founder of the Iron Pact.  ")
+            .await
+            .unwrap();
+        assert_eq!(
+            view_profile(&repo, player).await.unwrap().bio,
+            "Founder of the Iron Pact."
+        );
+        assert!(matches!(
+            edit_bio(&repo, player, &"x".repeat(5000)).await,
+            Err(ProfileError::Invalid)
+        ));
+
+        // Presence: a freshly-active account is Online; a stale last_activity reads LastSeen.
+        let now = crate::now();
+        let fresh = view_profile(&repo, player).await.unwrap();
+        assert_eq!(presence(fresh.last_activity, now, 600), Presence::Online);
+        sqlx::query("UPDATE users SET last_activity = now() - interval '1 hour' WHERE id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let stale = view_profile(&repo, player).await.unwrap();
+        assert!(matches!(
+            presence(stale.last_activity, now, 600),
+            Presence::LastSeen(_)
+        ));
     }
 
     /// 022 AC1–AC5: a player reports an account; a duplicate open report + a self-report are rejected; a

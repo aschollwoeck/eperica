@@ -204,6 +204,36 @@ pub trait AccountRepository: Send + Sync {
     async fn touch_activity(&self, _player: PlayerId, _now: Timestamp) -> Result<(), RepoError> {
         Ok(())
     }
+
+    /// Set (or clear) a player's profile bio (025). Defaults to a no-op.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn set_bio(&self, _player: PlayerId, _bio: &str) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// A player's public profile (name + bio + last activity for presence, 025), or `None` if unknown.
+    /// Defaults to `None`.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn profile_of(&self, _player: PlayerId) -> Result<Option<ProfileView>, RepoError> {
+        Ok(None)
+    }
+}
+
+/// A player's public profile (025): identity, bio, and the activity instant presence is derived from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileView {
+    /// The player.
+    pub player: PlayerId,
+    /// Display name.
+    pub name: String,
+    /// Free-text bio (empty if unset).
+    pub bio: String,
+    /// Last activity (Unix-ms UTC) — the input to the presence rule.
+    pub last_activity: Timestamp,
 }
 
 /// An in-flight movement, for the owner's view (007 AC7).
