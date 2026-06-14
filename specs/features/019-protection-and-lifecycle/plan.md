@@ -26,9 +26,9 @@ target's protection, and villages are removed via the existing delete path.
   inactivity + abandonment are System-only. No client path sets any of it. The attack gate is server-side.
 - **P7 (configurable, speed-scaled):** `lifecycle.toml` carries the window/threshold/timings/cadence; the
   time-based durations use `scaled_time_secs` against world speed.
-- **P11 (performance):** the attack hot-path adds **one timestamp compare** (target owner's
-  `protected_until`); the activity write is a **throttled conditional UPDATE**; the sweep is one bounded
-  batch per period.
+- **P11 (performance):** the attack hot-path adds **one PK-indexed `protection_of` lookup** on the
+  target owner plus a timestamp compare; the activity write is a **throttled conditional UPDATE**; the
+  sweep is one bounded batch per period.
 
 ## Domain (`domain/lifecycle.rs`, pure)
 
@@ -134,9 +134,10 @@ target's protection, and villages are removed via the existing delete path.
 - **Alliance membership of an abandoned account** — left attached in this slice (safe: the user row is
   retained, so no FK breaks; a villageless retired member is cosmetic). Founder-transfer/auto-leave on
   abandonment is **deferred** (noted in spec open questions).
-- **Protection gate placement.** Gate in `order_attack` (the single attack entry) using the target owner's
-  `protected_until` carried in the target lookup — O(1), no extra query (P11). Re-checking at resolution is
-  unnecessary (protection only *shrinks*; a launch already validated stays valid).
+- **Protection gate placement.** Gate in `order_attack` (the single attack entry) via one PK-indexed
+  `protection_of(dest.owner)` lookup + the pure `is_protected` compare — a single extra cheap query, not
+  an N+1 (P11). Re-checking at resolution is unnecessary (protection only *shrinks*; a launch already
+  validated stays valid).
 - **`create_account` needs the protection window.** The repo computes `protected_until` from the lifecycle
   rules + world speed at spawn; thread the precomputed expiry (or the rules+speed) into the create path.
 - **Phasing (T1–T6):** T1 pure domain (`lifecycle.rs`) + `lifecycle.toml` + loader; T2 migration 0029 +

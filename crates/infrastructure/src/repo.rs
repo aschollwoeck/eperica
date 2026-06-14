@@ -5208,8 +5208,9 @@ impl RankingRepository for PgAccountRepository {
         player: PlayerId,
     ) -> Result<Option<PlayerStats>, RepoError> {
         let pid = Uuid::from_u128(player.0);
+        // 019 AC8: an abandoned account is hidden from its stat page (treated as not found).
         let Some(name): Option<String> =
-            sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
+            sqlx::query_scalar("SELECT username FROM users WHERE id = $1 AND abandoned_at IS NULL")
                 .bind(pid)
                 .fetch_optional(&self.pool)
                 .await
@@ -5976,9 +5977,11 @@ impl LifecycleRepository for PgAccountRepository {
         let world = Uuid::from_u128(self.world_id.0);
         let mut tx = self.pool.begin().await.map_err(backend)?;
         // The live accounts idle past the period's cutoff (already-abandoned excluded — idempotent).
+        // `FOR UPDATE` locks the rows so a concurrent `touch_activity` cannot make one active between
+        // this read and the deletes below (it blocks until this transaction commits).
         let victims: Vec<Uuid> = sqlx::query_scalar(
             "SELECT id FROM users WHERE abandoned_at IS NULL \
-             AND last_activity < to_timestamp($1::double precision / 1000.0)",
+             AND last_activity < to_timestamp($1::double precision / 1000.0) FOR UPDATE",
         )
         .bind(cutoff.0)
         .fetch_all(&mut *tx)
@@ -6429,6 +6432,95 @@ mod tests {
         .await
         .unwrap();
         assert!(again.is_empty(), "no further periods to settle");
+    }
+
+    /// 019 AC8: an abandoned account is excluded from the leaderboards and its stat page, while a live
+    /// account is retained.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn abandoned_excluded_from_boards_and_stats(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let gone = make_account(&repo, &template, "gboard").await;
+        let live = make_account(&repo, &template, "lboard").await;
+        let gone_v = repo.villages_of(gone).await.unwrap()[0].clone();
+        let live_v = repo.villages_of(live).await.unwrap()[0].clone();
+        // A resolved raid gives `gone` attack points (so it shows on the attack board).
+        sqlx::query(
+            "INSERT INTO battle_reports (id, kind, attacker_player, attacker_village, \
+             defender_player, defender_village, attacker_won, luck, morale, wall_before, \
+             wall_after, attacker_forces, attacker_losses, defender_forces, defender_losses, \
+             attack_points) VALUES ($1,'raid',$2,$3,$4,$5,true,0,0,0,0,'{}','{}','{}','{}',50)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(Uuid::from_u128(gone.0))
+        .bind(Uuid::from_u128(gone_v.id.0))
+        .bind(Uuid::from_u128(live.0))
+        .bind(Uuid::from_u128(live_v.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Before abandonment: `gone` is on the population + attack boards and has a stat page.
+        let on_pop = |b: &[LeaderboardRow], p: PlayerId| b.iter().any(|r| r.player == p);
+        let pop = repo
+            .population_board(&econ, BoardScope::World, 100)
+            .await
+            .unwrap();
+        assert!(on_pop(&pop, gone) && on_pop(&pop, live));
+        let atk = repo
+            .conflict_board(ConflictMetric::Attack, BoardScope::World, None, None, 100)
+            .await
+            .unwrap();
+        assert!(
+            on_pop(&atk, gone),
+            "gone is on the attack board before abandonment"
+        );
+        assert!(repo.player_stats(&econ, gone).await.unwrap().is_some());
+
+        // Abandon `gone` (idle past the cutoff).
+        sqlx::query("UPDATE users SET last_activity = to_timestamp(1) WHERE id = $1")
+            .bind(Uuid::from_u128(gone.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.sweep_abandoned(0, Timestamp(1_000_000)).await.unwrap(),
+            1
+        );
+
+        // After: `gone` is gone from the boards and its stat page 404s; `live` remains.
+        let pop = repo
+            .population_board(&econ, BoardScope::World, 100)
+            .await
+            .unwrap();
+        assert!(
+            !on_pop(&pop, gone),
+            "abandoned account left the population board"
+        );
+        assert!(
+            on_pop(&pop, live),
+            "the live account remains on the population board"
+        );
+        let atk = repo
+            .conflict_board(ConflictMetric::Attack, BoardScope::World, None, None, 100)
+            .await
+            .unwrap();
+        assert!(
+            !on_pop(&atk, gone),
+            "abandoned account left the attack board"
+        );
+        assert!(
+            repo.player_stats(&econ, gone).await.unwrap().is_none(),
+            "stat page 404s"
+        );
+        assert!(
+            repo.player_stats(&econ, live).await.unwrap().is_some(),
+            "live stat page remains"
+        );
     }
 
     /// 007 AC1/AC4/AC5: a reinforcement debits the source garrison, arrives once (crash-resume
