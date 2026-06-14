@@ -11,22 +11,23 @@ use eperica_application::{
     MedalRepository, MedalSubjectKind, MedalView, Membership, MovementRepository, MovementView,
     NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
     OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
-    OutgoingInvite, PendingInvite, PlayerStats, RankingRepository, RazedBuilding, RepoError,
-    ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository,
-    SettleApply, SettleOutcome, SettleRepository, StarvationRepository, StationedGroup,
-    TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
-    VillageMarker,
+    OutgoingInvite, PendingInvite, PlayerStats, QuestRepository, RankingRepository, RazedBuilding,
+    RepoError, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
+    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, StarvationRepository,
+    StationedGroup, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
+    UserRecord, VillageMarker,
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, BuildTarget, BuildingKind,
     BuildingSlot, Coordinate, DiplomacyStance, DiplomacyStatus, EconomyRules, MedalCategory,
-    MovementKind, OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant, QueueLane,
-    ResourceAmounts, ResourceField, ResourceKind, Reward, RightSet, ScoutTarget, StartingVillage,
-    TileKind, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
-    WorldId, WorldMap, capacities, coordinates_within, deposit_capped, oasis_garrison,
+    MovementKind, OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant, QuestDef, QuestId,
+    QuestProgress, QueueLane, ResourceAmounts, ResourceField, ResourceKind, Reward, RightSet,
+    ScoutTarget, StartingVillage, TileKind, Timestamp, TradeKind, Tribe, UnitCounts, UnitId,
+    UnitSpec, Village, VillageId, WorldId, WorldMap, capacities, coordinates_within,
+    deposit_capped, oasis_garrison,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 /// SQLx-backed account repository bound to a single world.
@@ -5316,6 +5317,110 @@ fn alliance_row((id, name, tag, value): (Uuid, String, String, i64)) -> Alliance
 /// tie-break never drift (P6/AC13).
 const CLIMBER_DELTA: &str = "(cur.population - COALESCE(prev.population, 0))";
 
+/// Credit a one-time reward to a player's capital (or oldest village) inside an open transaction
+/// (017/018): culture points added, resources credited capped at the capital's storage, and a troop
+/// count upserted into the capital's garrison. Any component may be empty/`None`.
+async fn credit_reward(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    econ: &EconomyRules,
+    world: Uuid,
+    player: Uuid,
+    resources: ResourceAmounts,
+    culture: i64,
+    troops: Option<(&UnitId, u32)>,
+) -> Result<(), RepoError> {
+    if culture != 0 {
+        sqlx::query(
+            "INSERT INTO player_culture (player_id, value, updated_at) VALUES ($1, $2, now()) \
+             ON CONFLICT (player_id) DO UPDATE SET value = player_culture.value + $2",
+        )
+        .bind(player)
+        .bind(culture)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    }
+    let has_resources =
+        resources.wood > 0 || resources.clay > 0 || resources.iron > 0 || resources.crop > 0;
+    if !has_resources && troops.is_none() {
+        return Ok(());
+    }
+    // The capital (else the oldest village) receives resource/troop rewards.
+    let Some(row) = sqlx::query(
+        "SELECT id FROM villages WHERE owner_id = $1 AND world_id = $2 \
+         ORDER BY is_capital DESC, created_at ASC LIMIT 1",
+    )
+    .bind(player)
+    .bind(world)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(backend)?
+    else {
+        return Ok(());
+    };
+    let cap_id: Uuid = row.try_get("id").map_err(backend)?;
+    if has_resources {
+        let brows =
+            sqlx::query("SELECT building_type, level FROM village_buildings WHERE village_id = $1")
+                .bind(cap_id)
+                .fetch_all(&mut **tx)
+                .await
+                .map_err(backend)?;
+        let mut buildings = Vec::with_capacity(brows.len());
+        for br in &brows {
+            let kind = parse_building(&br.try_get::<String, _>("building_type").map_err(backend)?)?;
+            let level: i16 = br.try_get("level").map_err(backend)?;
+            buildings.push(BuildingSlot {
+                kind,
+                level: u8::try_from(level).unwrap_or(0),
+            });
+        }
+        let caps = capacities(&buildings, econ);
+        let (w, c, i, cr): (i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT wood, clay, iron, crop FROM village_resources WHERE village_id = $1",
+        )
+        .bind(cap_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(backend)?;
+        let after = deposit_capped(
+            ResourceAmounts {
+                wood: w,
+                clay: c,
+                iron: i,
+                crop: cr,
+            },
+            resources,
+            caps,
+        );
+        sqlx::query(
+            "UPDATE village_resources SET wood = $2, clay = $3, iron = $4, crop = $5 \
+             WHERE village_id = $1",
+        )
+        .bind(cap_id)
+        .bind(after.wood)
+        .bind(after.clay)
+        .bind(after.iron)
+        .bind(after.crop)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    }
+    if let Some((unit, count)) = troops {
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, $2, $3) \
+             ON CONFLICT (village_id, unit_id) DO UPDATE SET count = village_units.count + EXCLUDED.count",
+        )
+        .bind(cap_id)
+        .bind(&unit.0)
+        .bind(i32::try_from(count).unwrap_or(i32::MAX))
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    }
+    Ok(())
+}
+
 /// Insert one medal row inside an open transaction, idempotent per `(period, category, rank)`.
 async fn insert_medal(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -5645,84 +5750,145 @@ impl AchievementRepository for PgAccountRepository {
             tx.commit().await.map_err(backend)?;
             return Ok(false); // already held — no double grant or reward
         }
-        match def.reward {
+        match &def.reward {
             Reward::None => {}
             Reward::Culture(cp) => {
-                sqlx::query(
-                    "INSERT INTO player_culture (player_id, value, updated_at) \
-                     VALUES ($1, $2, now()) \
-                     ON CONFLICT (player_id) DO UPDATE SET value = player_culture.value + $2",
+                credit_reward(
+                    &mut tx,
+                    econ,
+                    world,
+                    pid,
+                    ResourceAmounts::default(),
+                    *cp,
+                    None,
                 )
-                .bind(pid)
-                .bind(cp)
-                .execute(&mut *tx)
-                .await
-                .map_err(backend)?;
+                .await?;
             }
             Reward::Resources(amount) => {
-                // Credit the player's capital (or oldest village), capped at its storage.
-                if let Some(row) = sqlx::query(
-                    "SELECT id FROM villages WHERE owner_id = $1 AND world_id = $2 \
-                     ORDER BY is_capital DESC, created_at ASC LIMIT 1",
-                )
-                .bind(pid)
-                .bind(world)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(backend)?
-                {
-                    let cap_id: Uuid = row.try_get("id").map_err(backend)?;
-                    let brows = sqlx::query(
-                        "SELECT building_type, level FROM village_buildings WHERE village_id = $1",
-                    )
-                    .bind(cap_id)
-                    .fetch_all(&mut *tx)
-                    .await
-                    .map_err(backend)?;
-                    let mut buildings = Vec::with_capacity(brows.len());
-                    for br in &brows {
-                        let kind = parse_building(
-                            &br.try_get::<String, _>("building_type").map_err(backend)?,
-                        )?;
-                        let level: i16 = br.try_get("level").map_err(backend)?;
-                        buildings.push(BuildingSlot {
-                            kind,
-                            level: u8::try_from(level).unwrap_or(0),
-                        });
-                    }
-                    let caps = capacities(&buildings, econ);
-                    let (w, c, i, cr): (i64, i64, i64, i64) = sqlx::query_as(
-                        "SELECT wood, clay, iron, crop FROM village_resources WHERE village_id = $1",
-                    )
-                    .bind(cap_id)
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(backend)?;
-                    let after = deposit_capped(
-                        ResourceAmounts {
-                            wood: w,
-                            clay: c,
-                            iron: i,
-                            crop: cr,
-                        },
-                        amount,
-                        caps,
-                    );
-                    sqlx::query(
-                        "UPDATE village_resources SET wood = $2, clay = $3, iron = $4, crop = $5 \
-                         WHERE village_id = $1",
-                    )
-                    .bind(cap_id)
-                    .bind(after.wood)
-                    .bind(after.clay)
-                    .bind(after.iron)
-                    .bind(after.crop)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(backend)?;
-                }
+                credit_reward(&mut tx, econ, world, pid, *amount, 0, None).await?;
             }
         }
+        tx.commit().await.map_err(backend)?;
+        Ok(true)
+    }
+}
+
+#[async_trait]
+impl QuestRepository for PgAccountRepository {
+    async fn completed_quests(&self, player: PlayerId) -> Result<HashSet<QuestId>, RepoError> {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT quest_id FROM player_quests WHERE player_id = $1")
+                .bind(Uuid::from_u128(player.0))
+                .fetch_all(&self.pool)
+                .await
+                .map_err(backend)?;
+        Ok(rows.into_iter().map(|(id,)| QuestId(id)).collect())
+    }
+
+    async fn quest_progress(
+        &self,
+        econ: &EconomyRules,
+        player: PlayerId,
+    ) -> Result<QuestProgress, RepoError> {
+        let pid = Uuid::from_u128(player.0);
+        let world = Uuid::from_u128(self.world_id.0);
+        let max_field_level: i32 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(f.level), 0)::int FROM village_fields f \
+             JOIN villages v ON v.id = f.village_id \
+             WHERE v.owner_id = $1 AND v.world_id = $2",
+        )
+        .bind(pid)
+        .bind(world)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        let brows = sqlx::query(
+            "SELECT b.building_type, MAX(b.level) AS level FROM village_buildings b \
+             JOIN villages v ON v.id = b.village_id \
+             WHERE v.owner_id = $1 AND v.world_id = $2 GROUP BY b.building_type",
+        )
+        .bind(pid)
+        .bind(world)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut building_levels = HashMap::with_capacity(brows.len());
+        for br in &brows {
+            let kind = parse_building(&br.try_get::<String, _>("building_type").map_err(backend)?)?;
+            let level: i16 = br.try_get("level").map_err(backend)?;
+            building_levels.insert(kind, u8::try_from(level).unwrap_or(0));
+        }
+        let has_troops: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM village_units u JOIN villages v ON v.id = u.village_id \
+             WHERE v.owner_id = $1 AND v.world_id = $2 AND u.count > 0)",
+        )
+        .bind(pid)
+        .bind(world)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        let has_raided: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM battle_reports WHERE attacker_player = $1)",
+        )
+        .bind(pid)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        let (fields, kinds, levels, pops) = population_arrays(econ);
+        let pop_expr = village_pop_expr("v.id", "$3", "$4", "$5", "$6");
+        let population: i64 = sqlx::query_scalar(&format!(
+            "SELECT COALESCE(SUM({pop_expr}), 0)::bigint FROM villages v \
+             WHERE v.owner_id = $1 AND v.world_id = $2"
+        ))
+        .bind(pid)
+        .bind(world)
+        .bind(&fields)
+        .bind(&kinds)
+        .bind(&levels)
+        .bind(&pops)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(QuestProgress {
+            max_field_level: u8::try_from(max_field_level).unwrap_or(0),
+            building_levels,
+            has_troops,
+            has_raided,
+            population,
+        })
+    }
+
+    async fn complete_quest(
+        &self,
+        econ: &EconomyRules,
+        player: PlayerId,
+        def: &QuestDef,
+    ) -> Result<bool, RepoError> {
+        let pid = Uuid::from_u128(player.0);
+        let world = Uuid::from_u128(self.world_id.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        let inserted = sqlx::query(
+            "INSERT INTO player_quests (player_id, quest_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(pid)
+        .bind(&def.id.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if inserted.rows_affected() == 0 {
+            tx.commit().await.map_err(backend)?;
+            return Ok(false); // already completed — no double reward
+        }
+        credit_reward(
+            &mut tx,
+            econ,
+            world,
+            pid,
+            def.reward.resources,
+            def.reward.culture,
+            def.reward.troops.as_ref().map(|(u, c)| (u, *c)),
+        )
+        .await?;
         tx.commit().await.map_err(backend)?;
         Ok(true)
     }
@@ -11199,6 +11365,146 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(after2, after, "no double reward");
+    }
+
+    /// 018 AC3/AC4: `quest_progress` reflects persisted state (garrison, raid, field level,
+    /// population); `complete_quest` applies its reward (resources capped to the capital, culture,
+    /// troops to the garrison) exactly once per `(player, quest)`.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn quest_progress_and_completion(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let account = async |tag: &str| {
+            let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+            let user = repo
+                .create_account(
+                    NewUser {
+                        username: uname.clone(),
+                        email: format!("{uname}@example.com"),
+                        password_hash: "h".to_owned(),
+                        email_confirmed: true,
+                        tribe: Tribe::Gauls,
+                    },
+                    &template,
+                )
+                .await
+                .expect("create account");
+            (user.id, repo.villages_of(user.id).await.unwrap()[0].clone())
+        };
+        let (player, v) = account("quest").await;
+
+        // A fresh village: no troops, no raids, but a starting population.
+        let p0 = repo.quest_progress(&econ, player).await.unwrap();
+        assert!(!p0.has_troops, "a new village has no garrison");
+        assert!(!p0.has_raided, "a new player has launched no raid");
+        assert!(p0.population > 0, "the starting village has population");
+
+        // Garrison a unit ⇒ has_troops; an upgraded field raises max_field_level.
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 5)",
+        )
+        .bind(Uuid::from_u128(v.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE village_fields SET level = 3 WHERE village_id = $1 AND slot = 0")
+            .bind(Uuid::from_u128(v.id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let p1 = repo.quest_progress(&econ, player).await.unwrap();
+        assert!(p1.has_troops);
+        assert!(p1.max_field_level >= 3);
+
+        // A launched raid ⇒ has_raided.
+        let (foe, foe_v) = account("foe").await;
+        sqlx::query(
+            "INSERT INTO battle_reports (id, kind, attacker_player, attacker_village, \
+             defender_player, defender_village, attacker_won, luck, morale, wall_before, \
+             wall_after, attacker_forces, attacker_losses, defender_forces, defender_losses) \
+             VALUES ($1,'raid',$2,$3,$4,$5,true,0,0,0,0,'{}','{}','{}','{}')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(Uuid::from_u128(player.0))
+        .bind(Uuid::from_u128(v.id.0))
+        .bind(Uuid::from_u128(foe.0))
+        .bind(Uuid::from_u128(foe_v.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(repo.quest_progress(&econ, player).await.unwrap().has_raided);
+
+        // Complete a quest whose reward covers all three kinds; each applies exactly once.
+        let wood_before: i64 =
+            sqlx::query_scalar("SELECT wood FROM village_resources WHERE village_id = $1")
+                .bind(Uuid::from_u128(v.id.0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let def = QuestDef {
+            id: QuestId("q_test".into()),
+            description: "test".into(),
+            condition: eperica_domain::QuestCondition::SendRaid,
+            reward: eperica_domain::QuestReward {
+                resources: ResourceAmounts {
+                    wood: 50,
+                    clay: 0,
+                    iron: 0,
+                    crop: 0,
+                },
+                culture: 30,
+                troops: Some((UnitId("phalanx".into()), 2)),
+            },
+        };
+        assert!(repo.complete_quest(&econ, player, &def).await.unwrap());
+        let cp: i64 = sqlx::query_scalar("SELECT value FROM player_culture WHERE player_id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cp, 30, "the culture reward applied");
+        let wood_after: i64 =
+            sqlx::query_scalar("SELECT wood FROM village_resources WHERE village_id = $1")
+                .bind(Uuid::from_u128(v.id.0))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            wood_after > wood_before,
+            "the resource reward credited the capital"
+        );
+        let troops: i32 = sqlx::query_scalar(
+            "SELECT count FROM village_units WHERE village_id = $1 AND unit_id = 'phalanx'",
+        )
+        .bind(Uuid::from_u128(v.id.0))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(troops, 7, "the troop reward joined the garrison (5 + 2)");
+
+        let completed = repo.completed_quests(player).await.unwrap();
+        assert!(completed.contains(&QuestId("q_test".into())));
+
+        // Re-completion is a no-op — no double reward.
+        assert!(!repo.complete_quest(&econ, player, &def).await.unwrap());
+        let cp2: i64 = sqlx::query_scalar("SELECT value FROM player_culture WHERE player_id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cp2, 30, "culture not re-credited");
+        let troops2: i32 = sqlx::query_scalar(
+            "SELECT count FROM village_units WHERE village_id = $1 AND unit_id = 'phalanx'",
+        )
+        .bind(Uuid::from_u128(v.id.0))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(troops2, 7, "troops not re-added");
     }
 
     /// 017 AC10: the count-based predicates — `defensive_wins` (100 lost-defence battles) and

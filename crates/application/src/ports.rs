@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, BuildTarget, BuildingKind, Coordinate,
     DiplomacyStance, DiplomacyStatus, EconomyRules, EventKind, MedalCategory, MovementKind,
-    OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant, QueueLane, ResourceAmounts,
-    RightSet, ScoutTarget, StartingVillage, Timestamp, TradeKind, Tribe, UnitCounts, UnitId,
-    UnitSpec, Village, VillageId,
+    OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant, QuestDef, QuestId, QuestProgress,
+    QueueLane, ResourceAmounts, RightSet, ScoutTarget, StartingVillage, Timestamp, TradeKind,
+    Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
 };
 use std::collections::HashSet;
 
@@ -2330,5 +2330,30 @@ pub trait AchievementRepository: Send + Sync {
         econ: &EconomyRules,
         player: PlayerId,
         def: &AchievementDef,
+    ) -> Result<bool, RepoError>;
+}
+
+/// Read/write of onboarding quest progress (018). The repository is bound to one world.
+#[async_trait]
+pub trait QuestRepository: Send + Sync {
+    /// The quests a player has completed (018 AC3) — the chain-progress set.
+    async fn completed_quests(&self, player: PlayerId) -> Result<HashSet<QuestId>, RepoError>;
+
+    /// The player's persisted facts the quest conditions read (max field level, per-building max level,
+    /// any troops, any raid launched, population).
+    async fn quest_progress(
+        &self,
+        econ: &EconomyRules,
+        player: PlayerId,
+    ) -> Result<QuestProgress, RepoError>;
+
+    /// Complete `def` for `player` and apply its reward (resources to the capital capped / culture /
+    /// troops to the capital garrison) in **one transaction**, exactly once (the `(player, quest)` PK
+    /// guards against double completion/reward). Returns `true` if newly completed.
+    async fn complete_quest(
+        &self,
+        econ: &EconomyRules,
+        player: PlayerId,
+        def: &QuestDef,
     ) -> Result<bool, RepoError>;
 }
