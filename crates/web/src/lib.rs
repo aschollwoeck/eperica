@@ -55,6 +55,7 @@ pub fn router(state: AppState) -> Router {
         .route("/alliance/transfer", post(handlers::alliance_transfer))
         .route("/alliance/disband", post(handlers::alliance_disband))
         .route("/alliance/diplomacy", post(handlers::alliance_diplomacy))
+        .route("/quests", get(handlers::quests_page))
         .route("/reports", get(handlers::reports))
         .route("/reports/scout/{id}", get(handlers::scout_report_detail))
         .route("/reports/{id}", get(handlers::report_detail))

@@ -2616,3 +2616,86 @@ async fn village_view_grants_achievements(pool: sqlx::PgPool) {
     assert_eq!(climbers.status().as_u16(), 200);
     assert!(climbers.text().await.unwrap().contains("Top climbers"));
 }
+
+/// 018 AC8: the /quests page requires login, shows the player's current quest (with its reward) and
+/// completed list, and lazily completes a quest whose action is now satisfied on view.
+#[sqlx::test(migrations = "../../migrations")]
+async fn quests_page_shows_progress_and_requires_login(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+
+    // AC8: an unauthenticated visitor is redirected to login.
+    let res = client().get(format!("{base}/quests")).send().await.unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+    assert_eq!(
+        res.headers().get(LOCATION).unwrap().to_str().unwrap(),
+        "/login"
+    );
+
+    let c = client();
+    let user = unique("quest");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", format!("{user}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let pid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind(&user)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // A fresh player: the first quest is current (with its reward), nothing completed.
+    let body = c
+        .get(format!("{base}/quests"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("Upgrade a resource field to level 2."));
+    assert!(
+        body.contains("200 wood"),
+        "the current quest's reward shows"
+    );
+    assert!(body.contains("No quests completed yet."));
+
+    // Satisfy the first quest's action; loading the page completes it (lazily, server-side).
+    sqlx::query(
+        "UPDATE village_fields SET level = 2 \
+         WHERE village_id IN (SELECT id FROM villages WHERE owner_id = $1) AND slot = 0",
+    )
+    .bind(pid)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let body = c
+        .get(format!("{base}/quests"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains("✓ Upgrade a resource field to level 2."),
+        "the satisfied quest now appears completed"
+    );
+    assert!(
+        body.contains("Build a Warehouse to store more resources."),
+        "the next quest becomes current"
+    );
+    let completed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM player_quests WHERE player_id = $1 AND quest_id = 'upgrade_field'",
+    )
+    .bind(pid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(completed, 1, "the completion persisted exactly once");
+}

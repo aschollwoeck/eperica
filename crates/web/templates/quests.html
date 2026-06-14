@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Quests</h1>
+  <p class="muted"><a href="/village?village={{ village_id }}">← Village</a></p>
+
+  <h2>Current quest</h2>
+  {% match current %}
+  {% when Some with (q) %}
+  <div class="card">
+    <p><strong>{{ q.description }}</strong></p>
+    <p class="muted">Reward: {{ q.reward }}</p>
+  </div>
+  {% when None %}
+  <p class="muted">All quests complete — you've finished the onboarding chain. Well played!</p>
+  {% endmatch %}
+
+  <h2>Completed</h2>
+  {% if completed.is_empty() %}
+  <p class="muted">No quests completed yet.</p>
+  {% else %}
+  <ul class="stats">
+    {% for q in completed %}<li>✓ {{ q.description }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endblock %}
