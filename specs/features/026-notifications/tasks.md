@@ -7,13 +7,13 @@ advancing. Live delivery + persistence reuse the 024 `LISTEN/NOTIFY` + SSE archi
 
 ## Domain
 
-- [ ] **T1 — Notification kind vocabulary (`domain/notification.rs`; P3).** `NotificationKind`
+- [x] **T1 — Notification kind vocabulary (`domain/notification.rs`; P3).** `NotificationKind`
   (IncomingAttack / BattleReport / NewMessage) with `as_str` / `parse` (stable DB codec) and a per-kind
   label. **Unit tests:** codec round-trips for every variant; unknown string → None; labels (AC1–AC3).
 
 ## Persistence & ports
 
-- [ ] **T2 — `notifications` table + repository (migration `0037`).** `NotificationRepository` (default
+- [x] **T2 — `notifications` table + repository (migration `0037`).** `NotificationRepository` (default
   no-ops): `record(&[NewNotification])` (bulk insert + per-recipient `pg_notify('notifications', …)` in one
   statement), `list(player, limit)`, `unread_count(player)`, `mark_read(player, now)`. `NewNotification` +
   `NotificationView` in ports. **DB tests:** record→list/unread reflect it; `mark_read` clears only the
@@ -21,14 +21,14 @@ advancing. Live delivery + persistence reuse the 024 `LISTEN/NOTIFY` + SSE archi
 
 ## Use-cases + generation
 
-- [ ] **T3 — Use-cases + generation helpers (`application/src/notification.rs`).** `list_notifications`,
+- [x] **T3 — Use-cases + generation helpers (`application/src/notification.rs`).** `list_notifications`,
   `notification_unread`, `mark_notifications_read`; `notify_incoming_attack` / `notify_battle_report` /
   `notify_new_message` (build `NewNotification`s, skip self, call `record`; no-op-safe). `NotificationError`.
   **Tests:** self-notification skipped; helpers tolerate a no-op repo (AC1–AC3, AC7).
 
 ## Hooks (generation at the event commit points)
 
-- [ ] **T4 — Wire the three hooks.** `order_attack` records an `IncomingAttack` for the defender (≠ attacker)
+- [x] **T4 — Wire the three hooks.** `order_attack` records an `IncomingAttack` for the defender (≠ attacker)
   after the movement commits (best-effort, never fails the attack). `apply_battle` inserts a notification per
   participant **in the report transaction** + notifies. `send_dm` inserts a `NewMessage` for the recipient +
   notifies. **DB/app tests:** attacking another's village notifies the defender, not the attacker; attacking
@@ -37,7 +37,7 @@ advancing. Live delivery + persistence reuse the 024 `LISTEN/NOTIFY` + SSE archi
 
 ## Live delivery + web
 
-- [ ] **T5 — Live bus + web surfaces.** `NotificationHub` + `run_notification_listener` (PgListener on
+- [x] **T5 — Live bus + web surfaces.** `NotificationHub` + `run_notification_listener` (PgListener on
   `notifications`), spawned in `main.rs`. Routes: `GET /notifications` (feed; marks read; rows link to ref),
   `GET /notifications/unread` (bell count), `POST /notifications/read` (mark all), `GET /notifications/stream`
   (SSE, per-player `notif:<uuid>` key). `base.html` bell (poll + EventSource), badge JS. Exclude the
