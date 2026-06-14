@@ -61,6 +61,12 @@ pub struct UserRecord {
     /// Whether the account has been **abandoned** by the inactivity sweep (019) — retired: cannot log
     /// in, hidden from rankings, but the row is retained for historical referential integrity.
     pub abandoned: bool,
+    /// Whether the account holds the elevated **Moderator** role (022) — additive to Player.
+    pub is_moderator: bool,
+    /// When the account was permanently **banned** (022), or `None`. A ban always blocks.
+    pub banned_at: Option<Timestamp>,
+    /// The instant a temporary **suspension** lifts (022), or `None`. Blocks while `now` is before it.
+    pub suspended_until: Option<Timestamp>,
 }
 
 /// Errors a repository/port can return to the application.

@@ -323,6 +323,15 @@ fn row_to_user(r: &PgRow) -> Result<UserRecord, RepoError> {
         email_confirmed: r.try_get("email_confirmed").map_err(backend)?,
         tribe,
         abandoned: r.try_get("abandoned").map_err(backend)?,
+        is_moderator: r.try_get("is_moderator").map_err(backend)?,
+        banned_at: r
+            .try_get::<Option<i64>, _>("banned_ms")
+            .map_err(backend)?
+            .map(Timestamp),
+        suspended_until: r
+            .try_get::<Option<i64>, _>("suspended_ms")
+            .map_err(backend)?
+            .map(Timestamp),
     })
 }
 
@@ -471,13 +480,19 @@ impl AccountRepository for PgAccountRepository {
             email_confirmed: user.email_confirmed,
             tribe: user.tribe,
             abandoned: false,
+            is_moderator: false,
+            banned_at: None,
+            suspended_until: None,
         })
     }
 
     async fn find_user_by_username(&self, username: &str) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
             "SELECT id, username, email, password_hash, email_confirmed, tribe, \
-             (abandoned_at IS NOT NULL) AS abandoned FROM users WHERE username = $1",
+             (abandoned_at IS NOT NULL) AS abandoned, is_moderator, \
+             (EXTRACT(EPOCH FROM banned_at) * 1000)::bigint AS banned_ms, \
+             (EXTRACT(EPOCH FROM suspended_until) * 1000)::bigint AS suspended_ms \
+             FROM users WHERE username = $1",
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -489,7 +504,10 @@ impl AccountRepository for PgAccountRepository {
     async fn find_user_by_id(&self, id: PlayerId) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
             "SELECT id, username, email, password_hash, email_confirmed, tribe, \
-             (abandoned_at IS NOT NULL) AS abandoned FROM users WHERE id = $1",
+             (abandoned_at IS NOT NULL) AS abandoned, is_moderator, \
+             (EXTRACT(EPOCH FROM banned_at) * 1000)::bigint AS banned_ms, \
+             (EXTRACT(EPOCH FROM suspended_until) * 1000)::bigint AS suspended_ms \
+             FROM users WHERE id = $1",
         )
         .bind(Uuid::from_u128(id.0))
         .fetch_optional(&self.pool)
@@ -6749,6 +6767,68 @@ mod tests {
             .unwrap();
         let rec = repo.find_user_by_id(player).await.unwrap().unwrap();
         assert!(rec.abandoned, "the sweep flag surfaces on the user record");
+    }
+
+    /// 022 AC1/AC5/AC8: the moderator + sanction fields round-trip, and a sanctioned account reads as
+    /// blocked via the pure `account_blocked` predicate.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn user_sanction_and_role_fields_round_trip(pool: PgPool) {
+        use eperica_domain::account_blocked;
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let player = make_account(&repo, &template, "sanc").await;
+
+        // Fresh account: no role, no sanction, not blocked.
+        let rec = repo.find_user_by_id(player).await.unwrap().unwrap();
+        assert!(!rec.is_moderator);
+        assert_eq!(rec.banned_at, None);
+        assert_eq!(rec.suspended_until, None);
+        assert!(!account_blocked(
+            rec.banned_at,
+            rec.suspended_until,
+            crate::now()
+        ));
+
+        // Grant the moderator role + ban — both round-trip and the account reads as blocked.
+        sqlx::query("UPDATE users SET is_moderator = true, banned_at = now() WHERE id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let rec = repo.find_user_by_id(player).await.unwrap().unwrap();
+        assert!(rec.is_moderator, "the moderator role surfaces");
+        assert!(rec.banned_at.is_some(), "the ban instant surfaces");
+        assert!(account_blocked(
+            rec.banned_at,
+            rec.suspended_until,
+            crate::now()
+        ));
+
+        // A past suspension (no ban) does not block; a future one does.
+        sqlx::query(
+            "UPDATE users SET banned_at = NULL, suspended_until = now() - interval '1 hour' \
+             WHERE id = $1",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let rec = repo.find_user_by_id(player).await.unwrap().unwrap();
+        assert!(!account_blocked(
+            rec.banned_at,
+            rec.suspended_until,
+            crate::now()
+        ));
+        sqlx::query("UPDATE users SET suspended_until = now() + interval '1 hour' WHERE id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let rec = repo.find_user_by_id(player).await.unwrap().unwrap();
+        assert!(account_blocked(
+            rec.banned_at,
+            rec.suspended_until,
+            crate::now()
+        ));
     }
 
     /// 019 AC2/AC3: a protected player cannot be attacked (no movement created); once a player attacks,

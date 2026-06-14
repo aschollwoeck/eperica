@@ -65,6 +65,9 @@ impl AccountRepository for InMemoryAccounts {
             email_confirmed: user.email_confirmed,
             tribe: user.tribe,
             abandoned: false,
+            is_moderator: false,
+            banned_at: None,
+            suspended_until: None,
         };
         users.push(rec.clone());
         Ok(rec)
