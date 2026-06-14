@@ -19,6 +19,7 @@ pub mod map;
 pub mod medals;
 pub mod movement;
 pub mod oasis;
+pub mod quest;
 pub mod ranking;
 pub mod resource;
 pub mod scouting;
@@ -61,6 +62,10 @@ pub use map::{FieldDistribution, MapRules, OasisBonus, TileKind, Weighted, World
 pub use medals::{MedalCategory, MedalRules, period_index, period_start, rank_top};
 pub use movement::{MovementKind, slowest_speed, travel_time_secs, travel_time_secs_floored};
 pub use oasis::{OasisRules, oasis_garrison, regrow_step};
+pub use quest::{
+    QuestCondition, QuestDef, QuestId, QuestProgress, QuestReward, current_quest, newly_completed,
+    quest_met,
+};
 pub use ranking::{RankingRules, apportion};
 pub use resource::ResourceKind;
 pub use scouting::{ScoutOutcome, ScoutRules, ScoutTarget, resolve_scouting, scouting_power};
