@@ -7,12 +7,12 @@
 use eperica_domain::{
     AchievementDef, AchievementId, AchievementKind, AllianceRules, ArtifactDef, ArtifactId,
     ArtifactKind, ArtifactScope, BuildRules, BuildingKind, BuildingSlot, CombatRules, CultureRules,
-    DomainError, EconomyRules, FieldDistribution, LevelSpec, LifecycleRules, LoyaltyRules,
-    MapRules, MedalCategory, MedalRules, MerchantProfile, MerchantRules, OasisBonus, OasisRules,
-    QuestCondition, QuestDef, QuestId, QuestReward, RankingRules, ResearchSpec, ResourceAmounts,
-    ResourceField, ResourceKind, Reward, ScoutRules, SiegeKind, SmithyRules, StartingVillage,
-    TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec, WallProfile, Weighted,
-    WonderRules, wonder_level_spec,
+    DomainError, EconomyRules, FairPlayRules, FieldDistribution, LevelSpec, LifecycleRules,
+    LoyaltyRules, MapRules, MedalCategory, MedalRules, MerchantProfile, MerchantRules, OasisBonus,
+    OasisRules, QuestCondition, QuestDef, QuestId, QuestReward, RankingRules, ResearchSpec,
+    ResourceAmounts, ResourceField, ResourceKind, Reward, ScoutRules, SiegeKind, SmithyRules,
+    StartingVillage, TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec, WallProfile,
+    Weighted, WonderRules, wonder_level_spec,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -99,6 +99,10 @@ const ARTIFACTS_TOML: &str = include_str!(concat!(
 const WONDER_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../specs/balance/wonder.toml"
+));
+const FAIRPLAY_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/fairplay.toml"
 ));
 
 /// Errors that can occur while loading balance data.
@@ -721,6 +725,47 @@ pub fn lifecycle_rules() -> Result<LifecycleRules, BalanceError> {
         inactive_after_secs: dto.inactivity.inactive_after_secs,
         abandon_after_secs: dto.inactivity.abandon_after_secs,
         sweep_interval_secs: dto.inactivity.sweep_interval_secs,
+    })
+}
+
+#[derive(Deserialize)]
+struct FairPlayDto {
+    rate_limit: RateLimitDto,
+    sanctions: SanctionsDto,
+    detection: DetectionDto,
+}
+
+#[derive(Deserialize)]
+struct RateLimitDto {
+    actions_per_window: u32,
+    window_secs: i64,
+    logins_per_window: u32,
+}
+
+#[derive(Deserialize)]
+struct SanctionsDto {
+    suspend_default_secs: i64,
+}
+
+#[derive(Deserialize)]
+struct DetectionDto {
+    ip_association_threshold: u32,
+    inhuman_rate_threshold: u32,
+}
+
+/// Load the fair-play / anti-cheat rules (022, P7) from `fairplay.toml`.
+///
+/// # Errors
+/// Returns [`BalanceError`] if the data cannot be parsed.
+pub fn fair_play_rules() -> Result<FairPlayRules, BalanceError> {
+    let dto: FairPlayDto = toml::from_str(FAIRPLAY_TOML)?;
+    Ok(FairPlayRules {
+        rate_limit_per_window: dto.rate_limit.actions_per_window,
+        rate_window_secs: dto.rate_limit.window_secs,
+        login_limit_per_window: dto.rate_limit.logins_per_window,
+        suspend_default_secs: dto.sanctions.suspend_default_secs,
+        ip_association_threshold: dto.detection.ip_association_threshold,
+        inhuman_rate_threshold: dto.detection.inhuman_rate_threshold,
     })
 }
 
@@ -1755,6 +1800,18 @@ mod tests {
             "abandon is later than inactive"
         );
         assert!(r.sweep_interval_secs > 0);
+    }
+
+    #[test]
+    fn loads_fair_play_rules() {
+        // 022: the rate limits, suspension default, and detection thresholds load and are positive.
+        let r = fair_play_rules().expect("fair-play rules load");
+        assert!(r.rate_limit_per_window > 0);
+        assert!(r.rate_window_secs > 0);
+        assert!(r.login_limit_per_window > 0);
+        assert!(r.suspend_default_secs > 0);
+        assert!(r.ip_association_threshold > 0);
+        assert!(r.inhuman_rate_threshold > 0);
     }
 
     #[test]

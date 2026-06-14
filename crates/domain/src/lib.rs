@@ -15,6 +15,7 @@ pub mod culture;
 pub mod economy;
 pub mod error;
 pub mod event;
+pub mod fairplay;
 pub mod lifecycle;
 pub mod loyalty;
 pub mod map;
@@ -61,6 +62,10 @@ pub use economy::{
 };
 pub use error::DomainError;
 pub use event::{EventKind, ScheduledEvent, Timestamp};
+pub use fairplay::{
+    FairPlayRules, ReportReason, SanctionKind, account_blocked, inhuman_action_rate,
+    shared_ip_flagged,
+};
 pub use lifecycle::{
     LifecycleRules, abandon_cutoff, is_inactive, is_protected, protection_ended_by_population,
     protection_expiry,
