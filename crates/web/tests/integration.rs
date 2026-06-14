@@ -4141,7 +4141,7 @@ async fn alliance_forum_flow_and_access(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn search_finds_players_alliances_and_coordinates(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
-    let (_ca, alice) = register_client(&base, &pool, &unique("Searchable")).await;
+    let (_ca, alice) = register_client(&base, &pool, &unique("sx")).await;
     // Rename to a deterministic prefix.
     sqlx::query("UPDATE users SET username = 'Aragorn' WHERE id = $1")
         .bind(alice)
