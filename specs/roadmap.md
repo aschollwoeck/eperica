@@ -143,7 +143,7 @@ a slice needs them**, not deferred to one block:
 - **Notifications / incoming-attack alerts** — alongside 009.
 - **Messaging & chat** ✅ — delivered as slice **024** (WhatsApp-style conversations: DMs + global/alliance live chat channels via SSE + `LISTEN/NOTIFY`).
 - **Map UI** — alongside the world/movement work (006–007), maturing through M4.
-- **Profile pages / leaderboard UI** — alongside ranking (016–017).
+- **Profile pages / leaderboard UI** — alongside ranking (016–017); the editable **bio + presence** layer (online/last-seen across profile, leaderboard, conversations & map) shipped as slice **025**.
 - **Admin/moderation UI** — alongside 022.
 
 Each is its own feature spec; this list just records *when* in the order they naturally land.

@@ -1,6 +1,6 @@
 # Feature 025 — Player profiles & presence — Plan
 
-**Spec:** ./spec.md · **Status:** Reviewed
+**Spec:** ./spec.md · **Status:** Verified
 
 A small social slice: an editable bio + a presence indicator derived from the existing `last_activity`
 (019). Pure presence rule (P3), owner-only edit (P4), reproducible (P1/P2), online window config (P7).

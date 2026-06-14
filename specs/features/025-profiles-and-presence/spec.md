@@ -1,6 +1,6 @@
 # Feature 025 — Player profiles & presence
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 019 (`last_activity` + the throttled `touch_activity` — the activity signal), 016 (the public player stats page presence/bio attach to), 024 (conversations, where presence is most useful), 001 (auth/sessions)
 **Roadmap:** app-layer social/meta (`social-and-meta-features.md` §Presentation & profiles) — a richer **public profile** (an editable bio) and an **online / last-seen presence** indicator surfaced across the UI.
 

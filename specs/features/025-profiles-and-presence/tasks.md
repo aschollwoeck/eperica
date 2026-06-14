@@ -35,7 +35,7 @@ advancing. Presence derives from the existing 019 `last_activity` — no new act
 
 ## Acceptance
 
-- [ ] **T5 — Docs + review.** rustdoc on new public items; `docs/architecture/0027-profiles-and-presence.md`;
+- [x] **T5 — Docs + review.** rustdoc on new public items; `docs/architecture/0027-profiles-and-presence.md`;
   `docs/manual/` profile/presence note; `CLAUDE.md` active slice → 025. Full gates + P11; `eperica-reviewer`
   until **APPROVE**; PR.
 
