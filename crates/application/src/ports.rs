@@ -8,8 +8,9 @@ use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, BuildTarget,
     BuildingKind, Coordinate, DiplomacyStance, DiplomacyStatus, EconomyRules, EventKind,
     MedalCategory, MovementKind, OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant,
-    QuestDef, QuestId, QuestProgress, QueueLane, ResourceAmounts, RightSet, ScoutTarget,
-    StartingVillage, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
+    QuestDef, QuestId, QuestProgress, QueueLane, ReportReason, ResourceAmounts, RightSet,
+    SanctionKind, ScoutTarget, StartingVillage, Timestamp, TradeKind, Tribe, UnitCounts, UnitId,
+    UnitSpec, Village, VillageId,
 };
 use std::collections::HashSet;
 
@@ -2625,5 +2626,128 @@ pub trait WonderRepository: Send + Sync {
         _won_at: Timestamp,
     ) -> Result<bool, RepoError> {
         Ok(false)
+    }
+}
+
+/// One open report on the moderator review queue (022 AC3): identity + the parties' names for display.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReportView {
+    /// The report's id (the resolve target).
+    pub id: u128,
+    /// The reporting player + their name.
+    pub reporter: PlayerId,
+    pub reporter_name: String,
+    /// The reported account + its name.
+    pub subject: PlayerId,
+    pub subject_name: String,
+    /// The reason + free-text note.
+    pub reason: ReportReason,
+    pub note: String,
+    /// When the report was filed (Unix-ms UTC) — the queue orders by this, oldest first.
+    pub created_ms: i64,
+}
+
+/// Persistence for fair-play moderation (022): the Moderator role, player reports, sanctions, the
+/// rate-limit counters, and the detection signals. Default no-ops/empties so non-moderation fakes are
+/// untouched.
+#[async_trait]
+pub trait ModerationRepository: Send + Sync {
+    /// Set (or clear) the elevated Moderator role on an account (022 AC1) — used by the operator
+    /// bootstrap. Idempotent.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn set_moderator(&self, _player: PlayerId, _is_moderator: bool) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// File a report of `subject` by `reporter` with a reason + note (022 AC2). Returns `true` if a new
+    /// open report was created, `false` if a duplicate **open** report already existed (collapsed).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn file_report(
+        &self,
+        _reporter: PlayerId,
+        _subject: PlayerId,
+        _reason: ReportReason,
+        _note: &str,
+    ) -> Result<bool, RepoError> {
+        Ok(false)
+    }
+
+    /// The open reports, **oldest first**, up to `limit` (022 AC3).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn open_reports(&self, _limit: i64) -> Result<Vec<ReportView>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Resolve an **open** report by `moderator` at `now`, recording the `resolution`, and — in the same
+    /// transaction — apply an optional sanction to the report's subject (022 AC4). Returns `true` if this
+    /// call resolved it, `false` if it was already resolved / not found (idempotent).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn resolve_report(
+        &self,
+        _report_id: u128,
+        _moderator: PlayerId,
+        _now: Timestamp,
+        _resolution: &str,
+        _sanction_kind: Option<SanctionKind>,
+        _suspended_until: Option<Timestamp>,
+    ) -> Result<bool, RepoError> {
+        Ok(false)
+    }
+
+    /// Apply a sanction to `subject` directly (022 AC4) — a **ban** stamps `banned_at = now`, a
+    /// **suspend** sets `suspended_until`, a **warn** changes no block state.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn apply_sanction(
+        &self,
+        _subject: PlayerId,
+        _now: Timestamp,
+        _kind: SanctionKind,
+        _suspended_until: Option<Timestamp>,
+    ) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// How many accounts share `subject`'s registration IP, including itself (022 AC7); 0 if the IP is
+    /// unknown.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn ip_association_count(&self, _subject: PlayerId) -> Result<u32, RepoError> {
+        Ok(0)
+    }
+
+    /// The peak per-window action count recorded for `subject` (022 AC7) — the inhuman-action-rate
+    /// signal's reproducible input.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn peak_action_count(&self, _subject: PlayerId) -> Result<u32, RepoError> {
+        Ok(0)
+    }
+
+    /// Atomically bump the fixed-window counter for `(subject, action)` at the window containing `now`
+    /// (window length `window_secs`) and return the **new** count (022 AC6). The web rate-limit guard
+    /// compares it to the configured limit.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn bump_rate(
+        &self,
+        _subject: &str,
+        _action: &str,
+        _now: Timestamp,
+        _window_secs: i64,
+    ) -> Result<u32, RepoError> {
+        Ok(0)
     }
 }
