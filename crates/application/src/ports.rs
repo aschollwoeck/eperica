@@ -2392,3 +2392,25 @@ pub trait QuestRepository: Send + Sync {
         def: &QuestDef,
     ) -> Result<bool, RepoError>;
 }
+
+/// Persistence for the inactivity → abandonment sweep (019). State-driven like the 017 settlement: the
+/// latest swept period is a watermark, and each period is settled atomically and idempotently.
+#[async_trait]
+pub trait LifecycleRepository: Send + Sync {
+    /// The latest abandonment-sweep period already settled for this world (`MAX(inactivity_sweeps.
+    /// period)`), or `None` if none yet.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn latest_swept_period(&self) -> Result<Option<i64>, RepoError>;
+
+    /// Settle abandonment for `period`: in **one transaction**, record the period watermark and, for
+    /// every live account whose `last_activity` is before `cutoff`, delete its villages (freeing the
+    /// valleys) and flag it `abandoned`. Returns the number of accounts abandoned. Idempotent — a
+    /// re-settle of a recorded period is a no-op (the watermark guards it; already-abandoned accounts
+    /// are excluded regardless).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn sweep_abandoned(&self, period: i64, cutoff: Timestamp) -> Result<usize, RepoError>;
+}

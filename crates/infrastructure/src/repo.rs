@@ -7,10 +7,10 @@ use eperica_application::{
     BattleReportView, BoardScope, BuildRepository, CombatRepository, ConflictMetric,
     ConquestRepository, CultureRepository, DefenderReport, DiplomacyEntry, DueAttack, DueBuild,
     DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade,
-    DueTraining, DueUnitOrder, IncomingAttack, LeaderboardRow, LoyaltyApply, MedalAward,
-    MedalRepository, MedalSubjectKind, MedalView, Membership, MovementRepository, MovementView,
-    NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
-    OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
+    DueTraining, DueUnitOrder, IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply,
+    MedalAward, MedalRepository, MedalSubjectKind, MedalView, Membership, MovementRepository,
+    MovementView, NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder,
+    NewUser, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
     OutgoingInvite, PendingInvite, PlayerStats, QuestRepository, RankingRepository, RazedBuilding,
     RepoError, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
     ScoutRepository, SettleApply, SettleOutcome, SettleRepository, StarvationRepository,
@@ -5959,6 +5959,63 @@ impl QuestRepository for PgAccountRepository {
     }
 }
 
+#[async_trait]
+impl LifecycleRepository for PgAccountRepository {
+    async fn latest_swept_period(&self) -> Result<Option<i64>, RepoError> {
+        sqlx::query_scalar("SELECT MAX(period) FROM inactivity_sweeps WHERE world_id = $1")
+            .bind(Uuid::from_u128(self.world_id.0))
+            .fetch_one(&self.pool)
+            .await
+            .map_err(backend)
+    }
+
+    async fn sweep_abandoned(&self, period: i64, cutoff: Timestamp) -> Result<usize, RepoError> {
+        let world = Uuid::from_u128(self.world_id.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        // The live accounts idle past the period's cutoff (already-abandoned excluded — idempotent).
+        let victims: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM users WHERE abandoned_at IS NULL \
+             AND last_activity < to_timestamp($1::double precision / 1000.0)",
+        )
+        .bind(cutoff.0)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        // Claim the period (watermark). If already recorded, another tick swept it — no double work.
+        let claimed = sqlx::query(
+            "INSERT INTO inactivity_sweeps (world_id, period, abandoned_count) VALUES ($1, $2, $3) \
+             ON CONFLICT (world_id, period) DO NOTHING",
+        )
+        .bind(world)
+        .bind(period)
+        .bind(i32::try_from(victims.len()).unwrap_or(i32::MAX))
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if claimed.rows_affected() == 0 {
+            tx.commit().await.map_err(backend)?;
+            return Ok(0); // period already swept — idempotent no-op
+        }
+        if !victims.is_empty() {
+            // Remove their villages in this world — frees the valleys (cascades village-scoped rows).
+            sqlx::query("DELETE FROM villages WHERE owner_id = ANY($1) AND world_id = $2")
+                .bind(&victims)
+                .bind(world)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+            // Retire (soft-delete) the accounts: kept for referential history, but cannot log in.
+            sqlx::query("UPDATE users SET abandoned_at = now() WHERE id = ANY($1)")
+                .bind(&victims)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+        }
+        tx.commit().await.map_err(backend)?;
+        Ok(victims.len())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5967,7 +6024,9 @@ mod tests {
         BoardScope, ConflictMetric, ConquestTransfer, DefenderContribution, NewBattleReport,
         ReinforcementReturn,
     };
-    use eperica_domain::{AttackMode, EconomyRules, GameSpeed, WorldConfig, is_protected};
+    use eperica_domain::{
+        AttackMode, EconomyRules, GameSpeed, LifecycleRules, WorldConfig, is_protected,
+    };
 
     /// The resources row's last-settled time — the snapshot orders must be computed from.
     async fn snapshot(repo: &PgAccountRepository, village: VillageId) -> Timestamp {
@@ -6260,6 +6319,113 @@ mod tests {
                 .await
                 .unwrap()
         );
+    }
+
+    /// 019 AC7/AC8: the abandonment sweep abandons an idle account — deleting its village (freeing the
+    /// valley) and retiring (but **retaining**) the account row — leaves an active account untouched,
+    /// and is idempotent per period.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn sweep_abandons_inactive_frees_map_and_is_idempotent(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let gone = make_account(&repo, &template, "gone").await;
+        let active = make_account(&repo, &template, "live").await;
+        let gone_v = repo.villages_of(gone).await.unwrap()[0].clone();
+        // `gone` last acted in the deep past; `active` is fresh (seeded at creation).
+        sqlx::query("UPDATE users SET last_activity = to_timestamp(1) WHERE id = $1")
+            .bind(Uuid::from_u128(gone.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        // A cutoff between `gone`'s ancient activity and `active`'s fresh activity.
+        let cutoff = Timestamp(1_000_000);
+
+        let count = repo.sweep_abandoned(0, cutoff).await.unwrap();
+        assert_eq!(count, 1, "the idle account was abandoned");
+        // AC7: the village is gone — the valley is free again.
+        assert!(
+            repo.village_at(gone_v.coordinate).await.unwrap().is_none(),
+            "the abandoned village's valley is freed"
+        );
+        assert!(repo.villages_of(gone).await.unwrap().is_empty());
+        // AC8: the account row is retained (history-safe) but flagged abandoned.
+        let rec = repo
+            .find_user_by_id(gone)
+            .await
+            .unwrap()
+            .expect("the user row is retained");
+        assert!(rec.abandoned, "the account is retired");
+        // The active account is untouched.
+        assert!(
+            !repo
+                .find_user_by_id(active)
+                .await
+                .unwrap()
+                .unwrap()
+                .abandoned
+        );
+        assert!(!repo.villages_of(active).await.unwrap().is_empty());
+        // Idempotent: re-sweeping the recorded period is a no-op.
+        assert_eq!(repo.sweep_abandoned(0, cutoff).await.unwrap(), 0);
+        assert_eq!(repo.latest_swept_period().await.unwrap(), Some(0));
+    }
+
+    /// 019 AC7/AC10: `process_due_lifecycle` settles every complete period once (watermark-driven) and
+    /// catches up, then no-ops when caught up.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn process_due_lifecycle_settles_complete_periods(pool: PgPool) {
+        let Setup {
+            repo,
+            template,
+            config,
+            ..
+        } = setup(pool.clone()).await;
+        let gone = make_account(&repo, &template, "abandon").await;
+        let gone_v = repo.villages_of(gone).await.unwrap()[0].clone();
+        sqlx::query("UPDATE users SET last_activity = to_timestamp(0) WHERE id = $1")
+            .bind(Uuid::from_u128(gone.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let rules = LifecycleRules {
+            beginner_protection_secs: 1,
+            protection_population_threshold: 1,
+            inactive_after_secs: 1,
+            abandon_after_secs: 1,
+            sweep_interval_secs: 10,
+        };
+        let world_start = Timestamp(0);
+        let now = Timestamp(60_000); // period 6 ⇒ periods 0..=5 are complete
+
+        let swept = eperica_application::process_due_lifecycle(
+            &repo,
+            world_start,
+            now,
+            &rules,
+            config.speed,
+        )
+        .await
+        .unwrap();
+        assert_eq!(swept.len(), 6, "periods 0..=5 each settle once");
+        let total: usize = swept.iter().map(|(_, c)| *c).sum();
+        assert_eq!(
+            total, 1,
+            "exactly one account abandoned across the catch-up"
+        );
+        assert!(
+            repo.village_at(gone_v.coordinate).await.unwrap().is_none(),
+            "the abandoned account's valley is freed"
+        );
+        // Caught up: a second run settles nothing.
+        let again = eperica_application::process_due_lifecycle(
+            &repo,
+            world_start,
+            now,
+            &rules,
+            config.speed,
+        )
+        .await
+        .unwrap();
+        assert!(again.is_empty(), "no further periods to settle");
     }
 
     /// 007 AC1/AC4/AC5: a reinforcement debits the source garrison, arrives once (crash-resume
