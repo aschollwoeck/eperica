@@ -16,20 +16,38 @@ pub struct World {
     pub created_at: Timestamp,
     /// The artifact-release instant (Unix-ms UTC), or `None` if not scheduled (020, GDD §13.2).
     pub artifact_release_at: Option<Timestamp>,
+    /// The Wonder-release instant (Unix-ms UTC), or `None` if not scheduled (021, after the artifact date).
+    pub wonder_release_at: Option<Timestamp>,
 }
 
-/// Ensure a world exists and return its id and seed. The first call inserts it from `config` with a
-/// deterministic per-world seed derived from its id; later calls return the existing row.
+const SELECT_COLS: &str = "id, seed, (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ms, \
+    (EXTRACT(EPOCH FROM artifact_release_at) * 1000)::bigint AS artifact_ms, \
+    (EXTRACT(EPOCH FROM wonder_release_at) * 1000)::bigint AS wonder_ms";
+
+fn world_from_row(row: &sqlx::postgres::PgRow) -> Result<World, sqlx::Error> {
+    let id: Uuid = row.try_get("id")?;
+    Ok(World {
+        id: WorldId(id.as_u128()),
+        seed: row.try_get("seed")?,
+        created_at: Timestamp(row.try_get("created_ms")?),
+        artifact_release_at: row.try_get::<Option<i64>, _>("artifact_ms")?.map(Timestamp),
+        wonder_release_at: row.try_get::<Option<i64>, _>("wonder_ms")?.map(Timestamp),
+    })
+}
+
+/// Ensure a world exists and return it. The first call inserts it from `config` with a deterministic
+/// per-world seed derived from its id; later calls return the existing row.
 ///
 /// # Errors
 /// Returns [`sqlx::Error`] on a storage failure.
 pub async fn ensure_world(pool: &PgPool, config: &WorldConfig) -> Result<World, sqlx::Error> {
-    // Default: artifacts release 90 days after creation (overridden in production via config, and in
+    // Defaults: artifacts at 90 days, the Wonder at 120 days (overridden in production via config, and in
     // release tests via `ensure_world_with_release`).
-    ensure_world_with_release(pool, config, 90 * 24 * 60 * 60).await
+    ensure_world_with_release(pool, config, 90 * 24 * 60 * 60, 120 * 24 * 60 * 60).await
 }
 
-/// Like [`ensure_world`] but with an explicit artifact-release offset (seconds after creation, 020).
+/// Like [`ensure_world`] but with explicit artifact-release (020) and Wonder-release (021) offsets
+/// (seconds after creation).
 ///
 /// # Errors
 /// Returns [`sqlx::Error`] on a storage failure.
@@ -37,51 +55,32 @@ pub async fn ensure_world_with_release(
     pool: &PgPool,
     config: &WorldConfig,
     artifact_release_offset_secs: i64,
+    wonder_release_offset_secs: i64,
 ) -> Result<World, sqlx::Error> {
-    const RELEASE_MS: &str =
-        "(EXTRACT(EPOCH FROM artifact_release_at) * 1000)::bigint AS release_ms";
-    if let Some(row) = sqlx::query(&format!(
-        "SELECT id, seed, (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ms, {RELEASE_MS} \
-         FROM worlds LIMIT 1"
-    ))
-    .fetch_optional(pool)
-    .await?
+    if let Some(row) = sqlx::query(&format!("SELECT {SELECT_COLS} FROM worlds LIMIT 1"))
+        .fetch_optional(pool)
+        .await?
     {
-        let id: Uuid = row.try_get("id")?;
-        let seed: i64 = row.try_get("seed")?;
-        let created_ms: i64 = row.try_get("created_ms")?;
-        let release_ms: Option<i64> = row.try_get("release_ms")?;
-        return Ok(World {
-            id: WorldId(id.as_u128()),
-            seed,
-            created_at: Timestamp(created_ms),
-            artifact_release_at: release_ms.map(Timestamp),
-        });
+        return world_from_row(&row);
     }
 
     let id = Uuid::new_v4();
-    // The seed is derived from the world id (same rule as the 0009 backfill) so it is deterministic
-    // and distinct per world without needing an RNG dependency. The artifact release is offset from
-    // creation by config (020, GDD §13.2).
+    // The seed is derived from the world id (same rule as the 0009 backfill) so it is deterministic and
+    // distinct per world without an RNG dependency. The end-game release dates are config offsets from
+    // creation (020/021, GDD §13.2).
     let row = sqlx::query(&format!(
-        "INSERT INTO worlds (id, speed, radius, seed, artifact_release_at) \
+        "INSERT INTO worlds (id, speed, radius, seed, artifact_release_at, wonder_release_at) \
          VALUES ($1, $2, $3, hashtextextended($1::text, 0), \
-                 now() + make_interval(secs => $4::double precision)) \
-         RETURNING seed, (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ms, {RELEASE_MS}"
+                 now() + make_interval(secs => $4::double precision), \
+                 now() + make_interval(secs => $5::double precision)) \
+         RETURNING {SELECT_COLS}"
     ))
     .bind(id)
     .bind(config.speed.multiplier())
     .bind(i32::try_from(config.radius).unwrap_or(i32::MAX))
     .bind(artifact_release_offset_secs as f64)
+    .bind(wonder_release_offset_secs as f64)
     .fetch_one(pool)
     .await?;
-    let seed: i64 = row.try_get("seed")?;
-    let created_ms: i64 = row.try_get("created_ms")?;
-    let release_ms: Option<i64> = row.try_get("release_ms")?;
-    Ok(World {
-        id: WorldId(id.as_u128()),
-        seed,
-        created_at: Timestamp(created_ms),
-        artifact_release_at: release_ms.map(Timestamp),
-    })
+    world_from_row(&row)
 }

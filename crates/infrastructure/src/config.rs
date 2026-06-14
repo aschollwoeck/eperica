@@ -26,6 +26,9 @@ pub struct AppConfig {
     pub world: WorldConfig,
     /// Seconds after world creation when artifacts are released (020, GDD §13.2). Default 90 days.
     pub artifact_release_offset_secs: i64,
+    /// Seconds after world creation when Wonder plans + sites release (021, GDD §11.3). Default 120 days
+    /// (after the artifact date, so the end-game escalates).
+    pub wonder_release_offset_secs: i64,
 }
 
 impl AppConfig {
@@ -59,10 +62,17 @@ impl AppConfig {
             .parse()
             .map_err(|_| ConfigError::Invalid("ARTIFACT_RELEASE_DELAY_SECS", release_raw))?;
 
+        let wonder_raw =
+            env::var("WONDER_RELEASE_DELAY_SECS").unwrap_or_else(|_| "10368000".to_owned());
+        let wonder_release_offset_secs: i64 = wonder_raw
+            .parse()
+            .map_err(|_| ConfigError::Invalid("WONDER_RELEASE_DELAY_SECS", wonder_raw))?;
+
         Ok(Self {
             database_url,
             world: WorldConfig::new(speed, radius),
             artifact_release_offset_secs,
+            wonder_release_offset_secs,
         })
     }
 }

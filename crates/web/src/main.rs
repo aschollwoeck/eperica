@@ -23,9 +23,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::from_env()?;
     let pool = create_pool(&config.database_url).await?;
     run_migrations(&pool).await?;
-    let world =
-        ensure_world_with_release(&pool, &config.world, config.artifact_release_offset_secs)
-            .await?;
+    let world = ensure_world_with_release(
+        &pool,
+        &config.world,
+        config.artifact_release_offset_secs,
+        config.wonder_release_offset_secs,
+    )
+    .await?;
     let rules = Arc::new(economy_rules()?);
     let units = Arc::new(unit_rules()?);
     let merchants = Arc::new(merchant_rules()?);

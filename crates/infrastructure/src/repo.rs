@@ -6612,12 +6612,12 @@ mod tests {
         );
     }
 
-    /// 020 AC1/AC7: `ensure_world` persists the artifact-release date (created + offset), returned
-    /// stably on later calls.
+    /// 020 AC1/AC7 + 021 AC1/AC8: `ensure_world` persists both the artifact- and Wonder-release dates
+    /// (created + offset), returned stably on later calls.
     #[sqlx::test(migrations = "../../migrations")]
     async fn world_carries_artifact_release_date(pool: PgPool) {
         let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
-        let world = crate::world::ensure_world_with_release(&pool, &config, 3600)
+        let world = crate::world::ensure_world_with_release(&pool, &config, 3600, 7200)
             .await
             .unwrap();
         let release = world.artifact_release_at.expect("a release is scheduled");
@@ -6626,11 +6626,20 @@ mod tests {
             (delta - 3_600_000).abs() < 5_000,
             "release ≈ created + 1h, got {delta}ms"
         );
-        // A later call returns the persisted release, not a recomputed one.
-        let again = crate::world::ensure_world_with_release(&pool, &config, 999)
+        let wonder = world
+            .wonder_release_at
+            .expect("a Wonder release is scheduled");
+        let wonder_delta = wonder.0 - world.created_at.0;
+        assert!(
+            (wonder_delta - 7_200_000).abs() < 5_000,
+            "Wonder release ≈ created + 2h, got {wonder_delta}ms"
+        );
+        // A later call returns the persisted releases, not recomputed ones.
+        let again = crate::world::ensure_world_with_release(&pool, &config, 999, 1234)
             .await
             .unwrap();
         assert_eq!(again.artifact_release_at, world.artifact_release_at);
+        assert_eq!(again.wonder_release_at, world.wonder_release_at);
     }
 
     /// 020 AC1/AC2/AC7: the artifact release is gated on the date, materializes Natar NPC villages +
