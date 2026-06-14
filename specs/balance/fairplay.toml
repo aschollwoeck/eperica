@@ -1,0 +1,21 @@
+# Fair-play & anti-cheat balance (022, GDD §12.5) — interim, tunable (P7). Limits are wall-clock: abuse
+# is real-time, never speed-scaled. Detection thresholds turn a reproducible count into an advisory flag
+# for a human moderator — they never sanction automatically.
+
+[rate_limit]
+# Max mutating actions one player may take per window before requests are rejected (HTTP 429).
+actions_per_window = 60
+# The fixed window length, in seconds.
+window_secs = 60
+# Max login attempts per window for one IP (brute-force guard).
+logins_per_window = 10
+
+[sanctions]
+# Default suspension length (seconds) when a moderator suspends without an explicit window (1 day).
+suspend_default_secs = 86400
+
+[detection]
+# Accounts sharing a registration IP at/above this count raise the shared-IP signal to moderators.
+ip_association_threshold = 3
+# A single window's action count at/above this raises the inhuman-action-rate signal.
+inhuman_rate_threshold = 120

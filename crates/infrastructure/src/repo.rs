@@ -9,24 +9,24 @@ use eperica_application::{
     DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade,
     DueTraining, DueUnitOrder, HeldArtifact, IncomingAttack, LeaderboardRow, LifecycleRepository,
     LoyaltyApply, MedalAward, MedalRepository, MedalSubjectKind, MedalView, Membership,
-    MovementRepository, MovementView, NewBuildOrder, NewOasisReport, NewScoutReport,
-    NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
+    ModerationRepository, MovementRepository, MovementView, NewBuildOrder, NewOasisReport,
+    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
     OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PendingInvite, PlayerStats,
-    QuestRepository, RankingRepository, RazedBuilding, RepoError, ResourceWrite, RosterEntry,
-    ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply, SettleOutcome,
-    SettleRepository, StarvationRepository, StationedGroup, TradeRepository, TradeView,
-    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome,
-    WonderRepository, WonderStanding,
+    QuestRepository, RankingRepository, RazedBuilding, RepoError, ReportView, ResourceWrite,
+    RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply,
+    SettleOutcome, SettleRepository, StarvationRepository, StationedGroup, TradeRepository,
+    TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
+    WonderOutcome, WonderRepository, WonderStanding,
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactEffects,
     ArtifactId, ArtifactKind, ArtifactScope, BuildTarget, BuildingKind, BuildingSlot, Coordinate,
     DiplomacyStance, DiplomacyStatus, EconomyRules, GameSpeed, MedalCategory, MovementKind,
     OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant, QuestDef, QuestId, QuestProgress,
-    QueueLane, ResourceAmounts, ResourceField, ResourceKind, Reward, RightSet, ScoutTarget,
-    StartingVillage, TileKind, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village,
-    VillageId, WorldId, WorldMap, aggregate_effects, capacities, coordinates_within,
-    deposit_capped, oasis_garrison, protection_expiry,
+    QueueLane, ReportReason, ResourceAmounts, ResourceField, ResourceKind, Reward, RightSet,
+    SanctionKind, ScoutTarget, StartingVillage, TileKind, Timestamp, TradeKind, Tribe, UnitCounts,
+    UnitId, UnitSpec, Village, VillageId, WorldId, WorldMap, aggregate_effects, capacities,
+    coordinates_within, deposit_capped, oasis_garrison, protection_expiry,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use std::collections::{HashMap, HashSet};
@@ -323,6 +323,15 @@ fn row_to_user(r: &PgRow) -> Result<UserRecord, RepoError> {
         email_confirmed: r.try_get("email_confirmed").map_err(backend)?,
         tribe,
         abandoned: r.try_get("abandoned").map_err(backend)?,
+        is_moderator: r.try_get("is_moderator").map_err(backend)?,
+        banned_at: r
+            .try_get::<Option<i64>, _>("banned_ms")
+            .map_err(backend)?
+            .map(Timestamp),
+        suspended_until: r
+            .try_get::<Option<i64>, _>("suspended_ms")
+            .map_err(backend)?
+            .map(Timestamp),
     })
 }
 
@@ -471,13 +480,19 @@ impl AccountRepository for PgAccountRepository {
             email_confirmed: user.email_confirmed,
             tribe: user.tribe,
             abandoned: false,
+            is_moderator: false,
+            banned_at: None,
+            suspended_until: None,
         })
     }
 
     async fn find_user_by_username(&self, username: &str) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
             "SELECT id, username, email, password_hash, email_confirmed, tribe, \
-             (abandoned_at IS NOT NULL) AS abandoned FROM users WHERE username = $1",
+             (abandoned_at IS NOT NULL) AS abandoned, is_moderator, \
+             (EXTRACT(EPOCH FROM banned_at) * 1000)::bigint AS banned_ms, \
+             (EXTRACT(EPOCH FROM suspended_until) * 1000)::bigint AS suspended_ms \
+             FROM users WHERE username = $1",
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -489,7 +504,10 @@ impl AccountRepository for PgAccountRepository {
     async fn find_user_by_id(&self, id: PlayerId) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
             "SELECT id, username, email, password_hash, email_confirmed, tribe, \
-             (abandoned_at IS NOT NULL) AS abandoned FROM users WHERE id = $1",
+             (abandoned_at IS NOT NULL) AS abandoned, is_moderator, \
+             (EXTRACT(EPOCH FROM banned_at) * 1000)::bigint AS banned_ms, \
+             (EXTRACT(EPOCH FROM suspended_until) * 1000)::bigint AS suspended_ms \
+             FROM users WHERE id = $1",
         )
         .bind(Uuid::from_u128(id.0))
         .fetch_optional(&self.pool)
@@ -791,6 +809,10 @@ impl AccountRepository for PgAccountRepository {
 /// Freshness window for [`PgAccountRepository::touch_activity`] — `last_activity` is rewritten only
 /// when older than this (5 minutes). An implementation constant, not game balance.
 const ACTIVITY_THROTTLE_MS: i64 = 5 * 60 * 1000;
+
+/// How long fixed-window `rate_limits` rows are retained (24h) before `bump_rate` prunes them — bounds
+/// the table (P11) while keeping recent history for the inhuman-action-rate detection signal (022).
+const RATE_LIMIT_RETENTION_SECS: i64 = 24 * 60 * 60;
 
 fn lane_str(lane: QueueLane) -> &'static str {
     match lane {
@@ -6588,6 +6610,251 @@ impl WonderRepository for PgAccountRepository {
     }
 }
 
+/// Read a `ReportView` from a joined `reports`/`users` row.
+fn moderation_report_from_row(r: &PgRow) -> Result<ReportView, RepoError> {
+    let id: Uuid = r.try_get("id").map_err(backend)?;
+    let reporter: Uuid = r.try_get("reporter_id").map_err(backend)?;
+    let subject: Uuid = r.try_get("subject_id").map_err(backend)?;
+    let reason_str: String = r.try_get("reason").map_err(backend)?;
+    Ok(ReportView {
+        id: id.as_u128(),
+        reporter: PlayerId(reporter.as_u128()),
+        reporter_name: r.try_get("reporter_name").map_err(backend)?,
+        subject: PlayerId(subject.as_u128()),
+        subject_name: r.try_get("subject_name").map_err(backend)?,
+        reason: ReportReason::parse(&reason_str).unwrap_or(ReportReason::Other),
+        note: r.try_get("note").map_err(backend)?,
+        created_ms: r.try_get("created_ms").map_err(backend)?,
+    })
+}
+
+/// Apply a sanction to a user within an existing transaction (022): ban stamps `banned_at`, suspend
+/// sets `suspended_until`, warn changes no block state.
+async fn apply_sanction_tx(
+    tx: &mut sqlx::PgConnection,
+    subject: Uuid,
+    now: Timestamp,
+    kind: SanctionKind,
+    suspended_until: Option<Timestamp>,
+) -> Result<(), RepoError> {
+    match kind {
+        SanctionKind::Warn => {}
+        SanctionKind::Ban => {
+            sqlx::query(
+                "UPDATE users SET banned_at = to_timestamp($1::double precision / 1000.0) \
+                 WHERE id = $2",
+            )
+            .bind(now.0)
+            .bind(subject)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        }
+        SanctionKind::Suspend => {
+            sqlx::query(
+                "UPDATE users SET suspended_until = to_timestamp($1::double precision / 1000.0) \
+                 WHERE id = $2",
+            )
+            .bind(suspended_until.unwrap_or(now).0)
+            .bind(subject)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        }
+    }
+    Ok(())
+}
+
+#[async_trait]
+impl ModerationRepository for PgAccountRepository {
+    async fn set_moderator(&self, player: PlayerId, is_moderator: bool) -> Result<(), RepoError> {
+        sqlx::query("UPDATE users SET is_moderator = $2 WHERE id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .bind(is_moderator)
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn record_registration_ip(&self, player: PlayerId, ip: &str) -> Result<(), RepoError> {
+        sqlx::query("UPDATE users SET registration_ip = $2 WHERE id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .bind(ip)
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn file_report(
+        &self,
+        reporter: PlayerId,
+        subject: PlayerId,
+        reason: ReportReason,
+        note: &str,
+    ) -> Result<bool, RepoError> {
+        // ON CONFLICT on the partial unique index collapses a duplicate **open** report (022 AC2).
+        let affected = sqlx::query(
+            "INSERT INTO reports (id, world_id, reporter_id, subject_id, reason, note) \
+             VALUES ($1, $2, $3, $4, $5, $6) \
+             ON CONFLICT (reporter_id, subject_id) WHERE status = 'open' DO NOTHING",
+        )
+        .bind(Uuid::new_v4())
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(Uuid::from_u128(reporter.0))
+        .bind(Uuid::from_u128(subject.0))
+        .bind(reason.as_str())
+        .bind(note)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?
+        .rows_affected();
+        Ok(affected > 0)
+    }
+
+    async fn open_reports(&self, limit: i64) -> Result<Vec<ReportView>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT r.id, r.reporter_id, r.subject_id, r.reason, r.note, \
+             (EXTRACT(EPOCH FROM r.created_at) * 1000)::bigint AS created_ms, \
+             rep.username AS reporter_name, sub.username AS subject_name \
+             FROM reports r \
+             JOIN users rep ON rep.id = r.reporter_id \
+             JOIN users sub ON sub.id = r.subject_id \
+             WHERE r.status = 'open' AND r.world_id = $1 \
+             ORDER BY r.created_at ASC, r.id LIMIT $2",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter().map(moderation_report_from_row).collect()
+    }
+
+    async fn resolve_report(
+        &self,
+        report_id: u128,
+        moderator: PlayerId,
+        now: Timestamp,
+        resolution: &str,
+        sanction_kind: Option<SanctionKind>,
+        suspended_until: Option<Timestamp>,
+    ) -> Result<bool, RepoError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        // Guarded on status='open' so resolving twice is a no-op (022 AC4).
+        let row = sqlx::query(
+            "UPDATE reports \
+             SET status = 'resolved', resolved_by = $2, \
+                 resolved_at = to_timestamp($3::double precision / 1000.0), resolution = $4 \
+             WHERE id = $1 AND status = 'open' RETURNING subject_id",
+        )
+        .bind(Uuid::from_u128(report_id))
+        .bind(Uuid::from_u128(moderator.0))
+        .bind(now.0)
+        .bind(resolution)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let Some(row) = row else {
+            tx.commit().await.map_err(backend)?;
+            return Ok(false);
+        };
+        if let Some(kind) = sanction_kind {
+            let subject: Uuid = row.try_get("subject_id").map_err(backend)?;
+            apply_sanction_tx(&mut tx, subject, now, kind, suspended_until).await?;
+        }
+        tx.commit().await.map_err(backend)?;
+        Ok(true)
+    }
+
+    async fn apply_sanction(
+        &self,
+        subject: PlayerId,
+        now: Timestamp,
+        kind: SanctionKind,
+        suspended_until: Option<Timestamp>,
+    ) -> Result<(), RepoError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        apply_sanction_tx(
+            &mut tx,
+            Uuid::from_u128(subject.0),
+            now,
+            kind,
+            suspended_until,
+        )
+        .await?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn ip_association_count(&self, subject: PlayerId) -> Result<u32, RepoError> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM users \
+             WHERE registration_ip IS NOT NULL \
+               AND registration_ip = (SELECT registration_ip FROM users WHERE id = $1)",
+        )
+        .bind(Uuid::from_u128(subject.0))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    }
+
+    async fn peak_action_count(&self, subject: PlayerId) -> Result<u32, RepoError> {
+        // Bounded to the retained window (older rows are pruned in `bump_rate`) — a recent burst is what
+        // the inhuman-rate signal cares about (P11: no full-history scan).
+        let peak: Option<i32> = sqlx::query_scalar(
+            "SELECT MAX(count) FROM rate_limits \
+             WHERE subject = $1 AND action = 'action' \
+               AND window_start >= now() - make_interval(secs => $2::double precision)",
+        )
+        .bind(subject.0.to_string())
+        .bind(RATE_LIMIT_RETENTION_SECS as f64)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(u32::try_from(peak.unwrap_or(0)).unwrap_or(u32::MAX))
+    }
+
+    async fn bump_rate(
+        &self,
+        subject: &str,
+        action: &str,
+        now: Timestamp,
+        window_secs: i64,
+    ) -> Result<u32, RepoError> {
+        // Fixed window: snap `now` down to the window boundary (P5 — counters are DB-side, stateless web).
+        let window = window_secs.max(1);
+        let window_start_secs = (now.0 / 1000 / window) * window;
+        let count: i32 = sqlx::query_scalar(
+            "INSERT INTO rate_limits (subject, action, window_start, count) \
+             VALUES ($1, $2, to_timestamp($3::double precision), 1) \
+             ON CONFLICT (subject, action, window_start) \
+             DO UPDATE SET count = rate_limits.count + 1 RETURNING count",
+        )
+        .bind(subject)
+        .bind(action)
+        .bind(window_start_secs as f64)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        // Prune this subject/action's windows older than the retention bound, so the table stays small
+        // (P11) while keeping recent history for the detection signal. Targeted by the PK prefix index.
+        sqlx::query(
+            "DELETE FROM rate_limits WHERE subject = $1 AND action = $2 \
+             AND window_start < to_timestamp($3::double precision)",
+        )
+        .bind(subject)
+        .bind(action)
+        .bind((window_start_secs - RATE_LIMIT_RETENTION_SECS) as f64)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6749,6 +7016,246 @@ mod tests {
             .unwrap();
         let rec = repo.find_user_by_id(player).await.unwrap().unwrap();
         assert!(rec.abandoned, "the sweep flag surfaces on the user record");
+    }
+
+    /// 022 AC1/AC5/AC8: the moderator + sanction fields round-trip, and a sanctioned account reads as
+    /// blocked via the pure `account_blocked` predicate.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn user_sanction_and_role_fields_round_trip(pool: PgPool) {
+        use eperica_domain::account_blocked;
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let player = make_account(&repo, &template, "sanc").await;
+
+        // Fresh account: no role, no sanction, not blocked.
+        let rec = repo.find_user_by_id(player).await.unwrap().unwrap();
+        assert!(!rec.is_moderator);
+        assert_eq!(rec.banned_at, None);
+        assert_eq!(rec.suspended_until, None);
+        assert!(!account_blocked(
+            rec.banned_at,
+            rec.suspended_until,
+            crate::now()
+        ));
+
+        // Grant the moderator role + ban — both round-trip and the account reads as blocked.
+        sqlx::query("UPDATE users SET is_moderator = true, banned_at = now() WHERE id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let rec = repo.find_user_by_id(player).await.unwrap().unwrap();
+        assert!(rec.is_moderator, "the moderator role surfaces");
+        assert!(rec.banned_at.is_some(), "the ban instant surfaces");
+        assert!(account_blocked(
+            rec.banned_at,
+            rec.suspended_until,
+            crate::now()
+        ));
+
+        // A past suspension (no ban) does not block; a future one does.
+        sqlx::query(
+            "UPDATE users SET banned_at = NULL, suspended_until = now() - interval '1 hour' \
+             WHERE id = $1",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let rec = repo.find_user_by_id(player).await.unwrap().unwrap();
+        assert!(!account_blocked(
+            rec.banned_at,
+            rec.suspended_until,
+            crate::now()
+        ));
+        sqlx::query("UPDATE users SET suspended_until = now() + interval '1 hour' WHERE id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let rec = repo.find_user_by_id(player).await.unwrap().unwrap();
+        assert!(account_blocked(
+            rec.banned_at,
+            rec.suspended_until,
+            crate::now()
+        ));
+    }
+
+    /// 022 AC1–AC5: a player reports an account; a duplicate open report + a self-report are rejected; a
+    /// non-moderator cannot review; a moderator reviews and resolves with a ban (idempotently).
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn moderation_report_review_resolve_flow(pool: PgPool) {
+        use eperica_application::ModerationError;
+        use eperica_domain::{ReportReason, SanctionKind, account_blocked};
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let rules = crate::fair_play_rules().unwrap();
+        let reporter = make_account(&repo, &template, "reporter").await;
+        let subject = make_account(&repo, &template, "subject").await;
+        let moderator = make_account(&repo, &template, "moderator").await;
+        repo.set_moderator(moderator, true).await.unwrap();
+
+        // AC2: a self-report is rejected.
+        assert!(matches!(
+            eperica_application::file_report(&repo, reporter, reporter, ReportReason::Botting, "")
+                .await,
+            Err(ModerationError::SelfReport)
+        ));
+
+        // AC2: a first report is created; a duplicate open report collapses.
+        assert!(
+            eperica_application::file_report(
+                &repo,
+                reporter,
+                subject,
+                ReportReason::Botting,
+                "scripting at night"
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !eperica_application::file_report(
+                &repo,
+                reporter,
+                subject,
+                ReportReason::Pushing,
+                "again"
+            )
+            .await
+            .unwrap(),
+            "a duplicate open report collapses"
+        );
+
+        // AC3: a non-moderator cannot review; a moderator sees the one open report.
+        assert!(matches!(
+            eperica_application::review_queue(&repo, &repo, reporter, 50).await,
+            Err(ModerationError::NotAuthorized)
+        ));
+        let queue = eperica_application::review_queue(&repo, &repo, moderator, 50)
+            .await
+            .unwrap();
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue[0].subject, subject);
+        let report_id = queue[0].id;
+
+        // AC4/AC5: resolve with a ban — the subject is blocked; the queue empties; re-resolve is a no-op.
+        let now = crate::now();
+        assert!(
+            eperica_application::resolve_report(
+                &repo,
+                &repo,
+                &rules,
+                moderator,
+                report_id,
+                now,
+                "confirmed botting",
+                Some(SanctionKind::Ban),
+                None,
+            )
+            .await
+            .unwrap()
+        );
+        let sub = repo.find_user_by_id(subject).await.unwrap().unwrap();
+        assert!(
+            account_blocked(sub.banned_at, sub.suspended_until, now),
+            "the subject is banned"
+        );
+        assert!(
+            eperica_application::review_queue(&repo, &repo, moderator, 50)
+                .await
+                .unwrap()
+                .is_empty(),
+            "the resolved report leaves the queue"
+        );
+        assert!(
+            !eperica_application::resolve_report(
+                &repo, &repo, &rules, moderator, report_id, now, "again", None, None,
+            )
+            .await
+            .unwrap(),
+            "resolving twice is a no-op"
+        );
+    }
+
+    /// 022 AC6: the fixed-window rate limiter counts within a window and trips once the count exceeds
+    /// the limit; a fresh window resets.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn rate_limit_counts_and_trips(pool: PgPool) {
+        use eperica_application::ModerationError;
+        let Setup { repo, .. } = setup(pool.clone()).await;
+        let rules = crate::fair_play_rules().unwrap();
+        let limit = 2u32;
+        let now = Timestamp(1_000_000_000);
+        let check = async |ts: Timestamp| {
+            eperica_application::check_rate_limit(&repo, &rules, "subjX", "action", limit, ts).await
+        };
+
+        // Two within the window pass; the third trips.
+        assert!(check(now).await.is_ok());
+        assert!(check(now).await.is_ok());
+        assert!(matches!(
+            check(now).await,
+            Err(ModerationError::RateLimited)
+        ));
+
+        // A later window (past window_secs) resets the count.
+        let next_window = Timestamp(now.0 + rules.rate_window_secs * 1000 + 1000);
+        assert!(check(next_window).await.is_ok(), "a new window resets");
+    }
+
+    /// 022 AC7/AC8: the detection signals are reproducible from persisted state — the shared-IP count
+    /// counts accounts on the same registration IP, and the inhuman-action-rate flag trips at the
+    /// threshold; both are moderator-gated.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn detection_signals_are_reproducible(pool: PgPool) {
+        use eperica_application::ModerationError;
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let rules = crate::fair_play_rules().unwrap();
+        let moderator = make_account(&repo, &template, "mod").await;
+        repo.set_moderator(moderator, true).await.unwrap();
+        let a = make_account(&repo, &template, "shared_a").await;
+        let b = make_account(&repo, &template, "shared_b").await;
+        let c = make_account(&repo, &template, "shared_c").await;
+
+        // Three accounts share one registration IP.
+        for p in [a, b, c] {
+            sqlx::query("UPDATE users SET registration_ip = '203.0.113.7' WHERE id = $1")
+                .bind(Uuid::from_u128(p.0))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        // A non-moderator is denied.
+        assert!(matches!(
+            eperica_application::account_signals(&repo, &repo, &rules, a, b).await,
+            Err(ModerationError::NotAuthorized)
+        ));
+
+        // The shared-IP signal counts all three and flags (threshold 3).
+        let sig = eperica_application::account_signals(&repo, &repo, &rules, moderator, a)
+            .await
+            .unwrap();
+        assert_eq!(sig.ip_association_count, 3);
+        assert!(sig.shared_ip_flagged);
+        // No action tally yet ⇒ no inhuman-rate flag.
+        assert_eq!(sig.peak_action_count, 0);
+        assert!(!sig.inhuman_action_rate);
+
+        // Seed a window action tally at the inhuman threshold for account `a`.
+        sqlx::query(
+            "INSERT INTO rate_limits (subject, action, window_start, count) \
+             VALUES ($1, 'action', now(), $2)",
+        )
+        .bind(a.0.to_string())
+        .bind(i32::try_from(rules.inhuman_rate_threshold).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let sig = eperica_application::account_signals(&repo, &repo, &rules, moderator, a)
+            .await
+            .unwrap();
+        assert_eq!(sig.peak_action_count, rules.inhuman_rate_threshold);
+        assert!(sig.inhuman_action_rate, "the inhuman-rate flag trips");
     }
 
     /// 019 AC2/AC3: a protected player cannot be attacked (no movement created); once a player attacks,

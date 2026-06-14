@@ -13,9 +13,9 @@ use eperica_domain::{
 };
 use eperica_infrastructure::{
     Argon2Hasher, PgAccountRepository, achievement_catalogue, alliance_rules, build_rules,
-    combat_rules, culture_rules, economy_rules, ensure_world, lifecycle_rules, loyalty_rules,
-    map_rules, merchant_rules, now, oasis_rules, quest_chain, ranking_rules, scout_rules,
-    starting_village, unit_rules, wonder_rules,
+    combat_rules, culture_rules, economy_rules, ensure_world, fair_play_rules, lifecycle_rules,
+    loyalty_rules, map_rules, merchant_rules, now, oasis_rules, quest_chain, ranking_rules,
+    scout_rules, starting_village, unit_rules, wonder_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -63,6 +63,9 @@ async fn spawn(pool: sqlx::PgPool) -> String {
         lifecycle_rules: Arc::new(lifecycle_rules().expect("lifecycle rules")),
         merchant_rules: Arc::new(merchant_rules().expect("merchant rules")),
         wonder_rules: Arc::new(wonder_rules().expect("wonder rules")),
+        fair_play_rules: Arc::new(fair_play_rules().expect("fair-play rules")),
+        // Tests trust the forwarded headers so they can control the client IP deterministically.
+        trust_proxy: true,
         map,
         world: config,
         require_email_confirmation: false,
@@ -72,7 +75,12 @@ async fn spawn(pool: sqlx::PgPool) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        axum::serve(listener, router(state)).await.unwrap();
+        axum::serve(
+            listener,
+            router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     format!("http://{addr}")
 }
@@ -3095,4 +3103,216 @@ async fn wonder_winner_banner_shows_when_won(pool: sqlx::PgPool) {
         "the winner banner shows"
     );
     assert!(body.contains("Champions"), "the winning alliance is named");
+}
+
+/// 022 AC5: a sanctioned (banned) logged-in player's mutating actions are rejected, but reads still work.
+#[sqlx::test(migrations = "../../migrations")]
+async fn sanctioned_player_actions_are_blocked(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let c = client();
+    let user = unique("sanc");
+    let email = format!("{user}@example.com");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // Before sanction: a mutating action is not 403-blocked by the guard.
+    let before = c
+        .post(format!("{base}/village/build"))
+        .form(&[("table", "field"), ("slot", "0")])
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(
+        before.status().as_u16(),
+        403,
+        "action allowed before sanction"
+    );
+
+    // Ban the account.
+    sqlx::query("UPDATE users SET banned_at = now() WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The mutating action is now rejected...
+    let after = c
+        .post(format!("{base}/village/build"))
+        .form(&[("table", "field"), ("slot", "0")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(after.status().as_u16(), 403, "sanctioned action is blocked");
+    // ...but a read still works.
+    assert_ne!(
+        c.get(format!("{base}/village"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        403,
+        "reads stay available for a sanctioned account"
+    );
+}
+
+/// 022 AC6: login attempts are rate-limited per IP — after the configured number, further attempts get
+/// 429 (a brute-force guard), even with wrong credentials.
+#[sqlx::test(migrations = "../../migrations")]
+async fn login_attempts_are_rate_limited(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let c = client();
+    let limit = fair_play_rules().unwrap().login_limit_per_window;
+
+    // The first `limit` attempts are processed (not 429); the next is rejected with 429.
+    for _ in 0..limit {
+        let res = c
+            .post(format!("{base}/login"))
+            .form(&[("username", "ghost"), ("password", "nope")])
+            .send()
+            .await
+            .unwrap();
+        assert_ne!(res.status().as_u16(), 429, "within the limit");
+    }
+    let over = c
+        .post(format!("{base}/login"))
+        .form(&[("username", "ghost"), ("password", "nope")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(over.status().as_u16(), 429, "over the limit is rejected");
+
+    // Per-IP isolation: a different client IP (distinct X-Forwarded-For, trusted in tests) has its own
+    // budget and is not affected by the first IP exhausting theirs.
+    let other = c
+        .post(format!("{base}/login"))
+        .header("x-forwarded-for", "198.51.100.42")
+        .form(&[("username", "ghost"), ("password", "nope")])
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(
+        other.status().as_u16(),
+        429,
+        "a different IP has an independent login budget"
+    );
+}
+
+/// 022 AC1–AC4/AC9: a player reports an account; a non-moderator is denied /mod; a moderator sees the
+/// report, resolves it with a ban, and the subject is then blocked from acting.
+#[sqlx::test(migrations = "../../migrations")]
+async fn moderation_report_to_sanction_flow(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+
+    // Three logged-in clients: reporter, subject, moderator.
+    let register = async |name: &str| -> reqwest::Client {
+        let c = client();
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", name),
+                ("email", &format!("{name}@example.com")),
+                ("password", "secret12"),
+                ("tribe", "gauls"),
+            ])
+            .send()
+            .await
+            .unwrap();
+        c
+    };
+    let reporter = unique("reporter");
+    let subject = unique("subject");
+    let moderator = unique("mod");
+    let cr = register(&reporter).await;
+    let cs = register(&subject).await;
+    let cm = register(&moderator).await;
+
+    let subject_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind(&subject)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_moderator = true WHERE username = $1")
+        .bind(&moderator)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The reporter files a report.
+    cr.post(format!("{base}/report"))
+        .form(&[
+            ("subject", subject_id.as_u128().to_string().as_str()),
+            ("reason", "botting"),
+            ("note", "scripts all night"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // AC1/AC3: a non-moderator is denied the queue; the moderator sees the report.
+    assert_eq!(
+        cr.get(format!("{base}/mod"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        403
+    );
+    let queue = cm
+        .get(format!("{base}/mod"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(queue.contains(&subject), "the report shows the subject");
+
+    // AC4: the moderator resolves the report with a ban.
+    let report_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM reports WHERE status = 'open'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    cm.post(format!("{base}/mod/resolve"))
+        .form(&[
+            ("report_id", report_id.as_u128().to_string().as_str()),
+            ("resolution", "confirmed"),
+            ("sanction", "ban"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // The subject is now blocked from acting (AC5) and the queue is empty (AC4).
+    let blocked = cs
+        .post(format!("{base}/village/build"))
+        .form(&[("table", "field"), ("slot", "0")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        blocked.status().as_u16(),
+        403,
+        "the banned subject cannot act"
+    );
+    let queue2 = cm
+        .get(format!("{base}/mod"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !queue2.contains(&subject),
+        "the resolved report left the queue"
+    );
 }

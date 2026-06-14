@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Moderation — {{ username }}</h1>
+  <p class="muted"><a href="/mod">← Back to the review queue</a></p>
+
+  <h2>Status</h2>
+  <ul>
+    <li>Banned: {% if banned %}<strong>yes</strong>{% else %}no{% endif %}</li>
+    <li>Suspended: {% if suspended %}<strong>yes</strong>{% else %}no{% endif %}</li>
+  </ul>
+
+  <h2>Detection signals</h2>
+  <ul>
+    <li>Accounts sharing its registration IP: {{ ip_association_count }}
+      {% if shared_ip_flagged %}<span class="badge">⚠ flagged</span>{% endif %}</li>
+    <li>Peak actions in a window: {{ peak_action_count }}
+      {% if inhuman_action_rate %}<span class="badge">⚠ inhuman rate</span>{% endif %}</li>
+  </ul>
+  <p class="muted">Signals are advisory — they never sanction automatically.</p>
+
+  <h2>Sanction</h2>
+  <form method="post" action="/mod/sanction" class="inline">
+    <input type="hidden" name="subject" value="{{ subject_id }}">
+    <select name="kind">
+      <option value="warn">Warn</option>
+      <option value="suspend">Suspend</option>
+      <option value="ban">Ban</option>
+    </select>
+    <button type="submit">Apply</button>
+  </form>
+</section>
+{% endblock %}

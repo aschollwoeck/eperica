@@ -710,6 +710,8 @@ pub struct HistoryPointView {
 #[derive(Template)]
 #[template(path = "player_stats.html")]
 pub struct PlayerStatsTemplate {
+    /// The viewed player's id (for the report action — 022 AC2).
+    pub subject_id: String,
     pub name: String,
     pub population: i64,
     pub attack_points: i64,
@@ -785,4 +787,40 @@ pub struct WonderTemplate {
     pub max_level: u8,
     /// The race standings, highest Wonder first.
     pub standings: Vec<WonderStandingView>,
+}
+
+/// One open report on the moderator review queue page (022 AC3/AC9).
+pub struct ModReportRow {
+    /// The report id (the resolve target).
+    pub id: String,
+    /// Reporter + subject display names.
+    pub reporter_name: String,
+    pub subject_id: String,
+    pub subject_name: String,
+    /// Reason + note.
+    pub reason: String,
+    pub note: String,
+}
+
+#[derive(Template)]
+#[template(path = "mod_queue.html")]
+pub struct ModQueueTemplate {
+    /// Open reports, oldest first.
+    pub reports: Vec<ModReportRow>,
+}
+
+#[derive(Template)]
+#[template(path = "mod_account.html")]
+pub struct ModAccountTemplate {
+    /// The inspected account.
+    pub subject_id: String,
+    pub username: String,
+    /// Current sanction status.
+    pub banned: bool,
+    pub suspended: bool,
+    /// Detection signals (022 AC7).
+    pub ip_association_count: u32,
+    pub shared_ip_flagged: bool,
+    pub peak_action_count: u32,
+    pub inhuman_action_rate: bool,
 }

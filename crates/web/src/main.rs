@@ -7,9 +7,9 @@ use eperica_domain::WorldMap;
 use eperica_infrastructure::{
     AppConfig, Argon2Hasher, PgAccountRepository, PgEventStore, Scheduler, achievement_catalogue,
     alliance_rules, artifact_catalogue, build_rules, combat_rules, create_pool, culture_rules,
-    economy_rules, ensure_world_with_release, lifecycle_rules, loyalty_rules, map_rules,
-    medal_rules, merchant_rules, oasis_rules, quest_chain, ranking_rules, run_migrations,
-    scout_rules, starting_village, unit_rules, wonder_rules,
+    economy_rules, ensure_world_with_release, fair_play_rules, lifecycle_rules, loyalty_rules,
+    map_rules, medal_rules, merchant_rules, oasis_rules, quest_chain, ranking_rules,
+    run_migrations, scout_rules, starting_village, unit_rules, wonder_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -45,6 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let lifecycle = Arc::new(lifecycle_rules()?);
     let artifacts = Arc::new(artifact_catalogue()?);
     let wonder = Arc::new(wonder_rules()?);
+    let fair_play = Arc::new(fair_play_rules()?);
     let template = Arc::new(starting_village()?);
     let map = Arc::new(WorldMap::new(
         world.seed as u64,
@@ -60,6 +61,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         lifecycle.beginner_protection_secs,
         config.world.speed,
     );
+
+    // 022: designate the operator's moderators (idempotent, P7) from the MODERATORS env list.
+    bootstrap_moderators(&accounts).await;
 
     // Background scheduler (P1) — processes due events, builds, unit orders, training, starvation.
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -105,6 +109,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         lifecycle_rules: lifecycle,
         merchant_rules: merchants,
         wonder_rules: Arc::clone(&wonder),
+        fair_play_rules: Arc::clone(&fair_play),
+        trust_proxy: env_flag("TRUST_PROXY"),
         map,
         world: config.world,
         require_email_confirmation: env_flag("REQUIRE_EMAIL_CONFIRMATION"),
@@ -115,12 +121,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "Eperica web listening");
 
-    axum::serve(listener, router(state))
-        .with_graceful_shutdown(shutdown_signal(shutdown_tx))
-        .await?;
+    axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal(shutdown_tx))
+    .await?;
 
     let _ = scheduler_handle.await;
     Ok(())
+}
+
+/// Grant the elevated Moderator role (022 AC1) to the operator-configured `MODERATORS` usernames
+/// (comma-separated), idempotently at startup. Unknown names are logged and skipped.
+async fn bootstrap_moderators(accounts: &PgAccountRepository) {
+    use eperica_infrastructure::application::{AccountRepository, ModerationRepository};
+    let Ok(list) = std::env::var("MODERATORS") else {
+        return;
+    };
+    for name in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        match accounts.find_user_by_username(name).await {
+            Ok(Some(u)) => {
+                if let Err(e) = accounts.set_moderator(u.id, true).await {
+                    tracing::error!(error = %e, moderator = name, "failed to grant moderator");
+                } else {
+                    tracing::info!(moderator = name, "granted moderator role");
+                }
+            }
+            Ok(None) => tracing::warn!(moderator = name, "MODERATORS lists an unknown username"),
+            Err(e) => tracing::error!(error = %e, moderator = name, "moderator lookup failed"),
+        }
+    }
 }
 
 /// Initialize structured tracing (P11 observability).

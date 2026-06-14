@@ -60,5 +60,19 @@
     </tbody>
   </table>
   {% endif %}
+
+  <h2>Report this account</h2>
+  <p class="muted">Seeing rule-breaking? Report it for a moderator to review.</p>
+  <form method="post" action="/report" class="inline">
+    <input type="hidden" name="subject" value="{{ subject_id }}">
+    <select name="reason">
+      <option value="pushing">Pushing / multi-account</option>
+      <option value="botting">Botting</option>
+      <option value="abuse">Abuse</option>
+      <option value="other">Other</option>
+    </select>
+    <input type="text" name="note" placeholder="optional detail">
+    <button type="submit">Report</button>
+  </form>
 </section>
 {% endblock %}

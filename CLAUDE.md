@@ -27,8 +27,11 @@ captures/steals an artifact, whose effects fold into the sim reads by scope). Th
 victory** slice (021, the M7 launch capstone: a second release of capturable Wonder plans + conquerable
 Natar Wonder sites; an alliance that controls a site and holds a plan builds the Wonder — an ordinary
 `BuildingKind` raised through the 003 queue to level 100; the first alliance to 100 wins the round, which
-the server then freezes — reusing 020 plan capture, 014 site conquest, and the 003 build queue) is in
-progress (M7).
+the server then freezes — reusing 020 plan capture, 014 site conquest, and the 003 build queue). The
+**fair play & anti-cheat** slice (022, M8 launch hardening: a Moderator role; player reporting →
+moderator review queue → sanctions (warn/suspend/ban) enforced server-side via the 019 login-block + 021
+freeze-guard chokepoints; DB-backed rate limiting (429); and reproducible, advisory detection signals —
+shared registration-IP association + inhuman action-rate — surfaced to moderators) is in progress (M8).
 
 ## Read the specs first — they are the source of truth
 
@@ -42,7 +45,7 @@ progress (M7).
 - **`specs/roadmap.md`** — dependency-ordered build order (slices 001 → end-game).
 - **`specs/social-and-meta-features.md`** — app-layer features (chat, profiles, UX) — not sim rules.
 - **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the active slice. Currently:
-  `021-wonder-and-victory`.
+  `022-fair-play-and-anti-cheat`.
 
 If behavior must change, **update the spec first**, then the code.
 
