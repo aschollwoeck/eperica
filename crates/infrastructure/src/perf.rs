@@ -73,6 +73,12 @@ pub async fn seed_world(
     .execute(pool)
     .await?;
 
+    // Refresh planner statistics after the bulk insert so measurements reflect a real (autovacuumed)
+    // database — without this the planner mis-estimates row counts and picks poor plans (023).
+    sqlx::query("ANALYZE users, villages, village_fields, village_buildings")
+        .execute(pool)
+        .await?;
+
     let players: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM users WHERE username LIKE 'perf\\_%' AND is_npc = false",
     )
