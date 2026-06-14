@@ -275,15 +275,19 @@ where
         // credit). Mirrors the training-delivery clamp (units.rs). The return still departs at the
         // true arrival.
         let credit_clock = Timestamp(leg.arrive_at.0.max(snapshot.0));
+        let upkeep = (village_upkeep(&target, &garrison, unit_rules) as f64
+            * target.artifact_effects.upkeep)
+            .round() as i64;
         let economy = eperica_domain::compute_economy(
             stored,
             (credit_clock.0 - snapshot.0) / 1000,
             &target.fields,
             &target.buildings,
-            village_upkeep(&target, &garrison, unit_rules),
+            upkeep,
             economy_rules,
             speed,
             target.oasis_bonus,
+            target.artifact_effects.storage,
         );
         let credited = deposit_capped(economy.amounts, leg.bundle, economy.capacities);
         match trades
@@ -468,6 +472,7 @@ mod tests {
             oasis_bonus: Default::default(),
             is_capital: false,
             is_natar: false,
+            artifact_effects: eperica_domain::ArtifactEffects::NONE,
         }
     }
 

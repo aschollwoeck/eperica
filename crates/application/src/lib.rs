@@ -40,7 +40,7 @@ pub use alliance::{
     expel_member, found_alliance, invite_player, leave_alliance, respond_invite, revoke_invite,
     set_diplomacy, set_member_role, transfer_founder,
 };
-pub use artifact::{ReleaseSpec, account_effects, process_due_artifact_release, village_effects};
+pub use artifact::{ReleaseSpec, process_due_artifact_release};
 pub use auth::{LoginError, authenticate};
 pub use build::{BuildError, order_build, process_due_builds};
 pub use combat::{CombatError, order_attack, process_due_combat};

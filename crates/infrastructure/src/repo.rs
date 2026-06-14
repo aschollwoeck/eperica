@@ -18,14 +18,14 @@ use eperica_application::{
     TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };
 use eperica_domain::{
-    AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactId, ArtifactKind,
-    ArtifactScope, BuildTarget, BuildingKind, BuildingSlot, Coordinate, DiplomacyStance,
-    DiplomacyStatus, EconomyRules, GameSpeed, MedalCategory, MovementKind, OasisBonus, OasisRules,
-    PlayerId, PlayerProgress, Quadrant, QuestDef, QuestId, QuestProgress, QueueLane,
-    ResourceAmounts, ResourceField, ResourceKind, Reward, RightSet, ScoutTarget, StartingVillage,
-    TileKind, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
-    WorldId, WorldMap, capacities, coordinates_within, deposit_capped, oasis_garrison,
-    protection_expiry,
+    AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactEffects,
+    ArtifactId, ArtifactKind, ArtifactScope, BuildTarget, BuildingKind, BuildingSlot, Coordinate,
+    DiplomacyStance, DiplomacyStatus, EconomyRules, GameSpeed, MedalCategory, MovementKind,
+    OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant, QuestDef, QuestId, QuestProgress,
+    QueueLane, ResourceAmounts, ResourceField, ResourceKind, Reward, RightSet, ScoutTarget,
+    StartingVillage, TileKind, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village,
+    VillageId, WorldId, WorldMap, aggregate_effects, capacities, coordinates_within,
+    deposit_capped, oasis_garrison, protection_expiry,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use std::collections::{HashMap, HashSet};
@@ -67,6 +67,35 @@ impl PgAccountRepository {
             protection_window_secs,
             speed,
         }
+    }
+
+    /// The artifact effects in force for a village (020 AC6), folded into its read like the oasis bonus:
+    /// the village's own **small** holdings plus the account's **large/unique**. `NONE` for a Natar/NPC
+    /// village (it never benefits from the artifacts it guards) or when the owner holds none.
+    async fn artifact_effects_for(
+        &self,
+        owner: PlayerId,
+        village: VillageId,
+        is_natar: bool,
+    ) -> Result<ArtifactEffects, RepoError> {
+        if is_natar {
+            return Ok(ArtifactEffects::NONE);
+        }
+        let held = self.held_by_player(owner).await?;
+        if held.is_empty() {
+            return Ok(ArtifactEffects::NONE);
+        }
+        let small: Vec<ArtifactDef> = held
+            .iter()
+            .filter(|h| h.holder == village && h.def.scope == ArtifactScope::Small)
+            .map(|h| h.def.clone())
+            .collect();
+        let account_wide: Vec<ArtifactDef> = held
+            .iter()
+            .filter(|h| matches!(h.def.scope, ArtifactScope::Large | ArtifactScope::Unique))
+            .map(|h| h.def.clone())
+            .collect();
+        Ok(aggregate_effects(&small, &account_wide))
     }
 
     /// Reset build orders stuck in `processing` (e.g. left by a crash) back to `pending` so they are
@@ -548,6 +577,9 @@ impl AccountRepository for PgAccountRepository {
                 oasis_bonus: self.village_oasis_bonus(vid_typed).await?,
                 is_capital,
                 is_natar,
+                artifact_effects: self
+                    .artifact_effects_for(owner, vid_typed, is_natar)
+                    .await?,
             });
         }
         Ok(villages)
@@ -617,6 +649,9 @@ impl AccountRepository for PgAccountRepository {
             oasis_bonus: self.village_oasis_bonus(village).await?,
             is_capital,
             is_natar,
+            artifact_effects: self
+                .artifact_effects_for(PlayerId(owner.as_u128()), village, is_natar)
+                .await?,
         }))
     }
 
@@ -3045,13 +3080,17 @@ impl CombatRepository for PgAccountRepository {
             .map_err(backend)?;
 
         // 020 AC4/AC5: a captured artifact moves to the attacking village, in the battle transaction.
+        // Guarded on the expected current holder so a concurrent capture affects zero rows (P5).
         if let Some(cap) = &apply.artifact_capture {
-            sqlx::query("UPDATE artifacts SET holder_village = $1 WHERE id = $2")
-                .bind(Uuid::from_u128(cap.to_village.0))
-                .bind(&cap.artifact_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(backend)?;
+            sqlx::query(
+                "UPDATE artifacts SET holder_village = $1 WHERE id = $2 AND holder_village = $3",
+            )
+            .bind(Uuid::from_u128(cap.to_village.0))
+            .bind(&cap.artifact_id)
+            .bind(Uuid::from_u128(cap.from_village.0))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
         }
         tx.commit().await.map_err(backend)?;
         Ok(())
@@ -6809,6 +6848,114 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(holder_b, Some(natar_b), "no Treasury ⇒ artifact not taken");
+    }
+
+    /// 020 AC5: a winning attack from a Treasury village against a **player** holding an artifact steals
+    /// it (the holder loses it; the attacker gains it).
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn artifact_stolen_from_player_holder(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            config,
+            world,
+        } = setup(pool.clone()).await;
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let units = crate::unit_rules().unwrap();
+
+        // The victim: a player holding a small artifact in their (lightly defended) village.
+        let victim = make_account(&repo, &template, "victim").await;
+        let vv = repo.villages_of(victim).await.unwrap()[0].clone();
+        sqlx::query(
+            "INSERT INTO artifacts (id, world_id, kind, scope, magnitude, holder_village, origin_x, origin_y) \
+             VALUES ('steal_me', $1, 'storage', 'small', 1.5, $2, 0, 0)",
+        )
+        .bind(Uuid::from_u128(world.id.0))
+        .bind(Uuid::from_u128(vv.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The thief: a Treasury village with an army.
+        let thief = make_account(&repo, &template, "thief").await;
+        let tv = repo.villages_of(thief).await.unwrap()[0].clone();
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+             VALUES ($1, 30, 'treasury', 5)",
+        )
+        .bind(Uuid::from_u128(tv.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'swordsman', 200)",
+        )
+        .bind(Uuid::from_u128(tv.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Clear any beginner's protection on the victim so the attack lands.
+        sqlx::query("UPDATE users SET protected_until = NULL")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        eperica_application::order_attack(
+            &repo,
+            &repo,
+            &repo,
+            &econ,
+            &units,
+            &map,
+            config.speed,
+            crate::now(),
+            thief,
+            None,
+            vv.coordinate,
+            vec![(UnitId("swordsman".into()), 150)],
+            AttackMode::Attack,
+            None,
+            None,
+        )
+        .await
+        .expect("attack launches");
+        eperica_application::process_due_combat(
+            &repo,
+            &repo,
+            &repo,
+            &repo,
+            &econ,
+            &units,
+            &crate::combat_rules().unwrap(),
+            &crate::scout_rules().unwrap(),
+            &crate::culture_rules().unwrap(),
+            &crate::loyalty_rules().unwrap(),
+            &crate::ranking_rules().unwrap(),
+            &map,
+            config.speed,
+            world.seed as u64,
+            Timestamp(crate::now().0 + 100_000_000_000),
+            100,
+            (3, 6, 10),
+        )
+        .await
+        .unwrap();
+
+        let holder: Option<Uuid> =
+            sqlx::query_scalar("SELECT holder_village FROM artifacts WHERE id = 'steal_me'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            holder,
+            Some(Uuid::from_u128(tv.id.0)),
+            "the artifact was stolen to the thief's village"
+        );
     }
 
     /// 020 AC6: a held Storage artifact raises the holding village's warehouse/granary capacity on the

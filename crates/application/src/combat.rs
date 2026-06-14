@@ -195,7 +195,7 @@ pub async fn order_attack<A, C, S>(
     catapult_target: Option<BuildingKind>,
 ) -> Result<(), CombatError>
 where
-    A: AccountRepository + ArtifactRepository,
+    A: AccountRepository,
     C: CombatRepository,
     S: crate::ports::StarvationRepository,
 {
@@ -250,10 +250,9 @@ where
         return Err(CombatError::EmptyComposition);
     };
     let distance = map.distance(home.coordinate, dest.coordinate);
+    // 020 AC6: a Speed artifact (carried on the sending village's read) shortens travel time.
     let base_secs = travel_time_secs_floored(distance, slowest, speed);
-    // 020 AC6: a Speed artifact (the attacker's village/account) shortens travel time.
-    let effects = crate::artifact::village_effects(accounts, owner, home.id).await?;
-    let secs = ((base_secs as f64) / effects.troop_speed).round() as i64;
+    let secs = ((base_secs as f64) / home.artifact_effects.troop_speed).round() as i64;
     let arrive = Timestamp(now.0 + secs * 1000);
     let kind = match mode {
         AttackMode::Attack => MovementKind::Attack,
@@ -433,12 +432,10 @@ where
             ));
         }
     };
-    // 020 AC6: the artifact effects each side brings — attacker's Eyes (scout power) + the defender's
-    // Architect (building durability) and Confuser (scout defence).
-    let attacker_effects =
-        crate::artifact::village_effects(accounts, attack.owner, home.id).await?;
-    let defender_effects =
-        crate::artifact::village_effects(accounts, target.owner, target.id).await?;
+    // 020 AC6: the artifact effects each side brings (carried on the village reads) — attacker's Eyes
+    // (scout power) + the defender's Architect (building durability) and Confuser (scout defence).
+    let attacker_effects = home.artifact_effects;
+    let defender_effects = target.artifact_effects;
 
     // Attacker pools (Smithy-scaled).
     let atk_roster = home.tribe.map_or(&[][..], |t| unit_rules.roster(t));
@@ -801,6 +798,7 @@ where
                 if can_capture(treasury, required, home_holds) {
                     Some(ArtifactCapture {
                         artifact_id: art.id.0,
+                        from_village: target.id,
                         to_village: home.id,
                     })
                 } else {
@@ -900,6 +898,7 @@ mod tests {
             oasis_bonus: Default::default(),
             is_capital: false,
             is_natar: false,
+            artifact_effects: eperica_domain::ArtifactEffects::NONE,
         }
     }
 

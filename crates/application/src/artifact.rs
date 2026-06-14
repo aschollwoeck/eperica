@@ -3,9 +3,7 @@
 //! village; large/unique = account-wide).
 
 use crate::ports::{ArtifactRepository, RepoError};
-use eperica_domain::{
-    ArtifactEffects, ArtifactScope, PlayerId, Timestamp, VillageId, aggregate_effects,
-};
+use eperica_domain::Timestamp;
 
 /// The released catalogue + garrison spec needed to materialize the artifacts (mirrors the infra
 /// catalogue; passed in so the use-case stays I/O-free).
@@ -44,46 +42,4 @@ where
         spec.garrison_per_index,
     )
     .await
-}
-
-/// The artifact effects in force for `village`, owned by `player`: the village's own **small**
-/// holdings plus the account's **large/unique** holdings (020 AC6). `ArtifactEffects::NONE` if none.
-pub async fn village_effects<R>(
-    repo: &R,
-    player: PlayerId,
-    village: VillageId,
-) -> Result<ArtifactEffects, RepoError>
-where
-    R: ArtifactRepository,
-{
-    let held = repo.held_by_player(player).await?;
-    if held.is_empty() {
-        return Ok(ArtifactEffects::NONE);
-    }
-    let village_small: Vec<_> = held
-        .iter()
-        .filter(|h| h.holder == village && h.def.scope == ArtifactScope::Small)
-        .map(|h| h.def.clone())
-        .collect();
-    let account_wide: Vec<_> = held
-        .iter()
-        .filter(|h| matches!(h.def.scope, ArtifactScope::Large | ArtifactScope::Unique))
-        .map(|h| h.def.clone())
-        .collect();
-    Ok(aggregate_effects(&village_small, &account_wide))
-}
-
-/// The account-wide artifact effects for `player` (large/unique only) — for paths not tied to a single
-/// village (e.g. training/scouting from any of the player's villages).
-pub async fn account_effects<R>(repo: &R, player: PlayerId) -> Result<ArtifactEffects, RepoError>
-where
-    R: ArtifactRepository,
-{
-    let held = repo.held_by_player(player).await?;
-    let account_wide: Vec<_> = held
-        .into_iter()
-        .filter(|h| matches!(h.def.scope, ArtifactScope::Large | ArtifactScope::Unique))
-        .map(|h| h.def)
-        .collect();
-    Ok(aggregate_effects(&[], &account_wide))
 }

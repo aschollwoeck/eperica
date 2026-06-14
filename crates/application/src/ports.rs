@@ -648,6 +648,9 @@ pub struct BattleApply {
 pub struct ArtifactCapture {
     /// The captured artifact's id.
     pub artifact_id: String,
+    /// The village it was taken **from** (the target) — the transfer is guarded on this so a
+    /// concurrent capture of the same artifact affects zero rows (exactly-once, P5).
+    pub from_village: VillageId,
     /// The attacking village it moves to.
     pub to_village: VillageId,
 }
