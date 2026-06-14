@@ -6,10 +6,10 @@ use axum_extra::extract::cookie::Key;
 use eperica_domain::WorldMap;
 use eperica_infrastructure::{
     AppConfig, Argon2Hasher, PgAccountRepository, PgEventStore, Scheduler, achievement_catalogue,
-    alliance_rules, build_rules, combat_rules, create_pool, culture_rules, economy_rules,
-    ensure_world, lifecycle_rules, loyalty_rules, map_rules, medal_rules, merchant_rules,
-    oasis_rules, quest_chain, ranking_rules, run_migrations, scout_rules, starting_village,
-    unit_rules,
+    alliance_rules, artifact_catalogue, build_rules, combat_rules, create_pool, culture_rules,
+    economy_rules, ensure_world_with_release, lifecycle_rules, loyalty_rules, map_rules,
+    medal_rules, merchant_rules, oasis_rules, quest_chain, ranking_rules, run_migrations,
+    scout_rules, starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -23,7 +23,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::from_env()?;
     let pool = create_pool(&config.database_url).await?;
     run_migrations(&pool).await?;
-    let world = ensure_world(&pool, &config.world).await?;
+    let world =
+        ensure_world_with_release(&pool, &config.world, config.artifact_release_offset_secs)
+            .await?;
     let rules = Arc::new(economy_rules()?);
     let units = Arc::new(unit_rules()?);
     let merchants = Arc::new(merchant_rules()?);
@@ -37,6 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let achievements = Arc::new(achievement_catalogue()?);
     let quests = Arc::new(quest_chain()?);
     let lifecycle = Arc::new(lifecycle_rules()?);
+    let artifacts = Arc::new(artifact_catalogue()?);
     let template = Arc::new(starting_village()?);
     let map = Arc::new(WorldMap::new(
         world.seed as u64,
@@ -69,11 +72,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&ranking),
         Arc::clone(&medals),
         Arc::clone(&lifecycle),
+        Arc::clone(&artifacts),
         Arc::clone(&template),
         Arc::clone(&map),
         config.world.speed,
         world.seed as u64,
         world.created_at,
+        world.artifact_release_at,
     );
     let scheduler_handle = tokio::spawn(scheduler.run(shutdown_rx));
 

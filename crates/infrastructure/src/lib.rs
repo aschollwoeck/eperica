@@ -17,13 +17,14 @@ pub mod world;
 pub use eperica_application as application;
 
 pub use balance::{
-    BalanceError, achievement_catalogue, alliance_rules, build_rules, combat_rules, culture_rules,
-    economy_rules, lifecycle_rules, loyalty_rules, map_rules, medal_rules, merchant_rules,
-    oasis_rules, quest_chain, ranking_rules, scout_rules, starting_village, unit_rules,
+    ArtifactCatalogue, BalanceError, achievement_catalogue, alliance_rules, artifact_catalogue,
+    build_rules, combat_rules, culture_rules, economy_rules, lifecycle_rules, loyalty_rules,
+    map_rules, medal_rules, merchant_rules, oasis_rules, quest_chain, ranking_rules, scout_rules,
+    starting_village, unit_rules,
 };
 pub use config::{AppConfig, ConfigError};
 pub use db::{MIGRATOR, create_pool, run_migrations};
 pub use event_store::{PgEventStore, Scheduler, now};
 pub use repo::PgAccountRepository;
 pub use security::Argon2Hasher;
-pub use world::{World, ensure_world};
+pub use world::{World, ensure_world, ensure_world_with_release};

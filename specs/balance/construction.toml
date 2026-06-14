@@ -189,3 +189,14 @@ wood = [460, 590, 755, 970, 1240, 1585, 2030, 2595, 3320, 4250]
 clay = [510, 655, 835, 1070, 1370, 1750, 2240, 2870, 3670, 4700]
 iron = [600, 770, 985, 1260, 1615, 2065, 2640, 3380, 4325, 5535]
 crop = [320, 410, 525, 670, 860, 1100, 1405, 1800, 2305, 2950]
+
+# Treasury (020) — required to hold an artifact; its level gates the artifact scope (small/large/unique).
+# An end-game building gated behind a developed Main Building.
+[buildings.treasury]
+time_secs = [8800, 11200, 14300, 18200, 23200, 29600, 37700, 48100, 61300, 78100]
+prerequisites = [{ building = "main_building", level = 10 }]
+[buildings.treasury.cost]
+wood = [1850, 2370, 3030, 3880, 4965, 6355, 8135, 10415, 13330, 17065]
+clay = [1700, 2175, 2785, 3565, 4565, 5840, 7475, 9570, 12250, 15680]
+iron = [1950, 2495, 3195, 4090, 5235, 6700, 8580, 10980, 14055, 17990]
+crop = [800, 1025, 1310, 1680, 2150, 2750, 3520, 4505, 5770, 7385]

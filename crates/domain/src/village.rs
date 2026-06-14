@@ -1,5 +1,6 @@
 //! Villages — the player's settlements: identity, the resource fields, and the center buildings.
 
+use crate::artifact::ArtifactEffects;
 use crate::building::BuildingKind;
 use crate::error::DomainError;
 use crate::map::{FieldDistribution, OasisBonus};
@@ -102,7 +103,7 @@ impl StartingVillage {
 }
 
 /// A player's settlement on the map.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Village {
     /// Unique identity.
     pub id: VillageId,
@@ -123,6 +124,13 @@ pub struct Village {
     /// Whether this village is the player's **capital** (013, §3.4) — set by building a Palace. The
     /// capital may raise its resource fields past the normal cap; folded into the village read.
     pub is_capital: bool,
+    /// Whether this is a **Natar NPC** village (020) — an artifact vault, not ownable (conquest never
+    /// transfers it) and excluded from boards/stats.
+    pub is_natar: bool,
+    /// The artifact effects in force for this village (020) — its own small holdings plus the
+    /// account's large/unique, aggregated on read (the oasis-bonus pattern). `NONE` for no holdings
+    /// (and for Natar/NPC villages, which never benefit from the artifacts they guard).
+    pub artifact_effects: ArtifactEffects,
 }
 
 impl Village {
@@ -147,6 +155,8 @@ impl Village {
             buildings: template.buildings().to_vec(),
             oasis_bonus: OasisBonus::default(),
             is_capital: false,
+            is_natar: false,
+            artifact_effects: ArtifactEffects::NONE,
         }
     }
 }

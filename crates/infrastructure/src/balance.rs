@@ -5,13 +5,13 @@
 //! types, keeping the domain itself free of serialization concerns.
 
 use eperica_domain::{
-    AchievementDef, AchievementId, AchievementKind, AllianceRules, BuildRules, BuildingKind,
-    BuildingSlot, CombatRules, CultureRules, DomainError, EconomyRules, FieldDistribution,
-    LevelSpec, LifecycleRules, LoyaltyRules, MapRules, MedalCategory, MedalRules, MerchantProfile,
-    MerchantRules, OasisBonus, OasisRules, QuestCondition, QuestDef, QuestId, QuestReward,
-    RankingRules, ResearchSpec, ResourceAmounts, ResourceField, ResourceKind, Reward, ScoutRules,
-    SiegeKind, SmithyRules, StartingVillage, TrainingRules, Tribe, UnitId, UnitRole, UnitRules,
-    UnitSpec, WallProfile, Weighted,
+    AchievementDef, AchievementId, AchievementKind, AllianceRules, ArtifactDef, ArtifactId,
+    ArtifactKind, ArtifactScope, BuildRules, BuildingKind, BuildingSlot, CombatRules, CultureRules,
+    DomainError, EconomyRules, FieldDistribution, LevelSpec, LifecycleRules, LoyaltyRules,
+    MapRules, MedalCategory, MedalRules, MerchantProfile, MerchantRules, OasisBonus, OasisRules,
+    QuestCondition, QuestDef, QuestId, QuestReward, RankingRules, ResearchSpec, ResourceAmounts,
+    ResourceField, ResourceKind, Reward, ScoutRules, SiegeKind, SmithyRules, StartingVillage,
+    TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec, WallProfile, Weighted,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -91,6 +91,10 @@ const LIFECYCLE_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../specs/balance/lifecycle.toml"
 ));
+const ARTIFACTS_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../specs/balance/artifacts.toml"
+));
 
 /// Errors that can occur while loading balance data.
 #[derive(Debug, thiserror::Error)]
@@ -119,6 +123,12 @@ pub enum BalanceError {
     /// A quest id appeared more than once in the chain (018) — ids must be unique (the completion PK).
     #[error("duplicate quest id: {0}")]
     DuplicateQuestId(String),
+    /// An unknown artifact kind appeared in the data (020).
+    #[error("unknown artifact kind: {0}")]
+    UnknownArtifactKind(String),
+    /// An unknown artifact scope appeared in the data (020).
+    #[error("unknown artifact scope: {0}")]
+    UnknownArtifactScope(String),
     /// The parsed data did not form a valid domain template.
     #[error(transparent)]
     Domain(DomainError),
@@ -206,6 +216,7 @@ fn parse_building(name: &str) -> Result<BuildingKind, BalanceError> {
         "outpost" => Ok(BuildingKind::Outpost),
         "town_hall" => Ok(BuildingKind::TownHall),
         "palace" => Ok(BuildingKind::Palace),
+        "treasury" => Ok(BuildingKind::Treasury),
         other => Err(BalanceError::UnknownBuilding(other.to_owned())),
     }
 }
@@ -344,6 +355,7 @@ struct BuildingsDto {
     town_hall: LevelSpecDto,
     residence: LevelSpecDto,
     palace: LevelSpecDto,
+    treasury: LevelSpecDto,
 }
 
 fn level_spec(dto: &LevelSpecDto) -> LevelSpec {
@@ -394,6 +406,7 @@ pub fn build_rules() -> Result<BuildRules, BalanceError> {
         (BuildingKind::TownHall, &dto.buildings.town_hall),
         (BuildingKind::Residence, &dto.buildings.residence),
         (BuildingKind::Palace, &dto.buildings.palace),
+        (BuildingKind::Treasury, &dto.buildings.treasury),
     ] {
         buildings.insert(kind, level_spec(spec_dto));
         let pr = prereqs(spec_dto)?;
@@ -698,6 +711,107 @@ pub fn lifecycle_rules() -> Result<LifecycleRules, BalanceError> {
         inactive_after_secs: dto.inactivity.inactive_after_secs,
         abandon_after_secs: dto.inactivity.abandon_after_secs,
         sweep_interval_secs: dto.inactivity.sweep_interval_secs,
+    })
+}
+
+/// The released artifact set plus the Treasury-level requirements and the Natar garrison spec (020).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArtifactCatalogue {
+    /// The artifacts released at the artifact-release date.
+    pub artifacts: Vec<ArtifactDef>,
+    /// Treasury level required to hold a small/large/unique artifact.
+    pub treasury_small: u8,
+    pub treasury_large: u8,
+    pub treasury_unique: u8,
+    /// The seeded Natar defensive garrison: `base_count + per_index * villageIndex` of `unit`.
+    pub garrison_unit: String,
+    pub garrison_base_count: i64,
+    pub garrison_per_index: i64,
+}
+
+#[derive(Deserialize)]
+struct ArtifactsDto {
+    treasury: TreasuryDto,
+    garrison: GarrisonDto,
+    artifacts: Vec<ArtifactDto>,
+}
+
+#[derive(Deserialize)]
+struct TreasuryDto {
+    small: u8,
+    large: u8,
+    unique: u8,
+}
+
+#[derive(Deserialize)]
+struct GarrisonDto {
+    unit: String,
+    base_count: i64,
+    per_index: i64,
+}
+
+#[derive(Deserialize)]
+struct ArtifactDto {
+    id: String,
+    kind: String,
+    scope: String,
+    magnitude: f64,
+}
+
+fn parse_artifact_kind(s: &str) -> Result<ArtifactKind, BalanceError> {
+    match s {
+        "speed" => Ok(ArtifactKind::Speed),
+        "storage" => Ok(ArtifactKind::Storage),
+        "sustenance" => Ok(ArtifactKind::Sustenance),
+        "trainer" => Ok(ArtifactKind::Trainer),
+        "architect" => Ok(ArtifactKind::Architect),
+        "eyes" => Ok(ArtifactKind::Eyes),
+        "confuser" => Ok(ArtifactKind::Confuser),
+        "fool" => Ok(ArtifactKind::Fool),
+        other => Err(BalanceError::UnknownArtifactKind(other.to_owned())),
+    }
+}
+
+fn parse_artifact_scope(s: &str) -> Result<ArtifactScope, BalanceError> {
+    match s {
+        "small" => Ok(ArtifactScope::Small),
+        "large" => Ok(ArtifactScope::Large),
+        "unique" => Ok(ArtifactScope::Unique),
+        other => Err(BalanceError::UnknownArtifactScope(other.to_owned())),
+    }
+}
+
+/// Load the artifact catalogue (020, P7) from `artifacts.toml`, fail-fast on unknown kind/scope or a
+/// duplicate id.
+pub fn artifact_catalogue() -> Result<ArtifactCatalogue, BalanceError> {
+    let dto: ArtifactsDto = toml::from_str(ARTIFACTS_TOML)?;
+    let mut seen = std::collections::HashSet::with_capacity(dto.artifacts.len());
+    let artifacts = dto
+        .artifacts
+        .iter()
+        .map(|a| {
+            if !seen.insert(a.id.as_str()) {
+                return Err(BalanceError::UnknownArtifactKind(format!(
+                    "duplicate artifact id: {}",
+                    a.id
+                )));
+            }
+            Ok(ArtifactDef {
+                id: ArtifactId(a.id.clone()),
+                kind: parse_artifact_kind(&a.kind)?,
+                scope: parse_artifact_scope(&a.scope)?,
+                magnitude: a.magnitude,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ArtifactCatalogue {
+        artifacts,
+        treasury_small: dto.treasury.small,
+        treasury_large: dto.treasury.large,
+        treasury_unique: dto.treasury.unique,
+        garrison_unit: dto.garrison.unit,
+        garrison_base_count: dto.garrison.base_count,
+        garrison_per_index: dto.garrison.per_index,
     })
 }
 
@@ -1545,6 +1659,26 @@ mod tests {
             eperica_domain::QuestCondition::BuildingLevel(BuildingKind::Warehouse, 1)
         );
         assert!(wh.reward.resources.wood > 0);
+    }
+
+    #[test]
+    fn loads_artifact_catalogue() {
+        // 020: the artifact set loads fail-fast with valid kinds/scopes and unique ids.
+        let cat = artifact_catalogue().expect("artifact catalogue load");
+        assert!(cat.artifacts.len() >= 8, "at least one of every kind");
+        assert!(
+            cat.treasury_small < cat.treasury_unique,
+            "unique needs a higher Treasury"
+        );
+        assert!(cat.garrison_base_count > 0);
+        // Every scope is represented.
+        use eperica_domain::ArtifactScope::*;
+        for scope in [Small, Large, Unique] {
+            assert!(
+                cat.artifacts.iter().any(|a| a.scope == scope),
+                "scope {scope:?} present"
+            );
+        }
     }
 
     #[test]

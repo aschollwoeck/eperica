@@ -133,9 +133,10 @@ where
         return Err(BuildError::NotFound);
     };
     let garrison = accounts.garrison(village.id).await?;
-    let upkeep = village
+    let base_upkeep = village
         .tribe
         .map_or(0, |t| garrison_upkeep(&garrison, unit_rules.roster(t)));
+    let upkeep = (base_upkeep as f64 * village.artifact_effects.upkeep).round() as i64;
     let elapsed = (now.0 - updated_at.0) / 1000;
     let amounts = compute_economy(
         stored,
@@ -146,6 +147,7 @@ where
         economy_rules,
         speed,
         village.oasis_bonus,
+        village.artifact_effects.storage,
     )
     .amounts;
     if !can_afford(amounts, cost) {
@@ -285,6 +287,8 @@ mod tests {
             buildings,
             oasis_bonus: Default::default(),
             is_capital: false,
+            is_natar: false,
+            artifact_effects: eperica_domain::ArtifactEffects::NONE,
         }
     }
 

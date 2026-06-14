@@ -54,9 +54,11 @@ pub fn settle_amounts(
     unit_rules: &UnitRules,
     speed: GameSpeed,
 ) -> ResourceAmounts {
-    let upkeep = village
+    let base_upkeep = village
         .tribe
         .map_or(0, |t| garrison_upkeep(garrison, unit_rules.roster(t)));
+    // 020 AC6: artifact Sustenance/Storage ride the village read on every settle (consistent, P2).
+    let upkeep = (base_upkeep as f64 * village.artifact_effects.upkeep).round() as i64;
     compute_economy(
         stored,
         (now.0 - updated_at.0) / 1000,
@@ -66,12 +68,13 @@ pub fn settle_amounts(
         rules,
         speed,
         village.oasis_bonus,
+        village.artifact_effects.storage,
     )
     .amounts
 }
 
 /// A village (its fields/buildings/levels) plus its garrison and computed economy.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VillageEconomy {
     /// The village, including field/building levels and coordinate.
     pub village: Village,
@@ -109,20 +112,21 @@ where
         return Ok(None);
     };
     let garrison = repo.garrison(village.id).await?;
-    let upkeep = village
+    // 020 AC6: Sustenance reduces the garrison's crop upkeep (the village carries its artifact effects).
+    let base_upkeep = village
         .tribe
         .map_or(0, |t| garrison_upkeep(&garrison, unit_rules.roster(t)));
-
-    let elapsed_secs = (now.0 - updated_at.0) / 1000;
+    let upkeep = (base_upkeep as f64 * village.artifact_effects.upkeep).round() as i64;
     let economy = compute_economy(
         stored,
-        elapsed_secs,
+        (now.0 - updated_at.0) / 1000,
         &village.fields,
         &village.buildings,
         upkeep,
         rules,
         speed,
         village.oasis_bonus,
+        village.artifact_effects.storage, // Storage enlarges warehouse/granary.
     );
     Ok(Some(VillageEconomy {
         village,

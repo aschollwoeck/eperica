@@ -68,6 +68,7 @@ mod tests {
             fields: Vec::new(),
             buildings: Vec::new(),
             protection: None,
+            artifacts: Vec::new(),
         }
     }
 
@@ -535,6 +536,16 @@ pub struct VillageTemplate {
     /// Beginner's-protection notice (019 AC9): a human summary of the remaining window, or `None`
     /// once protection has ended.
     pub protection: Option<String>,
+    /// Artifacts this player holds (020 AC8) — type/scope/effect + holding-village coordinate.
+    pub artifacts: Vec<ArtifactRowView>,
+}
+
+/// One held artifact on the village view (020 AC8).
+pub struct ArtifactRowView {
+    /// A human label: "Speed (large) — ×2.0".
+    pub label: String,
+    /// The holding village's coordinate, e.g. "(12|−4)".
+    pub holder: String,
 }
 
 // ---------------------------------------------------------------- alliances (015)

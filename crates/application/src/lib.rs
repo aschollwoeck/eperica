@@ -6,6 +6,7 @@
 
 pub mod achievements;
 pub mod alliance;
+pub mod artifact;
 pub mod auth;
 pub mod build;
 pub mod combat;
@@ -39,6 +40,7 @@ pub use alliance::{
     expel_member, found_alliance, invite_player, leave_alliance, respond_invite, revoke_invite,
     set_diplomacy, set_member_role, transfer_founder,
 };
+pub use artifact::{ReleaseSpec, process_due_artifact_release};
 pub use auth::{LoginError, authenticate};
 pub use build::{BuildError, order_build, process_due_builds};
 pub use combat::{CombatError, order_attack, process_due_combat};
@@ -54,18 +56,19 @@ pub use oasis::{
 };
 pub use ports::{
     AccountRepository, AchievementRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder,
-    AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage, BattleApply,
-    BattleReportView, BoardScope, BuildRepository, CombatRepository, ConflictMetric,
-    ConquestRepository, ConquestTransfer, CultureRepository, DefenderContribution, DefenderReport,
-    DiplomacyEntry, DueAttack, DueBuild, DueEvent, DueMovement, DueOasisAttack, DueOasisRegrow,
-    DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, EventStore,
-    IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply, MedalAward, MedalRepository,
-    MedalSubjectKind, MedalView, Membership, MovementRepository, MovementView, NewBattleReport,
-    NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
-    OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
-    OutgoingInvite, PasswordHasher, PendingInvite, PlayerStats, QuestRepository, RankingRepository,
-    RazedBuilding, ReinforcementReturn, RepoError, ResourceWrite, RosterEntry, ScoutApply,
-    ScoutIntel, ScoutReportView, ScoutRepository, SettleApply, SettleOutcome, SettleRepository,
+    AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage, ArtifactCapture,
+    ArtifactRepository, BattleApply, BattleReportView, BoardScope, BuildRepository,
+    CombatRepository, ConflictMetric, ConquestRepository, ConquestTransfer, CultureRepository,
+    DefenderContribution, DefenderReport, DiplomacyEntry, DueAttack, DueBuild, DueEvent,
+    DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade,
+    DueTraining, DueUnitOrder, EventStore, HeldArtifact, IncomingAttack, LeaderboardRow,
+    LifecycleRepository, LoyaltyApply, MedalAward, MedalRepository, MedalSubjectKind, MedalView,
+    Membership, MovementRepository, MovementView, NewBattleReport, NewBuildOrder, NewOasisReport,
+    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
+    OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PasswordHasher,
+    PendingInvite, PlayerStats, QuestRepository, RankingRepository, RazedBuilding,
+    ReinforcementReturn, RepoError, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel,
+    ScoutReportView, ScoutRepository, SettleApply, SettleOutcome, SettleRepository,
     StarvationRepository, StationedGroup, TradeRepository, TradeView, TrainingRepository,
     UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
 };

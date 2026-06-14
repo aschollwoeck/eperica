@@ -111,7 +111,9 @@ async fn village_and_amounts<A: AccountRepository>(
         return Ok(None);
     };
     let garrison = accounts.garrison(village.id).await?;
-    let upkeep = garrison_upkeep(&garrison, unit_rules.roster(tribe));
+    // 020 AC6: artifact Sustenance/Storage ride this settle too (consistent with the read).
+    let base_upkeep = garrison_upkeep(&garrison, unit_rules.roster(tribe));
+    let upkeep = (base_upkeep as f64 * village.artifact_effects.upkeep).round() as i64;
     let elapsed = (now.0 - updated_at.0) / 1000;
     let amounts = compute_economy(
         stored,
@@ -122,6 +124,7 @@ async fn village_and_amounts<A: AccountRepository>(
         economy_rules,
         speed,
         village.oasis_bonus,
+        village.artifact_effects.storage,
     )
     .amounts;
     Ok(Some((village, tribe, amounts, updated_at)))
@@ -416,16 +419,17 @@ where
         .iter()
         .find(|b| b.kind == spec.trained_in)
         .map_or(0, |b| b.level);
+    // 020 AC6: a Trainer artifact (carried on the training village's read) speeds training.
+    let base_per_unit =
+        per_unit_time_secs(spec.train_secs, building_level, &unit_rules.training, speed);
+    let per_unit_secs = ((base_per_unit as f64) * village.artifact_effects.training)
+        .round()
+        .max(1.0) as i64;
     let order = NewTrainingOrder {
         building: spec.trained_in,
         unit,
         count,
-        per_unit_secs: per_unit_time_secs(
-            spec.train_secs,
-            building_level,
-            &unit_rules.training,
-            speed,
-        ),
+        per_unit_secs,
     };
     training
         .start_training(village.id, settled, settled_from, now, order)
@@ -555,10 +559,11 @@ where
             segment_secs,
             &village.fields,
             &village.buildings,
-            upkeep,
+            (upkeep as f64 * village.artifact_effects.upkeep).round() as i64,
             economy_rules,
             speed,
             village.oasis_bonus,
+            village.artifact_effects.storage,
         )
         .amounts;
         from = Timestamp(from.0.max(t_i.0));
@@ -721,6 +726,8 @@ mod tests {
                 .collect(),
             oasis_bonus: Default::default(),
             is_capital: false,
+            is_natar: false,
+            artifact_effects: eperica_domain::ArtifactEffects::NONE,
         }
     }
 
@@ -772,6 +779,9 @@ mod tests {
             Ok(None)
         }
     }
+
+    // 020: no artifacts in the training tests (defaults apply); they assert base training times.
+    impl crate::ports::ArtifactRepository for FakeAccounts {}
 
     #[derive(Default)]
     struct FakeUnits {

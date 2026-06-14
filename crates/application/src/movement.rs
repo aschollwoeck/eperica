@@ -108,7 +108,10 @@ where
         return Err(MovementError::EmptyComposition);
     };
     let distance = map.distance(home.coordinate, dest.coordinate);
-    let secs = travel_time_secs_floored(distance, slowest, speed);
+    // 020 AC6: a Speed artifact (carried on the sending village's read) shortens travel.
+    let secs = ((travel_time_secs_floored(distance, slowest, speed) as f64)
+        / home.artifact_effects.troop_speed)
+        .round() as i64;
     let arrive = Timestamp(now.0 + secs * 1000);
 
     movements
@@ -279,9 +282,10 @@ where
         return Ok(None);
     };
     let garrison = accounts.garrison(home.id).await?;
-    let upkeep = home
+    let base_upkeep = home
         .tribe
         .map_or(0, |t| garrison_upkeep(&garrison, unit_rules.roster(t)));
+    let upkeep = (base_upkeep as f64 * home.artifact_effects.upkeep).round() as i64;
     // Never let the clock regress below the snapshot (mirrors the 008 deliver).
     let clock = Timestamp(now.0.max(snapshot.0));
     let econ = compute_economy(
@@ -293,6 +297,7 @@ where
         economy_rules,
         speed,
         home.oasis_bonus,
+        home.artifact_effects.storage,
     );
     let after = deposit_capped(econ.amounts, loot, econ.capacities);
     Ok(Some(ResourceWrite {
@@ -421,6 +426,8 @@ mod tests {
             }],
             oasis_bonus: Default::default(),
             is_capital: false,
+            is_natar: false,
+            artifact_effects: eperica_domain::ArtifactEffects::NONE,
         }
     }
 
@@ -467,6 +474,9 @@ mod tests {
             Ok(self.target.clone())
         }
     }
+
+    // 020: this fake holds no artifacts (defaults apply); the movement tests assert base travel times.
+    impl crate::ports::ArtifactRepository for FakeAccounts {}
 
     #[derive(Clone)]
     struct Sent {

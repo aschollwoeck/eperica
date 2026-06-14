@@ -7,6 +7,12 @@
   <p class="alert alert--success">🛡 {{ notice }}</p>
   {% endif %}
 
+  {% if !artifacts.is_empty() %}
+  <p class="muted">🏺 Artifacts held:
+    {% for a in artifacts %}<strong>{{ a.label }}</strong> @ {{ a.holder }}{% if !loop.last %} · {% endif %}{% endfor %}
+  </p>
+  {% endif %}
+
   {% if villages.len() > 1 %}
   <p class="muted">Your villages:
     {% for v in villages %}

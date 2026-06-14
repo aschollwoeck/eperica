@@ -43,7 +43,9 @@ where
         return starvation.cancel_starvation_check(village_id).await;
     };
 
-    let upkeep = garrison_upkeep(&garrison, unit_rules.roster(tribe));
+    let upkeep = (garrison_upkeep(&garrison, unit_rules.roster(tribe)) as f64
+        * village.artifact_effects.upkeep)
+        .round() as i64;
     let economy = compute_economy(
         stored,
         (now.0 - updated_at.0) / 1000,
@@ -53,6 +55,7 @@ where
         economy_rules,
         speed,
         village.oasis_bonus,
+        village.artifact_effects.storage,
     );
     match depletion_secs(economy.amounts.crop, economy.rates.crop_net) {
         None => starvation.cancel_starvation_check(village_id).await,
@@ -145,7 +148,8 @@ where
     }
 
     let roster = unit_rules.roster(tribe);
-    let upkeep = garrison_upkeep(&garrison, roster);
+    let upkeep = (garrison_upkeep(&garrison, roster) as f64 * village.artifact_effects.upkeep)
+        .round() as i64;
     let economy = compute_economy(
         stored,
         (now.0 - updated_at.0) / 1000,
@@ -155,6 +159,7 @@ where
         economy_rules,
         speed,
         village.oasis_bonus,
+        village.artifact_effects.storage,
     );
 
     if economy.rates.crop_net >= 0 {
@@ -334,6 +339,8 @@ mod tests {
             buildings: vec![],
             oasis_bonus: Default::default(),
             is_capital: false,
+            is_natar: false,
+            artifact_effects: eperica_domain::ArtifactEffects::NONE,
         }
     }
 

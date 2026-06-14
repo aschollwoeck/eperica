@@ -7,6 +7,7 @@
 
 pub mod achievements;
 pub mod alliance;
+pub mod artifact;
 pub mod building;
 pub mod combat;
 pub mod construction;
@@ -35,6 +36,10 @@ pub use achievements::{
 pub use alliance::{
     AllianceId, AllianceRight, AllianceRole, AllianceRules, DiplomacyAction, DiplomacyError,
     DiplomacyStance, DiplomacyState, DiplomacyStatus, RightSet, can_expel, has_right, next_stance,
+};
+pub use artifact::{
+    ArtifactDef, ArtifactEffects, ArtifactId, ArtifactKind, ArtifactScope, aggregate_effects,
+    can_capture, fool_resolved, required_treasury_level,
 };
 pub use building::BuildingKind;
 pub use combat::{

@@ -1313,6 +1313,7 @@ async fn combat_raid_and_reports_flow(pool: sqlx::PgPool) {
         world.seed as u64,
         future,
         100,
+        (3, 6, 10),
     )
     .await
     .unwrap();
@@ -1616,6 +1617,7 @@ async fn siege_loot_and_cranny_flow(pool: sqlx::PgPool) {
         world.seed as u64,
         future,
         100,
+        (3, 6, 10),
     )
     .await
     .unwrap();
@@ -2250,6 +2252,7 @@ async fn conquest_with_administrators_flow(pool: sqlx::PgPool) {
         world.seed as u64,
         future,
         100,
+        (3, 6, 10),
     )
     .await
     .unwrap();
@@ -2850,5 +2853,54 @@ async fn abandoned_account_cannot_log_in(pool: sqlx::PgPool) {
     assert!(
         body.contains("retired"),
         "an abandoned account is told it has been retired"
+    );
+}
+
+/// 020 AC8: a player who holds an artifact sees it on their village view.
+#[sqlx::test(migrations = "../../migrations")]
+async fn village_shows_held_artifacts(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let c = client();
+    let user = unique("arti");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", format!("{user}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let (vid, world_id): (uuid::Uuid, uuid::Uuid) = sqlx::query_as(
+        "SELECT v.id, v.world_id FROM villages v JOIN users u ON u.id = v.owner_id \
+         WHERE u.username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO artifacts (id, world_id, kind, scope, magnitude, holder_village, origin_x, origin_y) \
+         VALUES ('vt_speed', $1, 'speed', 'large', 2.0, $2, 0, 0)",
+    )
+    .bind(world_id)
+    .bind(vid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let body = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("Artifacts held"), "the holdings panel shows");
+    assert!(
+        body.contains("Speed (large)"),
+        "the held artifact is listed"
     );
 }

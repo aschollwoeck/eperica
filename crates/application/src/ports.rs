@@ -5,11 +5,11 @@
 
 use async_trait::async_trait;
 use eperica_domain::{
-    AchievementDef, AchievementId, AllianceId, AllianceRole, BuildTarget, BuildingKind, Coordinate,
-    DiplomacyStance, DiplomacyStatus, EconomyRules, EventKind, MedalCategory, MovementKind,
-    OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant, QuestDef, QuestId, QuestProgress,
-    QueueLane, ResourceAmounts, RightSet, ScoutTarget, StartingVillage, Timestamp, TradeKind,
-    Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
+    AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, BuildTarget,
+    BuildingKind, Coordinate, DiplomacyStance, DiplomacyStatus, EconomyRules, EventKind,
+    MedalCategory, MovementKind, OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant,
+    QuestDef, QuestId, QuestProgress, QueueLane, ResourceAmounts, RightSet, ScoutTarget,
+    StartingVillage, Timestamp, TradeKind, Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
 };
 use std::collections::HashSet;
 
@@ -637,6 +637,22 @@ pub struct BattleApply {
     /// value, and split defense points. Persisted as `battle_defenders` rows in this transaction;
     /// empty for a battle with no recorded player defenders (e.g. PvE, or a legacy test).
     pub defender_contributions: Vec<DefenderContribution>,
+    /// An artifact captured by this winning attack (020 AC4/AC5): its id moves to the attacking
+    /// village in the battle transaction. `None` when nothing is captured.
+    pub artifact_capture: Option<ArtifactCapture>,
+}
+
+/// An artifact transferred by a winning attack (020): the artifact id and the attacking village it
+/// moves to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArtifactCapture {
+    /// The captured artifact's id.
+    pub artifact_id: String,
+    /// The village it was taken **from** (the target) — the transfer is guarded on this so a
+    /// concurrent capture of the same artifact affects zero rows (exactly-once, P5).
+    pub from_village: VillageId,
+    /// The attacking village it moves to.
+    pub to_village: VillageId,
 }
 
 /// One defending player's share of a battle (016 AC3/AC4): the troops they contributed, their
@@ -2416,4 +2432,65 @@ pub trait LifecycleRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn sweep_abandoned(&self, period: i64, cutoff: Timestamp) -> Result<usize, RepoError>;
+}
+
+/// One held artifact and the village holding it (020).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeldArtifact {
+    /// The artifact.
+    pub def: ArtifactDef,
+    /// The village currently holding it.
+    pub holder: VillageId,
+}
+
+/// Persistence for the end-game artifacts + their Natar vaults (020).
+#[async_trait]
+pub trait ArtifactRepository: Send + Sync {
+    /// Materialize the released artifact set **once** (020 AC1): if `now ≥ release_at` and nothing has
+    /// been released yet, ensure the synthetic Natar NPC owner, place one Natar village per artifact on
+    /// the reserved Natar tiles (seeded ring order) with a seeded garrison, and insert each artifact
+    /// held by its Natar village. Returns the number released (0 if not yet due or already released).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn release_artifacts(
+        &self,
+        release_at: Timestamp,
+        now: Timestamp,
+        catalogue: &[ArtifactDef],
+        garrison_unit: &str,
+        garrison_base_count: i64,
+        garrison_per_index: i64,
+    ) -> Result<usize, RepoError> {
+        let _ = (
+            release_at,
+            now,
+            catalogue,
+            garrison_unit,
+            garrison_base_count,
+            garrison_per_index,
+        );
+        Ok(0)
+    }
+
+    /// The artifact a village currently holds, if any (020). Defaults to none; the real adapter
+    /// overrides it (so non-artifact fakes need not implement it).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn artifact_at_village(
+        &self,
+        _village: VillageId,
+    ) -> Result<Option<ArtifactDef>, RepoError> {
+        Ok(None)
+    }
+
+    /// Every artifact a player currently holds, with its holding village (020) — for effects + display.
+    /// Defaults to empty; the real adapter overrides it.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn held_by_player(&self, _player: PlayerId) -> Result<Vec<HeldArtifact>, RepoError> {
+        Ok(Vec::new())
+    }
 }

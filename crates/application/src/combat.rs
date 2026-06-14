@@ -5,9 +5,10 @@
 use crate::culture::load_culture;
 use crate::economy::settle_amounts;
 use crate::ports::{
-    AccountRepository, BattleApply, CombatRepository, ConquestRepository, ConquestTransfer,
-    CultureRepository, DefenderContribution, LoyaltyApply, MovementRepository, NewBattleReport,
-    NewScoutReport, RazedBuilding, ReinforcementReturn, RepoError, ResourceWrite, UnitRepository,
+    AccountRepository, ArtifactCapture, ArtifactRepository, BattleApply, CombatRepository,
+    ConquestRepository, ConquestTransfer, CultureRepository, DefenderContribution, LoyaltyApply,
+    MovementRepository, NewBattleReport, NewScoutReport, RazedBuilding, ReinforcementReturn,
+    RepoError, ResourceWrite, UnitRepository,
 };
 use crate::scouting::gather_intel;
 use eperica_domain::{
@@ -15,10 +16,10 @@ use eperica_domain::{
     GameSpeed, LoyaltyRules, MovementKind, PlayerId, RankingRules, ResourceAmounts, ScoutRules,
     ScoutTarget, SiegeKind, Timestamp, Tribe, UnitCounts, UnitId, UnitRole, UnitRules, UnitSpec,
     Village, VillageId, WorldMap, add_defense, administrator_count, administrator_drop,
-    apply_losses, apportion, attack_power, carry_capacity_total, catapult_power, conquest_outcome,
-    cranny_protection, is_protected, loot_split, luck_factor, population, razed_levels,
-    regenerate_loyalty, resolve_battle, resolve_scouting, scouting_power, slowest_speed,
-    travel_time_secs_floored,
+    apply_losses, apportion, attack_power, can_capture, carry_capacity_total, catapult_power,
+    conquest_outcome, cranny_protection, is_protected, loot_split, luck_factor, population,
+    razed_levels, regenerate_loyalty, required_treasury_level, resolve_battle, resolve_scouting,
+    scouting_power, slowest_speed, travel_time_secs_floored,
 };
 
 /// Why launching an attack/raid failed (009 AC2).
@@ -249,7 +250,9 @@ where
         return Err(CombatError::EmptyComposition);
     };
     let distance = map.distance(home.coordinate, dest.coordinate);
-    let secs = travel_time_secs_floored(distance, slowest, speed);
+    // 020 AC6: a Speed artifact (carried on the sending village's read) shortens travel time.
+    let base_secs = travel_time_secs_floored(distance, slowest, speed);
+    let secs = ((base_secs as f64) / home.artifact_effects.troop_speed).round() as i64;
     let arrive = Timestamp(now.0 + secs * 1000);
     let kind = match mode {
         AttackMode::Attack => MovementKind::Attack,
@@ -349,9 +352,10 @@ pub async fn process_due_combat<A, M, U, C>(
     world_seed: u64,
     now: Timestamp,
     limit: i64,
+    treasury_levels: (u8, u8, u8),
 ) -> Result<Vec<VillageId>, RepoError>
 where
-    A: AccountRepository + CultureRepository + ConquestRepository,
+    A: AccountRepository + CultureRepository + ConquestRepository + ArtifactRepository,
     M: MovementRepository,
     U: UnitRepository,
     C: CombatRepository,
@@ -374,6 +378,7 @@ where
             map,
             speed,
             world_seed,
+            treasury_levels,
             &attack,
         )
         .await
@@ -403,10 +408,11 @@ async fn resolve_one<A, M, U, C>(
     map: &WorldMap,
     speed: GameSpeed,
     world_seed: u64,
+    treasury_levels: (u8, u8, u8),
     attack: &crate::ports::DueAttack,
 ) -> Result<Option<VillageId>, RepoError>
 where
-    A: AccountRepository + CultureRepository + ConquestRepository,
+    A: AccountRepository + CultureRepository + ConquestRepository + ArtifactRepository,
     M: MovementRepository,
     U: UnitRepository,
     C: CombatRepository,
@@ -426,6 +432,10 @@ where
             ));
         }
     };
+    // 020 AC6: the artifact effects each side brings (carried on the village reads) — attacker's Eyes
+    // (scout power) + the defender's Architect (building durability) and Confuser (scout defence).
+    let attacker_effects = home.artifact_effects;
+    let defender_effects = target.artifact_effects;
 
     // Attacker pools (Smithy-scaled).
     let atk_roster = home.tribe.map_or(&[][..], |t| unit_rules.roster(t));
@@ -501,12 +511,14 @@ where
             .filter(|(id, _)| !is_scout(id))
             .cloned()
             .collect();
-        let attacker_power = scouting_power(scouts, atk_roster);
+        // Eyes sharpens the attacker's scouts; Confuser hardens the defender against scouting (020).
+        let attacker_power = scouting_power(scouts, atk_roster) * attacker_effects.scout_power;
         let mut defender_power = scouting_power(&garrison, def_roster);
         for group in &reinforcements {
             let group_roster = group.home_tribe.map_or(&[][..], |t| unit_rules.roster(t));
             defender_power += scouting_power(&group.troops, group_roster);
         }
+        defender_power *= defender_effects.scout_defense;
         let espionage = resolve_scouting(attacker_power, defender_power, scout_rules);
         let (scouts_after, esp_loss) = apply_losses(scouts, espionage.attacker_loss_frac);
         // Then the main battle's attacker fraction hits the non-scouts and the espionage survivors.
@@ -533,7 +545,9 @@ where
 
     // Catapults (011 AC2): surviving catapults raze a building when the attacker prevails.
     let razed = if outcome.attacker_won {
-        let cat_power = catapult_power(&survivors, atk_roster, &atk_levels, combat_rules);
+        // Architect (defender) toughens buildings against catapults — less effective siege power (020).
+        let cat_power = catapult_power(&survivors, atk_roster, &atk_levels, combat_rules)
+            * defender_effects.durability;
         pick_razed_target(
             &target,
             attack.catapult_target,
@@ -701,7 +715,9 @@ where
             )
             .await?;
             let has_slot = attacker_view.used_slots < attacker_view.allowed_villages;
-            let oc = conquest_outcome(loyalty_now, drop, target.is_capital, has_slot);
+            // 020 AC2: a Natar village is never ownable — treat it like a capital (no transfer).
+            let unconquerable = target.is_capital || target.is_natar;
+            let oc = conquest_outcome(loyalty_now, drop, unconquerable, has_slot);
             let apply: Option<LoyaltyApply> = if oc.transferred {
                 let loser_view = load_culture(
                     accounts,
@@ -748,8 +764,9 @@ where
                     gainer_culture_value: attacker_view.cp,
                     reinforcement_returns,
                 }))
-            } else if target.is_capital {
-                // AC5: a capital's loyalty is pinned — the strike "reduces nothing". `conquest_outcome`
+            } else if unconquerable {
+                // AC5: a capital's (or Natar vault's) loyalty is pinned — the strike "reduces
+                // nothing". `conquest_outcome`
                 // already left `new_loyalty == loyalty_now`, so there is nothing to persist: skip the
                 // write entirely (no re-anchor). The report below still records before == after so the
                 // attacker learns the capital is untouchable.
@@ -768,6 +785,31 @@ where
         } else {
             (None, None, false, None)
         };
+
+    // 020 AC4/AC5: a winning attack from a qualifying Treasury village claims the target's artifact
+    // (from a Natar vault or a beaten player holder). The transfer rides the battle transaction.
+    let artifact_capture = if outcome.attacker_won {
+        match accounts.artifact_at_village(target.id).await? {
+            Some(art) => {
+                let (small, large, unique) = treasury_levels;
+                let required = required_treasury_level(art.scope, small, large, unique);
+                let treasury = building_level(&home, BuildingKind::Treasury);
+                let home_holds = accounts.artifact_at_village(home.id).await?.is_some();
+                if can_capture(treasury, required, home_holds) {
+                    Some(ArtifactCapture {
+                        artifact_id: art.id.0,
+                        from_village: target.id,
+                        to_village: home.id,
+                    })
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
 
     combat
         .apply_battle(BattleApply {
@@ -812,6 +854,7 @@ where
             loyalty: loyalty_apply,
             attack_points,
             defender_contributions,
+            artifact_capture,
         })
         .await?;
     Ok(Some(target.id))
@@ -854,6 +897,8 @@ mod tests {
             }],
             oasis_bonus: Default::default(),
             is_capital: false,
+            is_natar: false,
+            artifact_effects: eperica_domain::ArtifactEffects::NONE,
         }
     }
 
@@ -949,6 +994,9 @@ mod tests {
             Ok(())
         }
     }
+
+    // 020: the combat fake holds no artifacts (defaults: never captures) — exercises the no-transfer path.
+    impl ArtifactRepository for FakeAccounts {}
 
     #[derive(Clone)]
     struct Sent {
@@ -1466,6 +1514,7 @@ mod tests {
             42,
             Timestamp(1_000_000),
             100,
+            (3, 6, 10),
         )
         .await
         .unwrap();
@@ -1534,6 +1583,7 @@ mod tests {
             42,
             Timestamp(1_000_000),
             100,
+            (3, 6, 10),
         )
         .await
         .unwrap();
@@ -1603,6 +1653,7 @@ mod tests {
             42,
             Timestamp(1_000_000),
             100,
+            (3, 6, 10),
         )
         .await
         .unwrap();
@@ -1739,6 +1790,7 @@ mod tests {
             42,
             Timestamp(1_000_000),
             100,
+            (3, 6, 10),
         )
         .await
         .unwrap();

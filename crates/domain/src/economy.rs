@@ -214,9 +214,15 @@ pub fn compute_economy(
     rules: &EconomyRules,
     speed: GameSpeed,
     oasis_bonus: OasisBonus,
+    storage_factor: f64,
 ) -> Economy {
     let rates = production_rates(fields, buildings, troop_upkeep, rules, speed, oasis_bonus);
-    let caps = capacities(buildings, rules);
+    let base = capacities(buildings, rules);
+    // 020: a Storage artifact multiplies warehouse/granary capacity (1.0 = no artifact).
+    let caps = Capacities {
+        warehouse: (base.warehouse as f64 * storage_factor) as i64,
+        granary: (base.granary as f64 * storage_factor) as i64,
+    };
     let amounts = ResourceAmounts {
         wood: accrue(stored.wood, rates.wood, elapsed_secs, caps.warehouse),
         clay: accrue(stored.clay, rates.clay, elapsed_secs, caps.warehouse),
@@ -439,6 +445,7 @@ mod tests {
             &rules(),
             GameSpeed::new(1.0).unwrap(),
             OasisBonus::default(),
+            1.0,
         );
         let b = compute_economy(
             stored,
@@ -449,6 +456,7 @@ mod tests {
             &rules(),
             GameSpeed::new(1.0).unwrap(),
             OasisBonus::default(),
+            1.0,
         );
         assert_eq!(a, b);
         assert_eq!(a.amounts.wood, 140); // 100 + 40/h

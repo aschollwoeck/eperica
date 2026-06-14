@@ -3,11 +3,11 @@
 use crate::repo::PgAccountRepository;
 use async_trait::async_trait;
 use eperica_application::{
-    DueEvent, EventStore, RepoError, process_due, process_due_builds, process_due_combat,
-    process_due_lifecycle, process_due_medal_settlement, process_due_movements,
-    process_due_oasis_combat, process_due_oasis_regrow, process_due_oasis_reinforce,
-    process_due_scouts, process_due_settles, process_due_starvation, process_due_trades,
-    process_due_training, process_due_unit_orders, sync_starvation_checks,
+    DueEvent, EventStore, ReleaseSpec, RepoError, process_due, process_due_artifact_release,
+    process_due_builds, process_due_combat, process_due_lifecycle, process_due_medal_settlement,
+    process_due_movements, process_due_oasis_combat, process_due_oasis_regrow,
+    process_due_oasis_reinforce, process_due_scouts, process_due_settles, process_due_starvation,
+    process_due_trades, process_due_training, process_due_unit_orders, sync_starvation_checks,
 };
 use eperica_domain::{
     CombatRules, CultureRules, EconomyRules, EventKind, GameSpeed, LifecycleRules, LoyaltyRules,
@@ -151,6 +151,7 @@ pub struct Scheduler {
     ranking_rules: Arc<RankingRules>,
     medal_rules: Arc<MedalRules>,
     lifecycle_rules: Arc<LifecycleRules>,
+    artifacts: Arc<crate::balance::ArtifactCatalogue>,
     template: Arc<StartingVillage>,
     map: Arc<WorldMap>,
     speed: GameSpeed,
@@ -158,6 +159,8 @@ pub struct Scheduler {
     /// The world's creation instant (Unix-ms) — the real-time anchor for the weekly settlement (017)
     /// and the inactivity-abandonment sweep (019).
     world_start: Timestamp,
+    /// The artifact-release instant (020), or `None` if not scheduled.
+    artifact_release_at: Option<Timestamp>,
     poll_interval: Duration,
 }
 
@@ -180,11 +183,13 @@ impl Scheduler {
         ranking_rules: Arc<RankingRules>,
         medal_rules: Arc<MedalRules>,
         lifecycle_rules: Arc<LifecycleRules>,
+        artifacts: Arc<crate::balance::ArtifactCatalogue>,
         template: Arc<StartingVillage>,
         map: Arc<WorldMap>,
         speed: GameSpeed,
         world_seed: u64,
         world_start: Timestamp,
+        artifact_release_at: Option<Timestamp>,
     ) -> Self {
         Self {
             store,
@@ -200,11 +205,13 @@ impl Scheduler {
             ranking_rules,
             medal_rules,
             lifecycle_rules,
+            artifacts,
             template,
             map,
             speed,
             world_seed,
             world_start,
+            artifact_release_at,
             poll_interval: Duration::from_millis(200),
         }
     }
@@ -374,6 +381,11 @@ impl Scheduler {
                 self.world_seed,
                 now(),
                 100,
+                (
+                    self.artifacts.treasury_small,
+                    self.artifacts.treasury_large,
+                    self.artifacts.treasury_unique,
+                ),
             )
             .await
             {
@@ -418,6 +430,26 @@ impl Scheduler {
                 }
                 Ok(_) => {}
                 Err(e) => tracing::error!(error = %e, "scheduler inactivity sweep failed"),
+            }
+            // 020: the one-time artifact release — materialize Natar villages + artifacts once the
+            // world reaches its release date (idempotent, state-driven).
+            let release_spec = ReleaseSpec {
+                catalogue: &self.artifacts.artifacts,
+                garrison_unit: &self.artifacts.garrison_unit,
+                garrison_base_count: self.artifacts.garrison_base_count,
+                garrison_per_index: self.artifacts.garrison_per_index,
+            };
+            match process_due_artifact_release(
+                &self.builds,
+                self.artifact_release_at,
+                now(),
+                &release_spec,
+            )
+            .await
+            {
+                Ok(n) if n > 0 => tracing::info!(released = n, "scheduler released artifacts"),
+                Ok(_) => {}
+                Err(e) => tracing::error!(error = %e, "scheduler artifact release failed"),
             }
             // Standalone scout missions (010): no village garrison changes at resolution, so there is
             // nothing to re-sync here (surviving scouts re-sync home when their return arrives).
