@@ -7158,6 +7158,82 @@ mod tests {
         );
     }
 
+    /// 023 AC3: the scheduler drains a large due-event backlog within a generous time ceiling and above a
+    /// throughput floor, processing every event exactly once.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn scheduler_throughput_drains_backlog(pool: PgPool) {
+        let _ = setup(pool.clone()).await; // ensure the world exists
+        let backlog = 2000u32;
+        crate::perf::seed_heartbeats(&pool, backlog).await.unwrap();
+        let store = crate::PgEventStore::new(pool.clone());
+        let now = crate::now();
+
+        let start = std::time::Instant::now();
+        let mut processed = 0usize;
+        loop {
+            let n = eperica_application::process_due(&store, now, 200)
+                .await
+                .unwrap();
+            processed += n;
+            if n == 0 {
+                break;
+            }
+        }
+        let elapsed = start.elapsed();
+        assert_eq!(
+            processed, backlog as usize,
+            "every due event processed once"
+        );
+        // Conservative bounds (local PG is far faster) that still flag an order-of-magnitude regression.
+        assert!(
+            elapsed.as_secs() < 20,
+            "draining {backlog} events took {elapsed:?}"
+        );
+        let per_sec = backlog as f64 / elapsed.as_secs_f64().max(0.001);
+        assert!(per_sec > 100.0, "throughput floor: {per_sec:.0} events/s");
+
+        // Idempotent drain: nothing left.
+        assert_eq!(
+            eperica_application::process_due(&store, now, 200)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
+    /// 023 AC5: two scheduler instances claiming the same backlog process each event **exactly once** —
+    /// the `FOR UPDATE SKIP LOCKED` guarantee that makes the scheduler horizontally scalable (P5).
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn concurrent_claim_processes_each_once(pool: PgPool) {
+        use eperica_application::EventStore;
+        let _ = setup(pool.clone()).await;
+        let backlog = 500u32;
+        crate::perf::seed_heartbeats(&pool, backlog).await.unwrap();
+        let now = crate::now();
+        let a = crate::PgEventStore::new(pool.clone());
+        let b = crate::PgEventStore::new(pool.clone());
+
+        // Two instances claim concurrently.
+        let (ra, rb) = tokio::join!(
+            a.claim_due(now, backlog as i64),
+            b.claim_due(now, backlog as i64)
+        );
+        let ca = ra.unwrap();
+        let cb = rb.unwrap();
+
+        let ids_a: std::collections::HashSet<u128> = ca.iter().map(|e| e.id).collect();
+        let ids_b: std::collections::HashSet<u128> = cb.iter().map(|e| e.id).collect();
+        assert!(
+            ids_a.is_disjoint(&ids_b),
+            "no event is claimed by both instances"
+        );
+        assert_eq!(
+            ids_a.len() + ids_b.len(),
+            backlog as usize,
+            "together they claim every event exactly once"
+        );
+    }
+
     /// 022 AC1–AC5: a player reports an account; a duplicate open report + a self-report are rejected; a
     /// non-moderator cannot review; a moderator reviews and resolves with a ban (idempotently).
     #[sqlx::test(migrations = "../../migrations")]
