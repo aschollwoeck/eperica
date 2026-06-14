@@ -522,6 +522,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "eperica-perf"
+version = "0.1.0"
+dependencies = [
+ "eperica-application",
+ "eperica-domain",
+ "eperica-infrastructure",
+ "reqwest",
+ "sqlx",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "eperica-web"
 version = "0.1.0"
 dependencies = [

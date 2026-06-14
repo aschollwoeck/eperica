@@ -1,0 +1,23 @@
+[package]
+name = "eperica-perf"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "eperica-perf"
+path = "src/main.rs"
+
+[dependencies]
+eperica-domain = { path = "../domain" }
+eperica-application = { path = "../application" }
+eperica-infrastructure = { path = "../infrastructure" }
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "uuid",
+] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["cookies"] }
+uuid = { version = "1", features = ["v4"] }

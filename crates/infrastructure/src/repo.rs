@@ -70,6 +70,11 @@ impl PgAccountRepository {
         }
     }
 
+    /// This repository's world id (e.g. for the `eperica-perf` scale tool to seed/measure, 023).
+    pub fn world_id(&self) -> WorldId {
+        self.world_id
+    }
+
     /// The artifact effects in force for a village (020 AC6), folded into its read like the oasis bonus:
     /// the village's own **small** holdings plus the account's **large/unique**. `NONE` for a Natar/NPC
     /// village (it never benefits from the artifacts it guards) or when the owner holds none.
