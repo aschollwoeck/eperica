@@ -6,3 +6,11 @@ publish.workspace = true
 
 # The pure domain core has NO dependencies (P3): no I/O, framework, or database crates.
 [dependencies]
+
+# Dev-only: criterion drives the hot-path micro-benchmarks (023). Not a runtime dependency (P3 intact).
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "hot"
+harness = false

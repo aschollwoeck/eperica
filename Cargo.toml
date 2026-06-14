@@ -5,6 +5,7 @@ members = [
     "crates/application",
     "crates/infrastructure",
     "crates/web",
+    "crates/perf",
 ]
 
 # Shared package settings inherited by every crate (keeps versions/edition in one place).

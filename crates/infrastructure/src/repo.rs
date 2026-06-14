@@ -70,6 +70,11 @@ impl PgAccountRepository {
         }
     }
 
+    /// This repository's world id (e.g. for the `eperica-perf` scale tool to seed/measure, 023).
+    pub fn world_id(&self) -> WorldId {
+        self.world_id
+    }
+
     /// The artifact effects in force for a village (020 AC6), folded into its read like the oasis bonus:
     /// the village's own **small** holdings plus the account's **large/unique**. `NONE` for a Natar/NPC
     /// village (it never benefits from the artifacts it guards) or when the owner holds none.
@@ -7078,6 +7083,189 @@ mod tests {
             rec.suspended_until,
             crate::now()
         ));
+    }
+
+    /// 023 AC1/AC2: in a large seeded world the hot read paths (population board, `villages_of`, map
+    /// viewport, player stats) stay within their latency budgets (best-of-N). Catches an order-of-magnitude
+    /// regression (e.g. a new sequential scan), not micro-jitter.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn scale_hot_reads_within_budget(pool: PgPool) {
+        let Setup {
+            repo, econ, world, ..
+        } = setup(pool.clone()).await;
+        // Seed a large world via the shared seeder (AC1).
+        let players = 1000u32;
+        let summary = crate::perf::seed_world(&pool, world.id, players)
+            .await
+            .expect("seed");
+        assert!(
+            summary.players >= i64::from(players),
+            "all perf players seeded"
+        );
+        assert!(summary.villages >= i64::from(players), "a village each");
+
+        // A seeded player for the per-player reads.
+        let pid_uuid: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = 'perf_1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let pid = PlayerId(pid_uuid.as_u128());
+
+        // A realistic map viewport overlapping the seeded block.
+        let w = crate::perf::seed_block_width(players).min(31);
+        let viewport: Vec<Coordinate> = (0..w)
+            .flat_map(|x| (0..w).map(move |y| Coordinate::new(x, y)))
+            .collect();
+
+        // best-of-5 wall-clock for each hot path.
+        let mut board_best = std::time::Duration::MAX;
+        let mut vof_best = std::time::Duration::MAX;
+        let mut map_best = std::time::Duration::MAX;
+        let mut stats_best = std::time::Duration::MAX;
+        for _ in 0..5 {
+            let t = std::time::Instant::now();
+            repo.population_board(&econ, BoardScope::World, 100)
+                .await
+                .unwrap();
+            board_best = board_best.min(t.elapsed());
+
+            let t = std::time::Instant::now();
+            repo.villages_of(pid).await.unwrap();
+            vof_best = vof_best.min(t.elapsed());
+
+            let t = std::time::Instant::now();
+            repo.villages_at(&viewport).await.unwrap();
+            map_best = map_best.min(t.elapsed());
+
+            let t = std::time::Instant::now();
+            eperica_application::player_statistics(&repo, &econ, pid)
+                .await
+                .unwrap();
+            stats_best = stats_best.min(t.elapsed());
+        }
+
+        // Generous best-of-5 ceilings (local PG is far faster; a seq-scan regression blows past these).
+        assert!(
+            board_best.as_millis() < 1000,
+            "population board over {players} players too slow: {board_best:?}"
+        );
+        assert!(
+            vof_best.as_millis() < 250,
+            "villages_of too slow: {vof_best:?}"
+        );
+        assert!(
+            map_best.as_millis() < 500,
+            "map viewport too slow: {map_best:?}"
+        );
+        assert!(
+            stats_best.as_millis() < 500,
+            "player stats too slow: {stats_best:?}"
+        );
+    }
+
+    /// 023 AC3: the scheduler drains a large due-event backlog within a generous time ceiling and above a
+    /// throughput floor, processing every event exactly once.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn scheduler_throughput_drains_backlog(pool: PgPool) {
+        let _ = setup(pool.clone()).await; // ensure the world exists
+        let backlog = 2000u32;
+        crate::perf::seed_heartbeats(&pool, backlog).await.unwrap();
+        let store = crate::PgEventStore::new(pool.clone());
+        let now = crate::now();
+
+        let start = std::time::Instant::now();
+        let mut processed = 0usize;
+        loop {
+            let n = eperica_application::process_due(&store, now, 200)
+                .await
+                .unwrap();
+            processed += n;
+            if n == 0 {
+                break;
+            }
+        }
+        let elapsed = start.elapsed();
+        assert_eq!(
+            processed, backlog as usize,
+            "every due event processed once"
+        );
+        // Conservative bounds (local PG is far faster) that still flag an order-of-magnitude regression.
+        assert!(
+            elapsed.as_secs() < 20,
+            "draining {backlog} events took {elapsed:?}"
+        );
+        let per_sec = backlog as f64 / elapsed.as_secs_f64().max(0.001);
+        assert!(per_sec > 100.0, "throughput floor: {per_sec:.0} events/s");
+
+        // Idempotent drain: nothing left.
+        assert_eq!(
+            eperica_application::process_due(&store, now, 200)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
+    /// 023 AC3 (determinism): a claim takes the **earliest** due events in `(due_at, seq)` order — every
+    /// claimed (`processing`) event has a lower `seq` than every still-`pending` one, so same-instant
+    /// ordering is deterministic (P6/P11), not left to scheduling chance.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn claim_takes_earliest_in_due_order(pool: PgPool) {
+        use eperica_application::EventStore;
+        let _ = setup(pool.clone()).await;
+        crate::perf::seed_heartbeats(&pool, 200).await.unwrap();
+        let store = crate::PgEventStore::new(pool.clone());
+        // Claim a strict subset (all share due_at = now()-1s, so only seq breaks the tie).
+        let claimed = store.claim_due(crate::now(), 50).await.unwrap();
+        assert_eq!(claimed.len(), 50);
+
+        let max_claimed: i64 =
+            sqlx::query_scalar("SELECT max(seq) FROM scheduled_events WHERE status = 'processing'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let min_pending: i64 =
+            sqlx::query_scalar("SELECT min(seq) FROM scheduled_events WHERE status = 'pending'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            max_claimed < min_pending,
+            "the claim took the earliest events by seq ({max_claimed} < {min_pending})"
+        );
+    }
+
+    /// 023 AC5: two scheduler instances claiming the same backlog process each event **exactly once** —
+    /// the `FOR UPDATE SKIP LOCKED` guarantee that makes the scheduler horizontally scalable (P5).
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn concurrent_claim_processes_each_once(pool: PgPool) {
+        use eperica_application::EventStore;
+        let _ = setup(pool.clone()).await;
+        let backlog = 500u32;
+        crate::perf::seed_heartbeats(&pool, backlog).await.unwrap();
+        let now = crate::now();
+        let a = crate::PgEventStore::new(pool.clone());
+        let b = crate::PgEventStore::new(pool.clone());
+
+        // Two instances claim concurrently.
+        let (ra, rb) = tokio::join!(
+            a.claim_due(now, backlog as i64),
+            b.claim_due(now, backlog as i64)
+        );
+        let ca = ra.unwrap();
+        let cb = rb.unwrap();
+
+        let ids_a: std::collections::HashSet<u128> = ca.iter().map(|e| e.id).collect();
+        let ids_b: std::collections::HashSet<u128> = cb.iter().map(|e| e.id).collect();
+        assert!(
+            ids_a.is_disjoint(&ids_b),
+            "no event is claimed by both instances"
+        );
+        assert_eq!(
+            ids_a.len() + ids_b.len(),
+            backlog as usize,
+            "together they claim every event exactly once"
+        );
     }
 
     /// 022 AC1–AC5: a player reports an account; a duplicate open report + a self-report are rejected; a
