@@ -18,6 +18,7 @@ pub mod lifecycle;
 pub mod map;
 pub mod medals;
 pub mod movement;
+pub mod notification;
 pub mod oasis;
 pub mod ports;
 pub mod profile;
@@ -62,6 +63,10 @@ pub use lifecycle::{end_protection_if_established, process_due_lifecycle};
 pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
 pub use medals::process_due_medal_settlement;
 pub use movement::{MovementError, order_reinforcement, order_return, process_due_movements};
+pub use notification::{
+    FEED_LIMIT, NotificationError, list_notifications, mark_notifications_read,
+    notification_unread, notify_incoming_attack, notify_new_message,
+};
 pub use oasis::{
     OasisError, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
     process_due_oasis_combat, process_due_oasis_regrow, process_due_oasis_reinforce,
