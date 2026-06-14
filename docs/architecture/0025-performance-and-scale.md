@@ -16,8 +16,9 @@ design — and it is **repeatable**: the same seeding library backs both the CI 
 CARGO="$(rustup which cargo)"; export RUSTUP_TOOLCHAIN=stable
 set -a && . ./.env && set +a    # DATABASE_URL
 
-# Hot-path latency + scheduler throughput + query plans, against $DATABASE_URL (seeds N players):
-"$CARGO" run -p eperica-perf -- measure --players 3000 --heartbeats 3000 --iters 5 --explain
+# Hot-path latency + scheduler throughput + query plans, against $DATABASE_URL (seeds N players).
+# Tip: run against an isolated throwaway DB for a clean N (the seeder ANALYZEs after loading):
+"$CARGO" run -p eperica-perf -- measure --players 10000 --heartbeats 10000 --iters 5 --explain
 
 # Just (re)seed a large world for ad-hoc experiments:
 "$CARGO" run -p eperica-perf -- seed --players 5000
@@ -40,18 +41,21 @@ Re-run after any slice, on bigger hardware, or before a real launch, and compare
 Local dev (Postgres 16 in Docker, single laptop). Treat as **relative**, not absolute — regenerate on
 target hardware.
 
-**Hot read paths** — `eperica-perf measure --players 3000` (best-of-5):
+**Hot read paths** — `eperica-perf measure --players 10000` on a fresh DB (best-of-5):
 
-| Path | Latency | Notes |
-|------|---------|-------|
-| `villages_of(player)` | ~5 ms | index scan on `villages_owner_idx` |
-| `player_statistics(player)` | ~4.5 ms | indexed point reads |
-| map viewport (961 tiles) | ~23 ms | `(world_id,x,y)` unique index, batched `unnest` |
-| `population_board(world, top 100)` | ~408 ms | the heaviest read — see *Findings* |
+| Path | Latency @ 10k | Notes |
+|------|---------------|-------|
+| `villages_of(player)` | ~3 ms | index scan on `villages_owner_idx` |
+| `player_statistics(player)` | ~5 ms | indexed point reads |
+| map viewport (961 tiles) | ~18 ms | `(world_id,x,y)` unique index, batched `unnest` |
+| `population_board(world, top 100)` | **~110 ms** | set-based aggregation (was ~1.9 s — see *Findings*) |
 
-**Scheduler throughput** — `process_due` draining a heartbeat backlog: **~320 events/s** (≈9.4s for 3000),
-the cost dominated by the per-event `mark_done` UPDATE. Comfortably above the regression floor; see
-*Findings* for the batching opportunity.
+The per-player + map reads are flat from 1k→10k (index-bound). The board was the one path that scaled with
+village count; it is now set-based (below).
+
+**Scheduler throughput** — `process_due` draining a heartbeat backlog: **~315 events/s** (≈32s for 10000),
+linear and dominated by the per-event `mark_done` UPDATE. Above the regression floor; see *Findings* for the
+batching opportunity.
 
 **Micro-benchmarks** — `cargo bench -p eperica-domain --bench hot` (pure functions, no I/O):
 
@@ -81,22 +85,25 @@ paths are **index-backed** — the prior slices were P11-diligent, so the audit 
   `WHERE status='pending' … ORDER BY due_at, seq` claim exactly.
 - conflict/stat reads → `battle_reports (attacker_player|defender_player, occurred_at DESC)` indexes.
 
-No migration was warranted. (A speculative index on the board's per-village subqueries would be redundant:
-they filter `village_fields/buildings WHERE village_id = …`, already the PK prefix.)
+No missing index — the only seq scan is on the tiny `users` table. (A speculative index on the board's
+per-village subqueries would be redundant: they filter `village_fields/buildings WHERE village_id = …`,
+already the PK prefix.)
 
-### Findings & recommendations (future tuning)
+### Findings
 
-1. **`population_board` is O(villages)** — its per-village population is two correlated subqueries over
-   `village_fields`/`village_buildings`, so the top-100 board costs ~408 ms at 3000 players and would grow
-   roughly linearly (~1.3 s at 10k). It is a secondary read (a leaderboard page, not the sub-second command
-   path), so it is within tolerance for launch, but it is the **#1 optimization target**. A naive set-based
-   rewrite (two grouped aggregations) was tried during this pass and **regressed** to ~1.1 s at 1000
-   players (a worse plan), so the correlated form is retained; a correct optimization needs careful plan
-   work (likely a `LATERAL` per-village aggregate or a materialized per-village population) and its own
-   slice.
-2. **Scheduler `mark_done` is per-event** — `process_due` issues one UPDATE per processed event (~320/s). A
-   batched `mark_done(ids[])` (one UPDATE … WHERE id = ANY($1)) would multiply throughput for large
-   backlogs. Out of scope here (it changes the `EventStore` contract); recorded for a future pass.
+1. **`population_board` — fixed (set-based aggregation).** Its per-village population was two correlated
+   subqueries over `village_fields`/`village_buildings`, i.e. O(villages): ~408 ms @ 3k and **~1.9 s @ 10k**.
+   It is now two grouped aggregations (`field_pop`/`bldg_pop` CTEs) joined to users — **~110 ms @ 10k, a
+   ~17× win**, with identical results (the board/ranking tests are unchanged and green).
+
+   The catch that made the *first* attempt look like a regression: bulk-seeding without `ANALYZE` leaves the
+   planner with stale row estimates (it thought `villages` had ~45 rows, not 10k), so it chose a bad plan
+   for the set-based query (~1.1 s @ 1k). The seeder now runs `ANALYZE` after loading — representative of a
+   real autovacuumed database — and the set-based plan wins decisively. **Lesson: measure with fresh stats.**
+
+2. **Scheduler `mark_done` is per-event** — `process_due` issues one UPDATE per processed event (~315/s,
+   linear). A batched `mark_done(ids[])` (one `UPDATE … WHERE id = ANY($1)`) would multiply throughput for
+   large backlogs. Out of scope here (it changes the `EventStore` contract); recorded for a future pass.
 
 ## Horizontal scale (P5) validation
 
@@ -115,7 +122,7 @@ they filter `village_fields/buildings WHERE village_id = …`, already the PK pr
 
 ## CI regression guards
 
-`scale_hot_reads_within_budget` (1000-player world; board/villages_of/map/stats under best-of-N ceilings),
+`scale_hot_reads_within_budget` (**10 000-player** world; board/villages_of/map/stats under best-of-N ceilings),
 `scheduler_throughput_drains_backlog` (drains a 2000-event backlog above a floor, each once), and
 `concurrent_claim_processes_each_once` run in CI on every change — generous ceilings that catch an
 order-of-magnitude regression (a new seq scan) without flaking on shared runners. They reuse
@@ -125,5 +132,6 @@ order-of-magnitude regression (a new seq scan) without flaking on shared runners
 
 - The scale pass is a **standing instrument**, not a one-off: `eperica-perf` + the benches + the CI guards
   can be re-run as the game grows.
-- The architecture holds its budgets at the "thousands" scale on modest hardware, with two clearly-scoped
-  optimization targets (the board query, the scheduler batch-ack) recorded for when the numbers demand them.
+- The architecture holds its budgets at the **10 000-player** scale on modest hardware. The one read that
+  scaled with village count (the population board) is now set-based (~110 ms @ 10k); the remaining scoped
+  target is the scheduler batch-ack, recorded for when the numbers demand it.

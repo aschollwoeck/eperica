@@ -5137,6 +5137,38 @@ fn village_pop_expr(
 
 /// Flatten the economy population balance into array binds: `(field_pops, b_kinds, b_levels, b_pops)`
 /// (the per-level field table, and the building (kind, level, pop) triples).
+/// Set-based per-user population board SQL (023 tuning) — two grouped aggregations over the world's
+/// `village_fields`/`village_buildings` joined to users, instead of [`village_pop_expr`]'s two correlated
+/// subqueries per village (O(villages)). `qf` is the quadrant filter on `u.id`. Placeholders: `$1` world,
+/// `$2` field-pops, `$3`/`$4`/`$5` building kinds/levels/pops, `$6` quadrant, `$7` limit.
+///
+/// Driven `FROM users` (the CTEs are world-scoped via `v.world_id = $1`, and the `> 0` filter prunes users
+/// with no village in this world) — single-world today. A multi-world deployment would scope this to users
+/// owning a village in the world to avoid a global `users` scan.
+fn population_board_sql(qf: &str) -> String {
+    format!(
+        "WITH field_pop AS ( \
+            SELECT v.owner_id AS oid, SUM(fp.pop) AS pop FROM villages v \
+            JOIN village_fields vf ON vf.village_id = v.id \
+            JOIN unnest($2::bigint[]) WITH ORDINALITY AS fp(pop, lvl) ON (fp.lvl - 1) = vf.level \
+            WHERE v.world_id = $1 GROUP BY v.owner_id \
+         ), bldg_pop AS ( \
+            SELECT v.owner_id AS oid, SUM(bp.pop) AS pop FROM villages v \
+            JOIN village_buildings vb ON vb.village_id = v.id \
+            JOIN unnest($3::text[], $4::int[], $5::bigint[]) AS bp(kind, lvl, pop) \
+              ON bp.kind = vb.building_type AND bp.lvl = vb.level \
+            WHERE v.world_id = $1 GROUP BY v.owner_id \
+         ) \
+         SELECT u.id, u.username, (COALESCE(f.pop, 0) + COALESCE(b.pop, 0))::bigint AS total \
+         FROM users u \
+         LEFT JOIN field_pop f ON f.oid = u.id \
+         LEFT JOIN bldg_pop b ON b.oid = u.id \
+         WHERE u.abandoned_at IS NULL AND u.is_npc = false AND {qf} \
+           AND (COALESCE(f.pop, 0) + COALESCE(b.pop, 0)) > 0 \
+         ORDER BY total DESC, u.id ASC LIMIT $7"
+    )
+}
+
 fn population_arrays(econ: &EconomyRules) -> (Vec<i64>, Vec<String>, Vec<i32>, Vec<i64>) {
     let field_pops = econ.field_population_per_level.clone();
     let (mut kinds, mut levels, mut pops) = (Vec::new(), Vec::new(), Vec::new());
@@ -5185,15 +5217,7 @@ impl RankingRepository for PgAccountRepository {
         limit: i64,
     ) -> Result<Vec<LeaderboardRow>, RepoError> {
         let (fields, kinds, levels, pops) = population_arrays(econ);
-        let pop = village_pop_expr("v.id", "$2", "$3", "$4", "$5");
-        let qf = quadrant_filter("v.owner_id", "$6");
-        let sql = format!(
-            "SELECT u.id, u.username, SUM({pop})::bigint AS total \
-             FROM villages v JOIN users u ON u.id = v.owner_id \
-             WHERE v.world_id = $1 AND {qf} AND u.abandoned_at IS NULL AND u.is_npc = false \
-             GROUP BY u.id, u.username HAVING SUM({pop}) > 0 \
-             ORDER BY total DESC, u.id ASC LIMIT $7"
-        );
+        let sql = population_board_sql(&quadrant_filter("u.id", "$6"));
         let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(&sql)
             .bind(Uuid::from_u128(self.world_id.0))
             .bind(&fields)
@@ -7093,8 +7117,8 @@ mod tests {
         let Setup {
             repo, econ, world, ..
         } = setup(pool.clone()).await;
-        // Seed a large world via the shared seeder (AC1).
-        let players = 1000u32;
+        // Seed a large world via the shared seeder (AC1) — 10k players, the launch-target scale.
+        let players = 10_000u32;
         let summary = crate::perf::seed_world(&pool, world.id, players)
             .await
             .expect("seed");

@@ -33,10 +33,11 @@ numbers.
 - `EXPLAIN (ANALYZE)` the hot queries under the seeded world (board, `villages_of`/`village_by_id`, map
   `villages_at`, world/owner/coordinate filters, `scheduled_events(due_at, seq)` ordering). Add missing
   indexes; fix any N+1; re-measure. Record before/after `EXPLAIN` for the report.
-- **Outcome (this pass):** the audit found the hot paths already index-backed (prior slices were
-  P11-diligent) — **no migration was needed**. The only seq scan is on the tiny `users` table; the
-  `population_board`'s O(villages) cost and the scheduler's per-event ack are recorded as future tuning
-  targets (a naive set-based board rewrite was tried and regressed, so it was reverted). See the 0025 report.
+- **Outcome:** the audit found the hot paths already index-backed (prior slices were P11-diligent) — **no
+  migration was needed** (the only seq scan is on the tiny `users` table). Re-running at the 10 000-player
+  target surfaced the one O(villages) read — `population_board` (~1.9 s @ 10k) — which is now **set-based**
+  (~110 ms @ 10k, ~17×, identical results); the seeder `ANALYZE`s so plans are representative. The
+  scheduler's per-event ack is recorded as the remaining future tuning target. See the 0025 report.
 
 ## Repeatable perf tool (`crates/perf` → bin `eperica-perf`)
 
