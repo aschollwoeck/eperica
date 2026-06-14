@@ -13,9 +13,9 @@ use eperica_domain::{
 };
 use eperica_infrastructure::{
     Argon2Hasher, PgAccountRepository, achievement_catalogue, alliance_rules, build_rules,
-    combat_rules, culture_rules, economy_rules, ensure_world, lifecycle_rules, loyalty_rules,
-    map_rules, merchant_rules, now, oasis_rules, quest_chain, ranking_rules, scout_rules,
-    starting_village, unit_rules, wonder_rules,
+    combat_rules, culture_rules, economy_rules, ensure_world, fair_play_rules, lifecycle_rules,
+    loyalty_rules, map_rules, merchant_rules, now, oasis_rules, quest_chain, ranking_rules,
+    scout_rules, starting_village, unit_rules, wonder_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -63,6 +63,7 @@ async fn spawn(pool: sqlx::PgPool) -> String {
         lifecycle_rules: Arc::new(lifecycle_rules().expect("lifecycle rules")),
         merchant_rules: Arc::new(merchant_rules().expect("merchant rules")),
         wonder_rules: Arc::new(wonder_rules().expect("wonder rules")),
+        fair_play_rules: Arc::new(fair_play_rules().expect("fair-play rules")),
         map,
         world: config,
         require_email_confirmation: false,
@@ -3154,4 +3155,31 @@ async fn sanctioned_player_actions_are_blocked(pool: sqlx::PgPool) {
         403,
         "reads stay available for a sanctioned account"
     );
+}
+
+/// 022 AC6: login attempts are rate-limited per IP — after the configured number, further attempts get
+/// 429 (a brute-force guard), even with wrong credentials.
+#[sqlx::test(migrations = "../../migrations")]
+async fn login_attempts_are_rate_limited(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let c = client();
+    let limit = fair_play_rules().unwrap().login_limit_per_window;
+
+    // The first `limit` attempts are processed (not 429); the next is rejected with 429.
+    for _ in 0..limit {
+        let res = c
+            .post(format!("{base}/login"))
+            .form(&[("username", "ghost"), ("password", "nope")])
+            .send()
+            .await
+            .unwrap();
+        assert_ne!(res.status().as_u16(), 429, "within the limit");
+    }
+    let over = c
+        .post(format!("{base}/login"))
+        .form(&[("username", "ghost"), ("password", "nope")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(over.status().as_u16(), 429, "over the limit is rejected");
 }

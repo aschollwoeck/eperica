@@ -3,9 +3,9 @@
 use axum::extract::FromRef;
 use axum_extra::extract::cookie::Key;
 use eperica_domain::{
-    AchievementDef, AllianceRules, BuildRules, CultureRules, EconomyRules, LifecycleRules,
-    LoyaltyRules, MerchantRules, QuestDef, RankingRules, StartingVillage, UnitRules, WonderRules,
-    WorldConfig, WorldMap,
+    AchievementDef, AllianceRules, BuildRules, CultureRules, EconomyRules, FairPlayRules,
+    LifecycleRules, LoyaltyRules, MerchantRules, QuestDef, RankingRules, StartingVillage,
+    UnitRules, WonderRules, WorldConfig, WorldMap,
 };
 use eperica_infrastructure::{Argon2Hasher, PgAccountRepository};
 use std::sync::Arc;
@@ -43,6 +43,8 @@ pub struct AppState {
     pub merchant_rules: Arc<MerchantRules>,
     /// Wonder-of-the-World balance rules (construction curve, plan/site counts — 021).
     pub wonder_rules: Arc<WonderRules>,
+    /// Fair-play balance rules (rate limits, suspension default, detection thresholds — 022).
+    pub fair_play_rules: Arc<FairPlayRules>,
     /// The world's seeded map for the map view and placement (006).
     pub map: Arc<WorldMap>,
     /// World configuration (speed, radius — P7).

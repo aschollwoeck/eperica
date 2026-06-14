@@ -7145,6 +7145,32 @@ mod tests {
         );
     }
 
+    /// 022 AC6: the fixed-window rate limiter counts within a window and trips once the count exceeds
+    /// the limit; a fresh window resets.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn rate_limit_counts_and_trips(pool: PgPool) {
+        use eperica_application::ModerationError;
+        let Setup { repo, .. } = setup(pool.clone()).await;
+        let rules = crate::fair_play_rules().unwrap();
+        let limit = 2u32;
+        let now = Timestamp(1_000_000_000);
+        let check = async |ts: Timestamp| {
+            eperica_application::check_rate_limit(&repo, &rules, "subjX", "action", limit, ts).await
+        };
+
+        // Two within the window pass; the third trips.
+        assert!(check(now).await.is_ok());
+        assert!(check(now).await.is_ok());
+        assert!(matches!(
+            check(now).await,
+            Err(ModerationError::RateLimited)
+        ));
+
+        // A later window (past window_secs) resets the count.
+        let next_window = Timestamp(now.0 + rules.rate_window_secs * 1000 + 1000);
+        assert!(check(next_window).await.is_ok(), "a new window resets");
+    }
+
     /// 019 AC2/AC3: a protected player cannot be attacked (no movement created); once a player attacks,
     /// their own protection ends. Drives the real `order_attack` use-case against the Pg repo.
     #[sqlx::test(migrations = "../../migrations")]

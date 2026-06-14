@@ -34,6 +34,70 @@ async fn session_player(
     Some(PlayerId(id))
 }
 
+/// The client IP for rate-limit/detection keying: the first `X-Forwarded-For` hop (proxy), then
+/// `X-Real-IP`, then a fixed `"unknown"` bucket. (The peer address is folded in at register, T7.)
+fn client_ip(headers: &axum::http::HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| headers.get("x-real-ip").and_then(|v| v.to_str().ok()))
+        .unwrap_or("unknown")
+        .to_owned()
+}
+
+/// Server-authoritative rate-limit guard (022 AC6, P4/P5): each mutating `POST` is counted in a
+/// DB-backed fixed window and rejected with **429** when over the configured limit. `/login` +
+/// `/register` are keyed by **IP** (brute-force / signup-spam); other actions by the **session player**.
+/// `/logout` and reads are never limited.
+async fn rate_limit_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    use eperica_application::{ModerationError, check_rate_limit};
+    let path = req.uri().path();
+    if req.method() != Method::POST || path == "/logout" {
+        return next.run(req).await;
+    }
+    let rules = state.fair_play_rules.clone();
+    let by_ip = matches!(path, "/login" | "/register");
+    let (mut parts, body) = req.into_parts();
+    let (subject, action, limit) = if by_ip {
+        (
+            client_ip(&parts.headers),
+            "login",
+            rules.login_limit_per_window,
+        )
+    } else {
+        match session_player(&mut parts, &state).await {
+            Some(p) => (p.0.to_string(), "action", rules.rate_limit_per_window),
+            // No session ⇒ nothing to key on; the page's own auth will redirect.
+            None => return next.run(Request::from_parts(parts, body)).await,
+        }
+    };
+    match check_rate_limit(
+        state.accounts.as_ref(),
+        &rules,
+        &subject,
+        action,
+        limit,
+        Timestamp(now().0),
+    )
+    .await
+    {
+        Err(ModerationError::RateLimited) => (
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many requests — slow down.",
+        )
+            .into_response(),
+        Ok(()) => next.run(Request::from_parts(parts, body)).await,
+        // Fail-open on a backend error: a counter glitch must not lock players out.
+        Err(e) => {
+            tracing::error!(error = %e, "rate-limit check failed");
+            next.run(Request::from_parts(parts, body)).await
+        }
+    }
+}
+
 /// Server-authoritative action guard (P4) on mutating `POST`s, except authentication (so a player can
 /// always log in / out):
 /// - **Round freeze** (021 AC7): once the world is won, every mutating action is rejected.
@@ -135,6 +199,10 @@ pub fn router(state: AppState) -> Router {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             action_guard,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_guard,
         ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
