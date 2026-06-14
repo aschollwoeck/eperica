@@ -36,7 +36,7 @@ advancing. Mirrors the 024 conversations UI; reuses the 015 `Announce` right + t
 
 ## Acceptance
 
-- [ ] **T5 — Docs + review.** rustdoc on new public items; `docs/architecture/0029-alliance-forum.md`;
+- [x] **T5 — Docs + review.** rustdoc on new public items; `docs/architecture/0029-alliance-forum.md`;
   `docs/manual/` forum note; `CLAUDE.md` active slice → 027. Full gates + P11; `eperica-reviewer` until
   **APPROVE**; PR.
 

@@ -1,6 +1,6 @@
 # Feature 027 — Alliance forum
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 015 (alliances — membership, roles & the `Announce` right), 024 (the conversations/thread UI patterns this mirrors), 021/022 (the freeze/sanction/rate-limit guards a post reuses), 001 (auth/sessions)
 **Roadmap:** app-layer social/meta (`social-and-meta-features.md` §Communication → "Alliance forum") — threaded boards scoped to an alliance, with per-role posting.
 

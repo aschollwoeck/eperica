@@ -1,6 +1,6 @@
 # Feature 027 — Alliance forum — Plan
 
-**Spec:** ./spec.md · **Status:** Reviewed
+**Spec:** ./spec.md · **Status:** Verified
 
 An alliance-scoped threaded forum mirroring the 024 conversations UI. Threads + posts, member-gated reads
 and writes (P4), announcements gated by the 015 `Announce` right + locked. Persisted (P2), reuses the
