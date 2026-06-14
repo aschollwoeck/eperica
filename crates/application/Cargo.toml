@@ -10,6 +10,8 @@ eperica-domain = { path = "../domain" }
 thiserror = "2"
 async-trait = "0.1"
 tracing = "0.1"
+# Conversation keys encode player ids; uuid formats the DM key so it matches the DB's uuid user ids.
+uuid = { version = "1" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

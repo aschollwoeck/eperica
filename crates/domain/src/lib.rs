@@ -50,9 +50,7 @@ pub use combat::{
     apply_losses, attack_power, carry_capacity_total, catapult_power, cranny_protection,
     loot_split, luck_factor, razed_levels, resolve_battle,
 };
-pub use comms::{
-    ChatChannel, MAX_BODY, MAX_CHAT, MAX_SUBJECT, can_access_channel, valid_chat, valid_message,
-};
+pub use comms::{ChatChannel, MAX_MESSAGE, can_access_channel, valid_body};
 pub use construction::{
     BuildRules, BuildTarget, LevelSpec, QueueLane, build_time_secs, building_levels_met,
     can_afford, debit, prerequisites_met, queue_lane,

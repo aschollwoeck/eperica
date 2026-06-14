@@ -1,102 +1,104 @@
-# Feature 024 — Communication: private messaging & real-time chat
+# Feature 024 — Communication: conversations (DMs & chat channels)
 
 **Status:** Reviewed
-**Depends on:** 015 (alliances — the alliance chat channel + membership), 022 (the sanction/rate-limit guards that gate sending), 016 (player identities the UI links to), 001 (auth/sessions, the DB, the world)
-**Roadmap:** app-layer social/meta (`social-and-meta-features.md` §Communication) — **private messaging** + **in-game chat**, the player-to-player communication layer.
+**Depends on:** 015 (alliances — the alliance channel + membership), 022 (the sanction/rate-limit guards that gate sending), 016 (player identities the UI links to), 001 (auth/sessions, the DB, the world)
+**Roadmap:** app-layer social/meta (`social-and-meta-features.md` §Communication) — player-to-player communication as **WhatsApp-style conversations**: a unified, recency-sorted list of threads (direct messages + group channels) that update live.
 
 ## Goal
 
-Give players two complementary channels of communication, both **server-authoritative** (P4) and built on
-the existing stateless/DB-as-truth architecture (P5):
+One coherent communication surface, **server-authoritative** (P4) on the existing stateless/DB-as-truth
+architecture (P5) — not a classic inbox/sent split, but **conversations** like a modern chat app:
 
-- **Private messaging (in-game mail).** Persistent player-to-player mail: compose, an inbox + sent box,
-  read/unread, and per-side delete. A durable record, read at leisure.
-- **Real-time chat.** Live channels — a **global** channel and a per-**alliance** channel — where messages
-  appear to connected players within a second. Persisted (so there is history + an audit trail, P2/P6) and
-  delivered live.
+- A **conversations list**: every thread the player is part of — their **direct-message** threads with other
+  players plus the **group channels** they can see (a **global** channel and their **alliance** channel) —
+  newest-activity first, each with a **last-message preview**, time, and **per-conversation unread count**.
+- A **conversation view**: the running message history, a send box, **mark-as-read** on open, and **live**
+  updates (new messages appear within ~a second).
 
-Both reuse the fair-play guards (022): a **sanctioned or frozen** sender cannot send, and sends are
-**rate-limited** (anti-spam) — no new enforcement path.
+Every thread is **persisted** (durable history + a moderation trail, P2/P6) and delivered **live** on top.
+Sending reuses the fair-play guards (022): a **sanctioned/frozen** sender can't send, and sends are
+**rate-limited** — no new enforcement path.
 
 ## Concepts
 
-- **Message (mail).** A row with a sender, a recipient, a subject, a body, a `created_at`, a `read_at`
-  (null until the recipient opens it), and **per-side soft-delete** (each party removes it from *their*
-  view without affecting the other's). The inbox is the recipient's non-deleted messages, newest first;
-  the sent box is the sender's. Server-validated: a real, non-abandoned recipient; no self-send.
+- **Conversation.** A thread the player reads/writes, of two kinds:
+  - **Direct (DM)** — a 1:1 thread between the viewer and **another player**. From the viewer's side it is
+    keyed by the other player (`dm:<other>`); the messages are every line exchanged between the two. Any
+    player may open a DM with any other (existing, non-abandoned) player.
+  - **Channel** — a group thread: **`global`** (open to all) or **`alliance:<id>`** (members only, 015).
+    Channel access is a pure rule of alliance membership (P4).
 
-- **Chat channel.** A named stream a player may read/post to. **`global`** is open to every player;
-  **`alliance:<id>`** is restricted to that alliance's members (015). Channel access is a pure rule of the
-  player's alliance membership (P4 — enforced server-side, never trusted from the client).
+- **Message.** A line in a conversation: a sender, a body (no subject), a `created_at`. DMs persist with an
+  explicit sender + recipient; channel lines persist with the channel key. Persisting first makes the
+  thread reproducible (P2/P6) and gives history + a moderation trail.
 
-- **Chat message.** A persisted row (channel, sender, body, `created_at`). Persisting first makes chat
-  **reproducible** (P2/P6) and gives **history** (a new joiner backfills the recent messages) and a
-  moderation trail.
+- **Read state (per viewer, per conversation).** A `last_read_at` per `(player, conversation)`; a
+  conversation's **unread** is its messages after the viewer's `last_read_at` not sent by the viewer.
+  Opening a conversation advances `last_read_at` to now (the WhatsApp “ticks”/badge behaviour).
 
-- **Live delivery (SSE + `LISTEN/NOTIFY`, P5).** A send is an ordinary `POST` that **persists** the message
-  then `pg_notify`s. Each web instance runs **one** Postgres listener that fans new messages out to its
-  locally-connected subscribers; clients receive via a one-way **Server-Sent Events** stream (a plain `GET`).
-  This keeps the web tier stateless and correct across **multiple instances** (the DB is the bus — no Redis,
-  no sticky sessions), and the existing auth/rate-limit/sanction middleware covers the send `POST` for free.
+- **Conversations list.** For a player: their DM threads (one per other party they've exchanged with) +
+  `global` + their alliance channel, each carrying the **latest message** + **unread count**, ordered by
+  latest activity. The nav badge is the **total** unread across all of them.
 
-- **Reuse of the fair-play guards (022).** Sending mail or chat is a mutating `POST`, so the round-freeze +
-  per-account sanction guard and the rate limiter already apply — a banned/suspended player cannot send,
-  and floods are throttled. Reads (inbox, the SSE stream) are always available.
+- **Live delivery (SSE + `LISTEN/NOTIFY`, P5).** A send is an ordinary `POST` that **persists** then
+  `pg_notify`s. Each web instance runs **one** Postgres listener fanning new messages to its locally
+  subscribed conversation streams; clients receive via a one-way **Server-Sent Events** stream (a `GET`).
+  The DB is the bus — correct across **multiple web instances** (no Redis, no sticky sessions) — and the
+  send `POST` flows through the existing auth/sanction/rate-limit middleware unchanged.
 
 ## Acceptance criteria
 
-> Sending, reading, deletion, and channel access are **server-authoritative** (P4) and reproducible from
-> persisted state (P2/P6). Live delivery is best-effort on top of the durable record.
+> Sending, reading, and access are **server-authoritative** (P4) and reproducible from persisted state
+> (P2/P6). Live delivery is best-effort on top of the durable record.
 
-- **AC1 — Send mail.** A player sends a message (subject + body) to **another existing, non-abandoned**
-  player; it is persisted. A self-send and a send to an unknown/abandoned recipient are rejected
-  server-side.
+- **AC1 — Send into a conversation.** A player posts a (validated, non-empty, length-capped) body into a
+  conversation they may access — a DM to **another existing, non-abandoned** player (no self-DM), the
+  **global** channel, or their **alliance** channel; it is persisted. Access/validation failures are
+  rejected server-side.
 
-- **AC2 — Inbox & sent.** The recipient sees received messages (excluding ones they deleted), newest first,
-  each flagged read/unread; the sender sees their sent messages (excluding ones they deleted).
+- **AC2 — Conversation history.** Opening a conversation shows its messages oldest→newest (recent window),
+  each with sender + time. A DM shows the full two-party exchange; a channel shows the channel's lines.
 
-- **AC3 — Read & unread count.** Opening a received message marks it read (once); the unread count reflects
-  only the recipient's unread, non-deleted messages.
+- **AC3 — Conversations list.** A player sees their DM threads + the global + their alliance channel, each
+  with the **latest message** preview/time and an **unread count**, ordered by latest activity.
 
-- **AC4 — Per-side delete.** Either party can delete a message from **their own** view; it remains in the
-  other party's view. A message is only readable/deletable by its sender or recipient (server-enforced).
+- **AC4 — Read state & badge.** Opening a conversation advances the viewer's `last_read_at`, zeroing its
+  unread; the nav badge shows the **total** unread (messages after `last_read_at`, not the viewer's own).
 
-- **AC5 — Chat channel access.** A player may read/post the **global** channel; an **alliance** channel only
-  if they are a member of that alliance. A non-member's read or post is rejected server-side.
+- **AC5 — Channel access.** A player may read/post `global`, and an `alliance:<id>` channel **only** if a
+  member; a non-member's read or post is rejected server-side. DM access requires the viewer be one of the
+  two parties.
 
-- **AC6 — Chat send & persist & deliver.** Posting to a channel the player may access persists the message
-  and delivers it **live** to connected subscribers of that channel (typically within a second); a new
-  subscriber **backfills** the recent history on connect.
+- **AC6 — Live delivery & persistence.** A post persists and is delivered **live** to connected subscribers
+  of that conversation (typically within a second); a subscriber **backfills** recent history on connect.
 
-- **AC7 — Fair-play enforcement.** A **sanctioned** (banned/suspended) or **round-frozen** player cannot
-  send mail or chat (the 022/021 guards), and sends are **rate-limited**. Reads/streams stay available.
+- **AC7 — Fair-play enforcement.** A **sanctioned/frozen** player cannot send (021/022 guards) and sends
+  are **rate-limited**; reads/streams stay available.
 
-- **AC8 — Reproducibility, scale & roles.** Mail + chat are persisted, so state is reproducible (P2/P6).
-  Live delivery uses `LISTEN/NOTIFY` so it is correct across **multiple web instances** (P5). A **Visitor**
-  cannot send or read; only a logged-in **Player** can (per roles.md).
+- **AC8 — Reproducibility, scale & roles.** Threads are persisted (reproducible, P2/P6); live delivery uses
+  `LISTEN/NOTIFY` so it is correct across **multiple web instances** (P5). A **Visitor** cannot read or
+  send; only a logged-in **Player** can (roles.md).
 
-- **AC9 — Interface.** Mail pages (inbox / sent / compose / view / delete) with an **unread badge**; a chat
-  page per accessible channel that shows history and updates live; a compose/“message this player” entry
-  from a player's profile/stats page. No client action bypasses access or a limit (P4).
+- **AC9 — Interface.** A conversations-list page (recency-sorted, previews + unread) with a total-unread nav
+  badge; a conversation page (history + live updates + send box) for DMs and channels; a **“Message”** entry
+  on a player's profile/stats page that opens the DM with them. No client action bypasses access or a limit
+  (P4).
 
 ## Roles & permissions
 
 Per [roles.md](../../roles.md). Communication is **Player** play; channel access derives from alliance
-membership (015). Moderation of content reuses 022 (reports/sanctions).
+membership (015); content moderation reuses 022.
 
 | Role | Permitted | Denied (server-enforced) |
 |------|-----------|--------------------------|
-| **Visitor** | — | All messaging/chat (must be a logged-in player). |
-| **Player** | Send mail to other players; read own inbox/sent; delete own copy; read/post the global channel + their alliance channel. | Read others' mailboxes; post/read an alliance channel they're not in; send while sanctioned/frozen; exceed the rate limit. |
+| **Visitor** | — | All conversations (must be a logged-in player). |
+| **Player** | DM any other player; read/post global + their alliance channel; read their own threads; mark read. | Read others' DMs; post/read an alliance channel they're not in; send while sanctioned/frozen; exceed the rate limit. |
 | **Moderator** | (022) review reported content + sanction senders. | — |
 | **Administrator** | (operator) config. | — |
 
 ## Out of scope
 
-- **Alliance forum** (threaded persistent boards) — a separate feature; this slice is mail + live chat.
-- **Presence / typing indicators / online lists** — a later enhancement; this slice delivers send/receive +
-  history.
-- **Block lists** (refusing mail from a specific player), read receipts beyond the recipient's own
-  read/unread, attachments, and message search — future work.
-- **WebSockets** — SSE + `LISTEN/NOTIFY` is the chosen realtime transport (simpler, P5-correct, testable);
-  a WS upgrade can replace it later if bidirectional/binary needs arise.
+- **Alliance forum** (threaded persistent boards) — a separate feature; this is conversations.
+- **Presence / typing indicators / online lists / delivery receipts beyond unread**, message edit/delete,
+  reactions, attachments, **block lists**, group DMs (multi-party ad-hoc), and search — future work.
+- **WebSockets** — SSE + `LISTEN/NOTIFY` is the chosen realtime transport (simpler, P5-correct, testable).

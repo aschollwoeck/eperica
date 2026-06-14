@@ -5,10 +5,9 @@
 
 use crate::alliance::AllianceId;
 
-/// Max lengths (characters) for mail subject/body and a chat line.
-pub const MAX_SUBJECT: usize = 120;
-pub const MAX_BODY: usize = 4000;
-pub const MAX_CHAT: usize = 500;
+/// Max length (characters) of a single message body (DM line or chat line). No subjects — these are
+/// conversations, not mail.
+pub const MAX_MESSAGE: usize = 2000;
 
 /// A chat channel a player may read/post: the open `Global` channel, or a per-alliance channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,20 +47,11 @@ pub fn can_access_channel(channel: ChatChannel, membership: Option<AllianceId>) 
     }
 }
 
-/// Whether a piece of text is non-empty after trimming and within `max` characters.
-fn in_bounds(text: &str, max: usize) -> bool {
-    let n = text.trim().chars().count();
-    n > 0 && n <= max
-}
-
-/// Whether a mail `subject` + `body` are valid to send (024 AC1) — both non-empty + within caps.
-pub fn valid_message(subject: &str, body: &str) -> bool {
-    in_bounds(subject, MAX_SUBJECT) && in_bounds(body, MAX_BODY)
-}
-
-/// Whether a chat line is valid to post (024 AC6) — non-empty + within the chat cap.
-pub fn valid_chat(body: &str) -> bool {
-    in_bounds(body, MAX_CHAT)
+/// Whether a message `body` is valid to send (024 AC1) — non-empty after trimming and within
+/// [`MAX_MESSAGE`] characters. Applies to both DM lines and channel lines.
+pub fn valid_body(body: &str) -> bool {
+    let n = body.trim().chars().count();
+    n > 0 && n <= MAX_MESSAGE
 }
 
 #[cfg(test)]
@@ -90,12 +80,10 @@ mod tests {
 
     #[test]
     fn validation_bounds() {
-        assert!(valid_message("hi", "there"));
-        assert!(!valid_message("   ", "body")); // empty subject
-        assert!(!valid_message("subj", "  ")); // empty body
-        assert!(!valid_message(&"x".repeat(MAX_SUBJECT + 1), "body"));
-        assert!(valid_chat("gg"));
-        assert!(!valid_chat(""));
-        assert!(!valid_chat(&"x".repeat(MAX_CHAT + 1)));
+        assert!(valid_body("hi there"));
+        assert!(!valid_body("   ")); // empty after trim
+        assert!(!valid_body(""));
+        assert!(!valid_body(&"x".repeat(MAX_MESSAGE + 1)));
+        assert!(valid_body(&"x".repeat(MAX_MESSAGE)));
     }
 }

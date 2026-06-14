@@ -4,19 +4,19 @@ use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, AchievementRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder,
     AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage, ArtifactRepository,
-    BattleApply, BattleReportView, BoardScope, BuildRepository, CombatRepository, ConflictMetric,
-    ConquestRepository, CultureRepository, DefenderReport, DiplomacyEntry, DueAttack, DueBuild,
-    DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade,
-    DueTraining, DueUnitOrder, HeldArtifact, IncomingAttack, LeaderboardRow, LifecycleRepository,
-    LoyaltyApply, MedalAward, MedalRepository, MedalSubjectKind, MedalView, Membership,
-    ModerationRepository, MovementRepository, MovementView, NewBuildOrder, NewOasisReport,
-    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, OasisBattleApply, OasisOwnership,
-    OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PendingInvite, PlayerStats,
-    QuestRepository, RankingRepository, RazedBuilding, RepoError, ReportView, ResourceWrite,
-    RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply,
-    SettleOutcome, SettleRepository, StarvationRepository, StationedGroup, TradeRepository,
-    TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker,
-    WonderOutcome, WonderRepository, WonderStanding,
+    BattleApply, BattleReportView, BoardScope, BuildRepository, CombatRepository, CommsRepository,
+    ConflictMetric, ConquestRepository, ConversationSummary, CultureRepository, DefenderReport,
+    DiplomacyEntry, DueAttack, DueBuild, DueMovement, DueOasisAttack, DueOasisRegrow,
+    DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, HeldArtifact,
+    IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply, MedalAward, MedalRepository,
+    MedalSubjectKind, MedalView, Membership, MessageView, ModerationRepository, MovementRepository,
+    MovementView, NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder,
+    NewUser, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
+    OutgoingInvite, PendingInvite, PlayerStats, QuestRepository, RankingRepository, RazedBuilding,
+    RepoError, ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
+    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, StarvationRepository,
+    StationedGroup, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
+    UserRecord, VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactEffects,
@@ -6884,6 +6884,218 @@ impl ModerationRepository for PgAccountRepository {
     }
 }
 
+/// Read a conversation message line from a joined row.
+fn message_from_row(r: &PgRow) -> Result<MessageView, RepoError> {
+    let id: Uuid = r.try_get("id").map_err(backend)?;
+    let sender: Uuid = r.try_get("sender_id").map_err(backend)?;
+    Ok(MessageView {
+        id: id.as_u128(),
+        sender: PlayerId(sender.as_u128()),
+        sender_name: r.try_get("sender_name").map_err(backend)?,
+        body: r.try_get("body").map_err(backend)?,
+        created_ms: r.try_get("created_ms").map_err(backend)?,
+    })
+}
+
+#[async_trait]
+impl CommsRepository for PgAccountRepository {
+    async fn send_dm(
+        &self,
+        sender: PlayerId,
+        recipient: PlayerId,
+        body: &str,
+        now: Timestamp,
+    ) -> Result<u128, RepoError> {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO direct_messages (id, world_id, sender_id, recipient_id, body, created_at) \
+             VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0))",
+        )
+        .bind(id)
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(Uuid::from_u128(sender.0))
+        .bind(Uuid::from_u128(recipient.0))
+        .bind(body)
+        .bind(now.0)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(id.as_u128())
+    }
+
+    async fn dm_history(
+        &self,
+        viewer: PlayerId,
+        other: PlayerId,
+        limit: i64,
+    ) -> Result<Vec<MessageView>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, sender_id, sender_name, body, created_ms FROM ( \
+                SELECT dm.id, dm.sender_id, u.username AS sender_name, dm.body, dm.created_at, \
+                       (EXTRACT(EPOCH FROM dm.created_at) * 1000)::bigint AS created_ms \
+                FROM direct_messages dm JOIN users u ON u.id = dm.sender_id \
+                WHERE dm.world_id = $1 \
+                  AND ((dm.sender_id = $2 AND dm.recipient_id = $3) \
+                    OR (dm.sender_id = $3 AND dm.recipient_id = $2)) \
+                ORDER BY dm.created_at DESC LIMIT $4 \
+             ) t ORDER BY created_at ASC",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(Uuid::from_u128(viewer.0))
+        .bind(Uuid::from_u128(other.0))
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter().map(message_from_row).collect()
+    }
+
+    async fn dm_threads(&self, viewer: PlayerId) -> Result<Vec<ConversationSummary>, RepoError> {
+        let v = Uuid::from_u128(viewer.0);
+        let rows = sqlx::query(
+            "WITH mine AS ( \
+                SELECT id, body, created_at, sender_id, \
+                       CASE WHEN sender_id = $1 THEN recipient_id ELSE sender_id END AS other \
+                FROM direct_messages WHERE world_id = $2 AND (sender_id = $1 OR recipient_id = $1) \
+             ), latest AS ( \
+                SELECT DISTINCT ON (other) other, body, created_at FROM mine \
+                ORDER BY other, created_at DESC \
+             ) \
+             SELECT l.other, u.username, l.body, \
+                    (EXTRACT(EPOCH FROM l.created_at) * 1000)::bigint AS last_ms, \
+                    (SELECT count(*) FROM mine m WHERE m.other = l.other AND m.sender_id <> $1 \
+                       AND m.created_at > COALESCE( \
+                            (SELECT last_read_at FROM conversation_reads \
+                              WHERE player_id = $1 AND conversation = 'dm:' || l.other::text), \
+                            to_timestamp(0))) AS unread \
+             FROM latest l JOIN users u ON u.id = l.other \
+             ORDER BY last_ms DESC",
+        )
+        .bind(v)
+        .bind(Uuid::from_u128(self.world_id.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let other: Uuid = r.try_get("other").map_err(backend)?;
+                Ok(ConversationSummary {
+                    key: format!("dm:{other}"),
+                    title: r.try_get("username").map_err(backend)?,
+                    last_body: r.try_get("body").map_err(backend)?,
+                    last_ms: r.try_get("last_ms").map_err(backend)?,
+                    unread: r.try_get("unread").map_err(backend)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn post_chat(
+        &self,
+        channel_key: &str,
+        sender: PlayerId,
+        body: &str,
+        now: Timestamp,
+    ) -> Result<u128, RepoError> {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO chat_messages (id, world_id, channel, sender_id, body, created_at) \
+             VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0))",
+        )
+        .bind(id)
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(channel_key)
+        .bind(Uuid::from_u128(sender.0))
+        .bind(body)
+        .bind(now.0)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(id.as_u128())
+    }
+
+    async fn chat_history(
+        &self,
+        channel_key: &str,
+        limit: i64,
+    ) -> Result<Vec<MessageView>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, sender_id, sender_name, body, created_ms FROM ( \
+                SELECT c.id, c.sender_id, u.username AS sender_name, c.body, c.created_at, \
+                       (EXTRACT(EPOCH FROM c.created_at) * 1000)::bigint AS created_ms \
+                FROM chat_messages c JOIN users u ON u.id = c.sender_id \
+                WHERE c.world_id = $1 AND c.channel = $2 \
+                ORDER BY c.created_at DESC LIMIT $3 \
+             ) t ORDER BY created_at ASC",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(channel_key)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter().map(message_from_row).collect()
+    }
+
+    async fn channel_latest(&self, channel_key: &str) -> Result<Option<(String, i64)>, RepoError> {
+        let row = sqlx::query(
+            "SELECT body, (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ms \
+             FROM chat_messages WHERE world_id = $1 AND channel = $2 \
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(channel_key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        row.map(|r| {
+            Ok::<_, RepoError>((
+                r.try_get("body").map_err(backend)?,
+                r.try_get("created_ms").map_err(backend)?,
+            ))
+        })
+        .transpose()
+    }
+
+    async fn mark_read(
+        &self,
+        player: PlayerId,
+        conversation: &str,
+        now: Timestamp,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            "INSERT INTO conversation_reads (player_id, conversation, last_read_at) \
+             VALUES ($1, $2, to_timestamp($3::double precision / 1000.0)) \
+             ON CONFLICT (player_id, conversation) \
+             DO UPDATE SET last_read_at = GREATEST(conversation_reads.last_read_at, EXCLUDED.last_read_at)",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .bind(conversation)
+        .bind(now.0)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn channel_unread(&self, player: PlayerId, channel_key: &str) -> Result<i64, RepoError> {
+        let p = Uuid::from_u128(player.0);
+        sqlx::query_scalar(
+            "SELECT count(*) FROM chat_messages c \
+             WHERE c.world_id = $1 AND c.channel = $2 AND c.sender_id <> $3 \
+               AND c.created_at > COALESCE( \
+                    (SELECT last_read_at FROM conversation_reads \
+                      WHERE player_id = $3 AND conversation = $2), to_timestamp(0))",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(channel_key)
+        .bind(p)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7289,6 +7501,109 @@ mod tests {
             ids_a.len() + ids_b.len(),
             backlog as usize,
             "together they claim every event exactly once"
+        );
+    }
+
+    /// 024 AC1–AC5: DM send/history + per-conversation unread/mark-read, and channel access (global open,
+    /// alliance members-only), driven through the comms use-cases.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn conversations_dm_and_channel_flow(pool: PgPool) {
+        use eperica_application::{
+            CommsError, conversation_list, dm_key, open_chat, open_dm, send_chat, send_dm,
+            unread_badge,
+        };
+        use eperica_domain::PlayerId;
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let a = make_account(&repo, &template, "alice").await;
+        let b = make_account(&repo, &template, "bob").await;
+        let now = crate::now();
+
+        // AC1: self-DM + unknown recipient rejected.
+        assert!(matches!(
+            send_dm(&repo, &repo, a, a, "hi me", now).await,
+            Err(CommsError::SelfSend)
+        ));
+        assert!(matches!(
+            send_dm(&repo, &repo, a, PlayerId(123_456_789), "ghost", now).await,
+            Err(CommsError::RecipientUnavailable)
+        ));
+        assert!(matches!(
+            send_dm(&repo, &repo, a, b, "   ", now).await,
+            Err(CommsError::Invalid)
+        ));
+
+        // AC1/AC2: A DMs B; both see the thread.
+        send_dm(&repo, &repo, a, b, "hello bob", now).await.unwrap();
+        send_dm(&repo, &repo, b, a, "hi alice", Timestamp(now.0 + 1000))
+            .await
+            .unwrap();
+        let from_b = repo.dm_history(b, a, 50).await.unwrap();
+        assert_eq!(from_b.len(), 2);
+        assert_eq!(from_b[0].body, "hello bob"); // oldest first
+        assert_eq!(from_b[1].body, "hi alice");
+
+        // AC3/AC4: B has 1 unread from A (B's own reply doesn't count); opening clears it.
+        let badge_before = unread_badge(&repo, &repo, b).await.unwrap();
+        assert_eq!(badge_before, 1, "one unread DM from alice");
+        open_dm(&repo, b, a, 50, Timestamp(now.0 + 2000))
+            .await
+            .unwrap();
+        assert_eq!(
+            unread_badge(&repo, &repo, b).await.unwrap(),
+            0,
+            "read clears it"
+        );
+
+        // AC3: the conversations list shows the DM thread + the global channel.
+        let list = conversation_list(&repo, &repo, b).await.unwrap();
+        assert!(
+            list.iter()
+                .any(|c| c.key == dm_key(a) && c.title.starts_with("alice")),
+            "the DM thread with alice is listed"
+        );
+        assert!(list.iter().any(|c| c.key == "global"));
+
+        // AC5: global is open to all; a non-member alliance channel is forbidden.
+        send_chat(&repo, &repo, a, "global", "gg all", now)
+            .await
+            .unwrap();
+        assert_eq!(repo.chat_history("global", 50).await.unwrap().len(), 1);
+        assert!(matches!(
+            send_chat(&repo, &repo, a, "alliance:999", "secret", now).await,
+            Err(CommsError::Forbidden)
+        ));
+        assert!(matches!(
+            open_chat(&repo, &repo, a, "alliance:999", 50, now).await,
+            Err(CommsError::Forbidden)
+        ));
+
+        // A joins an alliance → may post + read its channel; B (non-member) may not.
+        let alliance = Uuid::new_v4();
+        sqlx::query("INSERT INTO alliances (id, name, tag, founder_id) VALUES ($1,'A','AAA',$2)")
+            .bind(alliance)
+            .bind(Uuid::from_u128(a.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO alliance_members (player_id, alliance_id, role) VALUES ($1,$2,'founder')",
+        )
+        .bind(Uuid::from_u128(a.0))
+        .bind(alliance)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let akey = format!("alliance:{}", alliance.as_u128());
+        send_chat(&repo, &repo, a, &akey, "team only", now)
+            .await
+            .unwrap();
+        assert_eq!(repo.chat_history(&akey, 50).await.unwrap().len(), 1);
+        assert!(
+            matches!(
+                open_chat(&repo, &repo, b, &akey, 50, now).await,
+                Err(CommsError::Forbidden)
+            ),
+            "non-member cannot open the alliance channel"
         );
     }
 
