@@ -2942,6 +2942,39 @@ impl CombatRepository for PgAccountRepository {
             .map_err(backend)?;
         }
 
+        // 026 AC2: notify the attacker + each distinct defending participant that their report is ready —
+        // in the report transaction (so a notification is never orphaned), with the live `notif:<uuid>`
+        // nudge fired on commit. `note` is a data-modifying CTE (always executed); the SELECT does the
+        // NOTIFY.
+        let mut recipients: Vec<Uuid> = vec![Uuid::from_u128(r.attacker_player.0)];
+        for c in &apply.defender_contributions {
+            let d = Uuid::from_u128(c.player.0);
+            if !recipients.contains(&d) {
+                recipients.push(d);
+            }
+        }
+        for rcpt in recipients {
+            sqlx::query(
+                "WITH note AS ( \
+                    INSERT INTO notifications \
+                        (id, world_id, player_id, kind, ref_kind, ref_id, body, created_at) \
+                    VALUES ($1, $2, $3, 'battle_report', 'report', $4::text, '', \
+                            to_timestamp($5::double precision / 1000.0)) \
+                 ) \
+                 SELECT pg_notify('notifications', json_build_object( \
+                    'key', 'notif:' || $3::text, 'kind', 'battle_report')::text)",
+            )
+            .bind(Uuid::new_v4())
+            .bind(Uuid::from_u128(self.world_id.0))
+            .bind(rcpt)
+            // The feed links to `/reports/{id}`, which parses a u128 — store the report id in that form.
+            .bind(report_id.as_u128().to_string())
+            .bind(apply.battle_at.0)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        }
+
         // The scouter-facing intel report from scouts that rode the attack (010), if any.
         if let Some(report) = &apply.scout_report {
             insert_scout_report(&mut tx, report).await?;
@@ -6947,11 +6980,20 @@ impl CommsRepository for PgAccountRepository {
         // parties derive the same one and only they can, so a third party can't subscribe to the thread.
         // Do NOT switch this back to per-party `dm:<uuid>` keys: that key isn't pair-unique and would let
         // anyone wiretap a player's DMs.
+        // 026 AC3: a DM also records a NewMessage notification for the recipient + nudges their private
+        // `notif:<uuid>` stream. `ins` + `note` are data-modifying CTEs (always run); both pg_notify calls
+        // live in the final UNION'd SELECT so each is guaranteed to execute.
+        let notif_id = Uuid::new_v4();
         sqlx::query(
             "WITH ins AS ( \
                 INSERT INTO direct_messages (id, world_id, sender_id, recipient_id, body, created_at) \
                 VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0)) \
                 RETURNING created_at \
+             ), note AS ( \
+                INSERT INTO notifications \
+                    (id, world_id, player_id, kind, ref_kind, ref_id, body, created_at) \
+                VALUES ($7, $2, $4, 'new_message', 'dm', $3::text, '', \
+                        to_timestamp($6::double precision / 1000.0)) \
              ) \
              SELECT pg_notify('comms', json_build_object( \
                 'keys', json_build_array( \
@@ -6959,7 +7001,10 @@ impl CommsRepository for PgAccountRepository {
                 'sender_name', (SELECT username FROM users WHERE id = $3), \
                 'body', $5::text, \
                 'created_ms', (EXTRACT(EPOCH FROM (SELECT created_at FROM ins)) * 1000)::bigint \
-             )::text)",
+             )::text) \
+             UNION ALL \
+             SELECT pg_notify('notifications', json_build_object( \
+                'key', 'notif:' || $4::text, 'kind', 'new_message')::text)",
         )
         .bind(id)
         .bind(Uuid::from_u128(self.world_id.0))
@@ -6967,6 +7012,7 @@ impl CommsRepository for PgAccountRepository {
         .bind(Uuid::from_u128(recipient.0))
         .bind(body)
         .bind(now.0)
+        .bind(notif_id)
         .execute(&self.pool)
         .await
         .map_err(backend)?;
@@ -7739,6 +7785,19 @@ mod tests {
         assert_eq!(from_b[0].body, "hello bob"); // oldest first
         assert_eq!(from_b[1].body, "hi alice");
 
+        // 026 AC3: each DM recorded a new-message notification for its recipient.
+        let bob_notes = NotificationRepository::list(&repo, b, 10).await.unwrap();
+        assert_eq!(bob_notes.len(), 1);
+        assert_eq!(bob_notes[0].kind, NotificationKind::NewMessage);
+        assert_eq!(bob_notes[0].ref_kind.as_deref(), Some("dm"));
+        assert_eq!(
+            NotificationRepository::unread_count(&repo, a)
+                .await
+                .unwrap(),
+            1,
+            "alice was notified of bob's reply"
+        );
+
         // AC3/AC4: B has 1 unread from A (B's own reply doesn't count); opening clears it.
         let badge_before = unread_badge(&repo, &repo, b).await.unwrap();
         assert_eq!(badge_before, 1, "one unread DM from alice");
@@ -8130,6 +8189,7 @@ mod tests {
             &repo,
             &repo,
             &repo,
+            &repo,
             &econ,
             &units,
             &map,
@@ -8160,6 +8220,7 @@ mod tests {
             &repo,
             &repo,
             &repo,
+            &repo,
             &econ,
             &units,
             &map,
@@ -8186,6 +8247,26 @@ mod tests {
             !is_protected(repo.protection_of(attacker).await.unwrap(), crate::now()),
             "attacking ended the attacker's protection"
         );
+
+        // 026 AC1: the defender got an incoming-attack notification; the attacker did not notify themselves.
+        assert_eq!(
+            NotificationRepository::unread_count(&repo, target)
+                .await
+                .unwrap(),
+            1,
+            "the defender is warned of the incoming attack"
+        );
+        assert_eq!(
+            NotificationRepository::unread_count(&repo, attacker)
+                .await
+                .unwrap(),
+            0,
+            "the attacker does not notify themselves"
+        );
+        let feed = NotificationRepository::list(&repo, target, 10)
+            .await
+            .unwrap();
+        assert_eq!(feed[0].kind, NotificationKind::IncomingAttack);
     }
 
     /// 019 AC4: protection ends early once the player is established (population ≥ threshold), via the
@@ -8576,6 +8657,7 @@ mod tests {
                 &repo,
                 &repo,
                 &repo,
+                &repo,
                 &econ,
                 &units,
                 &map,
@@ -8726,6 +8808,7 @@ mod tests {
             .await
             .unwrap();
             eperica_application::order_attack(
+                &repo,
                 &repo,
                 &repo,
                 &repo,
@@ -9109,6 +9192,7 @@ mod tests {
             .unwrap();
 
         eperica_application::order_attack(
+            &repo,
             &repo,
             &repo,
             &repo,
@@ -10720,6 +10804,22 @@ mod tests {
         assert_eq!(defs.len(), 2);
         assert_eq!(defs[0], (Uuid::from_u128(defender.0), true)); // garrison owner
         assert_eq!(defs[1], (Uuid::from_u128(ally.0), false)); // reinforcer
+
+        // 026 AC2: the attacker + each distinct defending participant got a battle-report notification.
+        for (who, label) in [
+            (attacker, "attacker"),
+            (defender, "owner"),
+            (ally, "reinforcer"),
+        ] {
+            let notes = NotificationRepository::list(&repo, who, 10).await.unwrap();
+            assert!(
+                notes
+                    .iter()
+                    .any(|n| n.kind == NotificationKind::BattleReport
+                        && n.ref_id.as_deref() == Some(&reports[0].id.to_string())),
+                "the {label} got a battle-report notification"
+            );
+        }
     }
 
     /// 010 AC6/AC7/AC8/AC9: scouts riding an attack scout the village in addition to the battle —

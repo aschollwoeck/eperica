@@ -177,10 +177,11 @@ where
 /// # Errors
 /// See [`CombatError`].
 #[allow(clippy::too_many_arguments)]
-pub async fn order_attack<A, C, S>(
+pub async fn order_attack<A, C, S, N>(
     accounts: &A,
     combat: &C,
     starvation: &S,
+    notifs: &N,
     economy_rules: &EconomyRules,
     unit_rules: &UnitRules,
     map: &WorldMap,
@@ -198,6 +199,7 @@ where
     A: AccountRepository,
     C: CombatRepository,
     S: crate::ports::StarvationRepository,
+    N: crate::ports::NotificationRepository,
 {
     // The Wall (rams' job) and the ever-present Rally Point cannot be catapulted (011, P4).
     if matches!(
@@ -295,6 +297,22 @@ where
             RepoError::Conflict => CombatError::Insufficient,
             other => CombatError::Backend(other.to_string()),
         })?;
+
+    // 026 AC1: warn the defending owner of the inbound attack/raid (best-effort — a notification failure
+    // must never fail the attack itself, which is already committed).
+    if let Err(e) = crate::notification::notify_incoming_attack(
+        notifs,
+        owner,
+        dest.owner,
+        dest.id,
+        dest.coordinate,
+        arrive,
+        now,
+    )
+    .await
+    {
+        tracing::error!(error = %e, "failed to record incoming-attack notification");
+    }
 
     // 019 AC3: launching an attack/raid ends the attacker's own beginner's protection — you cannot
     // shelter behind protection while on the offensive. Idempotent (no-op if already ended).
@@ -1111,6 +1129,10 @@ mod tests {
         }
     }
 
+    struct NoopNotifs;
+    #[async_trait]
+    impl crate::ports::NotificationRepository for NoopNotifs {}
+
     struct NoopStarvation;
     #[async_trait]
     impl StarvationRepository for NoopStarvation {
@@ -1415,6 +1437,7 @@ mod tests {
             acc,
             cb,
             &NoopStarvation,
+            &NoopNotifs,
             &economy_rules(),
             &unit_rules(),
             &map(),
@@ -1441,6 +1464,7 @@ mod tests {
             acc,
             cb,
             &NoopStarvation,
+            &NoopNotifs,
             &economy_rules(),
             &unit_rules(),
             &map(),
@@ -1811,6 +1835,7 @@ mod tests {
                 &acc,
                 &cb,
                 &NoopStarvation,
+                &NoopNotifs,
                 &economy_rules(),
                 &unit_rules(),
                 &map(),
