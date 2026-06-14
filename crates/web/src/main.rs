@@ -7,8 +7,9 @@ use eperica_domain::WorldMap;
 use eperica_infrastructure::{
     AppConfig, Argon2Hasher, PgAccountRepository, PgEventStore, Scheduler, achievement_catalogue,
     alliance_rules, build_rules, combat_rules, create_pool, culture_rules, economy_rules,
-    ensure_world, loyalty_rules, map_rules, medal_rules, merchant_rules, oasis_rules, quest_chain,
-    ranking_rules, run_migrations, scout_rules, starting_village, unit_rules,
+    ensure_world, lifecycle_rules, loyalty_rules, map_rules, medal_rules, merchant_rules,
+    oasis_rules, quest_chain, ranking_rules, run_migrations, scout_rules, starting_village,
+    unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -35,6 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let medals = Arc::new(medal_rules()?);
     let achievements = Arc::new(achievement_catalogue()?);
     let quests = Arc::new(quest_chain()?);
+    let lifecycle = Arc::new(lifecycle_rules()?);
     let template = Arc::new(starting_village()?);
     let map = Arc::new(WorldMap::new(
         world.seed as u64,
@@ -47,6 +49,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         world.seed,
         config.world.radius,
         rules.starting_amounts,
+        lifecycle.beginner_protection_secs,
+        config.world.speed,
     );
 
     // Background scheduler (P1) — processes due events, builds, unit orders, training, starvation.
@@ -64,6 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&loyalty),
         Arc::clone(&ranking),
         Arc::clone(&medals),
+        Arc::clone(&lifecycle),
         Arc::clone(&template),
         Arc::clone(&map),
         config.world.speed,
@@ -85,6 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ranking_rules: ranking,
         achievement_catalogue: achievements,
         quest_chain: quests,
+        lifecycle_rules: lifecycle,
         merchant_rules: merchants,
         map,
         world: config.world,

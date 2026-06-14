@@ -14,6 +14,7 @@ pub mod culture;
 pub mod economy;
 pub mod error;
 pub mod event;
+pub mod lifecycle;
 pub mod loyalty;
 pub mod map;
 pub mod medals;
@@ -54,6 +55,10 @@ pub use economy::{
 };
 pub use error::DomainError;
 pub use event::{EventKind, ScheduledEvent, Timestamp};
+pub use lifecycle::{
+    LifecycleRules, abandon_cutoff, is_inactive, is_protected, protection_ended_by_population,
+    protection_expiry,
+};
 pub use loyalty::{
     ConquestOutcome, LoyaltyRules, MAX_LOYALTY, administrator_count, administrator_drop,
     conquest_outcome, regenerate_loyalty,

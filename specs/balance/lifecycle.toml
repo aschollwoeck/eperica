@@ -1,0 +1,19 @@
+# Account-lifecycle balance (019, GDD §12.2–12.3) — interim, tunable.
+#
+# Time-based `_secs` are BASE durations; the lifecycle scales them by world speed (P7) — a faster server
+# protects for less wall-clock and abandons sooner. `sweep_interval_secs` is the abandonment-sweep cadence
+# (the period length), applied in real time.
+
+[protection]
+# Beginner's attack-immunity window granted at spawn (3 days base; ×speed-scaled down).
+beginner_protection_secs = 259200
+# Population at which a protected player is "established" — protection ends early past this.
+population_threshold = 200
+
+[inactivity]
+# Idle this long ⇒ the player is inactive (farmable / greyed on the map). 7 days base.
+inactive_after_secs = 604800
+# Idle this long ⇒ the account is abandoned (villages removed, valleys freed). 30 days base.
+abandon_after_secs = 2592000
+# The abandonment-sweep cadence / period length (real time). 1 day.
+sweep_interval_secs = 86400

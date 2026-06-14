@@ -13,9 +13,9 @@ use eperica_domain::{
 };
 use eperica_infrastructure::{
     Argon2Hasher, PgAccountRepository, achievement_catalogue, alliance_rules, build_rules,
-    combat_rules, culture_rules, economy_rules, ensure_world, loyalty_rules, map_rules,
-    merchant_rules, now, oasis_rules, quest_chain, ranking_rules, scout_rules, starting_village,
-    unit_rules,
+    combat_rules, culture_rules, economy_rules, ensure_world, lifecycle_rules, loyalty_rules,
+    map_rules, merchant_rules, now, oasis_rules, quest_chain, ranking_rules, scout_rules,
+    starting_village, unit_rules,
 };
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -44,6 +44,10 @@ async fn spawn(pool: sqlx::PgPool) -> String {
             world.seed,
             config.radius,
             rules.starting_amounts,
+            lifecycle_rules()
+                .expect("lifecycle rules")
+                .beginner_protection_secs,
+            config.speed,
         )),
         hasher: Arc::new(Argon2Hasher),
         template: Arc::new(starting_village().unwrap()),
@@ -56,6 +60,7 @@ async fn spawn(pool: sqlx::PgPool) -> String {
         ranking_rules: Arc::new(ranking_rules().expect("ranking rules")),
         achievement_catalogue: Arc::new(achievement_catalogue().expect("achievement catalogue")),
         quest_chain: Arc::new(quest_chain().expect("quest chain")),
+        lifecycle_rules: Arc::new(lifecycle_rules().expect("lifecycle rules")),
         merchant_rules: Arc::new(merchant_rules().expect("merchant rules")),
         map,
         world: config,
@@ -77,6 +82,15 @@ fn client() -> reqwest::Client {
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap()
+}
+
+/// Lift beginner's protection from every account (019) — combat-flow tests attack freshly-registered
+/// defenders, who would otherwise be protected.
+async fn clear_protection(pool: &sqlx::PgPool) {
+    sqlx::query("UPDATE users SET protected_until = NULL")
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 fn unique(prefix: &str) -> String {
@@ -842,6 +856,10 @@ async fn movement_repo(pool: &sqlx::PgPool) -> PgAccountRepository {
         world.seed,
         config.radius,
         rules.starting_amounts,
+        lifecycle_rules()
+            .expect("lifecycle rules")
+            .beginner_protection_secs,
+        config.speed,
     )
 }
 
@@ -1244,6 +1262,8 @@ async fn combat_raid_and_reports_flow(pool: sqlx::PgPool) {
         .await
         .unwrap();
 
+    clear_protection(&pool).await; // 019: the fresh defender would otherwise be protected.
+
     // AC1/AC8: launch a raid; PRG back to the village, which shows the attack in flight.
     let res = ca
         .post(format!("{base}/village/rally/send"))
@@ -1551,6 +1571,8 @@ async fn siege_loot_and_cranny_flow(pool: sqlx::PgPool) {
     .execute(&pool)
     .await
     .unwrap();
+
+    clear_protection(&pool).await; // 019: the fresh defender would otherwise be protected.
 
     // AC11: raid with catapults aimed at the Warehouse.
     let res = ca
@@ -2188,6 +2210,8 @@ async fn conquest_with_administrators_flow(pool: sqlx::PgPool) {
         "loyalty shown on the village page"
     );
 
+    clear_protection(&pool).await; // 019: the fresh defender would otherwise be protected.
+
     // AC4/AC11: send the attack carrying administrators; PRG back to the village.
     let res = ca
         .post(format!("{base}/village/rally/send"))
@@ -2698,4 +2722,133 @@ async fn quests_page_shows_progress_and_requires_login(pool: sqlx::PgPool) {
     .await
     .unwrap();
     assert_eq!(completed, 1, "the completion persisted exactly once");
+}
+
+/// 019 AC1/AC9: a freshly-registered player's village view shows their beginner's-protection status.
+#[sqlx::test(migrations = "../../migrations")]
+async fn village_view_shows_protection_status(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let c = client();
+    let user = unique("prot");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", format!("{user}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let body = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains("you cannot be attacked"),
+        "the village view shows the protection notice"
+    );
+}
+
+/// 019 AC6: the map greys / flags an inactive (farmable) player's village.
+#[sqlx::test(migrations = "../../migrations")]
+async fn map_flags_inactive_villages(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    // The viewer (logged in via the cookie).
+    let viewer = client();
+    let vname = unique("viewer");
+    viewer
+        .post(format!("{base}/register"))
+        .form(&[
+            ("username", vname.as_str()),
+            ("email", format!("{vname}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    // A second player who has gone inactive.
+    let idle = client();
+    let iname = unique("idle");
+    idle.post(format!("{base}/register"))
+        .form(&[
+            ("username", iname.as_str()),
+            ("email", format!("{iname}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let (ix, iy): (i32, i32) = sqlx::query_as(
+        "SELECT v.x, v.y FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&iname)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE users SET last_activity = to_timestamp(1) WHERE username = $1")
+        .bind(&iname)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Center the viewer's map on the idle player's village so it is in the viewport.
+    let body = viewer
+        .get(format!("{base}/map?x={ix}&y={iy}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains("(inactive)"),
+        "the inactive player's village is flagged on the map"
+    );
+    assert!(
+        body.contains("map-grid__cell--inactive"),
+        "the inactive village's cell is greyed"
+    );
+}
+
+/// 019 AC8: an abandoned account cannot log in.
+#[sqlx::test(migrations = "../../migrations")]
+async fn abandoned_account_cannot_log_in(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let c = client();
+    let user = unique("retired");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", format!("{user}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET abandoned_at = now() WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // A fresh client (no cookie) attempts to log in.
+    let body = client()
+        .post(format!("{base}/login"))
+        .form(&[("username", user.as_str()), ("password", "secret12")])
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains("retired"),
+        "an abandoned account is told it has been retired"
+    );
 }

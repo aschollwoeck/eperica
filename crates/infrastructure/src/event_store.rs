@@ -4,15 +4,15 @@ use crate::repo::PgAccountRepository;
 use async_trait::async_trait;
 use eperica_application::{
     DueEvent, EventStore, RepoError, process_due, process_due_builds, process_due_combat,
-    process_due_medal_settlement, process_due_movements, process_due_oasis_combat,
-    process_due_oasis_regrow, process_due_oasis_reinforce, process_due_scouts, process_due_settles,
-    process_due_starvation, process_due_trades, process_due_training, process_due_unit_orders,
-    sync_starvation_checks,
+    process_due_lifecycle, process_due_medal_settlement, process_due_movements,
+    process_due_oasis_combat, process_due_oasis_regrow, process_due_oasis_reinforce,
+    process_due_scouts, process_due_settles, process_due_starvation, process_due_trades,
+    process_due_training, process_due_unit_orders, sync_starvation_checks,
 };
 use eperica_domain::{
-    CombatRules, CultureRules, EconomyRules, EventKind, GameSpeed, LoyaltyRules, MedalRules,
-    MerchantRules, OasisRules, RankingRules, ScoutRules, StartingVillage, Timestamp, UnitRules,
-    WorldMap,
+    CombatRules, CultureRules, EconomyRules, EventKind, GameSpeed, LifecycleRules, LoyaltyRules,
+    MedalRules, MerchantRules, OasisRules, RankingRules, ScoutRules, StartingVillage, Timestamp,
+    UnitRules, WorldMap,
 };
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
@@ -150,11 +150,13 @@ pub struct Scheduler {
     loyalty_rules: Arc<LoyaltyRules>,
     ranking_rules: Arc<RankingRules>,
     medal_rules: Arc<MedalRules>,
+    lifecycle_rules: Arc<LifecycleRules>,
     template: Arc<StartingVillage>,
     map: Arc<WorldMap>,
     speed: GameSpeed,
     world_seed: u64,
-    /// The world's creation instant (Unix-ms) — the real-time anchor for the weekly settlement (017).
+    /// The world's creation instant (Unix-ms) — the real-time anchor for the weekly settlement (017)
+    /// and the inactivity-abandonment sweep (019).
     world_start: Timestamp,
     poll_interval: Duration,
 }
@@ -177,6 +179,7 @@ impl Scheduler {
         loyalty_rules: Arc<LoyaltyRules>,
         ranking_rules: Arc<RankingRules>,
         medal_rules: Arc<MedalRules>,
+        lifecycle_rules: Arc<LifecycleRules>,
         template: Arc<StartingVillage>,
         map: Arc<WorldMap>,
         speed: GameSpeed,
@@ -196,6 +199,7 @@ impl Scheduler {
             loyalty_rules,
             ranking_rules,
             medal_rules,
+            lifecycle_rules,
             template,
             map,
             speed,
@@ -397,6 +401,23 @@ impl Scheduler {
                 }
                 Ok(_) => {}
                 Err(e) => tracing::error!(error = %e, "scheduler medal settlement failed"),
+            }
+            // 019: the inactivity-abandonment sweep — when a sweep period has passed, retire accounts
+            // idle past the abandon threshold and free their villages (state-driven; idempotent).
+            match process_due_lifecycle(
+                &self.builds,
+                self.world_start,
+                now(),
+                &self.lifecycle_rules,
+                self.speed,
+            )
+            .await
+            {
+                Ok(swept) if swept.iter().any(|(_, c)| *c > 0) => {
+                    tracing::info!(?swept, "scheduler swept inactive accounts");
+                }
+                Ok(_) => {}
+                Err(e) => tracing::error!(error = %e, "scheduler inactivity sweep failed"),
             }
             // Standalone scout missions (010): no village garrison changes at resolution, so there is
             // nothing to re-sync here (surviving scouts re-sync home when their return arrives).

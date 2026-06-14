@@ -109,7 +109,7 @@ timed construction. Proves the entire architecture end-to-end on the smallest po
 | 016 ✅ | **Ranking, leaderboards & statistics** — population metric, attack/defense points, leaderboard categories, stat pages. | 009, 014 | The competitive scoreboard (§11.2). | §11.2 |
 | 017 ✅ | **Medals & achievements** — weekly medal settlement (scheduled due-event); milestone achievement grants. | 016 | Prestige/competition; both as server-side grants (P1/P4/P6). | §11.2 |
 | 018 ✅ | **Quests & onboarding** — stage-gated quest chain with rewards, server-evaluated, tapering. | 005 | New-player bootstrap (§12.1). | §12.1 |
-| 019 | **Protection & lifecycle** — beginner's protection, inactivity decay/abandonment back to the map. | 009, 016 | A live, fair, self-renewing world (§12.2–12.3). | §12.2, §12.3 |
+| 019 ✅ | **Protection & lifecycle** — beginner's protection, inactivity decay/abandonment back to the map. | 009, 016 | A live, fair, self-renewing world (§12.2–12.3). | §12.2, §12.3 |
 
 ---
 

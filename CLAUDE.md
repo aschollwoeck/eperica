@@ -14,10 +14,12 @@ capital, and conquest) — plus the **alliances** (015) and **ranking, leaderboa
 defence/raider boards + alliance aggregates, quadrant/window filters, stat pages, faithful per-defender
 battle reports + shared defence points) and **medals & achievements** (017: a weekly medal settlement —
 the first recurring due-event — population snapshots, permanent medals, milestone achievements with
-rewards, and the 016-deferred top-climbers board + population-over-time) slices. The **quests &
-onboarding** slice (018: a finite, stage-gated quest chain that walks new players through the core loop,
-server-evaluated from persisted state with exactly-once resource/culture/troop rewards) is in progress
-(M6).
+rewards, and the 016-deferred top-climbers board + population-over-time) and **quests & onboarding**
+(018: a finite, stage-gated quest chain that walks new players through the core loop, server-evaluated
+from persisted state with exactly-once resource/culture/troop rewards) slices. The **protection &
+lifecycle** slice (019: beginner's attack-immunity — speed-scaled, ending on offence or at a population
+threshold — plus a two-stage inactivity lifecycle: derived farmable greying, then a state-driven
+abandonment sweep that frees villages back to the map and soft-deletes the account) is in progress (M6).
 
 ## Read the specs first — they are the source of truth
 
@@ -31,7 +33,7 @@ server-evaluated from persisted state with exactly-once resource/culture/troop r
 - **`specs/roadmap.md`** — dependency-ordered build order (slices 001 → end-game).
 - **`specs/social-and-meta-features.md`** — app-layer features (chat, profiles, UX) — not sim rules.
 - **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the active slice. Currently:
-  `018-quests-and-onboarding`.
+  `019-protection-and-lifecycle`.
 
 If behavior must change, **update the spec first**, then the code.
 

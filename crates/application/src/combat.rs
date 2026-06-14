@@ -16,8 +16,9 @@ use eperica_domain::{
     ScoutTarget, SiegeKind, Timestamp, Tribe, UnitCounts, UnitId, UnitRole, UnitRules, UnitSpec,
     Village, VillageId, WorldMap, add_defense, administrator_count, administrator_drop,
     apply_losses, apportion, attack_power, carry_capacity_total, catapult_power, conquest_outcome,
-    cranny_protection, loot_split, luck_factor, population, razed_levels, regenerate_loyalty,
-    resolve_battle, resolve_scouting, scouting_power, slowest_speed, travel_time_secs_floored,
+    cranny_protection, is_protected, loot_split, luck_factor, population, razed_levels,
+    regenerate_loyalty, resolve_battle, resolve_scouting, scouting_power, slowest_speed,
+    travel_time_secs_floored,
 };
 
 /// Why launching an attack/raid failed (009 AC2).
@@ -36,6 +37,9 @@ pub enum CombatError {
     /// own village, whether it is the selected home tile or another of your villages (013).
     #[error("cannot attack your own village")]
     SameTile,
+    /// The target's owner is under beginner's protection (019 AC2) — they cannot be attacked yet.
+    #[error("that player is under beginner's protection")]
+    TargetProtected,
     /// The chosen catapult target is the Wall or Rally Point (not catapultable, 011).
     #[error("that building cannot be targeted by catapults")]
     InvalidCatapultTarget,
@@ -235,6 +239,11 @@ where
     if dest.owner == owner {
         return Err(CombatError::SameTile);
     }
+    // 019 AC2: a player under beginner's protection cannot be attacked — reject before any movement is
+    // created (server-authoritative, P4). One indexed lookup; the predicate is pure.
+    if is_protected(accounts.protection_of(dest.owner).await?, now) {
+        return Err(CombatError::TargetProtected);
+    }
 
     let Some(slowest) = slowest_speed(&chosen, roster) else {
         return Err(CombatError::EmptyComposition);
@@ -283,6 +292,10 @@ where
             RepoError::Conflict => CombatError::Insufficient,
             other => CombatError::Backend(other.to_string()),
         })?;
+
+    // 019 AC3: launching an attack/raid ends the attacker's own beginner's protection — you cannot
+    // shelter behind protection while on the offensive. Idempotent (no-op if already ended).
+    accounts.end_protection(owner, now).await?;
 
     crate::starvation::sync_starvation_check(
         accounts,

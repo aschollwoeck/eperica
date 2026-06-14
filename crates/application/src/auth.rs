@@ -11,6 +11,9 @@ pub enum LoginError {
     /// The account exists but its email is not yet confirmed.
     #[error("email not confirmed")]
     EmailNotConfirmed,
+    /// The account has been abandoned by the inactivity sweep (019 AC8) — retired and cannot log in.
+    #[error("account abandoned")]
+    Abandoned,
     /// A storage/backend failure.
     #[error("storage error: {0}")]
     Backend(String),
@@ -51,6 +54,10 @@ where
 
     if !user.email_confirmed {
         return Err(LoginError::EmailNotConfirmed);
+    }
+
+    if user.abandoned {
+        return Err(LoginError::Abandoned);
     }
 
     Ok(user)

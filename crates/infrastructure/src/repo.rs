@@ -7,10 +7,10 @@ use eperica_application::{
     BattleReportView, BoardScope, BuildRepository, CombatRepository, ConflictMetric,
     ConquestRepository, CultureRepository, DefenderReport, DiplomacyEntry, DueAttack, DueBuild,
     DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade,
-    DueTraining, DueUnitOrder, IncomingAttack, LeaderboardRow, LoyaltyApply, MedalAward,
-    MedalRepository, MedalSubjectKind, MedalView, Membership, MovementRepository, MovementView,
-    NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
-    OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
+    DueTraining, DueUnitOrder, IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply,
+    MedalAward, MedalRepository, MedalSubjectKind, MedalView, Membership, MovementRepository,
+    MovementView, NewBuildOrder, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder,
+    NewUser, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
     OutgoingInvite, PendingInvite, PlayerStats, QuestRepository, RankingRepository, RazedBuilding,
     RepoError, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
     ScoutRepository, SettleApply, SettleOutcome, SettleRepository, StarvationRepository,
@@ -19,12 +19,12 @@ use eperica_application::{
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, BuildTarget, BuildingKind,
-    BuildingSlot, Coordinate, DiplomacyStance, DiplomacyStatus, EconomyRules, MedalCategory,
-    MovementKind, OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant, QuestDef, QuestId,
-    QuestProgress, QueueLane, ResourceAmounts, ResourceField, ResourceKind, Reward, RightSet,
-    ScoutTarget, StartingVillage, TileKind, Timestamp, TradeKind, Tribe, UnitCounts, UnitId,
-    UnitSpec, Village, VillageId, WorldId, WorldMap, capacities, coordinates_within,
-    deposit_capped, oasis_garrison,
+    BuildingSlot, Coordinate, DiplomacyStance, DiplomacyStatus, EconomyRules, GameSpeed,
+    MedalCategory, MovementKind, OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant,
+    QuestDef, QuestId, QuestProgress, QueueLane, ResourceAmounts, ResourceField, ResourceKind,
+    Reward, RightSet, ScoutTarget, StartingVillage, TileKind, Timestamp, TradeKind, Tribe,
+    UnitCounts, UnitId, UnitSpec, Village, VillageId, WorldId, WorldMap, capacities,
+    coordinates_within, deposit_capped, oasis_garrison, protection_expiry,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use std::collections::{HashMap, HashSet};
@@ -37,18 +37,25 @@ pub struct PgAccountRepository {
     world_id: WorldId,
     map: WorldMap,
     starting_amounts: ResourceAmounts,
+    /// Beginner's-protection window (base seconds, 019) granted at spawn; speed-scaled with `speed`.
+    protection_window_secs: i64,
+    /// World speed — scales the protection window (P7).
+    speed: GameSpeed,
 }
 
 impl PgAccountRepository {
     /// Create a repository for `world_id`. The world's `seed` + `radius` (with the embedded map
     /// balance) drive the generated map used for village placement (006); `starting_amounts` are
-    /// seeded into each new village's resources.
+    /// seeded into each new village's resources. `protection_window_secs` + `speed` set the
+    /// beginner's-protection window granted at spawn (019, speed-scaled, P7).
     pub fn new(
         pool: PgPool,
         world_id: WorldId,
         seed: i64,
         radius: u32,
         starting_amounts: ResourceAmounts,
+        protection_window_secs: i64,
+        speed: GameSpeed,
     ) -> Self {
         let rules = crate::balance::map_rules().expect("embedded map balance is valid");
         Self {
@@ -56,6 +63,8 @@ impl PgAccountRepository {
             world_id,
             map: WorldMap::new(seed as u64, radius, rules),
             starting_amounts,
+            protection_window_secs,
+            speed,
         }
     }
 
@@ -291,6 +300,7 @@ fn row_to_user(r: &PgRow) -> Result<UserRecord, RepoError> {
         password_hash: r.try_get("password_hash").map_err(backend)?,
         email_confirmed: r.try_get("email_confirmed").map_err(backend)?,
         tribe,
+        abandoned: r.try_get("abandoned").map_err(backend)?,
     })
 }
 
@@ -304,9 +314,13 @@ impl AccountRepository for PgAccountRepository {
         let mut tx = self.pool.begin().await.map_err(backend)?;
 
         let user_id = Uuid::new_v4();
+        // Beginner's protection (019 AC1): immune to attack until now + the speed-scaled window.
+        let protected_until =
+            protection_expiry(crate::now(), self.protection_window_secs, self.speed);
         let insert_user = sqlx::query(
-            "INSERT INTO users (id, username, email, password_hash, email_confirmed, tribe) \
-             VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO users (id, username, email, password_hash, email_confirmed, tribe, \
+             protected_until) \
+             VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7::double precision / 1000.0))",
         )
         .bind(user_id)
         .bind(&user.username)
@@ -314,6 +328,7 @@ impl AccountRepository for PgAccountRepository {
         .bind(&user.password_hash)
         .bind(user.email_confirmed)
         .bind(user.tribe.slug())
+        .bind(protected_until.0)
         .execute(&mut *tx)
         .await;
         if let Err(e) = insert_user {
@@ -433,12 +448,14 @@ impl AccountRepository for PgAccountRepository {
             password_hash: user.password_hash,
             email_confirmed: user.email_confirmed,
             tribe: user.tribe,
+            abandoned: false,
         })
     }
 
     async fn find_user_by_username(&self, username: &str) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
-            "SELECT id, username, email, password_hash, email_confirmed, tribe FROM users WHERE username = $1",
+            "SELECT id, username, email, password_hash, email_confirmed, tribe, \
+             (abandoned_at IS NOT NULL) AS abandoned FROM users WHERE username = $1",
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -449,7 +466,8 @@ impl AccountRepository for PgAccountRepository {
 
     async fn find_user_by_id(&self, id: PlayerId) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
-            "SELECT id, username, email, password_hash, email_confirmed, tribe FROM users WHERE id = $1",
+            "SELECT id, username, email, password_hash, email_confirmed, tribe, \
+             (abandoned_at IS NOT NULL) AS abandoned FROM users WHERE id = $1",
         )
         .bind(Uuid::from_u128(id.0))
         .fetch_optional(&self.pool)
@@ -643,7 +661,8 @@ impl AccountRepository for PgAccountRepository {
         let ys: Vec<i32> = coords.iter().map(|c| c.y).collect();
         // Exact match on the requested tiles via the (world_id, x, y) unique index.
         let rows = sqlx::query(
-            "SELECT v.x, v.y, u.username, al.tag AS alliance_tag \
+            "SELECT v.x, v.y, u.username, al.tag AS alliance_tag, \
+             (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity_ms \
              FROM villages v JOIN users u ON u.id = v.owner_id \
              LEFT JOIN alliance_members am ON am.player_id = v.owner_id \
              LEFT JOIN alliances al ON al.id = am.alliance_id \
@@ -661,10 +680,12 @@ impl AccountRepository for PgAccountRepository {
                 let y: i32 = r.try_get("y").map_err(backend)?;
                 let owner_name: String = r.try_get("username").map_err(backend)?;
                 let alliance_tag: Option<String> = r.try_get("alliance_tag").map_err(backend)?;
+                let last_activity_ms: i64 = r.try_get("last_activity_ms").map_err(backend)?;
                 Ok(VillageMarker {
                     coordinate: Coordinate::new(x, y),
                     owner_name,
                     alliance_tag,
+                    owner_last_activity: Timestamp(last_activity_ms),
                 })
             })
             .collect()
@@ -684,7 +705,54 @@ impl AccountRepository for PgAccountRepository {
             None => Ok(None),
         }
     }
+
+    async fn protection_of(&self, player: PlayerId) -> Result<Option<Timestamp>, RepoError> {
+        let ms: Option<i64> = sqlx::query_scalar(
+            "SELECT (EXTRACT(EPOCH FROM protected_until) * 1000)::bigint FROM users WHERE id = $1",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?
+        .flatten();
+        Ok(ms.map(Timestamp))
+    }
+
+    async fn end_protection(&self, player: PlayerId, now: Timestamp) -> Result<(), RepoError> {
+        // Only ends an *active* window; never extends or re-arms (idempotent — AC3/AC4).
+        sqlx::query(
+            "UPDATE users SET protected_until = to_timestamp($2::double precision / 1000.0) \
+             WHERE id = $1 AND protected_until > to_timestamp($2::double precision / 1000.0)",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .bind(now.0)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn touch_activity(&self, player: PlayerId, now: Timestamp) -> Result<(), RepoError> {
+        // Throttled (AC5): rewrite only when the stored value is staler than ACTIVITY_THROTTLE_MS, so
+        // an authenticated view costs at most one tiny write per throttle window, not per request.
+        let cutoff = now.0 - ACTIVITY_THROTTLE_MS;
+        sqlx::query(
+            "UPDATE users SET last_activity = to_timestamp($2::double precision / 1000.0) \
+             WHERE id = $1 AND last_activity < to_timestamp($3::double precision / 1000.0)",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .bind(now.0)
+        .bind(cutoff)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
 }
+
+/// Freshness window for [`PgAccountRepository::touch_activity`] — `last_activity` is rewritten only
+/// when older than this (5 minutes). An implementation constant, not game balance.
+const ACTIVITY_THROTTLE_MS: i64 = 5 * 60 * 1000;
 
 fn lane_str(lane: QueueLane) -> &'static str {
     match lane {
@@ -2529,7 +2597,8 @@ fn report_from_row(r: &PgRow) -> Result<BattleReportView, RepoError> {
 /// The `SELECT` of a battle report joined to player names + village coordinates (inbox/detail).
 const REPORT_SELECT: &str = "SELECT br.id, \
     (EXTRACT(EPOCH FROM br.occurred_at) * 1000)::bigint AS occurred_ms, br.kind, \
-    au.username AS attacker_name, av.x AS ax, av.y AS ay, \
+    au.username AS attacker_name, COALESCE(av.x, br.attacker_x) AS ax, \
+    COALESCE(av.y, br.attacker_y) AS ay, \
     COALESCE(du.username, br.defender_label) AS defender_name, \
     COALESCE(dv.x, br.defender_x) AS dx, COALESCE(dv.y, br.defender_y) AS dy, \
     br.attacker_player, br.defender_player, br.attacker_won, br.luck, br.morale, \
@@ -2540,7 +2609,7 @@ const REPORT_SELECT: &str = "SELECT br.id, \
     br.loyalty_before, br.loyalty_after, br.conquered \
     FROM battle_reports br \
     JOIN users au ON au.id = br.attacker_player \
-    JOIN villages av ON av.id = br.attacker_village \
+    LEFT JOIN villages av ON av.id = br.attacker_village \
     LEFT JOIN users du ON du.id = br.defender_player \
     LEFT JOIN villages dv ON dv.id = br.defender_village";
 
@@ -2710,9 +2779,10 @@ impl CombatRepository for PgAccountRepository {
               attacker_forces, attacker_losses, defender_forces, defender_losses, \
               scouted, scout_target, loot_wood, loot_clay, loot_iron, loot_crop, \
               razed_building, razed_before, razed_after, \
-              loyalty_before, loyalty_after, conquered, attack_points) \
+              loyalty_before, loyalty_after, conquered, attack_points, \
+              attacker_x, attacker_y, defender_x, defender_y) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, \
-                     $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)",
+                     $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)",
         )
         .bind(report_id)
         .bind(movement_kind_str(r.kind))
@@ -2742,6 +2812,11 @@ impl CombatRepository for PgAccountRepository {
         .bind(r.loyalty_after.and_then(|v| i16::try_from(v).ok()))
         .bind(r.conquered)
         .bind(apply.attack_points)
+        // 019: fallback coords so the report stays readable if a village is later deleted.
+        .bind(apply.attacker_origin.x)
+        .bind(apply.attacker_origin.y)
+        .bind(apply.target_coord.x)
+        .bind(apply.target_coord.y)
         .execute(&mut *tx)
         .await
         .map_err(backend)?;
@@ -3065,9 +3140,11 @@ async fn insert_oasis_report(
          (id, kind, attacker_player, attacker_village, defender_player, defender_village, \
           defender_x, defender_y, defender_label, \
           attacker_won, luck, morale, wall_before, wall_after, \
-          attacker_forces, attacker_losses, defender_forces, defender_losses) \
+          attacker_forces, attacker_losses, defender_forces, defender_losses, \
+          attacker_x, attacker_y) \
          VALUES ($1, 'oasis_attack', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0, 0, \
-                 $12, $13, $14, $15)",
+                 $12, $13, $14, $15, \
+                 (SELECT x FROM villages WHERE id = $3), (SELECT y FROM villages WHERE id = $3))",
     )
     .bind(Uuid::new_v4())
     .bind(Uuid::from_u128(r.attacker_player.0))
@@ -5022,7 +5099,7 @@ impl RankingRepository for PgAccountRepository {
         let sql = format!(
             "SELECT u.id, u.username, SUM({pop})::bigint AS total \
              FROM villages v JOIN users u ON u.id = v.owner_id \
-             WHERE v.world_id = $1 AND {qf} \
+             WHERE v.world_id = $1 AND {qf} AND u.abandoned_at IS NULL \
              GROUP BY u.id, u.username HAVING SUM({pop}) > 0 \
              ORDER BY total DESC, u.id ASC LIMIT $7"
         );
@@ -5055,6 +5132,7 @@ impl RankingRepository for PgAccountRepository {
              FROM {table} JOIN users u ON u.id = {pid} \
              WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
                AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) AND {qf} \
+               AND u.abandoned_at IS NULL \
              GROUP BY u.id, u.username HAVING COALESCE(SUM({val}), 0) > 0 \
              ORDER BY total DESC, u.id ASC LIMIT $4"
         );
@@ -5082,8 +5160,9 @@ impl RankingRepository for PgAccountRepository {
             "SELECT a.id, a.name, a.tag, COALESCE(SUM({pop}), 0)::bigint AS total \
              FROM alliances a \
              JOIN alliance_members am ON am.alliance_id = a.id \
+             JOIN users u ON u.id = am.player_id \
              JOIN villages v ON v.owner_id = am.player_id AND v.world_id = $1 \
-             WHERE {qf} \
+             WHERE {qf} AND u.abandoned_at IS NULL \
              GROUP BY a.id, a.name, a.tag HAVING COALESCE(SUM({pop}), 0) > 0 \
              ORDER BY total DESC, a.id ASC LIMIT $7"
         );
@@ -5115,11 +5194,12 @@ impl RankingRepository for PgAccountRepository {
             "SELECT a.id, a.name, a.tag, COALESCE(SUM(pv.val), 0)::bigint AS total \
              FROM alliances a \
              JOIN alliance_members am ON am.alliance_id = a.id \
+             JOIN users u ON u.id = am.player_id \
              JOIN (SELECT {pid} AS pid, SUM({val}) AS val FROM {table} \
                    WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
                      AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) \
                    GROUP BY {pid}) pv ON pv.pid = am.player_id \
-             WHERE {qf} \
+             WHERE {qf} AND u.abandoned_at IS NULL \
              GROUP BY a.id, a.name, a.tag HAVING COALESCE(SUM(pv.val), 0) > 0 \
              ORDER BY total DESC, a.id ASC LIMIT $4"
         );
@@ -5140,8 +5220,9 @@ impl RankingRepository for PgAccountRepository {
         player: PlayerId,
     ) -> Result<Option<PlayerStats>, RepoError> {
         let pid = Uuid::from_u128(player.0);
+        // 019 AC8: an abandoned account is hidden from its stat page (treated as not found).
         let Some(name): Option<String> =
-            sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
+            sqlx::query_scalar("SELECT username FROM users WHERE id = $1 AND abandoned_at IS NULL")
                 .bind(pid)
                 .fetch_optional(&self.pool)
                 .await
@@ -5618,6 +5699,7 @@ impl MedalRepository for PgAccountRepository {
              LEFT JOIN population_snapshots prev \
                ON prev.world_id = cur.world_id AND prev.player_id = cur.player_id AND prev.period = $2 \
              WHERE cur.world_id = $1 AND cur.period = $3 AND {delta} > 0 AND {qf} \
+               AND u.abandoned_at IS NULL \
              ORDER BY {delta} DESC, cur.player_id ASC LIMIT $5"
         );
         let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(&sql)
@@ -5894,6 +5976,65 @@ impl QuestRepository for PgAccountRepository {
     }
 }
 
+#[async_trait]
+impl LifecycleRepository for PgAccountRepository {
+    async fn latest_swept_period(&self) -> Result<Option<i64>, RepoError> {
+        sqlx::query_scalar("SELECT MAX(period) FROM inactivity_sweeps WHERE world_id = $1")
+            .bind(Uuid::from_u128(self.world_id.0))
+            .fetch_one(&self.pool)
+            .await
+            .map_err(backend)
+    }
+
+    async fn sweep_abandoned(&self, period: i64, cutoff: Timestamp) -> Result<usize, RepoError> {
+        let world = Uuid::from_u128(self.world_id.0);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        // The live accounts idle past the period's cutoff (already-abandoned excluded — idempotent).
+        // `FOR UPDATE` locks the rows so a concurrent `touch_activity` cannot make one active between
+        // this read and the deletes below (it blocks until this transaction commits).
+        let victims: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM users WHERE abandoned_at IS NULL \
+             AND last_activity < to_timestamp($1::double precision / 1000.0) FOR UPDATE",
+        )
+        .bind(cutoff.0)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        // Claim the period (watermark). If already recorded, another tick swept it — no double work.
+        let claimed = sqlx::query(
+            "INSERT INTO inactivity_sweeps (world_id, period, abandoned_count) VALUES ($1, $2, $3) \
+             ON CONFLICT (world_id, period) DO NOTHING",
+        )
+        .bind(world)
+        .bind(period)
+        .bind(i32::try_from(victims.len()).unwrap_or(i32::MAX))
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if claimed.rows_affected() == 0 {
+            tx.commit().await.map_err(backend)?;
+            return Ok(0); // period already swept — idempotent no-op
+        }
+        if !victims.is_empty() {
+            // Remove their villages in this world — frees the valleys (cascades village-scoped rows).
+            sqlx::query("DELETE FROM villages WHERE owner_id = ANY($1) AND world_id = $2")
+                .bind(&victims)
+                .bind(world)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+            // Retire (soft-delete) the accounts: kept for referential history, but cannot log in.
+            sqlx::query("UPDATE users SET abandoned_at = now() WHERE id = ANY($1)")
+                .bind(&victims)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+        }
+        tx.commit().await.map_err(backend)?;
+        Ok(victims.len())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5902,7 +6043,9 @@ mod tests {
         BoardScope, ConflictMetric, ConquestTransfer, DefenderContribution, NewBattleReport,
         ReinforcementReturn,
     };
-    use eperica_domain::{EconomyRules, GameSpeed, WorldConfig};
+    use eperica_domain::{
+        AttackMode, EconomyRules, GameSpeed, LifecycleRules, WorldConfig, is_protected,
+    };
 
     /// The resources row's last-settled time — the snapshot orders must be computed from.
     async fn snapshot(repo: &PgAccountRepository, village: VillageId) -> Timestamp {
@@ -5926,12 +6069,15 @@ mod tests {
             .await
             .expect("ensure world");
         let econ = crate::economy_rules().expect("economy rules");
+        let lifecycle = crate::lifecycle_rules().expect("lifecycle rules");
         let repo = PgAccountRepository::new(
             pool.clone(),
             world.id,
             world.seed,
             config.radius,
             econ.starting_amounts,
+            lifecycle.beginner_protection_secs,
+            config.speed,
         );
         let template = crate::starting_village().unwrap();
         Setup {
@@ -5941,6 +6087,487 @@ mod tests {
             repo,
             template,
         }
+    }
+
+    /// Create a bare account (no extra villages) and return its player id.
+    async fn make_account(
+        repo: &PgAccountRepository,
+        template: &StartingVillage,
+        tag: &str,
+    ) -> PlayerId {
+        let uname = format!("{tag}_{}", Uuid::new_v4().simple());
+        repo.create_account(
+            NewUser {
+                username: uname.clone(),
+                email: format!("{uname}@example.com"),
+                password_hash: "h".to_owned(),
+                email_confirmed: true,
+                tribe: Tribe::Gauls,
+            },
+            template,
+        )
+        .await
+        .expect("create account")
+        .id
+    }
+
+    /// 019 AC1: registration grants beginner's protection — `protected_until` is set ahead of now by
+    /// the (speed-scaled) window.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn create_account_grants_beginner_protection(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let lifecycle = crate::lifecycle_rules().unwrap();
+        let player = make_account(&repo, &template, "prot").await;
+        let until = repo
+            .protection_of(player)
+            .await
+            .unwrap()
+            .expect("a new account is protected");
+        let now = crate::now();
+        assert!(until.0 > now.0, "protection extends into the future");
+        // At speed 1.0 the window is the base seconds; allow generous slack for clock + insert latency.
+        let window_ms = lifecycle.beginner_protection_secs * 1000;
+        assert!(
+            until.0 >= now.0 + window_ms - 60_000,
+            "≈ the full window remains"
+        );
+        assert!(
+            is_protected(Some(until), now),
+            "the player reads as protected"
+        );
+    }
+
+    /// 019 AC3: `end_protection` ends an active window and is idempotent / never re-arms.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn end_protection_is_one_way(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let player = make_account(&repo, &template, "end").await;
+        let t = crate::now();
+        repo.end_protection(player, t).await.unwrap();
+        let after = repo.protection_of(player).await.unwrap().unwrap();
+        assert!(
+            !is_protected(Some(after), crate::now()),
+            "protection has ended"
+        );
+        // Re-ending later does not push protection further out (no re-arm).
+        repo.end_protection(player, Timestamp(t.0 + 1_000_000))
+            .await
+            .unwrap();
+        let after2 = repo.protection_of(player).await.unwrap().unwrap();
+        assert_eq!(after2.0, after.0, "already-ended protection is not moved");
+    }
+
+    /// 019 AC5: `touch_activity` is throttled — a no-op while fresh, a write once stale.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn touch_activity_is_throttled(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let player = make_account(&repo, &template, "act").await;
+        let pid = Uuid::from_u128(player.0);
+        let read = async |pool: &PgPool| -> i64 {
+            sqlx::query_scalar("SELECT (EXTRACT(EPOCH FROM last_activity) * 1000)::bigint FROM users WHERE id = $1")
+                .bind(pid)
+                .fetch_one(pool)
+                .await
+                .unwrap()
+        };
+        let seeded = read(&pool).await;
+        // A touch within the throttle window is a no-op.
+        repo.touch_activity(player, Timestamp(seeded + 1000))
+            .await
+            .unwrap();
+        assert_eq!(read(&pool).await, seeded, "fresh activity is not rewritten");
+        // A touch past the throttle window writes.
+        let later = Timestamp(seeded + ACTIVITY_THROTTLE_MS + 1000);
+        repo.touch_activity(player, later).await.unwrap();
+        assert_eq!(read(&pool).await, later.0, "stale activity is refreshed");
+    }
+
+    /// 019 AC8: an abandoned account surfaces as `abandoned` (which blocks login at the use-case).
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn abandoned_flag_surfaces(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let player = make_account(&repo, &template, "aband").await;
+        let rec = repo.find_user_by_id(player).await.unwrap().unwrap();
+        assert!(!rec.abandoned, "a live account is not abandoned");
+        sqlx::query("UPDATE users SET abandoned_at = now() WHERE id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let rec = repo.find_user_by_id(player).await.unwrap().unwrap();
+        assert!(rec.abandoned, "the sweep flag surfaces on the user record");
+    }
+
+    /// 019 AC2/AC3: a protected player cannot be attacked (no movement created); once a player attacks,
+    /// their own protection ends. Drives the real `order_attack` use-case against the Pg repo.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn protection_blocks_attack_and_attacking_ends_it(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            config,
+            world,
+            ..
+        } = setup(pool.clone()).await;
+        let map = WorldMap::new(
+            world.seed as u64,
+            config.radius,
+            crate::map_rules().unwrap(),
+        );
+        let units = crate::unit_rules().unwrap();
+        let attacker = make_account(&repo, &template, "atk").await;
+        let target = make_account(&repo, &template, "tgt").await;
+        let atk_v = repo.villages_of(attacker).await.unwrap()[0].clone();
+        let tgt_v = repo.villages_of(target).await.unwrap()[0].clone();
+        sqlx::query(
+            "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 50)",
+        )
+        .bind(Uuid::from_u128(atk_v.id.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let now = crate::now();
+        let troops = vec![(UnitId("phalanx".into()), 10)];
+
+        // AC2: the fresh target is protected ⇒ the attack is rejected and no movement is created.
+        let res = eperica_application::order_attack(
+            &repo,
+            &repo,
+            &repo,
+            &econ,
+            &units,
+            &map,
+            config.speed,
+            now,
+            attacker,
+            None,
+            tgt_v.coordinate,
+            troops.clone(),
+            AttackMode::Raid,
+            None,
+            None,
+        )
+        .await;
+        assert!(
+            matches!(res, Err(eperica_application::CombatError::TargetProtected)),
+            "a protected target is rejected, got {res:?}"
+        );
+        let moves: i64 = sqlx::query_scalar("SELECT count(*) FROM troop_movements")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(moves, 0, "no movement is created for a rejected attack");
+
+        // End the target's protection ⇒ the same attack now launches.
+        repo.end_protection(target, now).await.unwrap();
+        eperica_application::order_attack(
+            &repo,
+            &repo,
+            &repo,
+            &econ,
+            &units,
+            &map,
+            config.speed,
+            now,
+            attacker,
+            None,
+            tgt_v.coordinate,
+            troops,
+            AttackMode::Raid,
+            None,
+            None,
+        )
+        .await
+        .expect("attack launches against an unprotected target");
+        let moves: i64 = sqlx::query_scalar("SELECT count(*) FROM troop_movements")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(moves, 1, "the launched attack created a movement");
+
+        // AC3: launching the attack ended the attacker's own protection.
+        assert!(
+            !is_protected(repo.protection_of(attacker).await.unwrap(), crate::now()),
+            "attacking ended the attacker's protection"
+        );
+    }
+
+    /// 019 AC4: protection ends early once the player is established (population ≥ threshold), via the
+    /// lazy `end_protection_if_established`; it does not re-arm.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn protection_ends_at_population_threshold(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let rules = crate::lifecycle_rules().unwrap();
+        let player = make_account(&repo, &template, "grow").await;
+        let v = repo.villages_of(player).await.unwrap()[0].clone();
+        let now = crate::now();
+
+        // A fresh village is far below the threshold ⇒ protection stays.
+        assert!(
+            !eperica_application::end_protection_if_established(&repo, &econ, &rules, player, now)
+                .await
+                .unwrap()
+        );
+        assert!(is_protected(repo.protection_of(player).await.unwrap(), now));
+
+        // Grow population past the threshold (max-level fields), then it ends on evaluation.
+        sqlx::query("UPDATE village_fields SET level = 10 WHERE village_id = $1")
+            .bind(Uuid::from_u128(v.id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            eperica_application::end_protection_if_established(&repo, &econ, &rules, player, now)
+                .await
+                .unwrap(),
+            "an established player's protection ends"
+        );
+        assert!(!is_protected(
+            repo.protection_of(player).await.unwrap(),
+            now
+        ));
+        // Idempotent: a second evaluation does nothing.
+        assert!(
+            !eperica_application::end_protection_if_established(&repo, &econ, &rules, player, now)
+                .await
+                .unwrap()
+        );
+    }
+
+    /// 019 AC7/AC8: the abandonment sweep abandons an idle account — deleting its village (freeing the
+    /// valley) and retiring (but **retaining**) the account row — leaves an active account untouched,
+    /// and is idempotent per period.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn sweep_abandons_inactive_frees_map_and_is_idempotent(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let gone = make_account(&repo, &template, "gone").await;
+        let active = make_account(&repo, &template, "live").await;
+        let gone_v = repo.villages_of(gone).await.unwrap()[0].clone();
+        // `gone` last acted in the deep past; `active` is fresh (seeded at creation).
+        sqlx::query("UPDATE users SET last_activity = to_timestamp(1) WHERE id = $1")
+            .bind(Uuid::from_u128(gone.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        // A cutoff between `gone`'s ancient activity and `active`'s fresh activity.
+        let cutoff = Timestamp(1_000_000);
+
+        let count = repo.sweep_abandoned(0, cutoff).await.unwrap();
+        assert_eq!(count, 1, "the idle account was abandoned");
+        // AC7: the village is gone — the valley is free again.
+        assert!(
+            repo.village_at(gone_v.coordinate).await.unwrap().is_none(),
+            "the abandoned village's valley is freed"
+        );
+        assert!(repo.villages_of(gone).await.unwrap().is_empty());
+        // AC8: the account row is retained (history-safe) but flagged abandoned.
+        let rec = repo
+            .find_user_by_id(gone)
+            .await
+            .unwrap()
+            .expect("the user row is retained");
+        assert!(rec.abandoned, "the account is retired");
+        // The active account is untouched.
+        assert!(
+            !repo
+                .find_user_by_id(active)
+                .await
+                .unwrap()
+                .unwrap()
+                .abandoned
+        );
+        assert!(!repo.villages_of(active).await.unwrap().is_empty());
+        // Idempotent: re-sweeping the recorded period is a no-op.
+        assert_eq!(repo.sweep_abandoned(0, cutoff).await.unwrap(), 0);
+        assert_eq!(repo.latest_swept_period().await.unwrap(), Some(0));
+    }
+
+    /// 019 AC7/AC10: `process_due_lifecycle` settles every complete period once (watermark-driven) and
+    /// catches up, then no-ops when caught up.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn process_due_lifecycle_settles_complete_periods(pool: PgPool) {
+        let Setup {
+            repo,
+            template,
+            config,
+            ..
+        } = setup(pool.clone()).await;
+        let gone = make_account(&repo, &template, "abandon").await;
+        let gone_v = repo.villages_of(gone).await.unwrap()[0].clone();
+        sqlx::query("UPDATE users SET last_activity = to_timestamp(0) WHERE id = $1")
+            .bind(Uuid::from_u128(gone.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let rules = LifecycleRules {
+            beginner_protection_secs: 1,
+            protection_population_threshold: 1,
+            inactive_after_secs: 1,
+            abandon_after_secs: 1,
+            sweep_interval_secs: 10,
+        };
+        let world_start = Timestamp(0);
+        let now = Timestamp(60_000); // period 6 ⇒ periods 0..=5 are complete
+
+        let swept = eperica_application::process_due_lifecycle(
+            &repo,
+            world_start,
+            now,
+            &rules,
+            config.speed,
+        )
+        .await
+        .unwrap();
+        assert_eq!(swept.len(), 6, "periods 0..=5 each settle once");
+        let total: usize = swept.iter().map(|(_, c)| *c).sum();
+        assert_eq!(
+            total, 1,
+            "exactly one account abandoned across the catch-up"
+        );
+        assert!(
+            repo.village_at(gone_v.coordinate).await.unwrap().is_none(),
+            "the abandoned account's valley is freed"
+        );
+        // Caught up: a second run settles nothing.
+        let again = eperica_application::process_due_lifecycle(
+            &repo,
+            world_start,
+            now,
+            &rules,
+            config.speed,
+        )
+        .await
+        .unwrap();
+        assert!(again.is_empty(), "no further periods to settle");
+    }
+
+    /// 019 AC8: an abandoned account is excluded from the leaderboards (by a read-time filter, not by
+    /// destroying rows) and its stat page 404s — while a still-active opponent **keeps** its battle
+    /// report and ranking points (P6 audit retention).
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn abandoned_excluded_but_opponent_history_preserved(pool: PgPool) {
+        let Setup {
+            repo,
+            econ,
+            template,
+            world,
+            ..
+        } = setup(pool.clone()).await;
+        let gone = make_account(&repo, &template, "gboard").await;
+        let live = make_account(&repo, &template, "lboard").await;
+        let gone_v = repo.villages_of(gone).await.unwrap()[0].clone();
+        let live_v = repo.villages_of(live).await.unwrap()[0].clone();
+        // Two resolved raids (with fallback coords): each side scores attack points against the other.
+        let report = async |attacker: PlayerId, av: &Village, defender: PlayerId, dv: &Village| {
+            sqlx::query(
+                "INSERT INTO battle_reports (id, kind, attacker_player, attacker_village, \
+                 defender_player, defender_village, attacker_won, luck, morale, wall_before, \
+                 wall_after, attacker_forces, attacker_losses, defender_forces, defender_losses, \
+                 attack_points, attacker_x, attacker_y, defender_x, defender_y) \
+                 VALUES ($1,'raid',$2,$3,$4,$5,true,0,0,0,0,'{}','{}','{}','{}',50,$6,$7,$8,$9)",
+            )
+            .bind(Uuid::new_v4())
+            .bind(Uuid::from_u128(attacker.0))
+            .bind(Uuid::from_u128(av.id.0))
+            .bind(Uuid::from_u128(defender.0))
+            .bind(Uuid::from_u128(dv.id.0))
+            .bind(av.coordinate.x)
+            .bind(av.coordinate.y)
+            .bind(dv.coordinate.x)
+            .bind(dv.coordinate.y)
+            .execute(&pool)
+            .await
+            .unwrap();
+        };
+        report(gone, &gone_v, live, &live_v).await; // gone raids live
+        report(live, &live_v, gone, &gone_v).await; // live raids gone
+
+        // Snapshots so `gone` is a top-climber (period 0 → 1 is a positive delta).
+        let world_id = Uuid::from_u128(world.id.0);
+        for (period, popn) in [(0i64, 10i64), (1, 100)] {
+            sqlx::query(
+                "INSERT INTO population_snapshots (world_id, player_id, period, population) \
+                 VALUES ($1, $2, $3, $4)",
+            )
+            .bind(world_id)
+            .bind(Uuid::from_u128(gone.0))
+            .bind(period)
+            .bind(popn)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let on = |b: &[LeaderboardRow], p: PlayerId| b.iter().any(|r| r.player == p);
+        let attack_board = async || {
+            repo.conflict_board(ConflictMetric::Attack, BoardScope::World, None, None, 100)
+                .await
+                .unwrap()
+        };
+        let climbers = async || {
+            repo.climber_board(1, 0, BoardScope::World, 100)
+                .await
+                .unwrap()
+        };
+        // Before: both are on the attack + population boards; `gone` tops the climber board.
+        assert!(on(&attack_board().await, gone) && on(&attack_board().await, live));
+        assert!(
+            on(&climbers().await, gone),
+            "gone is a climber before abandonment"
+        );
+        assert!(repo.player_stats(&econ, gone).await.unwrap().is_some());
+
+        // Abandon `gone` (idle past the cutoff) — deletes its village, keeps its (now NULL-village) row.
+        sqlx::query("UPDATE users SET last_activity = to_timestamp(1) WHERE id = $1")
+            .bind(Uuid::from_u128(gone.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.sweep_abandoned(0, Timestamp(1_000_000)).await.unwrap(),
+            1
+        );
+
+        // `gone` is excluded everywhere; its stat page 404s.
+        let pop = repo
+            .population_board(&econ, BoardScope::World, 100)
+            .await
+            .unwrap();
+        assert!(
+            !on(&pop, gone),
+            "abandoned account left the population board"
+        );
+        assert!(on(&pop, live), "the live account remains");
+        assert!(
+            !on(&attack_board().await, gone),
+            "abandoned left the attack board"
+        );
+        assert!(
+            !on(&climbers().await, gone),
+            "abandoned left the climber board"
+        );
+        assert!(
+            repo.player_stats(&econ, gone).await.unwrap().is_none(),
+            "stat page 404s"
+        );
+
+        // AC8/P6: the opponent KEEPS its report and points (history was not destroyed).
+        assert!(
+            on(&attack_board().await, live),
+            "live keeps its attack points"
+        );
+        assert!(repo.player_stats(&econ, live).await.unwrap().is_some());
+        let live_reports = repo.reports_for(live, 100).await.unwrap();
+        assert!(
+            !live_reports.is_empty(),
+            "the opponent's battle report survived the abandonment"
+        );
     }
 
     /// 007 AC1/AC4/AC5: a reinforcement debits the source garrison, arrives once (crash-resume

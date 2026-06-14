@@ -23,6 +23,9 @@ pub struct VillageMarker {
     pub owner_name: String,
     /// The owner's alliance **tag**, if they are in one (public, §7.3; 015 AC11).
     pub alliance_tag: Option<String>,
+    /// The owner's last activity (Unix-ms) — the map view derives the **inactive/farmable** flag from
+    /// it via [`eperica_domain::is_inactive`] (019 AC6).
+    pub owner_last_activity: Timestamp,
 }
 
 /// Details for a new account to be created.
@@ -55,6 +58,9 @@ pub struct UserRecord {
     pub email_confirmed: bool,
     /// The account's tribe (chosen at registration; pre-004 accounts were backfilled).
     pub tribe: Tribe,
+    /// Whether the account has been **abandoned** by the inactivity sweep (019) — retired: cannot log
+    /// in, hidden from rankings, but the row is retained for historical referential integrity.
+    pub abandoned: bool,
 }
 
 /// Errors a repository/port can return to the application.
@@ -159,6 +165,38 @@ pub trait AccountRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn village_at(&self, coord: Coordinate) -> Result<Option<Village>, RepoError>;
+
+    /// A player's beginner's-protection expiry (019), or `None` if never granted / already ended. The
+    /// pure [`eperica_domain::is_protected`] turns this into the protected/unprotected decision.
+    ///
+    /// Defaults to "never protected" so non-account fakes need not implement it; the real adapter
+    /// overrides it.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn protection_of(&self, _player: PlayerId) -> Result<Option<Timestamp>, RepoError> {
+        Ok(None)
+    }
+
+    /// End a player's beginner's protection now (019 AC3/AC4) — sets `protected_until = now`, but only
+    /// while a window is still active (idempotent; never extends or re-arms protection). Defaults to a
+    /// no-op; the real adapter overrides it.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn end_protection(&self, _player: PlayerId, _now: Timestamp) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// Refresh a player's `last_activity` (019 AC5), **throttled**: a no-op unless the stored value is
+    /// already older than the implementation's freshness interval, so it is a cheap conditional write.
+    /// Defaults to a no-op; the real adapter overrides it.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn touch_activity(&self, _player: PlayerId, _now: Timestamp) -> Result<(), RepoError> {
+        Ok(())
+    }
 }
 
 /// An in-flight movement, for the owner's view (007 AC7).
@@ -2356,4 +2394,26 @@ pub trait QuestRepository: Send + Sync {
         player: PlayerId,
         def: &QuestDef,
     ) -> Result<bool, RepoError>;
+}
+
+/// Persistence for the inactivity → abandonment sweep (019). State-driven like the 017 settlement: the
+/// latest swept period is a watermark, and each period is settled atomically and idempotently.
+#[async_trait]
+pub trait LifecycleRepository: Send + Sync {
+    /// The latest abandonment-sweep period already settled for this world (`MAX(inactivity_sweeps.
+    /// period)`), or `None` if none yet.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn latest_swept_period(&self) -> Result<Option<i64>, RepoError>;
+
+    /// Settle abandonment for `period`: in **one transaction**, record the period watermark and, for
+    /// every live account whose `last_activity` is before `cutoff`, delete its villages (freeing the
+    /// valleys) and flag it `abandoned`. Returns the number of accounts abandoned. Idempotent — a
+    /// re-settle of a recorded period is a no-op (the watermark guards it; already-abandoned accounts
+    /// are excluded regardless).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn sweep_abandoned(&self, period: i64, cutoff: Timestamp) -> Result<usize, RepoError>;
 }

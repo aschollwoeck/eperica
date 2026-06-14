@@ -3,8 +3,9 @@
 use axum::extract::FromRef;
 use axum_extra::extract::cookie::Key;
 use eperica_domain::{
-    AchievementDef, AllianceRules, BuildRules, CultureRules, EconomyRules, LoyaltyRules,
-    MerchantRules, QuestDef, RankingRules, StartingVillage, UnitRules, WorldConfig, WorldMap,
+    AchievementDef, AllianceRules, BuildRules, CultureRules, EconomyRules, LifecycleRules,
+    LoyaltyRules, MerchantRules, QuestDef, RankingRules, StartingVillage, UnitRules, WorldConfig,
+    WorldMap,
 };
 use eperica_infrastructure::{Argon2Hasher, PgAccountRepository};
 use std::sync::Arc;
@@ -36,6 +37,8 @@ pub struct AppState {
     pub achievement_catalogue: Arc<Vec<AchievementDef>>,
     /// The onboarding quest chain (ordered conditions + rewards — 018), evaluated lazily on view.
     pub quest_chain: Arc<Vec<QuestDef>>,
+    /// Account-lifecycle rules (beginner's protection + inactivity/abandonment timings — 019, P7).
+    pub lifecycle_rules: Arc<LifecycleRules>,
     /// Merchant/trade balance rules (per-tribe capacity + speed, merchants per level — 008).
     pub merchant_rules: Arc<MerchantRules>,
     /// The world's seeded map for the map view and placement (006).

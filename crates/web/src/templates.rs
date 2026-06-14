@@ -67,6 +67,7 @@ mod tests {
             oases: Vec::new(),
             fields: Vec::new(),
             buildings: Vec::new(),
+            protection: None,
         }
     }
 
@@ -531,6 +532,9 @@ pub struct VillageTemplate {
     pub fields: Vec<BuildRow>,
     /// Building build rows.
     pub buildings: Vec<BuildRow>,
+    /// Beginner's-protection notice (019 AC9): a human summary of the remaining window, or `None`
+    /// once protection has ended.
+    pub protection: Option<String>,
 }
 
 // ---------------------------------------------------------------- alliances (015)

@@ -129,6 +129,7 @@ mod tests {
             coordinate: here,
             owner_name: "alice".to_owned(),
             alliance_tag: None,
+            owner_last_activity: eperica_domain::Timestamp(0),
         }];
         let v = map_viewport(&map(50), here, 1, &markers);
         assert_eq!(
