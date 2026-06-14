@@ -1,6 +1,6 @@
 # Feature 024 — Communication: conversations (DMs & chat channels)
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 015 (alliances — the alliance channel + membership), 022 (the sanction/rate-limit guards that gate sending), 016 (player identities the UI links to), 001 (auth/sessions, the DB, the world)
 **Roadmap:** app-layer social/meta (`social-and-meta-features.md` §Communication) — player-to-player communication as **WhatsApp-style conversations**: a unified, recency-sorted list of threads (direct messages + group channels) that update live.
 

@@ -16,9 +16,11 @@ use tokio::sync::broadcast;
 /// The Postgres `NOTIFY` channel chat messages are published on.
 const COMMS_CHANNEL: &str = "comms";
 
-/// A live message pushed to subscribers. `keys` are the viewer-relative conversation keys this line
-/// belongs to (a DM belongs to both parties' keys; a channel line to the channel key); an SSE stream for
-/// key `K` forwards the event iff `K ∈ keys`. The rest renders the line.
+/// A live message pushed to subscribers. `keys` are the broadcast routing keys this line belongs to: a DM
+/// carries the single **pair-canonical** key `dmp:<lo>:<hi>` (only the two parties derive it), a channel
+/// line carries the channel key. An SSE stream for key `K` forwards the event iff `K ∈ keys`. The rest
+/// renders the line. (Note: these are *not* the viewer-relative `dm:<other>` keys used for URLs/read
+/// watermarks — using those here would not be pair-unique and would leak DMs.)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiveMessage {
     /// Conversation keys this line should reach.

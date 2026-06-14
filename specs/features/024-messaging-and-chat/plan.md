@@ -1,6 +1,6 @@
 # Feature 024 — Communication: conversations — Plan
 
-**Spec:** ./spec.md · **Status:** Reviewed
+**Spec:** ./spec.md · **Status:** Verified
 
 A WhatsApp-style conversation model (DMs + group channels), persisted (P2/P6) and delivered live (SSE +
 `LISTEN/NOTIFY`, P5). Reuses the 021/022 send-time guards + the 022 rate limiter — no new enforcement path.
@@ -44,8 +44,9 @@ A WhatsApp-style conversation model (DMs + group channels), persisted (P2/P6) an
   `sqlx::postgres::PgListener` on channel `comms`; each `NOTIFY` (payload = conversation key + message) is
   republished to the broadcast. The SSE handler subscribes, filters to the **one conversation** it streams
   (already access-checked), and emits events.
-- `send_dm`/`post_chat` insert the row **and** `pg_notify('comms', json)` — for a DM, notify is addressed to
-  **both** viewer-relative keys (`dm:<sender>` and `dm:<recipient>`) so each party's stream matches.
+- `send_dm`/`post_chat` insert the row **and** `pg_notify('comms', json)`. A DM notifies the
+  **pair-canonical** key `dmp:<lo>:<hi>` (sorted uuids) — both parties derive it, only they can, so a third
+  party can't subscribe to the thread. A channel notifies the channel key.
 - Listener task started in `main.rs` + the test harness.
 
 ## Web (`crates/web`)
@@ -66,8 +67,9 @@ A WhatsApp-style conversation model (DMs + group channels), persisted (P2/P6) an
 
 - **One conversation model** unifies DMs + channels in the UI/use-cases; storage keeps DMs (sender+recipient)
   and channel lines in separate tables, joined only at the read-model level (the conversations list).
-- **Viewer-relative DM key** (`dm:<other>`) makes per-viewer read state + stream addressing trivial and
-  needs no canonical-pair table.
+- **Two DM key forms:** the **viewer-relative** `dm:<other>` keys URLs + the per-player read watermark;
+  the **pair-canonical** `dmp:<lo>:<hi>` keys live broadcast/notify routing (pair-unique, so it can't be
+  used to subscribe to a third party's thread). Neither needs a canonical-pair table.
 - **SSE over WS / persist-then-notify / anti-abuse for free** — as in the original plan: durable first,
   live on top; the send `POST` inherits 021/022 enforcement + rate limiting.
 

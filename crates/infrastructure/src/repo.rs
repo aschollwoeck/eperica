@@ -6908,7 +6908,10 @@ impl CommsRepository for PgAccountRepository {
     ) -> Result<u128, RepoError> {
         let id = Uuid::new_v4();
         // Insert + notify in one statement: the row is the source of truth, the NOTIFY is the live nudge
-        // (024). The payload carries both parties' viewer-relative keys so each side's stream matches.
+        // (024). The payload carries the **pair-canonical** key `dmp:<lo>:<hi>` (LEAST/GREATEST) — both
+        // parties derive the same one and only they can, so a third party can't subscribe to the thread.
+        // Do NOT switch this back to per-party `dm:<uuid>` keys: that key isn't pair-unique and would let
+        // anyone wiretap a player's DMs.
         sqlx::query(
             "WITH ins AS ( \
                 INSERT INTO direct_messages (id, world_id, sender_id, recipient_id, body, created_at) \
