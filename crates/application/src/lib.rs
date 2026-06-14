@@ -28,6 +28,7 @@ pub mod ranking;
 pub mod register;
 pub mod scheduler;
 pub mod scouting;
+pub mod search;
 pub mod settling;
 pub mod starvation;
 pub mod trade;
@@ -77,21 +78,22 @@ pub use oasis::{
 };
 pub use ports::{
     AccountRepository, AchievementRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder,
-    AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage, ArtifactCapture,
-    ArtifactRepository, BattleApply, BattleReportView, BoardScope, BuildRepository,
-    CombatRepository, CommsRepository, ConflictMetric, ConquestRepository, ConquestTransfer,
-    ConversationSummary, CultureRepository, DefenderContribution, DefenderReport, DiplomacyEntry,
-    DueAttack, DueBuild, DueEvent, DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce,
-    DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, EventStore, ForumPost, HeldArtifact,
-    IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply, MedalAward, MedalRepository,
-    MedalSubjectKind, MedalView, Membership, MessageView, ModerationRepository, MovementRepository,
-    MovementView, NewBattleReport, NewBuildOrder, NewNotification, NewOasisReport, NewScoutReport,
-    NewTrainingOrder, NewUnitOrder, NewUser, NotificationRepository, NotificationView,
-    OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
-    OutgoingInvite, PasswordHasher, PendingInvite, PlanCapture, PlayerStats, ProfileView,
-    QuestRepository, RankingRepository, RazedBuilding, ReinforcementReturn, RepoError, ReportView,
-    ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository,
-    SettleApply, SettleOutcome, SettleRepository, StarvationRepository, StationedGroup, ThreadHead,
+    AllianceHit, AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage,
+    ArtifactCapture, ArtifactRepository, BattleApply, BattleReportView, BoardScope,
+    BuildRepository, CombatRepository, CommsRepository, ConflictMetric, ConquestRepository,
+    ConquestTransfer, ConversationSummary, CultureRepository, DefenderContribution, DefenderReport,
+    DiplomacyEntry, DueAttack, DueBuild, DueEvent, DueMovement, DueOasisAttack, DueOasisRegrow,
+    DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, EventStore,
+    ForumPost, HeldArtifact, IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply,
+    MedalAward, MedalRepository, MedalSubjectKind, MedalView, Membership, MessageView,
+    ModerationRepository, MovementRepository, MovementView, NewBattleReport, NewBuildOrder,
+    NewNotification, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
+    NotificationRepository, NotificationView, OasisBattleApply, OasisOwnership,
+    OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PasswordHasher,
+    PendingInvite, PlanCapture, PlayerHit, PlayerStats, ProfileView, QuestRepository,
+    RankingRepository, RazedBuilding, ReinforcementReturn, RepoError, ReportView, ResourceWrite,
+    RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply,
+    SettleOutcome, SettleRepository, StarvationRepository, StationedGroup, ThreadHead,
     ThreadSummary, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
     UserRecord, VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
 };
@@ -105,6 +107,7 @@ pub use ranking::{
 pub use register::{RegisterCommand, RegisterError, register};
 pub use scheduler::process_due;
 pub use scouting::{ScoutError, gather_intel, order_scout, process_due_scouts};
+pub use search::{ALLIANCE_LIMIT, PLAYER_LIMIT, SearchError, SearchResults, search};
 pub use settling::{SettleError, order_settle, process_due_settles};
 pub use starvation::{process_due_starvation, sync_starvation_check, sync_starvation_checks};
 pub use trade::{TradeError, order_trade, process_due_trades};

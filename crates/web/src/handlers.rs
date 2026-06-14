@@ -13,8 +13,8 @@ use crate::templates::{
     NotificationRowView, NotificationsTemplate, OasisRow, OutgoingInviteView, PendingInviteView,
     PlayerStatsTemplate, ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow,
     RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, RosterRowView,
-    ScoutReportTemplate, ScoutResourceRow, ShipmentRow, SmithyRow, SmithyTemplate,
-    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
+    ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate, ShipmentRow, SmithyRow,
+    SmithyTemplate, StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
     VillageTemplate, WonderStandingView, WonderTemplate,
 };
 use askama::Template;
@@ -41,7 +41,7 @@ use eperica_application::{
     order_oasis_reinforce, order_reinforcement, order_research, order_return, order_scout,
     order_settle, order_smithy_upgrade, order_trade, order_train, order_wonder_build, parse_dm_key,
     player_statistics, population_history, population_leaderboard, register, reinforcement_reports,
-    reply, resolve_report, respond_invite, review_queue, revoke_invite, sanction_account,
+    reply, resolve_report, respond_invite, review_queue, revoke_invite, sanction_account, search,
     send_chat, send_dm, set_diplomacy, set_member_role, start_thread, transfer_founder,
     unread_badge, view_profile, viewport_coords,
 };
@@ -2807,6 +2807,68 @@ fn presence_view(last_activity: Timestamp, now: Timestamp, online_secs: i64) -> 
             (false, label)
         }
     }
+}
+
+/// The search query string.
+#[derive(Deserialize)]
+pub struct SearchQuery {
+    #[serde(default)]
+    q: Option<String>,
+}
+
+/// Public who-is search (028): players (username prefix), alliances (name/tag prefix), and a coordinate
+/// jump. A public read — no login required.
+pub async fn search_page(State(state): State<AppState>, Query(sq): Query<SearchQuery>) -> Response {
+    let query = sq.q.unwrap_or_default();
+    let trimmed = query.trim().to_owned();
+    if trimmed.is_empty() {
+        return page(&SearchTemplate {
+            query,
+            searched: false,
+            players: Vec::new(),
+            alliances: Vec::new(),
+            coordinate_href: None,
+            coordinate_label: String::new(),
+        });
+    }
+    let results = match search(state.accounts.as_ref(), state.accounts.as_ref(), &trimmed).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "search failed");
+            return server_error();
+        }
+    };
+    let players = results
+        .players
+        .into_iter()
+        .map(|p| SearchHitRow {
+            href: format!("/stats/player/{}", p.player.0),
+            label: p.name,
+        })
+        .collect();
+    let alliances = results
+        .alliances
+        .into_iter()
+        .map(|a| SearchHitRow {
+            href: format!("/stats/alliance/{}", a.alliance.0),
+            label: format!("{} [{}]", a.name, a.tag),
+        })
+        .collect();
+    let (coordinate_href, coordinate_label) = match results.coordinate {
+        Some(c) => (
+            Some(format!("/map?x={}&y={}", c.x, c.y)),
+            format!("({}|{})", c.x, c.y),
+        ),
+        None => (None, String::new()),
+    };
+    page(&SearchTemplate {
+        query,
+        searched: true,
+        players,
+        alliances,
+        coordinate_href,
+        coordinate_label,
+    })
 }
 
 /// Public player statistics page (016 AC9).

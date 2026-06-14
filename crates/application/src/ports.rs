@@ -221,6 +221,30 @@ pub trait AccountRepository: Send + Sync {
     async fn profile_of(&self, _player: PlayerId) -> Result<Option<ProfileView>, RepoError> {
         Ok(None)
     }
+
+    /// Players whose username is a case-insensitive **prefix** of `query` (028 AC1), excluding abandoned +
+    /// NPC accounts, ordered by name, capped at `limit`. Defaults to empty.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn search_players(&self, _query: &str, _limit: i64) -> Result<Vec<PlayerHit>, RepoError> {
+        Ok(Vec::new())
+    }
+}
+
+/// A public player search hit (028 AC1) — id + display name only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerHit {
+    pub player: PlayerId,
+    pub name: String,
+}
+
+/// A public alliance search hit (028 AC2) — id + name + tag.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AllianceHit {
+    pub alliance: AllianceId,
+    pub name: String,
+    pub tag: String,
 }
 
 /// A player's public profile (025): identity, bio, and the activity instant presence is derived from.
@@ -1758,6 +1782,19 @@ pub trait AllianceRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn list_posts(&self, _thread: u128, _limit: i64) -> Result<Vec<ForumPost>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Alliances whose **name or tag** is a case-insensitive prefix of `query` (028 AC2), capped at
+    /// `limit`. Defaults to empty.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn search_alliances(
+        &self,
+        _query: &str,
+        _limit: i64,
+    ) -> Result<Vec<AllianceHit>, RepoError> {
         Ok(Vec::new())
     }
 }

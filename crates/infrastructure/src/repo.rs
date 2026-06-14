@@ -3,22 +3,23 @@
 use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, AchievementRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder,
-    AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage, ArtifactRepository,
-    BattleApply, BattleReportView, BoardScope, BuildRepository, CombatRepository, CommsRepository,
-    ConflictMetric, ConquestRepository, ConversationSummary, CultureRepository, DefenderReport,
-    DiplomacyEntry, DueAttack, DueBuild, DueMovement, DueOasisAttack, DueOasisRegrow,
-    DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, ForumPost,
-    HeldArtifact, IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply, MedalAward,
-    MedalRepository, MedalSubjectKind, MedalView, Membership, MessageView, ModerationRepository,
-    MovementRepository, MovementView, NewBuildOrder, NewNotification, NewOasisReport,
-    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, NotificationRepository,
-    NotificationView, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository,
-    OasisState, OutgoingInvite, PendingInvite, PlayerStats, ProfileView, QuestRepository,
-    RankingRepository, RazedBuilding, RepoError, ReportView, ResourceWrite, RosterEntry,
-    ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply, SettleOutcome,
-    SettleRepository, StarvationRepository, StationedGroup, ThreadHead, ThreadSummary,
-    TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
-    VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
+    AllianceHit, AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage,
+    ArtifactRepository, BattleApply, BattleReportView, BoardScope, BuildRepository,
+    CombatRepository, CommsRepository, ConflictMetric, ConquestRepository, ConversationSummary,
+    CultureRepository, DefenderReport, DiplomacyEntry, DueAttack, DueBuild, DueMovement,
+    DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining,
+    DueUnitOrder, ForumPost, HeldArtifact, IncomingAttack, LeaderboardRow, LifecycleRepository,
+    LoyaltyApply, MedalAward, MedalRepository, MedalSubjectKind, MedalView, Membership,
+    MessageView, ModerationRepository, MovementRepository, MovementView, NewBuildOrder,
+    NewNotification, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
+    NotificationRepository, NotificationView, OasisBattleApply, OasisOwnership,
+    OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PendingInvite, PlayerHit,
+    PlayerStats, ProfileView, QuestRepository, RankingRepository, RazedBuilding, RepoError,
+    ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
+    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, StarvationRepository,
+    StationedGroup, ThreadHead, ThreadSummary, TradeRepository, TradeView, TrainingRepository,
+    UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome, WonderRepository,
+    WonderStanding,
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactEffects,
@@ -840,6 +841,34 @@ impl AccountRepository for PgAccountRepository {
             })
         })
         .transpose()
+    }
+
+    async fn search_players(&self, query: &str, limit: i64) -> Result<Vec<PlayerHit>, RepoError> {
+        // Case-insensitive username **prefix**, abandoned/NPC excluded (like the leaderboard). The LIKE
+        // pattern escapes the user's `%`/`_`/`\` so they are literal, and the anchored prefix uses the
+        // 0039 functional index (P11).
+        let rows = sqlx::query(
+            "SELECT id, username FROM users \
+             WHERE abandoned_at IS NULL AND is_npc = false \
+               AND lower(username) LIKE \
+                   replace(replace(replace(lower($1), '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%' \
+                   ESCAPE '\\' \
+             ORDER BY username ASC LIMIT $2",
+        )
+        .bind(query)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let id: Uuid = r.try_get("id").map_err(backend)?;
+                Ok(PlayerHit {
+                    player: PlayerId(id.as_u128()),
+                    name: r.try_get("username").map_err(backend)?,
+                })
+            })
+            .collect()
     }
 }
 
@@ -4779,6 +4808,39 @@ impl AllianceRepository for PgAccountRepository {
             })
             .collect()
     }
+
+    async fn search_alliances(
+        &self,
+        query: &str,
+        limit: i64,
+    ) -> Result<Vec<AllianceHit>, RepoError> {
+        // Case-insensitive prefix on name OR tag; the user's LIKE metacharacters are escaped to literals.
+        let rows = sqlx::query(
+            "SELECT id, name, tag FROM alliances \
+             WHERE lower(name) LIKE \
+                   replace(replace(replace(lower($1), '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%' \
+                   ESCAPE '\\' \
+                OR lower(tag) LIKE \
+                   replace(replace(replace(lower($1), '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%' \
+                   ESCAPE '\\' \
+             ORDER BY name ASC LIMIT $2",
+        )
+        .bind(query)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let id: Uuid = r.try_get("id").map_err(backend)?;
+                Ok(AllianceHit {
+                    alliance: AllianceId(id.as_u128()),
+                    name: r.try_get("name").map_err(backend)?,
+                    tag: r.try_get("tag").map_err(backend)?,
+                })
+            })
+            .collect()
+    }
 }
 
 // ---------------------------------------------------------------- settling (013)
@@ -8027,6 +8089,68 @@ mod tests {
             ),
             "non-member cannot open the alliance channel"
         );
+    }
+
+    /// 028 AC1/AC2/AC5: who-is search — username prefix (abandoned/NPC excluded) + alliance name/tag prefix.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn search_players_and_alliances(pool: PgPool) {
+        use eperica_domain::AllianceId;
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let alice = make_account(&repo, &template, "alice").await;
+        let _alvin = make_account(&repo, &template, "alvin").await;
+        let bob = make_account(&repo, &template, "bob").await;
+        // Rename to deterministic usernames for prefix assertions.
+        for (p, name) in [(alice, "Alaric"), (bob, "Boris")] {
+            sqlx::query("UPDATE users SET username = $2 WHERE id = $1")
+                .bind(Uuid::from_u128(p.0))
+                .bind(name)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        // An abandoned account must not surface.
+        let ghost = make_account(&repo, &template, "Alabaster").await;
+        sqlx::query("UPDATE users SET abandoned_at = now() WHERE id = $1")
+            .bind(Uuid::from_u128(ghost.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Prefix "ala" (case-insensitive) → Alaric, not Boris, not the abandoned Alabaster.
+        let hits = repo.search_players("ala", 10).await.unwrap();
+        let names: Vec<&str> = hits.iter().map(|h| h.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["Alaric"],
+            "prefix match excludes abandoned + non-matches"
+        );
+        // The cap is respected.
+        assert!(repo.search_players("a", 1).await.unwrap().len() <= 1);
+        // A wildcard char is literal (no injection of LIKE semantics).
+        assert!(repo.search_players("%", 10).await.unwrap().is_empty());
+
+        // Alliances: match by name and by tag.
+        let aid = AllianceId(Uuid::new_v4().as_u128());
+        sqlx::query(
+            "INSERT INTO alliances (id, name, tag, founder_id, created_at) \
+             VALUES ($1, 'Iron Pact', 'IRON', $2, now())",
+        )
+        .bind(Uuid::from_u128(aid.0))
+        .bind(Uuid::from_u128(alice.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            repo.search_alliances("iron p", 10).await.unwrap().len(),
+            1,
+            "by name"
+        );
+        assert_eq!(
+            repo.search_alliances("iro", 10).await.unwrap().len(),
+            1,
+            "by tag"
+        );
+        assert!(repo.search_alliances("zzz", 10).await.unwrap().is_empty());
     }
 
     /// 027 AC1–AC3: forum threads + posts round-trip; a reply bumps the thread's activity; `thread_head`

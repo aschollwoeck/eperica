@@ -30,6 +30,7 @@ pub mod quest;
 pub mod ranking;
 pub mod resource;
 pub mod scouting;
+pub mod search;
 pub mod trade;
 pub mod units;
 pub mod village;
@@ -93,6 +94,7 @@ pub use quest::{
 pub use ranking::{RankingRules, apportion};
 pub use resource::ResourceKind;
 pub use scouting::{ScoutOutcome, ScoutRules, ScoutTarget, resolve_scouting, scouting_power};
+pub use search::parse_coordinate;
 pub use trade::{
     MerchantProfile, MerchantRules, TradeKind, bundle_is_empty, bundle_total, deposit_capped,
     merchants_required,
