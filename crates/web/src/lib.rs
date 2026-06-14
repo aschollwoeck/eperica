@@ -7,36 +7,76 @@ pub mod handlers;
 pub mod state;
 pub mod templates;
 
+use auth::AUTH_COOKIE;
 use axum::Router;
-use axum::extract::{Request, State};
+use axum::extract::{FromRequestParts, Request, State};
 use axum::http::{Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use axum_extra::extract::PrivateCookieJar;
+use eperica_domain::{PlayerId, Timestamp, account_blocked};
+use eperica_infrastructure::now;
 use state::AppState;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
-/// Round-freeze guard (021 AC7): once the world has been won, the server rejects mutating game
-/// actions (`POST`s) — except authentication, so players can still log in to see the result. Reads
-/// stay fully available. Server-authoritative (P4): the freeze is enforced here, not in the client.
-async fn freeze_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
-    use eperica_application::WonderRepository;
+/// Extract the authenticated player id from the request's encrypted cookie, if any (read-only — the
+/// `AuthUser` extractor enforces presence on Player pages; here we only need to *know* who is acting).
+async fn session_player(
+    parts: &mut axum::http::request::Parts,
+    state: &AppState,
+) -> Option<PlayerId> {
+    let jar: PrivateCookieJar = PrivateCookieJar::from_request_parts(parts, state)
+        .await
+        .ok()?;
+    let id: u128 = jar.get(AUTH_COOKIE)?.value().parse().ok()?;
+    Some(PlayerId(id))
+}
+
+/// Server-authoritative action guard (P4) on mutating `POST`s, except authentication (so a player can
+/// always log in / out):
+/// - **Round freeze** (021 AC7): once the world is won, every mutating action is rejected.
+/// - **Sanction enforcement** (022 AC5): a banned or currently-suspended logged-in player's mutating
+///   actions are rejected.
+///
+/// Reads (`GET`) always pass; enforcement lives here, never in the client.
+async fn action_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    use eperica_application::{AccountRepository, WonderRepository};
     let is_auth = matches!(req.uri().path(), "/login" | "/logout" | "/register");
-    if req.method() == Method::POST && !is_auth {
-        match state.accounts.world_ended().await {
-            Ok(Some(_)) => {
+    if req.method() != Method::POST || is_auth {
+        return next.run(req).await;
+    }
+
+    // Round freeze (021).
+    match state.accounts.world_ended().await {
+        Ok(Some(_)) => {
+            return (
+                StatusCode::FORBIDDEN,
+                "The round is over — the world has been won and is frozen.",
+            )
+                .into_response();
+        }
+        Ok(None) => {}
+        Err(e) => tracing::error!(error = %e, "action guard failed to read world state"),
+    }
+
+    // Per-account sanction (022): reject a blocked logged-in player's mutating action.
+    let (mut parts, body) = req.into_parts();
+    if let Some(player) = session_player(&mut parts, &state).await {
+        match state.accounts.find_user_by_id(player).await {
+            Ok(Some(u)) if account_blocked(u.banned_at, u.suspended_until, Timestamp(now().0)) => {
                 return (
                     StatusCode::FORBIDDEN,
-                    "The round is over — the world has been won and is frozen.",
+                    "Your account is suspended or banned for a fair-play violation.",
                 )
                     .into_response();
             }
-            Ok(None) => {}
-            Err(e) => tracing::error!(error = %e, "freeze guard failed to read world state"),
+            Ok(_) => {}
+            Err(e) => tracing::error!(error = %e, "action guard failed to read account"),
         }
     }
-    next.run(req).await
+    next.run(Request::from_parts(parts, body)).await
 }
 
 /// Build the application router for the given state.
@@ -94,7 +134,7 @@ pub fn router(state: AppState) -> Router {
         .nest_service("/static", ServeDir::new("crates/web/static"))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            freeze_guard,
+            action_guard,
         ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)

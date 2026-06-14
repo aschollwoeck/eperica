@@ -253,7 +253,7 @@ async fn login_succeeds_with_correct_password() {
     register(&accounts, &FakeHasher, &template(), false, cmd("dave"))
         .await
         .unwrap();
-    let user = authenticate(&accounts, &FakeHasher, "dave", "secret123")
+    let user = authenticate(&accounts, &FakeHasher, "dave", "secret123", Timestamp(0))
         .await
         .unwrap();
     assert_eq!(user.username, "dave");
@@ -265,7 +265,7 @@ async fn login_rejects_wrong_password() {
     register(&accounts, &FakeHasher, &template(), false, cmd("erin"))
         .await
         .unwrap();
-    let err = authenticate(&accounts, &FakeHasher, "erin", "wrong")
+    let err = authenticate(&accounts, &FakeHasher, "erin", "wrong", Timestamp(0))
         .await
         .unwrap_err();
     assert_eq!(err, LoginError::InvalidCredentials);
@@ -274,7 +274,7 @@ async fn login_rejects_wrong_password() {
 #[tokio::test]
 async fn login_rejects_unknown_user() {
     let accounts = InMemoryAccounts::default();
-    let err = authenticate(&accounts, &FakeHasher, "ghost", "secret123")
+    let err = authenticate(&accounts, &FakeHasher, "ghost", "secret123", Timestamp(0))
         .await
         .unwrap_err();
     assert_eq!(err, LoginError::InvalidCredentials);
@@ -286,8 +286,52 @@ async fn login_rejects_unconfirmed_email() {
     register(&accounts, &FakeHasher, &template(), true, cmd("frank"))
         .await
         .unwrap();
-    let err = authenticate(&accounts, &FakeHasher, "frank", "secret123")
+    let err = authenticate(&accounts, &FakeHasher, "frank", "secret123", Timestamp(0))
         .await
         .unwrap_err();
     assert_eq!(err, LoginError::EmailNotConfirmed);
+}
+
+/// 022 AC5: a banned or currently-suspended account cannot log in; an expired suspension can.
+#[tokio::test]
+async fn login_rejects_sanctioned_account() {
+    let accounts = InMemoryAccounts::default();
+    register(&accounts, &FakeHasher, &template(), false, cmd("grace"))
+        .await
+        .unwrap();
+    let now = Timestamp(1_000_000);
+
+    // Set sanction state directly on the stored record.
+    let set = |banned: Option<Timestamp>, suspended: Option<Timestamp>| {
+        let mut users = accounts.users.lock().unwrap();
+        let u = users.iter_mut().find(|u| u.username == "grace").unwrap();
+        u.banned_at = banned;
+        u.suspended_until = suspended;
+    };
+
+    // Banned ⇒ rejected.
+    set(Some(Timestamp(1)), None);
+    assert_eq!(
+        authenticate(&accounts, &FakeHasher, "grace", "secret123", now)
+            .await
+            .unwrap_err(),
+        LoginError::Sanctioned
+    );
+
+    // Suspended into the future ⇒ rejected.
+    set(None, Some(Timestamp(now.0 + 10_000)));
+    assert_eq!(
+        authenticate(&accounts, &FakeHasher, "grace", "secret123", now)
+            .await
+            .unwrap_err(),
+        LoginError::Sanctioned
+    );
+
+    // Suspension expired ⇒ allowed again.
+    set(None, Some(Timestamp(now.0 - 1)));
+    assert!(
+        authenticate(&accounts, &FakeHasher, "grace", "secret123", now)
+            .await
+            .is_ok()
+    );
 }

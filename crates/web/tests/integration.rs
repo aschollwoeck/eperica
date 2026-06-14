@@ -3096,3 +3096,62 @@ async fn wonder_winner_banner_shows_when_won(pool: sqlx::PgPool) {
     );
     assert!(body.contains("Champions"), "the winning alliance is named");
 }
+
+/// 022 AC5: a sanctioned (banned) logged-in player's mutating actions are rejected, but reads still work.
+#[sqlx::test(migrations = "../../migrations")]
+async fn sanctioned_player_actions_are_blocked(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let c = client();
+    let user = unique("sanc");
+    let email = format!("{user}@example.com");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // Before sanction: a mutating action is not 403-blocked by the guard.
+    let before = c
+        .post(format!("{base}/village/build"))
+        .form(&[("table", "field"), ("slot", "0")])
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(
+        before.status().as_u16(),
+        403,
+        "action allowed before sanction"
+    );
+
+    // Ban the account.
+    sqlx::query("UPDATE users SET banned_at = now() WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The mutating action is now rejected...
+    let after = c
+        .post(format!("{base}/village/build"))
+        .form(&[("table", "field"), ("slot", "0")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(after.status().as_u16(), 403, "sanctioned action is blocked");
+    // ...but a read still works.
+    assert_ne!(
+        c.get(format!("{base}/village"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        403,
+        "reads stay available for a sanctioned account"
+    );
+}

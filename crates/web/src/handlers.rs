@@ -369,6 +369,7 @@ pub async fn login_submit(
         state.hasher.as_ref(),
         &form.username,
         &form.password,
+        now(),
     )
     .await
     {
@@ -384,6 +385,11 @@ pub async fn login_submit(
         }),
         Err(LoginError::Abandoned) => page(&LoginTemplate {
             error: Some("This account has been retired after a long inactivity.".to_owned()),
+        }),
+        Err(LoginError::Sanctioned) => page(&LoginTemplate {
+            error: Some(
+                "This account is suspended or banned for a fair-play violation.".to_owned(),
+            ),
         }),
         Err(LoginError::Backend(e)) => {
             tracing::error!(error = %e, "login failed");
