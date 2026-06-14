@@ -5698,6 +5698,7 @@ impl MedalRepository for PgAccountRepository {
              LEFT JOIN population_snapshots prev \
                ON prev.world_id = cur.world_id AND prev.player_id = cur.player_id AND prev.period = $2 \
              WHERE cur.world_id = $1 AND cur.period = $3 AND {delta} > 0 AND {qf} \
+               AND u.abandoned_at IS NULL \
              ORDER BY {delta} DESC, cur.player_id ASC LIMIT $5"
         );
         let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(&sql)
@@ -6454,6 +6455,7 @@ mod tests {
             repo,
             econ,
             template,
+            world,
             ..
         } = setup(pool.clone()).await;
         let gone = make_account(&repo, &template, "gboard").await;
@@ -6485,14 +6487,39 @@ mod tests {
         report(gone, &gone_v, live, &live_v).await; // gone raids live
         report(live, &live_v, gone, &gone_v).await; // live raids gone
 
+        // Snapshots so `gone` is a top-climber (period 0 → 1 is a positive delta).
+        let world_id = Uuid::from_u128(world.id.0);
+        for (period, popn) in [(0i64, 10i64), (1, 100)] {
+            sqlx::query(
+                "INSERT INTO population_snapshots (world_id, player_id, period, population) \
+                 VALUES ($1, $2, $3, $4)",
+            )
+            .bind(world_id)
+            .bind(Uuid::from_u128(gone.0))
+            .bind(period)
+            .bind(popn)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
         let on = |b: &[LeaderboardRow], p: PlayerId| b.iter().any(|r| r.player == p);
         let attack_board = async || {
             repo.conflict_board(ConflictMetric::Attack, BoardScope::World, None, None, 100)
                 .await
                 .unwrap()
         };
-        // Before: both are on the attack + population boards.
+        let climbers = async || {
+            repo.climber_board(1, 0, BoardScope::World, 100)
+                .await
+                .unwrap()
+        };
+        // Before: both are on the attack + population boards; `gone` tops the climber board.
         assert!(on(&attack_board().await, gone) && on(&attack_board().await, live));
+        assert!(
+            on(&climbers().await, gone),
+            "gone is a climber before abandonment"
+        );
         assert!(repo.player_stats(&econ, gone).await.unwrap().is_some());
 
         // Abandon `gone` (idle past the cutoff) — deletes its village, keeps its (now NULL-village) row.
@@ -6519,6 +6546,10 @@ mod tests {
         assert!(
             !on(&attack_board().await, gone),
             "abandoned left the attack board"
+        );
+        assert!(
+            !on(&climbers().await, gone),
+            "abandoned left the climber board"
         );
         assert!(
             repo.player_stats(&econ, gone).await.unwrap().is_none(),
