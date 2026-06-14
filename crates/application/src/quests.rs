@@ -22,9 +22,10 @@ where
     R: QuestRepository,
 {
     // Cheap early-out on the steady state (every village load hits this, P11): the chain is finite
-    // and tapers off — once the player has completed it all, skip the progress gather entirely.
+    // and tapers off — once the player has completed every quest, skip the progress gather entirely.
+    // Checking containment (not just counts) stays correct even if the catalogue is later changed.
     let completed = repo.completed_quests(player).await?;
-    if completed.len() >= chain.len() {
+    if chain.iter().all(|q| completed.contains(&q.id)) {
         return Ok(Vec::new());
     }
     let progress = repo.quest_progress(econ, player).await?;

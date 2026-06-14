@@ -112,6 +112,9 @@ pub enum BalanceError {
     /// An unknown quest condition kind appeared in the data (018).
     #[error("unknown quest condition kind: {0}")]
     UnknownQuestCondition(String),
+    /// A quest id appeared more than once in the chain (018) — ids must be unique (the completion PK).
+    #[error("duplicate quest id: {0}")]
+    DuplicateQuestId(String),
     /// The parsed data did not form a valid domain template.
     #[error(transparent)]
     Domain(DomainError),
@@ -810,9 +813,13 @@ fn quest_reward(dto: &QuestRewardDto) -> QuestReward {
 /// Returns [`BalanceError`] if the data cannot be parsed or names an unknown condition/building.
 pub fn quest_chain() -> Result<Vec<QuestDef>, BalanceError> {
     let dto: QuestsDto = toml::from_str(QUESTS_TOML)?;
+    let mut seen = std::collections::HashSet::with_capacity(dto.quests.len());
     dto.quests
         .iter()
         .map(|q| {
+            if !seen.insert(q.id.as_str()) {
+                return Err(BalanceError::DuplicateQuestId(q.id.clone()));
+            }
             Ok(QuestDef {
                 id: QuestId(q.id.clone()),
                 description: q.description.clone(),
