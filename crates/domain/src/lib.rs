@@ -17,6 +17,7 @@ pub mod economy;
 pub mod error;
 pub mod event;
 pub mod fairplay;
+pub mod forum;
 pub mod lifecycle;
 pub mod loyalty;
 pub mod map;
@@ -70,6 +71,7 @@ pub use fairplay::{
     FairPlayRules, ReportReason, SanctionKind, account_blocked, inhuman_action_rate,
     shared_ip_flagged,
 };
+pub use forum::{MAX_THREAD_TITLE, valid_thread_title};
 pub use lifecycle::{
     LifecycleRules, abandon_cutoff, is_inactive, is_protected, protection_ended_by_population,
     protection_expiry,
