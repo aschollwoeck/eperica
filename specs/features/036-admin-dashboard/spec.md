@@ -1,6 +1,6 @@
 # Feature 036 — Admin role + dashboard shell
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 022 (Moderator role, sanctions), 035 (auth-aware nav)
 **Roadmap:** M9 multi-world & administration, slice 1 of 6 — see [ADR 0034](../../../docs/architecture/0034-multi-world-and-administration.md).
 **Program note:** This slice introduces the **Administrator** role and the console *shell*. It operates on

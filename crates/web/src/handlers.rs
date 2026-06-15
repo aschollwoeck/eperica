@@ -204,6 +204,11 @@ fn server_error() -> Response {
     (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
 }
 
+/// 403 for a non-administrator reaching an admin-only surface (036 AC2, P4).
+fn admin_forbidden() -> Response {
+    (StatusCode::FORBIDDEN, "Administrators only.").into_response()
+}
+
 /// 403 for a non-moderator reaching a moderator-only surface (022 AC1, P4).
 fn forbidden() -> Response {
     (StatusCode::FORBIDDEN, "Moderators only.").into_response()
@@ -3013,7 +3018,7 @@ pub async fn admin(
     let overview =
         match admin_overview(state.accounts.as_ref(), state.accounts.as_ref(), player).await {
             Ok(o) => o,
-            Err(AdminError::NotAuthorized) => return forbidden(),
+            Err(AdminError::NotAuthorized) => return admin_forbidden(),
             Err(e) => {
                 tracing::error!(error = %e, "admin overview failed");
                 return server_error();
@@ -3102,7 +3107,7 @@ pub async fn admin_role_submit(
     Form(form): Form<AdminRoleForm>,
 ) -> Response {
     if let Err(AdminError::NotAuthorized) = require_admin(state.accounts.as_ref(), player).await {
-        return forbidden();
+        return admin_forbidden();
     }
     let (Some(role), Ok(target)) = (
         ElevatedRole::from_slug(&form.role),
@@ -3122,7 +3127,7 @@ pub async fn admin_role_submit(
     .await
     {
         Ok(()) => Redirect::to("/admin").into_response(),
-        Err(AdminError::NotAuthorized) => forbidden(),
+        Err(AdminError::NotAuthorized) => admin_forbidden(),
         Err(e) => {
             tracing::warn!(error = %e, "admin role change rejected");
             with_flash(
