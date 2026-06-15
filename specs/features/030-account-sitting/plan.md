@@ -1,6 +1,6 @@
 # Feature 030 — Account sitting — Plan
 
-**Spec:** ./spec.md · **Status:** Reviewed
+**Spec:** ./spec.md · **Status:** Verified
 
 A player operates a trusted owner's account within limits, audited. The takeover is an **effective-player**
 resolution in the auth layer, so existing gameplay handlers act as the owner unchanged. Server-enforced

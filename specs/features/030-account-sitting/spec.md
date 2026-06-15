@@ -1,6 +1,6 @@
 # Feature 030 — Account sitting
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 001 (auth/sessions + the `AuthUser` extractor), 022 (sanction guard — a banned actor/owner is blocked), 029 (the settings surface a sitter must not change)
 **Roadmap:** app-layer social/meta (`social-and-meta-features.md` §Account & meta UX → "Account sitting & vacation mode" — the *sitting* half; vacation mode stays deferred).
 

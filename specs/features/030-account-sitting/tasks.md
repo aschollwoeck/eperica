@@ -42,7 +42,7 @@ advancing. The takeover is an effective-player resolution in the auth layer; gam
 
 ## Acceptance
 
-- [ ] **T6 — Docs + review.** rustdoc on new public items; `docs/architecture/0032-account-sitting.md`;
+- [x] **T6 — Docs + review.** rustdoc on new public items; `docs/architecture/0032-account-sitting.md`;
   `docs/manual/` sitting note; `CLAUDE.md` active slice → 030. Full gates + P11; `eperica-reviewer` until
   **APPROVE**; PR.
 
