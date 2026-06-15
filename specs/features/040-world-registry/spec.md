@@ -1,6 +1,6 @@
 # Feature 040 — World registry runtime
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 037 (players), 038 (world-scoped event store), 039 (world-scoped due processing)
 **Roadmap:** M9 multi-world & administration, slice 5 — see [ADR 0034](../../../docs/architecture/0034-multi-world-and-administration.md).
 **Program note:** The runtime that lets **many worlds run concurrently**. At startup the process loads every
@@ -32,13 +32,16 @@ scheduler with **its own** speed/map/seed — so the runtime must become a **reg
 ## Design
 
 - **`World` += `speed: f64`, `radius: u32`** (already columns; just surfaced), via `SELECT_COLS` +
-  `world_from_row`. New `all_worlds(pool) -> Vec<World>` (ordered by `created_at`).
-- **`WorldRuntime`** (web): `build_world_runtime(world, pool, map_rules, starting_amounts, beginner_secs)`
-  derives `WorldConfig` from the row and constructs the per-world `WorldMap`, `PgAccountRepository`, and
-  `PgEventStore`. `spawn_world_scheduler(runtime, &shared_rules, shutdown_rx)` builds `Scheduler::new` from
-  the runtime + the shared rules and spawns it.
-- **Startup (`main.rs`).** Load all worlds → a runtime each → spawn a scheduler each; pick the home runtime
-  (matching `ensure_world`'s id) for `AppState`. The home path is otherwise unchanged.
+  `world_from_row`. New `all_worlds(pool) -> Vec<World>` (ordered by `created_at, id`).
+- **Deterministic home world.** `ensure_world` selects the **oldest** world (`ORDER BY created_at, id LIMIT
+  1`) so the home world (which runs on the env config) cannot flip between restarts once more worlds exist.
+- **Startup registry (`main.rs`, inlined).** The home-world setup (map, repo, the home scheduler,
+  `AppState`) is left exactly as-is. Then an **additive loop** over `all_worlds()` spawns a scheduler for
+  every world `≠` home: derive `GameSpeed` from the row (log + skip on invalid), build the per-world
+  `WorldMap` / `PgAccountRepository` / `PgEventStore` (the 038/039 world-scoped instances), construct
+  `Scheduler::new` from the world row's speed/seed/created_at/release dates + the shared rule `Arc`s, and
+  `tokio::spawn` with a cloned shutdown receiver; all handles awaited on shutdown. (Kept inline rather than
+  a `WorldRuntime` helper to leave the home path's blast radius at zero — see plan.md.)
 - **No domain change (P3).** This is runtime composition + an infra read; gameplay rules untouched.
 
 ## Out of scope

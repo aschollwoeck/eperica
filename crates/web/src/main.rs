@@ -125,7 +125,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     continue;
                 };
-                let Ok(mr) = map_rules() else { continue };
+                let Ok(mr) = map_rules() else {
+                    tracing::error!(world = w.id.0, "skipping world: map rules failed to load");
+                    continue;
+                };
                 let w_map = Arc::new(WorldMap::new(w.seed as u64, w.radius, mr));
                 let w_accounts = PgAccountRepository::new(
                     pool.clone(),

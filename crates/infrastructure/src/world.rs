@@ -78,9 +78,13 @@ pub async fn ensure_world_with_release(
     artifact_release_offset_secs: i64,
     wonder_release_offset_secs: i64,
 ) -> Result<World, sqlx::Error> {
-    if let Some(row) = sqlx::query(&format!("SELECT {SELECT_COLS} FROM worlds LIMIT 1"))
-        .fetch_optional(pool)
-        .await?
+    // The **home** world is the oldest (the original, env-configured one) — pinned deterministically so
+    // it cannot flip between restarts once more worlds exist (040; the home world runs on the env config).
+    if let Some(row) = sqlx::query(&format!(
+        "SELECT {SELECT_COLS} FROM worlds ORDER BY created_at, id LIMIT 1"
+    ))
+    .fetch_optional(pool)
+    .await?
     {
         return world_from_row(&row);
     }
