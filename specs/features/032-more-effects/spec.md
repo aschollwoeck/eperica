@@ -1,6 +1,6 @@
 # Feature 032 — More building effects + resource bars
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 031 (the informative-actions pass this extends), 009 (combat — Wall/Cranny), 008 (trade — merchants), 013 (culture — Town Hall/Residence)
 **Roadmap:** app-layer UX — continuation of the **UX information** pass (031): cover the building effects whose rules live *outside* the economy, and add live resource bars.
 
