@@ -147,6 +147,7 @@ a slice needs them**, not deferred to one block:
 - **Profile pages / leaderboard UI** — alongside ranking (016–017); the editable **bio + presence** layer (online/last-seen across profile, leaderboard, conversations & map) shipped as slice **025**.
 - **Admin/moderation UI** — alongside 022.
 - **Search / who-is** ✅ — delivered as slice **028** (find players by username, alliances by name/tag, and a coordinate jump — a public, bounded prefix search).
+- **Settings & preferences** ✅ — delivered as slice **029** (a Settings page with per-kind notification preferences, enforced server-side at notification generation).
 
 Each is its own feature spec; this list just records *when* in the order they naturally land.
 

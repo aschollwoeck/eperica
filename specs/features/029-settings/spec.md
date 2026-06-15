@@ -1,6 +1,6 @@
 # Feature 029 — Settings & preferences
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 026 (notifications — the kinds these preferences gate), 001 (auth/sessions)
 **Roadmap:** app-layer social/meta (`social-and-meta-features.md` §Account & meta UX → "Settings & preferences").
 

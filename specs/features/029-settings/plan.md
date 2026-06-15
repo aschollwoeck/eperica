@@ -1,6 +1,6 @@
 # Feature 029 — Settings & preferences — Plan
 
-**Spec:** ./spec.md · **Status:** Reviewed
+**Spec:** ./spec.md · **Status:** Verified
 
 A small account-UX slice: a Settings page + per-kind notification preferences, enforced at notification
 generation (a muted kind produces no row). Owner-scoped (P4), default-on, persisted (P2).

@@ -33,7 +33,7 @@ advancing. Completes the 026-deferred per-kind notification preferences.
 
 ## Acceptance
 
-- [ ] **T5 — Docs + review.** rustdoc on new public items; `docs/architecture/0031-settings.md`;
+- [x] **T5 — Docs + review.** rustdoc on new public items; `docs/architecture/0031-settings.md`;
   `docs/manual/` settings note; `CLAUDE.md` active slice → 029. Full gates + P11; `eperica-reviewer` until
   **APPROVE**; PR.
 
