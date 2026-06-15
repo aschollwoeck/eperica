@@ -5,7 +5,7 @@ use axum_extra::extract::cookie::Key;
 use eperica_domain::{
     AchievementDef, AllianceRules, BuildRules, CombatRules, CultureRules, EconomyRules,
     FairPlayRules, LifecycleRules, LoyaltyRules, MerchantRules, QuestDef, RankingRules,
-    StartingVillage, UnitRules, WonderRules, WorldConfig, WorldMap,
+    StartingVillage, UnitRules, WonderRules, WorldConfig, WorldId, WorldMap,
 };
 use eperica_infrastructure::{Argon2Hasher, ChatHub, NotificationHub, PgAccountRepository};
 use std::sync::Arc;
@@ -59,6 +59,8 @@ pub struct AppState {
     pub map: Arc<WorldMap>,
     /// World configuration (speed, radius — P7).
     pub world: WorldConfig,
+    /// The active world's id (038) — the seam the per-world scheduler/registry (039) keys on.
+    pub world_id: WorldId,
     /// Whether new accounts must confirm their email before login (AC1 / Decisions).
     pub require_email_confirmation: bool,
     /// Key used to encrypt the auth cookie.

@@ -8202,10 +8202,10 @@ mod tests {
     /// throughput floor, processing every event exactly once.
     #[sqlx::test(migrations = "../../migrations")]
     async fn scheduler_throughput_drains_backlog(pool: PgPool) {
-        let _ = setup(pool.clone()).await; // ensure the world exists
+        let Setup { world, .. } = setup(pool.clone()).await; // ensure the world exists
         let backlog = 2000u32;
         crate::perf::seed_heartbeats(&pool, backlog).await.unwrap();
-        let store = crate::PgEventStore::new(pool.clone());
+        let store = crate::PgEventStore::new(pool.clone(), world.id);
         let now = crate::now();
 
         let start = std::time::Instant::now();
@@ -8247,9 +8247,9 @@ mod tests {
     #[sqlx::test(migrations = "../../migrations")]
     async fn claim_takes_earliest_in_due_order(pool: PgPool) {
         use eperica_application::EventStore;
-        let _ = setup(pool.clone()).await;
+        let Setup { world, .. } = setup(pool.clone()).await;
         crate::perf::seed_heartbeats(&pool, 200).await.unwrap();
-        let store = crate::PgEventStore::new(pool.clone());
+        let store = crate::PgEventStore::new(pool.clone(), world.id);
         // Claim a strict subset (all share due_at = now()-1s, so only seq breaks the tie).
         let claimed = store.claim_due(crate::now(), 50).await.unwrap();
         assert_eq!(claimed.len(), 50);
@@ -8275,12 +8275,12 @@ mod tests {
     #[sqlx::test(migrations = "../../migrations")]
     async fn concurrent_claim_processes_each_once(pool: PgPool) {
         use eperica_application::EventStore;
-        let _ = setup(pool.clone()).await;
+        let Setup { world, .. } = setup(pool.clone()).await;
         let backlog = 500u32;
         crate::perf::seed_heartbeats(&pool, backlog).await.unwrap();
         let now = crate::now();
-        let a = crate::PgEventStore::new(pool.clone());
-        let b = crate::PgEventStore::new(pool.clone());
+        let a = crate::PgEventStore::new(pool.clone(), world.id);
+        let b = crate::PgEventStore::new(pool.clone(), world.id);
 
         // Two instances claim concurrently.
         let (ra, rb) = tokio::join!(

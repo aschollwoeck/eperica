@@ -80,6 +80,7 @@ async fn spawn(pool: sqlx::PgPool) -> String {
         },
         map,
         world: config,
+        world_id: world.id,
         require_email_confirmation: false,
         cookie_key: Key::generate(),
     };
