@@ -31,6 +31,7 @@ pub mod scouting;
 pub mod search;
 pub mod settings;
 pub mod settling;
+pub mod sitting;
 pub mod starvation;
 pub mod trade;
 pub mod units;
@@ -111,6 +112,10 @@ pub use scouting::{ScoutError, gather_intel, order_scout, process_due_scouts};
 pub use search::{ALLIANCE_LIMIT, PLAYER_LIMIT, SearchError, SearchResults, search};
 pub use settings::{SettingsError, notification_settings, set_notification_pref};
 pub use settling::{SettleError, order_settle, process_due_settles};
+pub use sitting::{
+    SITTER_LOG_LIMIT, SittingError, authorize_sit, grant_sitter, list_sitters, list_sitting_for,
+    record_sitter_action, revoke_sitter, sitter_log,
+};
 pub use starvation::{process_due_starvation, sync_starvation_check, sync_starvation_checks};
 pub use trade::{TradeError, order_trade, process_due_trades};
 pub use units::{
