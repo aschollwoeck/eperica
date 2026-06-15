@@ -3418,12 +3418,7 @@ pub async fn me(State(state): State<AppState>, MaybeAuthUser(who): MaybeAuthUser
         }
         None => (false, false),
     };
-    (
-        StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "application/json")],
-        format!("{{\"authed\":{authed},\"moderator\":{moderator}}}"),
-    )
-        .into_response()
+    axum::Json(serde_json::json!({ "authed": authed, "moderator": moderator })).into_response()
 }
 
 /// Live sitting status (030) — the owner's name when actively sitting, else empty. Drives the persistent

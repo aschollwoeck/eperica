@@ -1,6 +1,6 @@
 # Feature 035 — Auth-aware navigation
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** the global topbar (`base.html`), auth (`AuthUser`/sitting 030), the Moderator role (022)
 **Roadmap:** app-layer UX — a navigation correctness fix surfaced during the UX review.
 
