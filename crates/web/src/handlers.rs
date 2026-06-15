@@ -315,12 +315,13 @@ fn user_msg(err: String) -> String {
 /// Percent-encode a flash message so it is a valid cookie value (the JS reads it with
 /// `decodeURIComponent`). Encodes everything outside the unreserved set.
 fn pct_encode(s: &str) -> String {
+    use std::fmt::Write as _;
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
             out.push(b as char);
         } else {
-            out.push_str(&format!("%{b:02X}"));
+            let _ = write!(out, "%{b:02X}");
         }
     }
     out
@@ -4672,4 +4673,40 @@ pub async fn notifications_stream(
     axum::response::sse::Sse::new(stream)
         .keep_alive(axum::response::sse::KeepAlive::default())
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{pct_encode, user_msg};
+
+    #[test]
+    fn user_msg_hides_storage_errors_but_keeps_reasons() {
+        // AC2: an internal storage/backend failure never reaches the player verbatim.
+        assert_eq!(
+            user_msg("storage error: connection refused".to_owned()),
+            "Something went wrong — please try again."
+        );
+        // AC1: a use-case reason passes through, capitalized for the banner.
+        assert_eq!(
+            user_msg("not enough resources".to_owned()),
+            "Not enough resources"
+        );
+        // Already-capitalized / empty messages are left intact.
+        assert_eq!(
+            user_msg("No player with that name.".to_owned()),
+            "No player with that name."
+        );
+        assert_eq!(user_msg(String::new()), "");
+    }
+
+    #[test]
+    fn pct_encode_escapes_for_cookie_value() {
+        assert_eq!(
+            pct_encode("Not enough resources"),
+            "Not%20enough%20resources"
+        );
+        // Unreserved set is preserved; everything else (incl. multi-byte UTF-8) is escaped.
+        assert_eq!(pct_encode("a-b_c.d~e"), "a-b_c.d~e");
+        assert_eq!(pct_encode("—"), "%E2%80%94"); // em-dash, 3 UTF-8 bytes
+    }
 }
