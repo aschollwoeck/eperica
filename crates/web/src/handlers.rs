@@ -1171,6 +1171,8 @@ pub async fn map(
             }
         };
 
+    // 032: distances on the map are measured from the player's home (capital, else first village).
+    let origin = capital_coord.or_else(|| villages.first().map(|v| v.coordinate));
     let rows: Vec<Vec<MapCellView>> = viewport
         .rows
         .iter()
@@ -1231,6 +1233,10 @@ pub async fn map(
                             coord.x,
                             coord.y
                         );
+                        // A send shortcut to another player's village (you can't target your own).
+                        if marker.owner_name != user.username {
+                            href = Some(format!("/village/rally?x={}&y={}", coord.x, coord.y));
+                        }
                     } else if matches!(cell.tile, TileKind::Oasis(_)) {
                         // An oasis links to the Rally Point pre-filled with the tile (attack, or
                         // reinforce your own); its owner (if any) is shown in the label.
@@ -1246,6 +1252,13 @@ pub async fn map(
                                 format!("{base_label} — wild animals ({}|{})", coord.x, coord.y);
                         }
                         href = Some(format!("/village/rally?x={}&y={}", coord.x, coord.y));
+                    }
+                    // Distance from home (toroidal, rounded) — helps judge travel time at a glance.
+                    if let Some(o) = origin {
+                        let d = state.map.distance(o, coord);
+                        if d >= 0.5 {
+                            label.push_str(&format!(" · {} fields away", d.round() as i64));
+                        }
                     }
                     MapCellView {
                         cell_class: class,
