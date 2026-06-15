@@ -654,6 +654,125 @@ async fn rejected_action_sets_flash_message(pool: sqlx::PgPool) {
     );
 }
 
+/// 035: the `/me` nav probe reports the viewer's auth + moderator state so the topbar can render the
+/// right link set. Reachable by visitors (authed:false), and reflects the Moderator role when set.
+#[sqlx::test(migrations = "../../migrations")]
+async fn me_probe_reports_auth_and_moderator(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+
+    // A visitor: reachable without auth, reports logged-out.
+    let visitor = client();
+    let body = visitor
+        .get(format!("{base}/me"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("\"authed\":false"), "got: {body}");
+    assert!(body.contains("\"moderator\":false"), "got: {body}");
+
+    // A logged-in player: authed, but not a moderator.
+    let user = unique("navme");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let body = c
+        .get(format!("{base}/me"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("\"authed\":true"), "got: {body}");
+    assert!(body.contains("\"moderator\":false"), "got: {body}");
+
+    // Promote to moderator → the probe now reports it (drives the Moderation nav link).
+    sqlx::query("UPDATE users SET is_moderator = TRUE WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let body = c
+        .get(format!("{base}/me"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("\"authed\":true"), "got: {body}");
+    assert!(body.contains("\"moderator\":true"), "got: {body}");
+}
+
+/// 035: `/me` reflects the *effective* player while sitting (030) — the same identity the 022 moderator
+/// gate keys on. A non-mod sitting a moderator owner reports `moderator:true`; the reverse reports false.
+#[sqlx::test(migrations = "../../migrations")]
+async fn me_probe_reflects_effective_player_while_sitting(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let owner_name = unique("me_o");
+    let sitter_name = unique("me_s");
+    let (jo, owner) = register_client(&base, &pool, &owner_name).await;
+    let (js, _sitter) = register_client(&base, &pool, &sitter_name).await;
+
+    // The owner is a moderator; the sitter is not.
+    sqlx::query("UPDATE users SET is_moderator = TRUE WHERE username = $1")
+        .bind(&owner_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let me = |c: &reqwest::Client| {
+        let c = c.clone();
+        let base = base.clone();
+        async move {
+            c.get(format!("{base}/me"))
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+
+    // Before sitting, the sitter is a plain player.
+    assert!(me(&js).await.contains("\"moderator\":false"));
+
+    // Owner authorises the sitter; the sitter starts operating the owner's (moderator) account.
+    jo.post(format!("{base}/sitting/grant"))
+        .form(&[("username", sitter_name.as_str())])
+        .send()
+        .await
+        .unwrap();
+    let r = js
+        .post(format!("{base}/sitting/start"))
+        .form(&[("owner", owner.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+
+    // Now the effective player is the moderator owner → /me reports moderator:true.
+    let body = me(&js).await;
+    assert!(body.contains("\"authed\":true"), "got: {body}");
+    assert!(
+        body.contains("\"moderator\":true"),
+        "sitting a moderator should reflect the role, got: {body}"
+    );
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;

@@ -119,3 +119,21 @@ impl FromRequestParts<AppState> for RealUser {
         Ok(RealUser(PlayerId(id)))
     }
 }
+
+/// Extractor for an **optional** effective player — `Some` when logged in (the owner when sitting, else
+/// the human), `None` for a visitor. Never rejects, so it suits best-effort, public-reachable endpoints
+/// (e.g. the `/me` nav probe) that must answer for logged-out callers too.
+pub struct MaybeAuthUser(pub Option<PlayerId>);
+
+impl FromRequestParts<AppState> for MaybeAuthUser {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(MaybeAuthUser(effective_identity(parts, state).await.map(
+            |(real, sitting_owner)| sitting_owner.unwrap_or(real),
+        )))
+    }
+}

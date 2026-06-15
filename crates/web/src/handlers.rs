@@ -1,6 +1,6 @@
 //! HTTP handlers for the register / login / village flow.
 
-use crate::auth::{AuthUser, RealUser, auth_cookie, clear_cookie};
+use crate::auth::{AuthUser, MaybeAuthUser, RealUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
 use crate::templates::{
     AcademyRow, AcademyTemplate, AchievementRowView, ActiveView, AllianceStatsTemplate,
@@ -3397,6 +3397,28 @@ pub async fn sitting_page(
         audit,
         currently_sitting: sit_owner_name(&state, &jar, me).await,
     })
+}
+
+/// Nav probe (035) — who the viewer is, for the topbar: whether logged in and whether a moderator.
+/// Best-effort and reachable by visitors (returns `authed:false`), so the JS can render the right link
+/// set without threading auth state through every page template. Excluded from presence-touch.
+pub async fn me(State(state): State<AppState>, MaybeAuthUser(who): MaybeAuthUser) -> Response {
+    use eperica_application::AccountRepository;
+    let (authed, moderator) = match who {
+        Some(player) => {
+            // The moderator gate (022) keys on the *effective* player, so the link matches the action.
+            let is_mod = state
+                .accounts
+                .find_user_by_id(player)
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|u| u.is_moderator);
+            (true, is_mod)
+        }
+        None => (false, false),
+    };
+    axum::Json(serde_json::json!({ "authed": authed, "moderator": moderator })).into_response()
 }
 
 /// Live sitting status (030) — the owner's name when actively sitting, else empty. Drives the persistent

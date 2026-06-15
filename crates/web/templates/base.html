@@ -10,7 +10,17 @@
 <body>
   <header class="topbar">
     <a class="topbar__brand" href="/">Eperica</a>
-    <nav class="topbar__nav"><a href="/leaderboard">Leaderboards</a> <a href="/wonder">Wonder</a> <a href="/notifications" title="Notifications">🔔 <span id="notif-badge" class="badge" hidden></span></a> <a href="/messages">Messages <span id="unread-badge" class="badge" hidden></span></a> <a href="/profile">Profile</a> <a href="/settings">Settings</a> <a href="/sitting">Sitting</a>
+    <nav class="topbar__nav">
+      <!-- Public links — shown to everyone. -->
+      <a href="/leaderboard">Leaderboards</a> <a href="/wonder">Wonder</a>
+      <!-- Member links — revealed by JS (/me) only when logged in (035). Hidden by default to avoid
+           showing account-only links to visitors. -->
+      <span class="topbar__group" data-auth="in" hidden>
+        <a href="/village">Village</a> <a href="/notifications" title="Notifications">🔔 <span id="notif-badge" class="badge" hidden></span></a> <a href="/messages">Messages <span id="unread-badge" class="badge" hidden></span></a> <a href="/profile">Profile</a> <a href="/settings">Settings</a> <a href="/sitting">Sitting</a> <a href="/mod" id="nav-mod" hidden>Moderation</a>
+        <form method="post" action="/logout" class="topbar__logout"><button type="submit">Log out</button></form>
+      </span>
+      <!-- Visitor links — revealed by JS only when logged out. -->
+      <span class="topbar__group" data-auth="out" hidden><a href="/login">Log in</a> <a href="/register">Register</a></span>
       <form method="get" action="/search" class="topbar__search"><input type="text" name="q" placeholder="Search…" autocomplete="off"></form></nav>
   </header>
   <div id="sitting-banner" class="banner" hidden></div>
@@ -20,6 +30,25 @@
   </main>
   <footer class="footer">Eperica — a faithful Travian-style strategy MMO</footer>
   <script>
+    // 035: auth-aware nav — ask /me who the viewer is and reveal the matching link group. Default is
+    // everything hidden, so a visitor never sees member-only links (and vice versa). Best-effort: on
+    // failure the public links remain and the rest stays hidden.
+    (function () {
+      function show(sel, on) {
+        document.querySelectorAll(sel).forEach(function (el) { el.hidden = !on; });
+      }
+      fetch("/me", { headers: { Accept: "application/json" } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (me) {
+          if (!me) return;
+          show('[data-auth="in"]', !!me.authed);
+          show('[data-auth="out"]', !me.authed);
+          var mod = document.getElementById("nav-mod");
+          if (mod) mod.hidden = !(me.authed && me.moderator);
+        })
+        .catch(function () {});
+    })();
+
     // 034: one-shot flash message — show + clear the `flash` cookie set when an action was rejected.
     (function () {
       var box = document.getElementById("flash");
