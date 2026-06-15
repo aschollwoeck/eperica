@@ -561,6 +561,99 @@ async fn training_flow_and_garrison(pool: sqlx::PgPool) {
     assert_eq!(anon.status().as_u16(), 303);
 }
 
+/// 034: a rejected action must tell the player *why* — the PRG redirect carries a one-shot `flash`
+/// cookie with a user-facing reason (here, training more troops than the village can afford).
+#[sqlx::test(migrations = "../../migrations")]
+async fn rejected_action_sets_flash_message(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+
+    let user = unique("flash");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // Seed a Barracks so the order passes the building check and fails on resources instead.
+    let village_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         VALUES ($1, 4, 'barracks', 1)",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Drain the starting resources so any batch is unaffordable.
+    sqlx::query(
+        "UPDATE village_resources SET wood = 0, clay = 0, iron = 0, crop = 0 WHERE village_id = $1",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Order far more than the village can afford → rejected, PRG back, with a flash cookie set.
+    let res = c
+        .post(format!("{base}/village/train"))
+        .form(&[("unit", "phalanx"), ("count", "999")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+    let set_cookie = res
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|v| v.starts_with("flash="))
+        .expect("rejected action should set a flash cookie");
+    // The message is the use-case reason (capitalized, percent-encoded), never an internal error.
+    assert!(
+        set_cookie.contains("Not%20enough%20resources"),
+        "flash cookie should carry the rejection reason, got: {set_cookie}"
+    );
+    assert!(!set_cookie.contains("storage%20error"));
+
+    // A *successful* action sets no flash cookie. Refund resources and order an affordable batch.
+    sqlx::query(
+        "UPDATE village_resources SET wood = 5000, clay = 5000, iron = 5000, crop = 5000, \
+         updated_at = now() WHERE village_id = $1",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let ok = c
+        .post(format!("{base}/village/train"))
+        .form(&[("unit", "phalanx"), ("count", "1")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ok.status().as_u16(), 303);
+    assert!(
+        !ok.headers()
+            .get_all(reqwest::header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .any(|v| v.starts_with("flash=")),
+        "a successful action must not set a flash cookie"
+    );
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;

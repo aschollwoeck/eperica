@@ -294,6 +294,54 @@ fn redirect_to_village(village: Option<&str>) -> Response {
     redirect_with_village("/village", village)
 }
 
+/// A short-lived, JS-readable cookie carrying a one-shot user-facing message (034). The `base.html`
+/// banner reads it, shows it, and clears it.
+const FLASH_COOKIE: &str = "flash";
+
+/// Turn a use-case error's `Display` into a user-facing message, hiding internal storage errors (034).
+/// The error strings are lowercase sentence fragments (e.g. "not enough resources"); capitalize the
+/// first letter so the banner reads as a sentence.
+fn user_msg(err: String) -> String {
+    if err.starts_with("storage error") {
+        return "Something went wrong — please try again.".to_owned();
+    }
+    let mut chars = err.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => err,
+    }
+}
+
+/// Percent-encode a flash message so it is a valid cookie value (the JS reads it with
+/// `decodeURIComponent`). Encodes everything outside the unreserved set.
+fn pct_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// Attach a one-shot flash message to a response (typically a redirect, 034) — the next page shows it.
+/// `None` leaves the response unchanged (the action succeeded).
+fn with_flash(resp: Response, msg: Option<String>) -> Response {
+    let Some(msg) = msg else { return resp };
+    let cookie = format!(
+        "{FLASH_COOKIE}={}; Path=/; Max-Age=30; SameSite=Lax",
+        pct_encode(&msg)
+    );
+    let mut resp = resp;
+    if let Ok(value) = axum::http::HeaderValue::from_str(&cookie) {
+        resp.headers_mut()
+            .append(axum::http::header::SET_COOKIE, value);
+    }
+    resp
+}
+
 /// Public landing page (Visitor).
 pub async fn index() -> Response {
     page(&IndexTemplate)
@@ -1324,7 +1372,7 @@ pub async fn build_submit(
         _ => return redirect_to_village(form.village.as_deref()),
     };
 
-    if let Err(e) = order_build(
+    let flash = order_build(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
         state.accounts.as_ref(),
@@ -1338,10 +1386,12 @@ pub async fn build_submit(
         target,
     )
     .await
-    {
+    .err()
+    .map(|e| {
         tracing::warn!(error = %e, "build order rejected");
-    }
-    redirect_to_village(form.village.as_deref())
+        user_msg(e.to_string())
+    });
+    with_flash(redirect_to_village(form.village.as_deref()), flash)
 }
 
 fn role_label(role: UnitRole) -> &'static str {
@@ -1690,7 +1740,7 @@ pub async fn research_submit(
     AuthUser(player): AuthUser,
     Form(form): Form<UnitForm>,
 ) -> Response {
-    if let Err(e) = order_research(
+    let flash = order_research(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
         state.accounts.as_ref(),
@@ -1703,10 +1753,15 @@ pub async fn research_submit(
         UnitId(form.unit),
     )
     .await
-    {
+    .err()
+    .map(|e| {
         tracing::warn!(error = %e, "research order rejected");
-    }
-    redirect_with_village("/village/academy", form.village.as_deref())
+        user_msg(e.to_string())
+    });
+    with_flash(
+        redirect_with_village("/village/academy", form.village.as_deref()),
+        flash,
+    )
 }
 
 fn parse_troop_building(slug: &str) -> Option<BuildingKind> {
@@ -1831,7 +1886,7 @@ pub async fn train_submit(
     Form(form): Form<TrainForm>,
 ) -> Response {
     let unit = UnitId(form.unit);
-    if let Err(e) = order_train(
+    let flash = order_train(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
         state.accounts.as_ref(),
@@ -1846,9 +1901,11 @@ pub async fn train_submit(
         form.count,
     )
     .await
-    {
+    .err()
+    .map(|e| {
         tracing::warn!(error = %e, "training order rejected");
-    }
+        user_msg(e.to_string())
+    });
     // Land back on the unit's building page (the same kind across tribes), keeping the village.
     let building = [Tribe::Romans, Tribe::Teutons, Tribe::Gauls]
         .into_iter()
@@ -1860,7 +1917,10 @@ pub async fn train_submit(
         Some(BuildingKind::Workshop) => "/village/troops/workshop",
         _ => "/village",
     };
-    redirect_with_village(target, form.village.as_deref())
+    with_flash(
+        redirect_with_village(target, form.village.as_deref()),
+        flash,
+    )
 }
 
 /// Order a Smithy upgrade for the player's village, then return to the Smithy (Player only, P4).
@@ -1869,7 +1929,7 @@ pub async fn smithy_upgrade_submit(
     AuthUser(player): AuthUser,
     Form(form): Form<UnitForm>,
 ) -> Response {
-    if let Err(e) = order_smithy_upgrade(
+    let flash = order_smithy_upgrade(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
         state.accounts.as_ref(),
@@ -1882,10 +1942,15 @@ pub async fn smithy_upgrade_submit(
         UnitId(form.unit),
     )
     .await
-    {
+    .err()
+    .map(|e| {
         tracing::warn!(error = %e, "smithy upgrade rejected");
-    }
-    redirect_with_village("/village/smithy", form.village.as_deref())
+        user_msg(e.to_string())
+    });
+    with_flash(
+        redirect_with_village("/village/smithy", form.village.as_deref()),
+        flash,
+    )
 }
 
 /// The Rally Point: the garrison troops that can be sent to reinforce (007 AC7; Player only, P4).
@@ -2016,10 +2081,10 @@ pub async fn rally_send(
     // The building attached catapults aim at (011); ignored unless catapults are in the composition.
     let catapult_target = parse_building_kind(form.get("catapult_target").map(String::as_str));
     // The mode selects the use-case: reinforce (007) defends; attack/raid (009) fight; scout (010) spies.
-    match form.get("mode").map(String::as_str) {
+    let flash = match form.get("mode").map(String::as_str) {
         Some("settle") => {
             // Found a new village: send the settler group to a free valley tile (013 AC6/AC11).
-            if let Err(e) = order_settle(
+            order_settle(
                 state.accounts.as_ref(),
                 state.accounts.as_ref(),
                 state.accounts.as_ref(),
@@ -2035,36 +2100,38 @@ pub async fn rally_send(
                 target,
             )
             .await
-            {
+            .err()
+            .map(|e| {
                 tracing::warn!(error = %e, "settle order rejected");
-            }
+                user_msg(e.to_string())
+            })
         }
-        Some("scout") => {
-            if let Err(e) = order_scout(
-                state.accounts.as_ref(),
-                state.accounts.as_ref(),
-                state.accounts.as_ref(),
-                state.rules.as_ref(),
-                state.unit_rules.as_ref(),
-                state.map.as_ref(),
-                state.world.speed,
-                now(),
-                player,
-                selected,
-                target,
-                troops,
-                scout_target.unwrap_or(ScoutTarget::Defenses),
-            )
-            .await
-            {
-                tracing::warn!(error = %e, "scout order rejected");
-            }
-        }
+        Some("scout") => order_scout(
+            state.accounts.as_ref(),
+            state.accounts.as_ref(),
+            state.accounts.as_ref(),
+            state.rules.as_ref(),
+            state.unit_rules.as_ref(),
+            state.map.as_ref(),
+            state.world.speed,
+            now(),
+            player,
+            selected,
+            target,
+            troops,
+            scout_target.unwrap_or(ScoutTarget::Defenses),
+        )
+        .await
+        .err()
+        .map(|e| {
+            tracing::warn!(error = %e, "scout order rejected");
+            user_msg(e.to_string())
+        }),
         Some(mode @ ("attack" | "raid")) => {
             // An oasis tile (no village) routes to the oasis-attack use-case (012); a village tile
             // to the 009 attack/raid.
             if state.map.oasis_bonus_at(target).is_some() {
-                if let Err(e) = order_oasis_attack(
+                order_oasis_attack(
                     state.accounts.as_ref(),
                     state.accounts.as_ref(),
                     state.accounts.as_ref(),
@@ -2079,16 +2146,18 @@ pub async fn rally_send(
                     troops,
                 )
                 .await
-                {
+                .err()
+                .map(|e| {
                     tracing::warn!(error = %e, "oasis attack rejected");
-                }
+                    user_msg(e.to_string())
+                })
             } else {
                 let mode = if mode == "raid" {
                     AttackMode::Raid
                 } else {
                     AttackMode::Attack
                 };
-                if let Err(e) = order_attack(
+                order_attack(
                     state.accounts.as_ref(),
                     state.accounts.as_ref(),
                     state.accounts.as_ref(),
@@ -2107,15 +2176,17 @@ pub async fn rally_send(
                     catapult_target,
                 )
                 .await
-                {
+                .err()
+                .map(|e| {
                     tracing::warn!(error = %e, "attack order rejected");
-                }
+                    user_msg(e.to_string())
+                })
             }
         }
         _ => {
             // Reinforcing an oasis tile stations troops on it (012); a village tile defends it (007).
             if state.map.oasis_bonus_at(target).is_some() {
-                if let Err(e) = order_oasis_reinforce(
+                order_oasis_reinforce(
                     state.accounts.as_ref(),
                     state.accounts.as_ref(),
                     state.accounts.as_ref(),
@@ -2130,30 +2201,36 @@ pub async fn rally_send(
                     troops,
                 )
                 .await
-                {
+                .err()
+                .map(|e| {
                     tracing::warn!(error = %e, "oasis reinforcement rejected");
-                }
-            } else if let Err(e) = order_reinforcement(
-                state.accounts.as_ref(),
-                state.accounts.as_ref(),
-                state.accounts.as_ref(),
-                state.rules.as_ref(),
-                state.unit_rules.as_ref(),
-                state.map.as_ref(),
-                state.world.speed,
-                now(),
-                player,
-                selected,
-                target,
-                troops,
-            )
-            .await
-            {
-                tracing::warn!(error = %e, "reinforcement order rejected");
+                    user_msg(e.to_string())
+                })
+            } else {
+                order_reinforcement(
+                    state.accounts.as_ref(),
+                    state.accounts.as_ref(),
+                    state.accounts.as_ref(),
+                    state.rules.as_ref(),
+                    state.unit_rules.as_ref(),
+                    state.map.as_ref(),
+                    state.world.speed,
+                    now(),
+                    player,
+                    selected,
+                    target,
+                    troops,
+                )
+                .await
+                .err()
+                .map(|e| {
+                    tracing::warn!(error = %e, "reinforcement order rejected");
+                    user_msg(e.to_string())
+                })
             }
         }
-    }
-    redirect_to_village(village)
+    };
+    with_flash(redirect_to_village(village), flash)
 }
 
 /// Send-back form fields (the host village whose stationed troops to recall).
@@ -2174,7 +2251,7 @@ pub async fn rally_return(
     let Ok(host) = form.host.trim().parse::<u128>() else {
         return Redirect::to("/village").into_response();
     };
-    if let Err(e) = order_return(
+    let flash = order_return(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
         state.unit_rules.as_ref(),
@@ -2185,10 +2262,12 @@ pub async fn rally_return(
         VillageId(host),
     )
     .await
-    {
+    .err()
+    .map(|e| {
         tracing::warn!(error = %e, "return order rejected");
-    }
-    redirect_to_village(form.village.as_deref())
+        user_msg(e.to_string())
+    });
+    with_flash(redirect_to_village(form.village.as_deref()), flash)
 }
 
 /// Recall form fields (the oasis tile to recall stationed troops from).
@@ -2209,7 +2288,7 @@ pub async fn oasis_recall(
     Form(form): Form<OasisRecallForm>,
 ) -> Response {
     let target = Coordinate::new(form.x, form.y);
-    if let Err(e) = order_oasis_recall(
+    let flash = order_oasis_recall(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
         state.unit_rules.as_ref(),
@@ -2221,10 +2300,12 @@ pub async fn oasis_recall(
         target,
     )
     .await
-    {
+    .err()
+    .map(|e| {
         tracing::warn!(error = %e, "oasis recall rejected");
-    }
-    redirect_to_village(form.village.as_deref())
+        user_msg(e.to_string())
+    });
+    with_flash(redirect_to_village(form.village.as_deref()), flash)
 }
 
 /// The Marketplace: the merchant pool (free/total + capacity) and a send-resources form (008 AC6;
@@ -2309,7 +2390,7 @@ pub async fn market_send(
         iron: amount("amount_iron"),
         crop: amount("amount_crop"),
     };
-    if let Err(e) = order_trade(
+    let flash = order_trade(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
         state.rules.as_ref(),
@@ -2324,10 +2405,12 @@ pub async fn market_send(
         bundle,
     )
     .await
-    {
+    .err()
+    .map(|e| {
         tracing::warn!(error = %e, "trade order rejected");
-    }
-    redirect_to_village(village)
+        user_msg(e.to_string())
+    });
+    with_flash(redirect_to_village(village), flash)
 }
 
 /// A one-line headline for a report from this player's perspective.
@@ -2739,7 +2822,7 @@ pub async fn wonder_build_submit(
     AuthUser(player): AuthUser,
     Form(form): Form<WonderBuildForm>,
 ) -> Response {
-    if let Err(e) = order_wonder_build(
+    let flash = order_wonder_build(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
         state.accounts.as_ref(),
@@ -2754,10 +2837,12 @@ pub async fn wonder_build_submit(
         selected_village(form.village.as_deref()),
     )
     .await
-    {
+    .err()
+    .map(|e| {
         tracing::warn!(error = %e, "Wonder build order rejected");
-    }
-    redirect_to_village(form.village.as_deref())
+        user_msg(e.to_string())
+    });
+    with_flash(redirect_to_village(form.village.as_deref()), flash)
 }
 
 /// The Wonder-build form: which controlled site village to build the Wonder in (013 AC11).
@@ -2924,11 +3009,18 @@ pub async fn report_submit(
     };
     let reason = ReportReason::parse(&form.reason).unwrap_or(ReportReason::Other);
     let note = form.note.unwrap_or_default();
-    if let Err(e) = file_report(state.accounts.as_ref(), player, subject, reason, &note).await {
-        // A self-report or backend error is non-fatal — just return to the page.
-        tracing::warn!(error = %e, "report rejected");
-    }
-    Redirect::to(&format!("/stats/player/{}", subject.0)).into_response()
+    let flash = file_report(state.accounts.as_ref(), player, subject, reason, &note)
+        .await
+        .err()
+        .map(|e| {
+            // A self-report or backend error is non-fatal — just return to the page.
+            tracing::warn!(error = %e, "report rejected");
+            user_msg(e.to_string())
+        });
+    with_flash(
+        Redirect::to(&format!("/stats/player/{}", subject.0)).into_response(),
+        flash,
+    )
 }
 
 /// Label a report reason for display.
@@ -3332,10 +3424,14 @@ pub async fn sitting_grant(
     RealUser(me): RealUser,
     Form(form): Form<GrantForm>,
 ) -> Response {
-    if let Err(e) = grant_sitter(state.accounts.as_ref(), me, &form.username).await {
-        tracing::warn!(error = %e, "grant sitter rejected");
-    }
-    Redirect::to("/sitting").into_response()
+    let flash = grant_sitter(state.accounts.as_ref(), me, &form.username)
+        .await
+        .err()
+        .map(|e| {
+            tracing::warn!(error = %e, "grant sitter rejected");
+            user_msg(e.to_string())
+        });
+    with_flash(Redirect::to("/sitting").into_response(), flash)
 }
 
 /// The revoke / start forms carry a target player id.
@@ -3851,7 +3947,7 @@ pub async fn alliance_found(
     AuthUser(player): AuthUser,
     Form(form): Form<FoundForm>,
 ) -> Response {
-    if let Err(e) = found_alliance(
+    let flash = found_alliance(
         state.accounts.as_ref(),
         state.alliance_rules.as_ref(),
         player,
@@ -3859,10 +3955,12 @@ pub async fn alliance_found(
         form.tag.trim(),
     )
     .await
-    {
+    .err()
+    .map(|e| {
         tracing::warn!(error = %e, "found alliance rejected");
-    }
-    Redirect::to("/alliance").into_response()
+        user_msg(e.to_string())
+    });
+    with_flash(Redirect::to("/alliance").into_response(), flash)
 }
 
 #[derive(Deserialize)]
@@ -3887,12 +3985,17 @@ pub async fn alliance_invite(
     AuthUser(player): AuthUser,
     Form(form): Form<UsernameForm>,
 ) -> Response {
-    if let Some(invitee) = resolve_player(&state, &form.username).await
-        && let Err(e) = invite_player(state.accounts.as_ref(), player, invitee).await
-    {
-        tracing::warn!(error = %e, "invite rejected");
-    }
-    Redirect::to("/alliance").into_response()
+    let flash = match resolve_player(&state, &form.username).await {
+        Some(invitee) => invite_player(state.accounts.as_ref(), player, invitee)
+            .await
+            .err()
+            .map(|e| {
+                tracing::warn!(error = %e, "invite rejected");
+                user_msg(e.to_string())
+            }),
+        None => Some("No player with that name.".to_owned()),
+    };
+    with_flash(Redirect::to("/alliance").into_response(), flash)
 }
 
 pub async fn alliance_revoke(
@@ -3900,12 +4003,17 @@ pub async fn alliance_revoke(
     AuthUser(player): AuthUser,
     Form(form): Form<UsernameForm>,
 ) -> Response {
-    if let Some(invitee) = resolve_player(&state, &form.username).await
-        && let Err(e) = revoke_invite(state.accounts.as_ref(), player, invitee).await
-    {
-        tracing::warn!(error = %e, "revoke rejected");
-    }
-    Redirect::to("/alliance").into_response()
+    let flash = match resolve_player(&state, &form.username).await {
+        Some(invitee) => revoke_invite(state.accounts.as_ref(), player, invitee)
+            .await
+            .err()
+            .map(|e| {
+                tracing::warn!(error = %e, "revoke rejected");
+                user_msg(e.to_string())
+            }),
+        None => Some("No player with that name.".to_owned()),
+    };
+    with_flash(Redirect::to("/alliance").into_response(), flash)
 }
 
 #[derive(Deserialize)]
@@ -3919,8 +4027,8 @@ pub async fn alliance_respond(
     AuthUser(player): AuthUser,
     Form(form): Form<RespondForm>,
 ) -> Response {
-    if let Ok(id) = form.alliance.parse::<u128>()
-        && let Err(e) = respond_invite(
+    let flash = match form.alliance.parse::<u128>() {
+        Ok(id) => respond_invite(
             state.accounts.as_ref(),
             state.alliance_rules.as_ref(),
             player,
@@ -3928,27 +4036,39 @@ pub async fn alliance_respond(
             form.accept,
         )
         .await
-    {
-        tracing::warn!(error = %e, "respond invite rejected");
-    }
-    Redirect::to("/alliance").into_response()
+        .err()
+        .map(|e| {
+            tracing::warn!(error = %e, "respond invite rejected");
+            user_msg(e.to_string())
+        }),
+        Err(_) => None,
+    };
+    with_flash(Redirect::to("/alliance").into_response(), flash)
 }
 
 pub async fn alliance_leave(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
-    if let Err(e) = leave_alliance(state.accounts.as_ref(), player).await {
-        tracing::warn!(error = %e, "leave rejected");
-    }
-    Redirect::to("/alliance").into_response()
+    let flash = leave_alliance(state.accounts.as_ref(), player)
+        .await
+        .err()
+        .map(|e| {
+            tracing::warn!(error = %e, "leave rejected");
+            user_msg(e.to_string())
+        });
+    with_flash(Redirect::to("/alliance").into_response(), flash)
 }
 
 pub async fn alliance_disband(
     State(state): State<AppState>,
     AuthUser(player): AuthUser,
 ) -> Response {
-    if let Err(e) = disband_alliance(state.accounts.as_ref(), player).await {
-        tracing::warn!(error = %e, "disband rejected");
-    }
-    Redirect::to("/alliance").into_response()
+    let flash = disband_alliance(state.accounts.as_ref(), player)
+        .await
+        .err()
+        .map(|e| {
+            tracing::warn!(error = %e, "disband rejected");
+            user_msg(e.to_string())
+        });
+    with_flash(Redirect::to("/alliance").into_response(), flash)
 }
 
 #[derive(Deserialize)]
@@ -3961,12 +4081,17 @@ pub async fn alliance_expel(
     AuthUser(player): AuthUser,
     Form(form): Form<TargetForm>,
 ) -> Response {
-    if let Ok(id) = form.target.parse::<u128>()
-        && let Err(e) = expel_member(state.accounts.as_ref(), player, PlayerId(id)).await
-    {
-        tracing::warn!(error = %e, "expel rejected");
-    }
-    Redirect::to("/alliance").into_response()
+    let flash = match form.target.parse::<u128>() {
+        Ok(id) => expel_member(state.accounts.as_ref(), player, PlayerId(id))
+            .await
+            .err()
+            .map(|e| {
+                tracing::warn!(error = %e, "expel rejected");
+                user_msg(e.to_string())
+            }),
+        Err(_) => None,
+    };
+    with_flash(Redirect::to("/alliance").into_response(), flash)
 }
 
 pub async fn alliance_transfer(
@@ -3974,12 +4099,17 @@ pub async fn alliance_transfer(
     AuthUser(player): AuthUser,
     Form(form): Form<TargetForm>,
 ) -> Response {
-    if let Ok(id) = form.target.parse::<u128>()
-        && let Err(e) = transfer_founder(state.accounts.as_ref(), player, PlayerId(id)).await
-    {
-        tracing::warn!(error = %e, "transfer rejected");
-    }
-    Redirect::to("/alliance").into_response()
+    let flash = match form.target.parse::<u128>() {
+        Ok(id) => transfer_founder(state.accounts.as_ref(), player, PlayerId(id))
+            .await
+            .err()
+            .map(|e| {
+                tracing::warn!(error = %e, "transfer rejected");
+                user_msg(e.to_string())
+            }),
+        Err(_) => None,
+    };
+    with_flash(Redirect::to("/alliance").into_response(), flash)
 }
 
 #[derive(Deserialize)]
@@ -4026,12 +4156,14 @@ pub async fn alliance_role(
     if form.manage_roles {
         rights = rights.with(AllianceRight::ManageRoles);
     }
-    if let Err(e) =
-        set_member_role(state.accounts.as_ref(), player, PlayerId(id), role, rights).await
-    {
-        tracing::warn!(error = %e, "role change rejected");
-    }
-    Redirect::to("/alliance").into_response()
+    let flash = set_member_role(state.accounts.as_ref(), player, PlayerId(id), role, rights)
+        .await
+        .err()
+        .map(|e| {
+            tracing::warn!(error = %e, "role change rejected");
+            user_msg(e.to_string())
+        });
+    with_flash(Redirect::to("/alliance").into_response(), flash)
 }
 
 #[derive(Deserialize)]
@@ -4055,17 +4187,19 @@ pub async fn alliance_diplomacy(
         "cancel" => DiplomacyCommand::Cancel,
         _ => return Redirect::to("/alliance").into_response(),
     };
-    if let Err(e) = set_diplomacy(
+    let flash = set_diplomacy(
         state.accounts.as_ref(),
         player,
         eperica_domain::AllianceId(id),
         command,
     )
     .await
-    {
+    .err()
+    .map(|e| {
         tracing::warn!(error = %e, "diplomacy change rejected");
-    }
-    Redirect::to("/alliance").into_response()
+        user_msg(e.to_string())
+    });
+    with_flash(Redirect::to("/alliance").into_response(), flash)
 }
 
 // ---- Alliance forum (027) ----
@@ -4361,10 +4495,14 @@ pub async fn messages_send(
         .await
         .map(|_| ())
     };
-    if let Err(e) = result {
+    let flash = result.err().map(|e| {
         tracing::warn!(error = %e, "send rejected");
-    }
-    Redirect::to(&format!("/messages/c/{}", form.conversation)).into_response()
+        user_msg(e.to_string())
+    });
+    with_flash(
+        Redirect::to(&format!("/messages/c/{}", form.conversation)).into_response(),
+        flash,
+    )
 }
 
 /// Open (or start) the DM with a player from their profile (024 AC9).

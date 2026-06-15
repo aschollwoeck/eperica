@@ -14,11 +14,32 @@
       <form method="get" action="/search" class="topbar__search"><input type="text" name="q" placeholder="Search…" autocomplete="off"></form></nav>
   </header>
   <div id="sitting-banner" class="banner" hidden></div>
+  <div id="flash" class="container" hidden></div>
   <main class="container">
     {% block content %}{% endblock %}
   </main>
   <footer class="footer">Eperica — a faithful Travian-style strategy MMO</footer>
   <script>
+    // 034: one-shot flash message — show + clear the `flash` cookie set when an action was rejected.
+    (function () {
+      var box = document.getElementById("flash");
+      if (!box) return;
+      var m = document.cookie.split("; ").find(function (c) { return c.indexOf("flash=") === 0; });
+      // Clear it immediately so it shows once.
+      document.cookie = "flash=; Path=/; Max-Age=0; SameSite=Lax";
+      if (!m) return;
+      var msg = "";
+      try { msg = decodeURIComponent(m.slice("flash=".length)); } catch (_) { return; }
+      if (!msg) return;
+      box.className = "container";
+      var alert = document.createElement("div");
+      alert.className = "alert alert--danger";
+      alert.setAttribute("role", "alert");
+      alert.textContent = msg;
+      box.appendChild(alert);
+      box.hidden = false;
+    })();
+
     // Poll the total unread for the Messages nav badge (024). Best-effort; ignored when logged out.
     (function () {
       var badge = document.getElementById("unread-badge");
