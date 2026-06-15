@@ -1,6 +1,6 @@
 # Feature 037 — Account ↔ Player split
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 036 (admin/M9 program), 001 (users/villages), the world row
 **Roadmap:** M9 multi-world & administration, slice 2 of 6 — see [ADR 0034](../../../docs/architecture/0034-multi-world-and-administration.md).
 **Program note:** The **keystone** of the multi-world program. It introduces the per-world *player*
