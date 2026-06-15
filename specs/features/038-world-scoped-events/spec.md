@@ -1,6 +1,6 @@
 # Feature 038 — World-scoped event store
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 037 (players), the world row, the scheduler/event store (001/023)
 **Roadmap:** M9 multi-world & administration, slice 3 of 6 — see [ADR 0034](../../../docs/architecture/0034-multi-world-and-administration.md).
 **Program note:** Foundational threading. Makes `WorldId` a first-class, end-to-end identity and

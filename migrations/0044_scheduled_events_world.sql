@@ -3,6 +3,7 @@
 -- events. Add nullable, backfill to the single existing world, then enforce NOT NULL + the FK.
 ALTER TABLE scheduled_events ADD COLUMN world_id uuid;
 
+-- Single-world backfill: `LIMIT 1` is unambiguous while exactly one world exists (039 introduces more).
 UPDATE scheduled_events
 SET world_id = (SELECT id FROM worlds LIMIT 1)
 WHERE world_id IS NULL;

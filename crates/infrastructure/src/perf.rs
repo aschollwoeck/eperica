@@ -102,6 +102,7 @@ pub fn seed_block_width(players: u32) -> i32 {
 /// # Errors
 /// Returns [`sqlx::Error`] on a storage failure.
 pub async fn seed_heartbeats(pool: &PgPool, n: u32) -> Result<(), sqlx::Error> {
+    // Tag the heartbeats with the single world (`LIMIT 1` is unambiguous pre-039 / single-world).
     sqlx::query(
         "INSERT INTO scheduled_events (id, world_id, kind, due_at, status) \
          SELECT gen_random_uuid(), (SELECT id FROM worlds LIMIT 1), 'heartbeat', \

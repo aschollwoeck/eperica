@@ -132,8 +132,11 @@ impl EventStore for PgEventStore {
     }
 
     async fn mark_done(&self, id: u128) -> Result<(), RepoError> {
-        sqlx::query("UPDATE scheduled_events SET status = 'done' WHERE id = $1")
+        // World-scoped for symmetry + defence-in-depth (038): a store only marks done events in its own
+        // world, even though ids are only ever learned via this store's world-scoped `claim_due`.
+        sqlx::query("UPDATE scheduled_events SET status = 'done' WHERE id = $1 AND world_id = $2")
             .bind(Uuid::from_u128(id))
+            .bind(self.world_id)
             .execute(&self.pool)
             .await
             .map_err(backend)?;
