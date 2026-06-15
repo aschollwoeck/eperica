@@ -4693,7 +4693,7 @@ async fn capped_noncapital_field_shows_no_effect(pool: sqlx::PgPool) {
     );
 }
 
-/// 032: the map shows each tile's distance from home and a send shortcut to another player's village.
+/// 033: the map shows each tile's distance from home and a send shortcut to another player's village.
 #[sqlx::test(migrations = "../../migrations")]
 async fn map_shows_distance_and_send_shortcut(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
@@ -4729,5 +4729,10 @@ async fn map_shows_distance_and_send_shortcut(pool: sqlx::PgPool) {
     assert!(
         body.contains(&format!("/village/rally?x={bx}&amp;y={by}")),
         "a neighbouring village has a send shortcut"
+    );
+    // Your own village is never a send target (the home tile is the only own village in view).
+    assert!(
+        !body.contains(&format!("/village/rally?x={ax}&amp;y={ay}")),
+        "own village is not a send target"
     );
 }

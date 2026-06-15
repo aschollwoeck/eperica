@@ -1171,7 +1171,7 @@ pub async fn map(
             }
         };
 
-    // 032: distances on the map are measured from the player's home (capital, else first village).
+    // 033: distances on the map are measured from the player's home (capital, else first village).
     let origin = capital_coord.or_else(|| villages.first().map(|v| v.coordinate));
     let rows: Vec<Vec<MapCellView>> = viewport
         .rows

@@ -1,6 +1,6 @@
 # Feature 033 — Map info (distance + send shortcut)
 
-**Status:** Reviewed
+**Status:** Verified
 **Depends on:** 006 (the world map), 007/012 (movement; oases already link to the Rally Point)
 **Roadmap:** app-layer UX — the last of the **UX information** pass (031/032): make the map actionable at a glance.
 
