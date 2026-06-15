@@ -1,6 +1,6 @@
 //! HTTP handlers for the register / login / village flow.
 
-use crate::auth::{AuthUser, MaybeAuthUser, RealUser, auth_cookie, clear_cookie};
+use crate::auth::{AuthUser, MaybeAuthUser, MaybeRealUser, RealUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
 use crate::templates::{
     AcademyRow, AcademyTemplate, AchievementRowView, ActiveView, AdminAccountRow, AdminTemplate,
@@ -45,10 +45,10 @@ use eperica_application::{
     order_oasis_reinforce, order_reinforcement, order_research, order_return, order_scout,
     order_settle, order_smithy_upgrade, order_trade, order_train, order_wonder_build, parse_dm_key,
     player_statistics, population_history, population_leaderboard, register, reinforcement_reports,
-    reply, resolve_report, respond_invite, review_queue, revoke_invite, revoke_sitter,
-    sanction_account, search, send_chat, send_dm, set_diplomacy, set_member_role,
-    set_notification_pref, set_role as admin_set_role_uc, sitter_log, start_thread,
-    transfer_founder, unread_badge, view_profile, viewport_coords,
+    reply, require_admin, resolve_report, respond_invite, review_queue, revoke_invite,
+    revoke_sitter, sanction_account, search, search_accounts as admin_search_accounts, send_chat,
+    send_dm, set_diplomacy, set_member_role, set_notification_pref, set_role as admin_set_role_uc,
+    sitter_log, start_thread, transfer_founder, unread_badge, view_profile, viewport_coords,
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, ChatChannel,
@@ -3001,9 +3001,15 @@ pub async fn mod_sanction_submit(
     }
 }
 
-/// The admin console (036) — read-only world/server status + account role administration. Admin-gated:
-/// a non-admin gets 403 (the use-case gate), a visitor is redirected to `/login` by `AuthUser`.
-pub async fn admin(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+/// The admin console (036) — read-only world/server status + account role administration. Admin-gated on
+/// the **real** human (`RealUser`, so admin powers are never delegated through a 030 sit): a non-admin
+/// gets 403, a visitor is redirected to `/login`. An optional `?q=` searches accounts (028) so an admin
+/// can manage the roles of *any* account, not only the recent listing.
+pub async fn admin(
+    State(state): State<AppState>,
+    RealUser(player): RealUser,
+    Query(q): Query<AdminQuery>,
+) -> Response {
     let overview =
         match admin_overview(state.accounts.as_ref(), state.accounts.as_ref(), player).await {
             Ok(o) => o,
@@ -3013,18 +3019,33 @@ pub async fn admin(State(state): State<AppState>, AuthUser(player): AuthUser) ->
                 return server_error();
             }
         };
-    let accounts = match admin_list_accounts(
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
-        player,
-        100,
-    )
-    .await
-    {
+    let query = q.q.unwrap_or_default();
+    let trimmed = query.trim();
+    let searched = !trimmed.is_empty();
+    // A search lists matching accounts (any account); otherwise the recent-accounts listing.
+    let listing = if searched {
+        admin_search_accounts(
+            state.accounts.as_ref(),
+            state.accounts.as_ref(),
+            player,
+            trimmed,
+            50,
+        )
+        .await
+    } else {
+        admin_list_accounts(
+            state.accounts.as_ref(),
+            state.accounts.as_ref(),
+            player,
+            100,
+        )
+        .await
+    };
+    let accounts = match listing {
         Ok(a) => a,
         Err(AdminError::NotAuthorized) => return forbidden(),
         Err(e) => {
-            tracing::error!(error = %e, "admin account list failed");
+            tracing::error!(error = %e, "admin account listing failed");
             return server_error();
         }
     };
@@ -3050,8 +3071,17 @@ pub async fn admin(State(state): State<AppState>, AuthUser(player): AuthUser) ->
         accounts: overview.accounts,
         villages: overview.villages,
         pending_events: overview.pending_events,
+        query: trimmed.to_owned(),
+        searched,
         rows,
     })
+}
+
+/// The admin console search query (036 AC3).
+#[derive(Deserialize)]
+pub struct AdminQuery {
+    #[serde(default)]
+    q: Option<String>,
 }
 
 /// The admin role-change form (036 AC3): grant/revoke Moderator or Administrator on a target account.
@@ -3063,13 +3093,17 @@ pub struct AdminRoleForm {
     grant: bool,
 }
 
-/// Grant/revoke an elevated role from the admin console (036 AC3). Admin-gated; the self-demotion guard
-/// and not-found surface as a flash on `/admin`.
+/// Grant/revoke an elevated role from the admin console (036 AC3). Admin-gated on the **real** human
+/// (`RealUser`); the gate runs before malformed-input handling so a non-admin never learns the input was
+/// parsed. The self-demotion guard and not-found surface as a flash on `/admin`.
 pub async fn admin_role_submit(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    RealUser(player): RealUser,
     Form(form): Form<AdminRoleForm>,
 ) -> Response {
+    if let Err(AdminError::NotAuthorized) = require_admin(state.accounts.as_ref(), player).await {
+        return forbidden();
+    }
     let (Some(role), Ok(target)) = (
         ElevatedRole::from_slug(&form.role),
         form.target.trim().parse::<u128>(),
@@ -3503,20 +3537,32 @@ pub async fn sitting_page(
 /// administrator. Best-effort and reachable by visitors (returns `authed:false`), so the JS can render
 /// the right link set without threading auth state through every page template. Excluded from
 /// presence-touch.
-pub async fn me(State(state): State<AppState>, MaybeAuthUser(who): MaybeAuthUser) -> Response {
+pub async fn me(
+    State(state): State<AppState>,
+    MaybeAuthUser(effective): MaybeAuthUser,
+    MaybeRealUser(real): MaybeRealUser,
+) -> Response {
     use eperica_application::AccountRepository;
-    let (authed, moderator, admin) = match who {
-        Some(player) => {
-            // The role gates (022/036) key on the *effective* player, so each link matches its action.
-            let rec = state.accounts.find_user_by_id(player).await.ok().flatten();
-            (
-                true,
-                rec.as_ref().is_some_and(|u| u.is_moderator),
-                rec.as_ref().is_some_and(|u| u.is_admin),
-            )
-        }
-        None => (false, false, false),
+    // Moderator follows the *effective* player (035 — sitting a moderator lets you moderate as them).
+    // Admin follows the *real* human only (036 — admin grants persist, so they are never delegated
+    // through a sit; matches the `RealUser`-gated console).
+    let eff_rec = match effective {
+        Some(p) => state.accounts.find_user_by_id(p).await.ok().flatten(),
+        None => None,
     };
+    let admin = match real {
+        Some(p) if Some(p) == effective => eff_rec.as_ref().is_some_and(|u| u.is_admin),
+        Some(p) => state
+            .accounts
+            .find_user_by_id(p)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|u| u.is_admin),
+        None => false,
+    };
+    let authed = effective.is_some();
+    let moderator = eff_rec.as_ref().is_some_and(|u| u.is_moderator);
     axum::Json(serde_json::json!({ "authed": authed, "moderator": moderator, "admin": admin }))
         .into_response()
 }

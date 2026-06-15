@@ -45,7 +45,10 @@ mod tests;
 pub use eperica_domain as domain;
 
 pub use achievements::evaluate_achievements;
-pub use admin::{AdminError, ElevatedRole, admin_overview, list_accounts, require_admin, set_role};
+pub use admin::{
+    AdminError, ElevatedRole, admin_overview, list_accounts, require_admin, search_accounts,
+    set_role,
+};
 pub use alliance::{
     AllianceError, AllianceOverview, DiplomacyCommand, alliance_view, disband_alliance,
     expel_member, found_alliance, invite_player, leave_alliance, respond_invite, revoke_invite,

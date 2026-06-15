@@ -28,7 +28,16 @@
   <p class="muted">Creating, configuring and archiving worlds arrives with the multi-world slices (M9 / 040).</p>
 
   <h2>Accounts</h2>
-  <p class="muted">{{ rows.len() }} most-recent accounts. Roles are additive; you cannot remove your own admin role.</p>
+  <form method="get" action="/admin" class="inline">
+    <input type="text" name="q" value="{{ query }}" placeholder="Search any account by username…" autocomplete="off">
+    <button type="submit" class="btn btn--secondary">Search</button>
+    {% if searched %}<a href="/admin">Clear</a>{% endif %}
+  </form>
+  {% if searched %}
+  <p class="muted">{{ rows.len() }} account(s) matching “{{ query }}”. Roles are additive; you cannot remove your own admin role.</p>
+  {% else %}
+  <p class="muted">{{ rows.len() }} most-recent accounts (search above to manage any account). Roles are additive; you cannot remove your own admin role.</p>
+  {% endif %}
   <table class="table">
     <thead>
       <tr><th>Account</th><th>Roles</th><th>Moderator</th><th>Administrator</th></tr>

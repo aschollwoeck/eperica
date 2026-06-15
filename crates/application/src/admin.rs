@@ -80,6 +80,34 @@ where
     Ok(admin.recent_accounts(limit).await?)
 }
 
+/// Find accounts by username for role administration (036 AC3) — reuses the 028 player search, then
+/// resolves each hit's current roles for the console's role forms. Admin-gated. So an admin can manage
+/// **any** account, not only the recent-accounts listing.
+///
+/// # Errors
+/// [`AdminError::NotAuthorized`] for a non-admin; otherwise a backend error.
+pub async fn search_accounts<A, D>(
+    accounts: &A,
+    admin: &D,
+    actor: PlayerId,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<AdminAccount>, AdminError>
+where
+    A: AccountRepository,
+    D: AdminRepository,
+{
+    require_admin(accounts, actor).await?;
+    let hits = accounts.search_players(query, limit).await?;
+    let mut out = Vec::with_capacity(hits.len());
+    for hit in hits {
+        if let Some(account) = admin.admin_account(hit.player).await? {
+            out.push(account);
+        }
+    }
+    Ok(out)
+}
+
 /// Grant or revoke an elevated role (Moderator or Administrator) on `subject` (036 AC3). Admin-gated.
 /// Refuses to remove the actor's **own** Administrator role (anti-lockout). Idempotent.
 ///
@@ -192,6 +220,23 @@ mod tests {
         ) -> Result<Option<UserRecord>, RepoError> {
             Ok(None)
         }
+        async fn search_players(
+            &self,
+            query: &str,
+            _limit: i64,
+        ) -> Result<Vec<crate::ports::PlayerHit>, RepoError> {
+            Ok(self
+                .users
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|u| u.username.contains(query))
+                .map(|u| crate::ports::PlayerHit {
+                    player: u.id,
+                    name: u.username.clone(),
+                })
+                .collect())
+        }
         async fn villages_of(
             &self,
             _owner: PlayerId,
@@ -244,6 +289,21 @@ mod tests {
         async fn set_admin(&self, p: PlayerId, on: bool) -> Result<(), RepoError> {
             self.set_admin_calls.lock().unwrap().push((p.0, on));
             Ok(())
+        }
+        async fn admin_account(&self, player: PlayerId) -> Result<Option<AdminAccount>, RepoError> {
+            Ok(self
+                .users
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|u| u.id == player)
+                .map(|u| AdminAccount {
+                    id: u.id,
+                    username: u.username.clone(),
+                    is_moderator: u.is_moderator,
+                    is_admin: u.is_admin,
+                    abandoned: u.abandoned,
+                }))
         }
     }
 
@@ -346,6 +406,25 @@ mod tests {
             )
             .await,
             Err(AdminError::NotFound)
+        );
+    }
+
+    #[tokio::test]
+    async fn search_resolves_accounts_with_roles_for_admin() {
+        let mut admin = user(1, true);
+        admin.is_moderator = true;
+        let f = fake(vec![admin, user(2, false)]);
+        // The admin searches by a shared prefix and gets both accounts, with their current roles.
+        let hits = search_accounts(&f, &f, PlayerId(1), "u", 10).await.unwrap();
+        assert_eq!(hits.len(), 2);
+        let a1 = hits.iter().find(|a| a.id == PlayerId(1)).unwrap();
+        assert!(a1.is_admin && a1.is_moderator);
+        let a2 = hits.iter().find(|a| a.id == PlayerId(2)).unwrap();
+        assert!(!a2.is_admin && !a2.is_moderator);
+        // A non-admin cannot search accounts.
+        assert_eq!(
+            search_accounts(&f, &f, PlayerId(2), "u", 10).await,
+            Err(AdminError::NotAuthorized)
         );
     }
 

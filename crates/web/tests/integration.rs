@@ -815,6 +815,42 @@ async fn admin_console_gates_and_manages_roles(pool: sqlx::PgPool) {
     assert!(body.contains("World &amp; server"), "overview shown");
     assert!(body.contains("Accounts (active)"), "account count shown");
     assert!(body.contains(&target_name), "lists other accounts");
+    // AC4: the derived counts are the real DB aggregates, not just present labels.
+    let active: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE abandoned_at IS NULL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let villages: i64 = sqlx::query_scalar("SELECT count(*) FROM villages")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        body.contains(&format!("<td class=\"num\">{active}</td>")),
+        "active-account count {active} rendered"
+    );
+    assert!(
+        body.contains(&format!("<td class=\"num\">{villages}</td>")),
+        "village count {villages} rendered"
+    );
+
+    // AC3: search finds *any* account by username (the 028 search) and surfaces its role forms.
+    let found = ac
+        .get(format!("{base}/admin?q={target_name}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        found.contains(&target_name),
+        "search lists the matched account"
+    );
+    assert!(
+        found.contains("name=\"role\" value=\"admin\""),
+        "search results carry the role-grant forms"
+    );
+
     let me = ac
         .get(format!("{base}/me"))
         .send()
@@ -883,6 +919,41 @@ async fn admin_console_gates_and_manages_roles(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert_eq!(r.status().as_u16(), 403, "non-admin cannot set roles");
+
+    // 036 anti-escalation: admin powers are NOT delegated through a 030 sit. A sitter operating the
+    // admin's account is gated on the *real* human, so they cannot reach /admin and /me reports false.
+    let sitter_name = unique("sit");
+    let (sc, _sitter_id) = register_client(&base, &pool, &sitter_name).await;
+    ac.post(format!("{base}/sitting/grant"))
+        .form(&[("username", sitter_name.as_str())])
+        .send()
+        .await
+        .unwrap();
+    let r = sc
+        .post(format!("{base}/sitting/start"))
+        .form(&[("owner", admin_id.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303, "sit started");
+    let r = sc.get(format!("{base}/admin")).send().await.unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        403,
+        "a sitter cannot reach /admin even while operating an admin's account"
+    );
+    let me = sc
+        .get(format!("{base}/me"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        me.contains("\"admin\":false"),
+        "admin flag follows the real human, not the sit-effective player: {me}"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]

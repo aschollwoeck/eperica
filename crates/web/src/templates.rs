@@ -893,6 +893,10 @@ pub struct AdminTemplate {
     pub villages: i64,
     pub pending_events: i64,
     // Account role administration (036 AC3).
+    /// The current search query (echoed into the box); empty for the default recent listing.
+    pub query: String,
+    /// Whether a (non-empty) account search was run — distinguishes "recent accounts" from "results".
+    pub searched: bool,
     pub rows: Vec<AdminAccountRow>,
 }
 

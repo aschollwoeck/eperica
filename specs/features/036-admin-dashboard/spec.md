@@ -17,12 +17,14 @@ operational tasks that previously required shell/DB access (role grants) or were
   mirrors `require_moderator` (022). At startup, the `ADMINS` env var (comma-separated usernames,
   mirroring `MODERATORS`) idempotently grants the role. All gating is server-authoritative (P4).
 - **AC2 — Gated console.** `GET /admin` is reachable only by an administrator; a non-admin player gets
-  403, a visitor is redirected to `/login`.
+  403, a visitor is redirected to `/login`. The gate keys on the **real** human (`RealUser`), so admin
+  capability is **never delegated through a 030 sit** — a sitter operating an admin's account cannot reach
+  `/admin` (an admin grant would otherwise persist beyond the sit).
 - **AC3 — Role administration.** From the console an admin can **promote/demote the Moderator and
-  Administrator roles** of any account, in-app (no longer env-only). An admin **cannot remove their own**
-  Administrator role (anti-lockout); the `ADMINS` env re-grants on restart regardless. Account search
-  reuses the 028 player search; sanctions reuse the existing 022 account-inspect page (linked, not
-  duplicated).
+  Administrator roles** of any account, in-app (no longer env-only). A `?q=` box searches **any** account
+  by username (reusing the 028 player search) and surfaces its role forms — not only the recent listing.
+  An admin **cannot remove their own** Administrator role (anti-lockout); the `ADMINS` env re-grants on
+  restart regardless. Sanctions reuse the existing 022 account-inspect page (linked, not duplicated).
 - **AC4 — Read-only world/server status.** The console shows the active world's configuration (speed,
   radius, seed, created-at, artifact/Wonder release schedule, win state) and live counts (accounts,
   villages, pending scheduled events) — all derived from the DB on read (P1/P5).
@@ -33,10 +35,15 @@ operational tasks that previously required shell/DB access (role grants) or were
 
 - **Role storage & gate.** `is_admin boolean NOT NULL DEFAULT false` on `users` (migration 0042), surfaced
   on `UserRecord`. A new `application::admin` module provides `require_admin`, the gated role-setting
-  use-case (with the self-demotion guard), and the gated console reads. Promotion reuses the existing
-  `set_moderator`; a new `set_admin` repo method mirrors it.
+  use-case (with the self-demotion guard), the account search/listing, and the gated console reads.
+  Promotion reuses the existing `set_moderator`; a new `set_admin` repo method mirrors it.
+- **Real-human gate (anti-escalation).** The web admin surfaces (`/admin`, `/admin/role`) take the
+  `RealUser` extractor, and the `/me` `admin` flag follows the real human (a new `MaybeRealUser`
+  extractor) — so sitting an admin's account confers no admin power. Moderator visibility keeps the 035
+  effective-player behavior.
 - **Console reads.** A small `AdminRepository` port supplies the overview counts (`accounts`, `villages`,
-  `pending_events`) and a recent-accounts listing, all read-only.
+  `pending_events`), a recent-accounts listing, and a by-id account lookup (used to resolve search hits'
+  roles), all read-only.
 - **Bootstrap.** `bootstrap_admins` in `main.rs` mirrors `bootstrap_moderators` — idempotent, logs unknown
   names. Ensures there is always at least one admin via config even if all in-app admins are demoted.
 - **No domain rules.** This slice is identity/role + I/O plumbing + presentation; the pure `domain` crate
