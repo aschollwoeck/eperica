@@ -884,6 +884,22 @@ pub struct NotificationsTemplate {
     pub notifications: Vec<NotificationRowView>,
 }
 
+/// One notification-kind toggle on the settings page (029).
+pub struct SettingsToggleRow {
+    /// The kind's stable token (the checkbox `name`).
+    pub token: String,
+    /// Human label.
+    pub label: String,
+    /// Whether the kind is currently enabled (checkbox checked).
+    pub enabled: bool,
+}
+
+#[derive(Template)]
+#[template(path = "settings.html")]
+pub struct SettingsTemplate {
+    pub notifications: Vec<SettingsToggleRow>,
+}
+
 /// A player or alliance hit on the search page (028).
 pub struct SearchHitRow {
     pub href: String,

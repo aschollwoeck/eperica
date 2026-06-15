@@ -4216,3 +4216,100 @@ async fn search_finds_players_alliances_and_coordinates(pool: sqlx::PgPool) {
     let body = res.text().await.unwrap();
     assert!(body.contains("No players found") && body.contains("No alliances found"));
 }
+
+/// 029 AC1–AC5: a player can mute a notification kind on the settings page; muting suppresses its
+/// generation (the bell stays 0); re-enabling restores it; one player's mute doesn't affect another.
+#[sqlx::test(migrations = "../../migrations")]
+async fn settings_notification_preferences(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (ca, _aid) = register_client(&base, &pool, &unique("st_a")).await;
+    let (cb, bid) = register_client(&base, &pool, &unique("st_b")).await;
+
+    // Settings page lists the kinds, all enabled by default.
+    let page = cb
+        .get(format!("{base}/settings"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(page.contains("New message") && page.contains("checked"));
+
+    let unread = |c: &reqwest::Client| {
+        let c = c.clone();
+        let base = base.clone();
+        async move {
+            c.get(format!("{base}/notifications/unread"))
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+
+    // Bob disables new-message notifications: submit the form with incoming_attack + battle_report only.
+    cb.post(format!("{base}/settings/notifications"))
+        .form(&[("incoming_attack", "1"), ("battle_report", "1")])
+        .send()
+        .await
+        .unwrap();
+
+    // Alice DMs Bob → Bob gets NO notification (muted).
+    ca.post(format!("{base}/messages/send"))
+        .form(&[
+            ("conversation", format!("dm:{bid}").as_str()),
+            ("body", "are you there"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unread(&cb).await.trim(), "0", "muted kind records nothing");
+
+    // The settings page now shows new-message unchecked.
+    let page = cb
+        .get(format!("{base}/settings"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    // The new_message checkbox must not be checked (the others remain checked).
+    assert!(
+        !page.contains("name=\"new_message\" value=\"1\" checked"),
+        "new_message is now unchecked"
+    );
+    assert!(page.contains("name=\"incoming_attack\" value=\"1\" checked"));
+
+    // Re-enable everything → a new DM now notifies.
+    cb.post(format!("{base}/settings/notifications"))
+        .form(&[
+            ("incoming_attack", "1"),
+            ("battle_report", "1"),
+            ("new_message", "1"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    ca.post(format!("{base}/messages/send"))
+        .form(&[
+            ("conversation", format!("dm:{bid}").as_str()),
+            ("body", "hello again"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        unread(&cb).await.trim(),
+        "1",
+        "re-enabling restores notifications"
+    );
+
+    // A Visitor is redirected from settings.
+    let anon = client();
+    let res = anon.get(format!("{base}/settings")).send().await.unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+}

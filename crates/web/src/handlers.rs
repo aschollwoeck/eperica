@@ -13,9 +13,10 @@ use crate::templates::{
     NotificationRowView, NotificationsTemplate, OasisRow, OutgoingInviteView, PendingInviteView,
     PlayerStatsTemplate, ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow,
     RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, RosterRowView,
-    ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate, ShipmentRow, SmithyRow,
-    SmithyTemplate, StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
-    VillageTemplate, WonderStandingView, WonderTemplate,
+    ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate, SettingsTemplate,
+    SettingsToggleRow, ShipmentRow, SmithyRow, SmithyTemplate, StyleGuideTemplate, TrainRow,
+    TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate, WonderStandingView,
+    WonderTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -36,14 +37,15 @@ use eperica_application::{
     disband_alliance, dm_key, dm_pair_key, edit_bio, end_protection_if_established,
     evaluate_achievements, evaluate_quests, expel_member, file_report, found_alliance,
     invite_player, leave_alliance, list_forum, list_notifications, load_culture, load_economy,
-    map_viewport, mark_notifications_read, notif_key, notification_unread, open_chat, open_dm,
-    open_thread, order_attack, order_build, order_oasis_attack, order_oasis_recall,
-    order_oasis_reinforce, order_reinforcement, order_research, order_return, order_scout,
-    order_settle, order_smithy_upgrade, order_trade, order_train, order_wonder_build, parse_dm_key,
-    player_statistics, population_history, population_leaderboard, register, reinforcement_reports,
-    reply, resolve_report, respond_invite, review_queue, revoke_invite, sanction_account, search,
-    send_chat, send_dm, set_diplomacy, set_member_role, start_thread, transfer_founder,
-    unread_badge, view_profile, viewport_coords,
+    map_viewport, mark_notifications_read, notif_key, notification_settings, notification_unread,
+    open_chat, open_dm, open_thread, order_attack, order_build, order_oasis_attack,
+    order_oasis_recall, order_oasis_reinforce, order_reinforcement, order_research, order_return,
+    order_scout, order_settle, order_smithy_upgrade, order_trade, order_train, order_wonder_build,
+    parse_dm_key, player_statistics, population_history, population_leaderboard, register,
+    reinforcement_reports, reply, resolve_report, respond_invite, review_queue, revoke_invite,
+    sanction_account, search, send_chat, send_dm, set_diplomacy, set_member_role,
+    set_notification_pref, start_thread, transfer_founder, unread_badge, view_profile,
+    viewport_coords,
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, ChatChannel,
@@ -3001,6 +3003,44 @@ pub async fn profile_bio_submit(
             server_error()
         }
     }
+}
+
+/// The player's settings page (029, Player only) — currently per-kind notification preferences.
+pub async fn settings_page(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+    match notification_settings(state.accounts.as_ref(), player).await {
+        Ok(prefs) => page(&SettingsTemplate {
+            notifications: prefs
+                .into_iter()
+                .map(|(kind, enabled)| SettingsToggleRow {
+                    token: kind.as_str().to_owned(),
+                    label: kind.label().to_owned(),
+                    enabled,
+                })
+                .collect(),
+        }),
+        Err(e) => {
+            tracing::error!(error = %e, "settings load failed");
+            server_error()
+        }
+    }
+}
+
+/// Save notification preferences (029 AC2, owner-scoped). A checkbox present in the form ⇒ that kind is
+/// enabled; absent ⇒ muted. Iterates every kind so unchecking is honoured.
+pub async fn settings_notifications_submit(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    for kind in eperica_domain::NotificationKind::ALL {
+        let enabled = form.contains_key(kind.as_str());
+        if let Err(e) = set_notification_pref(state.accounts.as_ref(), player, kind, enabled).await
+        {
+            tracing::error!(error = %e, "notification pref save failed");
+            return server_error();
+        }
+    }
+    Redirect::to("/settings").into_response()
 }
 
 /// The player's onboarding quests (018 AC8, Player only): the current quest with its reward, the
