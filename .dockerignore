@@ -1,0 +1,8 @@
+# Build artifacts (rebuilt inside the image) and local-only files.
+target/
+.git/
+.env
+*.log
+.github/
+# Docs aren't needed in the build context.
+docs/
