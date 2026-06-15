@@ -34,8 +34,9 @@ pub struct WorldRegistry {
     artifacts: Arc<ArtifactCatalogue>,
     template: Arc<StartingVillage>,
     wonder: Arc<WonderRules>,
-    /// The worlds whose scheduler is running (for idempotency + graceful shutdown).
-    running: Mutex<HashMap<WorldId, JoinHandle<()>>>,
+    /// The worlds whose scheduler is **claimed** (starting or running) — the key's presence is the
+    /// atomic idempotency guard; the value is the join handle once spawned (`None` while starting).
+    running: Mutex<HashMap<WorldId, Option<JoinHandle<()>>>>,
 }
 
 impl WorldRegistry {
@@ -89,9 +90,32 @@ impl WorldRegistry {
     /// # Errors
     /// Returns a message when the world does not exist or its rules/speed are invalid.
     pub async fn start_world(&self, world_id: WorldId) -> Result<(), String> {
-        if self.running.lock().unwrap().contains_key(&world_id) {
-            return Ok(()); // already running
+        // Atomically claim the slot before the await: a concurrent `start_world(same id)` that already
+        // claimed it returns here, so a world is never spawned twice (idempotency, not "in practice").
+        {
+            let mut g = self.running.lock().unwrap();
+            if g.contains_key(&world_id) {
+                return Ok(());
+            }
+            g.insert(world_id, None);
         }
+        // On any failure, release the claim so a later retry/restart can start the world.
+        match self.build_and_spawn(world_id).await {
+            Ok(handle) => {
+                self.running.lock().unwrap().insert(world_id, Some(handle));
+                tracing::info!(world = world_id.0, "registry started scheduler for world");
+                Ok(())
+            }
+            Err(e) => {
+                self.running.lock().unwrap().remove(&world_id);
+                Err(e)
+            }
+        }
+    }
+
+    /// Build the world's scoped runtime (map/repo/event-store from the world row) and spawn its
+    /// scheduler. The caller owns the `running` claim/release around this.
+    async fn build_and_spawn(&self, world_id: WorldId) -> Result<JoinHandle<()>, String> {
         let world = world_by_id(&self.pool, world_id)
             .await
             .map_err(|e| e.to_string())?
@@ -135,18 +159,14 @@ impl WorldRegistry {
             Arc::clone(&self.wonder),
             world.wonder_release_at,
         );
-        let handle = tokio::spawn(scheduler.run(self.shutdown_rx.clone()));
-        // Last-writer-wins on the rare concurrent start (startup + create are not concurrent in practice).
-        self.running.lock().unwrap().insert(world_id, handle);
-        tracing::info!(world = world_id.0, "registry started scheduler for world");
-        Ok(())
+        Ok(tokio::spawn(scheduler.run(self.shutdown_rx.clone())))
     }
 
     /// Await every running world's scheduler — called on graceful shutdown after the signal is sent.
     pub async fn join_all(&self) {
         let handles: Vec<JoinHandle<()>> = {
             let mut g = self.running.lock().unwrap();
-            g.drain().map(|(_, h)| h).collect()
+            g.drain().filter_map(|(_, h)| h).collect()
         };
         for h in handles {
             let _ = h.await;

@@ -83,7 +83,10 @@ async fn spawn(pool: sqlx::PgPool) -> String {
         world: config,
         world_id: world.id,
         world_registry: {
-            let (_tx, rx) = tokio::sync::watch::channel(false);
+            let (tx, rx) = tokio::sync::watch::channel(false);
+            // Keep the shutdown sender alive for the test's lifetime so a scheduler the registry spawns
+            // (e.g. via POST /admin/world) does not see a closed channel and exit immediately.
+            std::mem::forget(tx);
             Arc::new(WorldRegistry::new(
                 pool.clone(),
                 rx,

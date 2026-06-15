@@ -1,6 +1,6 @@
 # Feature 041 — World lifecycle admin (create worlds live)
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 036 (admin console + `require_admin`), 040 (world registry runtime)
 **Roadmap:** M9 multi-world & administration, slice 6 — see [ADR 0034](../../../docs/architecture/0034-multi-world-and-administration.md).
 **Program note:** Turns the registry on for **operators**: an admin creates a new world from the `/admin`
