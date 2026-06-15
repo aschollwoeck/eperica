@@ -134,6 +134,26 @@ timed construction. Proves the entire architecture end-to-end on the smallest po
 
 ---
 
+## M9 — Multi-world & administration
+
+Production needs **many concurrent worlds** (different speeds, round-based) that a **single account can
+play across simultaneously**, plus the **Administrator** console `roles.md` already specifies. The crux is
+architectural: today there is no per-world *player* entity (`villages.owner_id → users.id`), and the
+world's speed/map/scheduler are pinned at boot. See
+[ADR 0034](../docs/architecture/0034-multi-world-and-administration.md) for the full design; this program
+is sequenced so the low-risk pieces land first and the heavy refactors are isolated.
+
+| #   | Slice | Depends on | Delivers / proves | GDD |
+|-----|-------|-----------|-------------------|-----|
+| 036 | **Admin role + dashboard shell** — `is_admin` + `ADMINS` bootstrap, `require_admin`, gated `/admin`: in-app moderator/admin promotion + account management, read-only world/server status. Single-world; no multi-world yet. | 022 (roles, sanctions) | The Administrator role + console foundation (roles.md §2). | §13.2 |
+| 037 | **Account↔player split** — new `players` table, one row per `(user, world)`; re-key `PlayerId` from user to player; backfill the existing world. Pure refactor, no user-visible change. | 036 | The keystone for one-account-many-worlds. | §13.3 |
+| 038 | **World context plumbing** — world selection in session; resolve player per `(user, world)`; world-scope remaining player state + `scheduled_events`. | 037 | Code is world-aware end-to-end (still one live world). | §13.3 |
+| 039 | **World registry runtime** — many `WorldRuntime`s (map/speed/scheduler) concurrently; per-world scheduler. | 038 | Two+ worlds run at once. | §13.3 |
+| 040 | **World lifecycle admin** — create/start/archive worlds live from the dashboard (registry add/remove, no restart, others undisturbed; archival reuses the 021 freeze-guard). | 039 | Operators run rounds without a process restart. | §13.2–13.3 |
+| 041 | **Player multi-world UX** — post-login world lobby, join-world flow, nav world switcher. | 040 | Players self-select and play across worlds. | §13.3 |
+
+---
+
 ## App-layer social/meta features (interleaved)
 
 These come from [social-and-meta-features.md](./social-and-meta-features.md) and are **pulled in when
@@ -145,7 +165,8 @@ a slice needs them**, not deferred to one block:
 - **Alliance forum** ✅ — delivered as slice **027** (alliance-scoped threads + posts; announcements gated by the `Announce` right + locked).
 - **Map UI** — alongside the world/movement work (006–007), maturing through M4.
 - **Profile pages / leaderboard UI** — alongside ranking (016–017); the editable **bio + presence** layer (online/last-seen across profile, leaderboard, conversations & map) shipped as slice **025**.
-- **Admin/moderation UI** — alongside 022.
+- **Admin/moderation UI** — the moderator surface shipped with **022**; the **Administrator** console
+  (world create/configure/start/archive + user admin) is the **M9** program (slices **036–041**, ADR 0034).
 - **Search / who-is** ✅ — delivered as slice **028** (find players by username, alliances by name/tag, and a coordinate jump — a public, bounded prefix search).
 - **Settings & preferences** ✅ — delivered as slice **029** (a Settings page with per-kind notification preferences, enforced server-side at notification generation).
 - **Account sitting** ✅ — delivered as slice **030** (authorise trusted sitters to operate your account within limits, with an audit trail; the takeover is an effective-player resolution in the auth layer). Vacation/away mode (a sim mechanic) stays deferred.
