@@ -48,6 +48,22 @@ a { color: var(--c-gold); }
   text-decoration: none;
 }
 
+/* 035: auth-aware nav groups — keep the logout form and link groups inline with the other nav links.
+   The explicit [hidden] rule must win over `display: inline` (an author rule would otherwise override
+   the UA `[hidden] { display: none }`, leaking the hidden group). */
+.topbar__group { display: inline; }
+.topbar__group[hidden], #nav-mod[hidden] { display: none; }
+.topbar__logout { display: inline; margin: 0; }
+.topbar__logout button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--c-gold);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 .container { max-width: 880px; margin: var(--space-6) auto; padding: 0 var(--space-4); }
 .footer { color: var(--c-ink-muted); text-align: center; padding: var(--space-6); font-size: 0.85rem; }
 

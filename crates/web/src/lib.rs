@@ -46,7 +46,8 @@ async fn presence_touch(State(state): State<AppState>, req: Request, next: Next)
         || path.starts_with("/messages/stream")
         || path == "/notifications/unread"
         || path == "/notifications/stream"
-        || path == "/sitting/status";
+        || path == "/sitting/status"
+        || path == "/me";
     if background {
         return next.run(req).await;
     }
@@ -309,6 +310,7 @@ pub fn router(state: AppState) -> Router {
             "/settings/notifications",
             post(handlers::settings_notifications_submit),
         )
+        .route("/me", get(handlers::me))
         .route("/sitting", get(handlers::sitting_page))
         .route("/sitting/status", get(handlers::sitting_status))
         .route("/sitting/grant", post(handlers::sitting_grant))
