@@ -4330,3 +4330,194 @@ async fn settings_notification_preferences(pool: sqlx::PgPool) {
     let res = anon.get(format!("{base}/settings")).send().await.unwrap();
     assert_eq!(res.status().as_u16(), 303);
 }
+
+/// 030 AC2–AC5: an authorised sitter operates the owner's account (proved via the owner's notification
+/// count), restrictions are enforced, actions are audited, and stop reverts.
+#[sqlx::test(migrations = "../../migrations")]
+async fn account_sitting_takeover_restrictions_and_audit(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let owner_name = unique("si_o");
+    let sitter_name = unique("si_s");
+    let (jo, owner) = register_client(&base, &pool, &owner_name).await;
+    let (js, sitter) = register_client(&base, &pool, &sitter_name).await;
+    let (jc, _carol) = register_client(&base, &pool, &unique("si_c")).await;
+    let (jd, _dave) = register_client(&base, &pool, &unique("si_d")).await;
+
+    // Carol DMs the owner → the owner has one notification; the sitter has none.
+    jc.post(format!("{base}/messages/send"))
+        .form(&[
+            ("conversation", format!("dm:{owner}").as_str()),
+            ("body", "hi owner"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    let unread = |c: &reqwest::Client| {
+        let c = c.clone();
+        let base = base.clone();
+        async move {
+            c.get(format!("{base}/notifications/unread"))
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+    let status = |c: &reqwest::Client| {
+        let c = c.clone();
+        let base = base.clone();
+        async move {
+            c.get(format!("{base}/sitting/status"))
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+
+    // Owner authorises the sitter by username.
+    jo.post(format!("{base}/sitting/grant"))
+        .form(&[("username", sitter_name.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    // Not sitting yet: the sitter sees their own (empty) notifications.
+    assert_eq!(unread(&js).await.trim(), "0");
+
+    // A non-authorised player cannot start sitting the owner.
+    let r = jd
+        .post(format!("{base}/sitting/start"))
+        .form(&[("owner", owner.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403, "non-authorised cannot start");
+
+    // The sitter starts → now acts as the owner: their notification count is the OWNER's (1).
+    let r = js
+        .post(format!("{base}/sitting/start"))
+        .form(&[("owner", owner.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    assert_eq!(
+        unread(&js).await.trim(),
+        "1",
+        "effective player is the owner"
+    );
+    // The status endpoint reports the owner's name (drives the banner).
+    assert_eq!(status(&js).await.text().await.unwrap().trim(), owner_name);
+
+    // Restrictions: a sitter cannot change the owner's settings/profile or manage sitters.
+    for (path, form) in [
+        ("/settings/notifications", vec![("incoming_attack", "1")]),
+        ("/profile/bio", vec![("bio", "hacked")]),
+        ("/sitting/grant", vec![("username", owner_name.as_str())]),
+    ] {
+        let r = js
+            .post(format!("{base}{path}"))
+            .form(&form)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 403, "sitter blocked from {path}");
+    }
+
+    // A normal action is allowed (acts as the owner) and audited.
+    js.post(format!("{base}/village/build"))
+        .form(&[("table", "field"), ("slot", "1"), ("kind", "")])
+        .send()
+        .await
+        .unwrap();
+    let log = jo
+        .get(format!("{base}/sitting"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        log.contains("POST /village/build"),
+        "the owner's audit log shows the sitter's action"
+    );
+    assert!(log.contains(&sitter_name), "the audit names the sitter");
+
+    // Stop sitting → back to the sitter's own account.
+    js.post(format!("{base}/sitting/stop"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        unread(&js).await.trim(),
+        "0",
+        "stopped — back to own account"
+    );
+
+    // AC3: revoking mid-sit reverts the sitter on the next request.
+    js.post(format!("{base}/sitting/start"))
+        .form(&[("owner", owner.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unread(&js).await.trim(), "1");
+    jo.post(format!("{base}/sitting/revoke"))
+        .form(&[("sitter", sitter.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unread(&js).await.trim(), "0", "revoke ended the sit");
+}
+
+/// 030 AC6: a banned owner cannot be operated; a banned sitter cannot sit.
+#[sqlx::test(migrations = "../../migrations")]
+async fn account_sitting_respects_sanctions(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let sitter_name = unique("sb_s");
+    let (jo, owner) = register_client(&base, &pool, &unique("sb_o")).await;
+    let (js, sitter) = register_client(&base, &pool, &sitter_name).await;
+    jo.post(format!("{base}/sitting/grant"))
+        .form(&[("username", sitter_name.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    let ban = |id: uuid::Uuid, banned: bool| {
+        let pool = pool.clone();
+        async move {
+            let sql = if banned {
+                "UPDATE users SET banned_at = now() WHERE id = $1"
+            } else {
+                "UPDATE users SET banned_at = NULL WHERE id = $1"
+            };
+            sqlx::query(sql).bind(id).execute(&pool).await.unwrap();
+        }
+    };
+    let start = |c: &reqwest::Client| {
+        let c = c.clone();
+        let base = base.clone();
+        let o = owner.as_u128().to_string();
+        async move {
+            c.post(format!("{base}/sitting/start"))
+                .form(&[("owner", o.as_str())])
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .as_u16()
+        }
+    };
+
+    // Banned owner ⇒ the sit is refused.
+    ban(owner, true).await;
+    assert_eq!(start(&js).await, 403, "cannot operate a banned owner");
+    ban(owner, false).await;
+
+    // Banned sitter ⇒ their mutating actions (incl. starting a sit) are refused.
+    ban(sitter, true).await;
+    assert_eq!(start(&js).await, 403, "a banned sitter cannot sit");
+}

@@ -163,6 +163,15 @@ a { color: var(--c-gold); }
   font-weight: 700;
 }
 
+/* 030: account-sitting banner — a persistent bar while operating another player's account. */
+.banner {
+  padding: var(--space-2) var(--space-3);
+  background: color-mix(in srgb, var(--c-gold) 18%, transparent);
+  border-bottom: 1px solid var(--c-gold);
+  color: var(--c-ink);
+  text-align: center;
+}
+
 /* 026: notifications feed — unread rows stand out until viewed. */
 .notifications { list-style: none; padding: 0; }
 .notifications li { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--c-border); }

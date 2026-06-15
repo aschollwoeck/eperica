@@ -148,6 +148,7 @@ a slice needs them**, not deferred to one block:
 - **Admin/moderation UI** — alongside 022.
 - **Search / who-is** ✅ — delivered as slice **028** (find players by username, alliances by name/tag, and a coordinate jump — a public, bounded prefix search).
 - **Settings & preferences** ✅ — delivered as slice **029** (a Settings page with per-kind notification preferences, enforced server-side at notification generation).
+- **Account sitting** ✅ — delivered as slice **030** (authorise trusted sitters to operate your account within limits, with an audit trail; the takeover is an effective-player resolution in the auth layer). Vacation/away mode (a sim mechanic) stays deferred.
 
 Each is its own feature spec; this list just records *when* in the order they naturally land.
 

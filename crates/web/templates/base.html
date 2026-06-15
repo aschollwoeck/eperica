@@ -10,9 +10,10 @@
 <body>
   <header class="topbar">
     <a class="topbar__brand" href="/">Eperica</a>
-    <nav class="topbar__nav"><a href="/leaderboard">Leaderboards</a> <a href="/wonder">Wonder</a> <a href="/notifications" title="Notifications">🔔 <span id="notif-badge" class="badge" hidden></span></a> <a href="/messages">Messages <span id="unread-badge" class="badge" hidden></span></a> <a href="/profile">Profile</a> <a href="/settings">Settings</a>
+    <nav class="topbar__nav"><a href="/leaderboard">Leaderboards</a> <a href="/wonder">Wonder</a> <a href="/notifications" title="Notifications">🔔 <span id="notif-badge" class="badge" hidden></span></a> <a href="/messages">Messages <span id="unread-badge" class="badge" hidden></span></a> <a href="/profile">Profile</a> <a href="/settings">Settings</a> <a href="/sitting">Sitting</a>
       <form method="get" action="/search" class="topbar__search"><input type="text" name="q" placeholder="Search…" autocomplete="off"></form></nav>
   </header>
+  <div id="sitting-banner" class="banner" hidden></div>
   <main class="container">
     {% block content %}{% endblock %}
   </main>
@@ -51,6 +52,31 @@
         var es = new EventSource("/notifications/stream");
         es.onmessage = function () { refresh(); };
       } catch (_) {}
+    })();
+
+    // Account-sitting banner (030): when sitting, show a persistent "you are operating X's account" bar
+    // with a Stop control. Best-effort poll; ignored when logged out / not sitting.
+    (function () {
+      var bar = document.getElementById("sitting-banner");
+      if (!bar) return;
+      function refresh() {
+        fetch("/sitting/status").then(function (r) { return r.ok ? r.text() : ""; })
+          .then(function (name) {
+            name = (name || "").trim();
+            if (name) {
+              bar.textContent = "You are operating " + name + "'s account. ";
+              var f = document.createElement("form");
+              f.method = "post"; f.action = "/sitting/stop"; f.style.display = "inline";
+              var b = document.createElement("button"); b.type = "submit"; b.textContent = "Stop sitting";
+              f.appendChild(b); bar.appendChild(f);
+              bar.hidden = false;
+            } else {
+              bar.textContent = ""; bar.hidden = true;
+            }
+          }).catch(function () {});
+      }
+      refresh();
+      setInterval(refresh, 20000);
     })();
   </script>
 </body>

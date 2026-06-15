@@ -36,5 +36,6 @@ manual grows as the game does.
 - [The alliance forum](alliance-forum.md) — your alliance's private threaded discussion: start threads, reply, and post locked announcements (with the Announce right).
 - [Finding players, alliances & places](search.md) — the search box: jump to a player, an alliance (by name or tag), or a map tile by coordinate.
 - [Settings & preferences](settings.md) — your own preferences, starting with per-kind notification controls.
+- [Account sitting](account-sitting.md) — let a trusted player operate your account while you're away, within limits and with a full audit log.
 
 *(More chapters arrive as those features ship.)*

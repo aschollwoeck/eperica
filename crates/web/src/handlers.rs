@@ -1,10 +1,10 @@
 //! HTTP handlers for the register / login / village flow.
 
-use crate::auth::{AuthUser, auth_cookie, clear_cookie};
+use crate::auth::{AuthUser, RealUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
 use crate::templates::{
     AcademyRow, AcademyTemplate, AchievementRowView, ActiveView, AllianceStatsTemplate,
-    AllianceTemplate, AlliedVillageView, ArtifactRowView, BuildRow, ChatLineView,
+    AllianceTemplate, AlliedVillageView, ArtifactRowView, AuditRow, BuildRow, ChatLineView,
     CompletedQuestView, ConversationRow, ConversationTemplate, CurrentQuestView, DiploRowView,
     ForceRow, ForumPostRow, ForumTemplate, ForumThreadRow, ForumThreadTemplate, GarrisonRow,
     HistoryPointView, IncomingView, IndexTemplate, LeaderboardRowView, LeaderboardTemplate,
@@ -14,9 +14,9 @@ use crate::templates::{
     PlayerStatsTemplate, ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow,
     RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, RosterRowView,
     ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate, SettingsTemplate,
-    SettingsToggleRow, ShipmentRow, SmithyRow, SmithyTemplate, StyleGuideTemplate, TrainRow,
-    TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate, WonderStandingView,
-    WonderTemplate,
+    SettingsToggleRow, ShipmentRow, SitterRow, SittingTemplate, SmithyRow, SmithyTemplate,
+    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
+    VillageTemplate, WonderStandingView, WonderTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -29,22 +29,23 @@ use eperica_application::{
     ArtifactRepository, BattleReportView, BoardScope, BuildRepository, CombatRepository,
     CommsError, ConflictMetric, ConquestRepository, DiplomacyCommand, ForumError, LeaderboardRow,
     LoginError, MedalRepository, MedalSubjectKind, ModerationError, ModerationRepository,
-    MovementRepository, OasisRepository, QuestRepository, RegisterCommand, RegisterError,
-    ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository, TrainingRepository,
-    UnitOrderKind, UnitRepository, Window, WonderRepository, account_signals,
+    MovementRepository, OasisRepository, PlayerHit, QuestRepository, RegisterCommand,
+    RegisterError, ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository,
+    TrainingRepository, UnitOrderKind, UnitRepository, Window, WonderRepository, account_signals,
     alliance_conflict_leaderboard, alliance_population_leaderboard, alliance_statistics,
-    alliance_view, authenticate, climbers_leaderboard, conflict_leaderboard, conversation_list,
-    disband_alliance, dm_key, dm_pair_key, edit_bio, end_protection_if_established,
-    evaluate_achievements, evaluate_quests, expel_member, file_report, found_alliance,
-    invite_player, leave_alliance, list_forum, list_notifications, load_culture, load_economy,
-    map_viewport, mark_notifications_read, notif_key, notification_settings, notification_unread,
-    open_chat, open_dm, open_thread, order_attack, order_build, order_oasis_attack,
-    order_oasis_recall, order_oasis_reinforce, order_reinforcement, order_research, order_return,
-    order_scout, order_settle, order_smithy_upgrade, order_trade, order_train, order_wonder_build,
-    parse_dm_key, player_statistics, population_history, population_leaderboard, register,
-    reinforcement_reports, reply, resolve_report, respond_invite, review_queue, revoke_invite,
+    alliance_view, authenticate, authorize_sit, climbers_leaderboard, conflict_leaderboard,
+    conversation_list, disband_alliance, dm_key, dm_pair_key, edit_bio,
+    end_protection_if_established, evaluate_achievements, evaluate_quests, expel_member,
+    file_report, found_alliance, grant_sitter, invite_player, leave_alliance, list_forum,
+    list_notifications, list_sitters, list_sitting_for, load_culture, load_economy, map_viewport,
+    mark_notifications_read, notif_key, notification_settings, notification_unread, open_chat,
+    open_dm, open_thread, order_attack, order_build, order_oasis_attack, order_oasis_recall,
+    order_oasis_reinforce, order_reinforcement, order_research, order_return, order_scout,
+    order_settle, order_smithy_upgrade, order_trade, order_train, order_wonder_build, parse_dm_key,
+    player_statistics, population_history, population_leaderboard, register, reinforcement_reports,
+    reply, resolve_report, respond_invite, review_queue, revoke_invite, revoke_sitter,
     sanction_account, search, send_chat, send_dm, set_diplomacy, set_member_role,
-    set_notification_pref, start_thread, transfer_founder, unread_badge, view_profile,
+    set_notification_pref, sitter_log, start_thread, transfer_founder, unread_badge, view_profile,
     viewport_coords,
 };
 use eperica_domain::{
@@ -3041,6 +3042,182 @@ pub async fn settings_notifications_submit(
         }
     }
     Redirect::to("/settings").into_response()
+}
+
+// ---- Account sitting (030) ----
+
+/// A coarse "how long ago" label for an audit timestamp (030 AC5).
+fn ago(then_ms: i64, now_ms: i64) -> String {
+    let secs = ((now_ms - then_ms) / 1000).max(0);
+    if secs < 60 {
+        "just now".to_owned()
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h ago", secs / 3600)
+    } else {
+        format!("{}d ago", secs / 86_400)
+    }
+}
+
+/// The owner's name if the player is currently (and validly) sitting — from the sit cookie + a live
+/// authorisation check. Shared by the page + the status poll.
+async fn sit_owner_name(state: &AppState, jar: &PrivateCookieJar, me: PlayerId) -> Option<String> {
+    let owner = PlayerId(
+        jar.get(crate::auth::SIT_COOKIE)?
+            .value()
+            .parse::<u128>()
+            .ok()?,
+    );
+    match authorize_sit(state.accounts.as_ref(), owner, me, now()).await {
+        Ok(true) => view_profile(state.accounts.as_ref(), owner)
+            .await
+            .ok()
+            .map(|p| p.name),
+        _ => None,
+    }
+}
+
+/// The account-sitting page (030): your sitters, the accounts you sit for, and your audit log. Always
+/// operates on the **real** logged-in player (`RealUser`), even mid-sit.
+pub async fn sitting_page(
+    State(state): State<AppState>,
+    jar: PrivateCookieJar,
+    RealUser(me): RealUser,
+) -> Response {
+    let repo = state.accounts.as_ref();
+    let to_rows = |hits: Vec<PlayerHit>| {
+        hits.into_iter()
+            .map(|h| SitterRow {
+                id: h.player.0.to_string(),
+                name: h.name,
+            })
+            .collect::<Vec<_>>()
+    };
+    let my_sitters = match list_sitters(repo, me).await {
+        Ok(s) => to_rows(s),
+        Err(e) => {
+            tracing::error!(error = %e, "list sitters failed");
+            return server_error();
+        }
+    };
+    let sitting_for = match list_sitting_for(repo, me).await {
+        Ok(s) => to_rows(s),
+        Err(e) => {
+            tracing::error!(error = %e, "list sitting-for failed");
+            return server_error();
+        }
+    };
+    let now_ms = now().0;
+    let audit = match sitter_log(repo, me).await {
+        Ok(log) => log
+            .into_iter()
+            .map(|a| AuditRow {
+                sitter: a.sitter_name,
+                action: a.action,
+                when: ago(a.created_ms, now_ms),
+            })
+            .collect(),
+        Err(e) => {
+            tracing::error!(error = %e, "sitter log failed");
+            return server_error();
+        }
+    };
+    page(&SittingTemplate {
+        my_sitters,
+        sitting_for,
+        audit,
+        currently_sitting: sit_owner_name(&state, &jar, me).await,
+    })
+}
+
+/// Live sitting status (030) — the owner's name when actively sitting, else empty. Drives the persistent
+/// banner; excluded from presence-touch. Uses the sit cookie + a live authorisation check.
+pub async fn sitting_status(
+    State(state): State<AppState>,
+    jar: PrivateCookieJar,
+    RealUser(me): RealUser,
+) -> Response {
+    (
+        StatusCode::OK,
+        sit_owner_name(&state, &jar, me).await.unwrap_or_default(),
+    )
+        .into_response()
+}
+
+/// The grant-sitter form (030).
+#[derive(Deserialize)]
+pub struct GrantForm {
+    username: String,
+}
+
+/// Authorise a sitter by username (030 AC1, owner = the real player).
+pub async fn sitting_grant(
+    State(state): State<AppState>,
+    RealUser(me): RealUser,
+    Form(form): Form<GrantForm>,
+) -> Response {
+    if let Err(e) = grant_sitter(state.accounts.as_ref(), me, &form.username).await {
+        tracing::warn!(error = %e, "grant sitter rejected");
+    }
+    Redirect::to("/sitting").into_response()
+}
+
+/// The revoke / start forms carry a target player id.
+#[derive(Deserialize)]
+pub struct SitterTargetForm {
+    #[serde(default)]
+    sitter: Option<String>,
+    #[serde(default)]
+    owner: Option<String>,
+}
+
+/// Revoke a sitter (030 AC1, owner = the real player). Ends any in-progress sit on the next request.
+pub async fn sitting_revoke(
+    State(state): State<AppState>,
+    RealUser(me): RealUser,
+    Form(form): Form<SitterTargetForm>,
+) -> Response {
+    if let Some(sitter) = form.sitter.and_then(|s| s.parse::<u128>().ok())
+        && let Err(e) = revoke_sitter(state.accounts.as_ref(), me, PlayerId(sitter)).await
+    {
+        tracing::error!(error = %e, "revoke sitter failed");
+    }
+    Redirect::to("/sitting").into_response()
+}
+
+/// Start sitting an owner (030 AC2): authorise, then set the sit cookie. Acts on the real player.
+pub async fn sitting_start(
+    State(state): State<AppState>,
+    jar: PrivateCookieJar,
+    RealUser(me): RealUser,
+    Form(form): Form<SitterTargetForm>,
+) -> Response {
+    let Some(owner) = form
+        .owner
+        .and_then(|s| s.parse::<u128>().ok())
+        .map(PlayerId)
+    else {
+        return Redirect::to("/sitting").into_response();
+    };
+    match authorize_sit(state.accounts.as_ref(), owner, me, now()).await {
+        Ok(true) => {
+            let jar = jar.add(crate::auth::sit_cookie(owner.0));
+            (jar, Redirect::to("/village")).into_response()
+        }
+        // Not authorised (not a sitter / blocked owner) — refuse.
+        Ok(false) => forbidden(),
+        Err(e) => {
+            tracing::error!(error = %e, "authorize sit failed");
+            server_error()
+        }
+    }
+}
+
+/// Stop sitting (030 AC2): clear the sit cookie, returning to the real account.
+pub async fn sitting_stop(jar: PrivateCookieJar) -> Response {
+    let jar = jar.remove(crate::auth::clear_sit_cookie());
+    (jar, Redirect::to("/sitting")).into_response()
 }
 
 /// The player's onboarding quests (018 AC8, Player only): the current quest with its reward, the
