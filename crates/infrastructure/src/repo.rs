@@ -14,7 +14,7 @@ use eperica_application::{
     MovementRepository, MovementView, NewBuildOrder, NewNotification, NewOasisReport,
     NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, NotificationRepository,
     NotificationView, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository,
-    OasisState, OutgoingInvite, PendingInvite, PlayerHit, PlayerStats, ProfileView,
+    OasisState, OutgoingInvite, PendingInvite, PlayerHit, PlayerStats, PlayerWorld, ProfileView,
     QuestRepository, RankingRepository, RazedBuilding, RepoError, ReportView, ResourceWrite,
     RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply,
     SettleOutcome, SettleRepository, SitterActionView, StarvationRepository, StationedGroup,
@@ -382,6 +382,17 @@ impl AccountRepository for PgAccountRepository {
         let owner = PlayerId(user_id.as_u128());
         let world_uuid = Uuid::from_u128(self.world_id.0);
 
+        // The per-world player profile (037): one row per (user, world). In the single world a player's
+        // id equals the user's id, so `villages.owner_id` (= user_id) already identifies this player and
+        // no game data is re-pointed. Same transaction as the user + village.
+        sqlx::query("INSERT INTO players (id, user_id, world_id, tribe) VALUES ($1, $1, $2, $3)")
+            .bind(user_id)
+            .bind(world_uuid)
+            .bind(user.tribe.slug())
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+
         // Place the village on the first free **valley** in the deterministic ring order (oases and
         // Natar are skipped, 006 AC5); its fields come from that valley's distribution. Each attempt
         // is a SAVEPOINT so a coordinate clash rolls back just that insert (not the whole tx).
@@ -524,6 +535,45 @@ impl AccountRepository for PgAccountRepository {
         .await
         .map_err(backend)?;
         row.as_ref().map(row_to_user).transpose()
+    }
+
+    async fn player_in_world(
+        &self,
+        user: PlayerId,
+        world: WorldId,
+    ) -> Result<Option<PlayerId>, RepoError> {
+        let id: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM players WHERE user_id = $1 AND world_id = $2")
+                .bind(Uuid::from_u128(user.0))
+                .bind(Uuid::from_u128(world.0))
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(backend)?;
+        Ok(id.map(|u| PlayerId(u.as_u128())))
+    }
+
+    async fn worlds_of_user(&self, user: PlayerId) -> Result<Vec<PlayerWorld>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, world_id, tribe FROM players WHERE user_id = $1 ORDER BY created_at, id",
+        )
+        .bind(Uuid::from_u128(user.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let id: Uuid = r.try_get("id").map_err(backend)?;
+                let world: Uuid = r.try_get("world_id").map_err(backend)?;
+                let tribe_str: String = r.try_get("tribe").map_err(backend)?;
+                let tribe = Tribe::from_slug(&tribe_str)
+                    .ok_or_else(|| RepoError::Backend(format!("unknown tribe: {tribe_str}")))?;
+                Ok(PlayerWorld {
+                    player: PlayerId(id.as_u128()),
+                    world: WorldId(world.as_u128()),
+                    tribe,
+                })
+            })
+            .collect()
     }
 
     async fn villages_of(&self, owner: PlayerId) -> Result<Vec<Village>, RepoError> {
@@ -12174,6 +12224,43 @@ mod tests {
 
         // Lookup works.
         assert!(repo.find_user_by_username(&uname).await.unwrap().is_some());
+    }
+
+    /// 037: registration creates a per-world player profile, and the resolution layer finds it. The
+    /// reuse-UUID invariant holds — `player_in_world` equals the user id, which equals the village owner.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn registration_creates_player_and_resolves_in_world(pool: PgPool) {
+        let Setup { repo, world, .. } = setup(pool.clone()).await;
+        let template = crate::starting_village().expect("template");
+        let user = make_account(&repo, &template, "split").await;
+
+        // The account now has exactly one player, in the one world, resolving to the same id (AC2/AC3/AC4).
+        let player = repo
+            .player_in_world(user, world.id)
+            .await
+            .expect("resolve")
+            .expect("a player exists in the world");
+        assert_eq!(player, user, "reuse-UUID invariant: player id == user id");
+
+        // The village owner is that player (the seam that lets owner_id key on the player, AC5).
+        let villages = repo.villages_of(user).await.expect("villages");
+        assert_eq!(villages[0].owner, player);
+
+        // `worlds_of_user` lists exactly the one world, with the chosen tribe.
+        let worlds = repo.worlds_of_user(user).await.expect("worlds");
+        assert_eq!(worlds.len(), 1);
+        assert_eq!(worlds[0].player, user);
+        assert_eq!(worlds[0].world, world.id);
+        assert_eq!(worlds[0].tribe, Tribe::Gauls);
+
+        // An account with no player in a *different* world resolves to None (the join gate, future).
+        let other_world = WorldId(0xDEAD_BEEF);
+        assert!(
+            repo.player_in_world(user, other_world)
+                .await
+                .expect("resolve other")
+                .is_none()
+        );
     }
 
     /// 006 AC6 migration-boundary guard: the world `seed` is backfilled NOT NULL with the

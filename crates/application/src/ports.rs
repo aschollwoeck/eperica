@@ -10,7 +10,7 @@ use eperica_domain::{
     MedalCategory, MovementKind, NotificationKind, OasisBonus, OasisRules, PlayerId,
     PlayerProgress, Quadrant, QuestDef, QuestId, QuestProgress, QueueLane, ReportReason,
     ResourceAmounts, RightSet, SanctionKind, ScoutTarget, StartingVillage, Timestamp, TradeKind,
-    Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId,
+    Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId, WorldId,
 };
 use std::collections::HashSet;
 
@@ -41,6 +41,17 @@ pub struct NewUser {
     /// Whether the account is considered email-confirmed at creation.
     pub email_confirmed: bool,
     /// The tribe chosen at registration (immutable thereafter, 004 AC1/AC2).
+    pub tribe: Tribe,
+}
+
+/// One per-world player profile of an account (037) — the worlds a user participates in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerWorld {
+    /// The per-world player id (equals the user id in the single existing world — the 037 invariant).
+    pub player: PlayerId,
+    /// The world this profile plays in.
+    pub world: WorldId,
+    /// The player's tribe in that world.
     pub tribe: Tribe,
 }
 
@@ -132,6 +143,28 @@ pub trait AccountRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn find_user_by_id(&self, id: PlayerId) -> Result<Option<UserRecord>, RepoError>;
+
+    /// Resolve the account's **player** (per-world game profile, 037) in `world` — the identity all
+    /// game state keys on. `None` if the account has no player in that world (has not joined it). In the
+    /// single existing world a player's id equals the user's id (the 037 backfill invariant).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn player_in_world(
+        &self,
+        _user: PlayerId,
+        _world: WorldId,
+    ) -> Result<Option<PlayerId>, RepoError> {
+        Ok(None)
+    }
+
+    /// The worlds an account has a player in (037) — drives the future world lobby / switcher.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn worlds_of_user(&self, _user: PlayerId) -> Result<Vec<PlayerWorld>, RepoError> {
+        Ok(Vec::new())
+    }
 
     /// All villages owned by a player (with their fields and buildings).
     ///
