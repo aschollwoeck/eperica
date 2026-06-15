@@ -120,6 +120,33 @@ impl FromRequestParts<AppState> for RealUser {
     }
 }
 
+/// The real logged-in human from the auth cookie, ignoring any sit (030) — `None` for a visitor.
+fn real_player(jar: &PrivateCookieJar) -> Option<PlayerId> {
+    Some(PlayerId(
+        jar.get(AUTH_COOKIE)?.value().parse::<u128>().ok()?,
+    ))
+}
+
+/// Extractor for an **optional real** player — the logged-in human, ignoring any sit (030); `None` for a
+/// visitor. Never rejects. Used where an elevated capability must **not** be delegated through sitting —
+/// e.g. the `/me` admin flag (so it matches the `RealUser`-gated admin console, 036).
+pub struct MaybeRealUser(pub Option<PlayerId>);
+
+impl FromRequestParts<AppState> for MaybeRealUser {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let real = match PrivateCookieJar::from_request_parts(parts, state).await {
+            Ok(jar) => real_player(&jar),
+            Err(_) => None,
+        };
+        Ok(MaybeRealUser(real))
+    }
+}
+
 /// Extractor for an **optional** effective player — `Some` when logged in (the owner when sitting, else
 /// the human), `None` for a visitor. Never rejects, so it suits best-effort, public-reachable endpoints
 /// (e.g. the `/me` nav probe) that must answer for logged-out callers too.

@@ -52,7 +52,7 @@ a { color: var(--c-gold); }
    The explicit [hidden] rule must win over `display: inline` (an author rule would otherwise override
    the UA `[hidden] { display: none }`, leaking the hidden group). */
 .topbar__group { display: inline; }
-.topbar__group[hidden], #nav-mod[hidden] { display: none; }
+.topbar__group[hidden], #nav-mod[hidden], #nav-admin[hidden] { display: none; }
 .topbar__logout { display: inline; margin: 0; }
 .topbar__logout button {
   background: none;

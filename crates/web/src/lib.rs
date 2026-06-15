@@ -318,6 +318,8 @@ pub fn router(state: AppState) -> Router {
         .route("/sitting/start", post(handlers::sitting_start))
         .route("/sitting/stop", post(handlers::sitting_stop))
         .route("/report", post(handlers::report_submit))
+        .route("/admin", get(handlers::admin))
+        .route("/admin/role", post(handlers::admin_role_submit))
         .route("/mod", get(handlers::mod_queue))
         .route("/mod/account/{id}", get(handlers::mod_account))
         .route("/mod/resolve", post(handlers::mod_resolve_submit))

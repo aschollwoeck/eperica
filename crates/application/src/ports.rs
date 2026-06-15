@@ -64,6 +64,9 @@ pub struct UserRecord {
     pub abandoned: bool,
     /// Whether the account holds the elevated **Moderator** role (022) — additive to Player.
     pub is_moderator: bool,
+    /// Whether the account holds the elevated **Administrator** role (036) — additive to Player/Moderator;
+    /// operates worlds and accounts from the `/admin` console.
+    pub is_admin: bool,
     /// When the account was permanently **banned** (022), or `None`. A ban always blocks.
     pub banned_at: Option<Timestamp>,
     /// The instant a temporary **suspension** lifts (022), or `None`. Blocks while `now` is before it.
@@ -3010,6 +3013,82 @@ pub trait ModerationRepository: Send + Sync {
         _window_secs: i64,
     ) -> Result<u32, RepoError> {
         Ok(0)
+    }
+}
+
+/// A read-only snapshot of the active world + server for the admin console (036 AC4). All counts are
+/// derived from the DB on read (P1/P5).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdminOverview {
+    /// World multiplier (P7).
+    pub speed: f64,
+    /// Map radius.
+    pub radius: u32,
+    /// Deterministic per-world seed (P6).
+    pub seed: i64,
+    /// World creation instant (Unix-ms UTC).
+    pub created_ms: i64,
+    /// Artifact-release schedule, if set (Unix-ms UTC).
+    pub artifact_release_ms: Option<i64>,
+    /// Wonder-release schedule, if set (Unix-ms UTC).
+    pub wonder_release_ms: Option<i64>,
+    /// When the world was won/frozen, if at all (Unix-ms UTC).
+    pub won_ms: Option<i64>,
+    /// Live, non-abandoned account count.
+    pub accounts: i64,
+    /// Village count.
+    pub villages: i64,
+    /// Pending (not-yet-processed) scheduled events.
+    pub pending_events: i64,
+}
+
+/// One account row for the admin console listing (036 AC3): identity + the elevated roles + retirement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdminAccount {
+    pub id: PlayerId,
+    pub username: String,
+    pub is_moderator: bool,
+    pub is_admin: bool,
+    pub abandoned: bool,
+}
+
+/// Persistence for the admin console (036): the Administrator role grant + read-only server overview /
+/// account listing. Default no-ops/empties so non-admin fakes are untouched.
+#[async_trait]
+pub trait AdminRepository: Send + Sync {
+    /// Set (or clear) the elevated Administrator role on an account (036 AC1/AC3). Idempotent.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn set_admin(&self, _player: PlayerId, _is_admin: bool) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// The read-only world + server overview (036 AC4).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure or if no world row exists.
+    async fn admin_overview(&self) -> Result<AdminOverview, RepoError> {
+        Err(RepoError::Backend(
+            "admin_overview unimplemented".to_owned(),
+        ))
+    }
+
+    /// The most recently-created accounts, newest first, capped at `limit` (036 AC3) — the console's
+    /// default listing when no search is active.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn recent_accounts(&self, _limit: i64) -> Result<Vec<AdminAccount>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Look up one account by id for the console's role view (036 AC3).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn admin_account(&self, _player: PlayerId) -> Result<Option<AdminAccount>, RepoError> {
+        Ok(None)
     }
 }
 

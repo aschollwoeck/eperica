@@ -195,6 +195,7 @@ mod tests {
             tribe: Tribe::Gauls,
             abandoned: false,
             is_moderator: false,
+            is_admin: false,
             banned_at: if banned { Some(Timestamp(1)) } else { None },
             suspended_until: None,
         }
