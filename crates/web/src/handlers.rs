@@ -54,8 +54,9 @@ use eperica_domain::{
     PlayerId, Presence, Quadrant, QuestReward, QueueLane, ReportReason, ResearchDenied,
     ResourceAmounts, ResourceKind, RightSet, SanctionKind, ScoutTarget, TileKind, Timestamp,
     TradeKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, VillageId,
-    can_access_channel, can_afford, can_research, can_upgrade, current_quest, garrison_upkeep,
-    is_inactive, per_unit_time_secs, presence, queue_lane, regenerate_loyalty, scaled_time_secs,
+    can_access_channel, can_afford, can_research, can_upgrade, current_quest, expansion_slots,
+    garrison_upkeep, is_inactive, per_unit_time_secs, presence, queue_lane, regenerate_loyalty,
+    scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
@@ -619,23 +620,71 @@ pub async fn village(
         }
         s
     };
+    // Effects for buildings whose rules live outside the economy (combat / trade / culture / build /
+    // training). Read-only lookups; the village's tribe selects the (tribe-flavoured) Wall profile.
+    let combat = state.combat_rules.as_ref();
+    let merchants = state.merchant_rules.as_ref();
+    let culture = state.culture_rules.as_ref();
+    let training = &state.unit_rules.training;
     let building_effect = |kind: BuildingKind, level: u8| -> String {
+        let next = level + 1;
         let special = match kind {
             BuildingKind::Warehouse => Some(format!(
                 "Storage {} → {}",
                 econ.warehouse_capacity(level),
-                econ.warehouse_capacity(level + 1)
+                econ.warehouse_capacity(next)
             )),
             BuildingKind::Granary => Some(format!(
                 "Crop storage {} → {}",
                 econ.granary_capacity(level),
-                econ.granary_capacity(level + 1)
+                econ.granary_capacity(next)
             )),
             BuildingKind::Outpost => Some(format!(
                 "Holds {} → {} oases",
                 econ.outpost_capacity(level),
-                econ.outpost_capacity(level + 1)
+                econ.outpost_capacity(next)
             )),
+            BuildingKind::Wall => tribe.map(|t| {
+                // One decimal: tribe wall bonuses differ by half-percent steps (e.g. Gaul 2.5 % vs
+                // Teuton 2.0 %), which a whole-percent display would collapse.
+                format!(
+                    "Wall defence {:+.1}% → {:+.1}%",
+                    combat.wall_bonus(t, level) * 100.0,
+                    combat.wall_bonus(t, next) * 100.0
+                )
+            }),
+            BuildingKind::Cranny => Some(format!(
+                "Hides {} → {} of each resource",
+                combat.cranny_capacity(level),
+                combat.cranny_capacity(next)
+            )),
+            BuildingKind::Marketplace => Some(format!(
+                "Merchants {} → {}",
+                merchants.merchants_total(level),
+                merchants.merchants_total(next)
+            )),
+            BuildingKind::TownHall => Some(format!(
+                "Culture +{} → +{}/h",
+                culture.town_hall_cp(level),
+                culture.town_hall_cp(next)
+            )),
+            BuildingKind::Residence | BuildingKind::Palace => Some(format!(
+                "Expansion slots {} → {}",
+                expansion_slots(&[level], culture),
+                expansion_slots(&[next], culture)
+            )),
+            BuildingKind::MainBuilding => Some(format!(
+                "Build speed ×{:.2} → ×{:.2}",
+                build_rules.main_building_factor(level),
+                build_rules.main_building_factor(next)
+            )),
+            BuildingKind::Barracks | BuildingKind::Stable | BuildingKind::Workshop => {
+                Some(format!(
+                    "Training speed ×{:.2} → ×{:.2}",
+                    training.building_factor(level),
+                    training.building_factor(next)
+                ))
+            }
             _ => None,
         };
         let dpop =

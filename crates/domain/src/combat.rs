@@ -80,6 +80,12 @@ impl CombatRules {
     pub fn smithy_factor(&self, level: u8) -> f64 {
         1.0 + f64::from(level) * self.smithy_bonus_per_level
     }
+
+    /// The Wall defence-multiplier **bonus** for `tribe` at Wall `level` (e.g. `0.03` ⇒ +3 %); `0.0` if
+    /// the tribe has no Wall profile. Used to show a Wall upgrade's effect (031).
+    pub fn wall_bonus(&self, tribe: Tribe, level: u8) -> f64 {
+        self.wall(tribe).map_or(0.0, |w| w.bonus(level))
+    }
 }
 
 /// A side's split attack power (Smithy-scaled), with ram force tracked separately for the Wall.
@@ -499,6 +505,18 @@ mod tests {
                 ),
             ]),
         }
+    }
+
+    #[test]
+    fn wall_bonus_is_tribe_correct_and_clamped() {
+        let r = rules();
+        // Per-level bonus, tribe-specific (Gauls +3 %/level, Teutons +2 %/level).
+        assert!((r.wall_bonus(Tribe::Gauls, 1) - 0.03).abs() < 1e-9);
+        assert!((r.wall_bonus(Tribe::Teutons, 1) - 0.02).abs() < 1e-9);
+        assert!(r.wall_bonus(Tribe::Gauls, 2) > r.wall_bonus(Tribe::Teutons, 2));
+        // Level 0 = no Wall ⇒ no bonus; beyond the table clamps to the last entry.
+        assert_eq!(r.wall_bonus(Tribe::Gauls, 0), 0.0);
+        assert!((r.wall_bonus(Tribe::Gauls, 99) - 0.15).abs() < 1e-9);
     }
 
     fn input(attack: AttackPower, def_i: f64, def_c: f64, wall: u8) -> BattleInput {

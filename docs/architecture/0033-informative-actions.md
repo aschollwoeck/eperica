@@ -37,5 +37,8 @@ field upgrade showed its price but not the new production rate. This is the firs
 ## Consequences
 - Players see production/storage/population deltas on upgrades, unit stat gains on Smithy upgrades, and live
   cost/time/power/ETA previews on training, rally, and trade — before committing.
-- **Follow-up:** effects for buildings whose rules live outside `EconomyRules` (Wall defence, Main-Building
-  speed-up, merchants, culture, expansion slots), and the visual/theming pass.
+- **Follow-up (delivered in slice 032):** the remaining building effects — Wall defence %, Cranny hidden
+  resources, Marketplace merchants, Town Hall culture/h, Residence/Palace expansion slots, Main-Building
+  build-speed, and Barracks/Stable/Workshop training-speed (a new pure `CombatRules::wall_bonus`; the rest
+  reuse existing accessors) — plus resource bars (fill + time-to-full / -empty). The visual/theming pass
+  remains.

@@ -149,7 +149,7 @@ a slice needs them**, not deferred to one block:
 - **Search / who-is** ✅ — delivered as slice **028** (find players by username, alliances by name/tag, and a coordinate jump — a public, bounded prefix search).
 - **Settings & preferences** ✅ — delivered as slice **029** (a Settings page with per-kind notification preferences, enforced server-side at notification generation).
 - **Account sitting** ✅ — delivered as slice **030** (authorise trusted sitters to operate your account within limits, with an audit trail; the takeover is an effective-player resolution in the auth layer). Vacation/away mode (a sim mechanic) stays deferred.
-- **UX information pass** ✅ — slice **031** (show an action's *effect*, not just its cost: build/upgrade effects, Smithy stat gains, and live training/rally/marketplace previews). First step of the broader UI/UX overhaul; visual theming + imagery still to come.
+- **UX information pass** ✅ — slice **031** (show an action's *effect*, not just its cost: build/upgrade effects, Smithy stat gains, and live training/rally/marketplace previews). Extended in slice **032** (the remaining building effects + resource bars). Visual theming + imagery still to come.
 
 Each is its own feature spec; this list just records *when* in the order they naturally land.
 

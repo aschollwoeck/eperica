@@ -62,17 +62,41 @@
 
   <h2>Resources</h2>
   <ul class="resource-list">
-    <li class="res res--wood">Wood {{ wood }} / {{ warehouse }} (+{{ wood_rate }}/h)</li>
-    <li class="res res--clay">Clay {{ clay }} / {{ warehouse }} (+{{ clay_rate }}/h)</li>
-    <li class="res res--iron">Iron {{ iron }} / {{ warehouse }} (+{{ iron_rate }}/h)</li>
-    {% if crop_rate > 0 %}
-    <li class="res res--crop">Crop {{ crop }} / {{ granary }} (+{{ crop_rate }}/h)</li>
-    {% else %}
-    <li class="res res--crop">Crop {{ crop }} / {{ granary }}
-      <strong style="color:var(--c-warning)">({{ crop_rate }}/h — starving)</strong></li>
-    {% endif %}
+    <li class="res res--wood resbar" data-amt="{{ wood }}" data-cap="{{ warehouse }}" data-rate="{{ wood_rate }}">
+      <span class="resbar__label">Wood {{ wood }} / {{ warehouse }} (+{{ wood_rate }}/h) <span class="resbar__eta muted"></span></span>
+      <span class="resbar__track"><span class="resbar__fill"></span></span>
+    </li>
+    <li class="res res--clay resbar" data-amt="{{ clay }}" data-cap="{{ warehouse }}" data-rate="{{ clay_rate }}">
+      <span class="resbar__label">Clay {{ clay }} / {{ warehouse }} (+{{ clay_rate }}/h) <span class="resbar__eta muted"></span></span>
+      <span class="resbar__track"><span class="resbar__fill"></span></span>
+    </li>
+    <li class="res res--iron resbar" data-amt="{{ iron }}" data-cap="{{ warehouse }}" data-rate="{{ iron_rate }}">
+      <span class="resbar__label">Iron {{ iron }} / {{ warehouse }} (+{{ iron_rate }}/h) <span class="resbar__eta muted"></span></span>
+      <span class="resbar__track"><span class="resbar__fill"></span></span>
+    </li>
+    <li class="res res--crop resbar" data-amt="{{ crop }}" data-cap="{{ granary }}" data-rate="{{ crop_rate }}">
+      <span class="resbar__label">Crop {{ crop }} / {{ granary }}
+        {% if crop_rate > 0 %}(+{{ crop_rate }}/h){% else %}<strong style="color:var(--c-warning)">({{ crop_rate }}/h — starving)</strong>{% endif %}
+        <span class="resbar__eta muted"></span></span>
+      <span class="resbar__track"><span class="resbar__fill"></span></span>
+    </li>
   </ul>
 </section>
+
+<script>
+  // 032: resource bars — fill level + time-to-full (or time-to-empty for a negative crop rate).
+  for (const el of document.querySelectorAll(".resbar")) {
+    const amt = +el.dataset.amt, cap = +el.dataset.cap, rate = +el.dataset.rate;
+    const fill = el.querySelector(".resbar__fill"), eta = el.querySelector(".resbar__eta");
+    if (cap > 0) fill.style.width = Math.max(0, Math.min(100, (amt / cap) * 100)).toFixed(1) + "%";
+    if (rate > 0 && amt < cap) fill.classList.toggle("resbar__fill--warn", (cap - amt) / rate <= 1);
+    const fmt = (s) => { s = Math.round(s); const h = Math.floor(s/3600); s -= h*3600;
+      const m = Math.floor(s/60); return `${h}:${String(m).padStart(2,"0")}:${String(s-m*60).padStart(2,"0")}`; };
+    if (rate > 0 && amt < cap) eta.textContent = `· full in ${fmt(((cap - amt) / rate) * 3600)}`;
+    else if (rate < 0 && amt > 0) eta.textContent = `· empty in ${fmt((amt / -rate) * 3600)}`;
+    else if (cap > 0 && amt >= cap) eta.textContent = "· full";
+  }
+</script>
 
 {% if !garrison.is_empty() %}
 <section class="panel">
