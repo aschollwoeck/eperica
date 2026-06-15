@@ -163,9 +163,9 @@ a { color: var(--c-gold); }
   font-weight: 700;
 }
 
-/* 031: resource bars — a fill track under each resource line. */
-.resource-list { list-style: none; padding: 0; }
-.resbar { display: flex; flex-direction: column; gap: 4px; padding: var(--space-2) 0; }
+/* 032: resource bars — a fill track under each resource line. Stacks the resources full-width. */
+.resource-list { flex-direction: column; gap: var(--space-2); }
+.resbar { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
 .resbar__track {
   height: 8px; border-radius: 999px; overflow: hidden;
   background: color-mix(in srgb, var(--c-ink-muted) 25%, transparent);

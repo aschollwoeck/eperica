@@ -507,6 +507,18 @@ mod tests {
         }
     }
 
+    #[test]
+    fn wall_bonus_is_tribe_correct_and_clamped() {
+        let r = rules();
+        // Per-level bonus, tribe-specific (Gauls +3 %/level, Teutons +2 %/level).
+        assert!((r.wall_bonus(Tribe::Gauls, 1) - 0.03).abs() < 1e-9);
+        assert!((r.wall_bonus(Tribe::Teutons, 1) - 0.02).abs() < 1e-9);
+        assert!(r.wall_bonus(Tribe::Gauls, 2) > r.wall_bonus(Tribe::Teutons, 2));
+        // Level 0 = no Wall ⇒ no bonus; beyond the table clamps to the last entry.
+        assert_eq!(r.wall_bonus(Tribe::Gauls, 0), 0.0);
+        assert!((r.wall_bonus(Tribe::Gauls, 99) - 0.15).abs() < 1e-9);
+    }
+
     fn input(attack: AttackPower, def_i: f64, def_c: f64, wall: u8) -> BattleInput {
         BattleInput {
             attack,

@@ -54,9 +54,9 @@ use eperica_domain::{
     PlayerId, Presence, Quadrant, QuestReward, QueueLane, ReportReason, ResearchDenied,
     ResourceAmounts, ResourceKind, RightSet, SanctionKind, ScoutTarget, TileKind, Timestamp,
     TradeKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, VillageId,
-    can_access_channel, can_afford, can_research, can_upgrade, culture_rate, current_quest,
-    expansion_slots, garrison_upkeep, is_inactive, per_unit_time_secs, presence, queue_lane,
-    regenerate_loyalty, scaled_time_secs,
+    can_access_channel, can_afford, can_research, can_upgrade, current_quest, expansion_slots,
+    garrison_upkeep, is_inactive, per_unit_time_secs, presence, queue_lane, regenerate_loyalty,
+    scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use serde::Deserialize;
@@ -645,8 +645,10 @@ pub async fn village(
                 econ.outpost_capacity(next)
             )),
             BuildingKind::Wall => tribe.map(|t| {
+                // One decimal: tribe wall bonuses differ by half-percent steps (e.g. Gaul 2.5 % vs
+                // Teuton 2.0 %), which a whole-percent display would collapse.
                 format!(
-                    "Wall defence {:+.0}% → {:+.0}%",
+                    "Wall defence {:+.1}% → {:+.1}%",
                     combat.wall_bonus(t, level) * 100.0,
                     combat.wall_bonus(t, next) * 100.0
                 )
@@ -663,8 +665,8 @@ pub async fn village(
             )),
             BuildingKind::TownHall => Some(format!(
                 "Culture +{} → +{}/h",
-                culture_rate(&[level], culture),
-                culture_rate(&[next], culture)
+                culture.town_hall_cp(level),
+                culture.town_hall_cp(next)
             )),
             BuildingKind::Residence | BuildingKind::Palace => Some(format!(
                 "Expansion slots {} → {}",

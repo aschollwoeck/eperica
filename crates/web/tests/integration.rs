@@ -4567,13 +4567,92 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
         body.contains("Storage "),
         "the warehouse shows a storage effect"
     );
-    // Buildings whose rules live outside the economy show their effects too.
-    assert!(body.contains("Merchants "), "the Marketplace shows merchant count");
-    assert!(body.contains("Build speed ×"), "the Main Building shows the build-speed factor");
-    assert!(body.contains("Culture +"), "the Town Hall shows culture gain");
-    assert!(body.contains("Training speed ×"), "training buildings show the training-speed factor");
+    // Buildings whose rules live outside the economy show their effects too (AC1).
+    assert!(
+        body.contains("Merchants "),
+        "the Marketplace shows merchant count"
+    );
+    assert!(
+        body.contains("Build speed ×"),
+        "the Main Building shows the build-speed factor"
+    );
+    assert!(
+        body.contains("Culture +"),
+        "the Town Hall shows culture gain"
+    );
+    assert!(
+        body.contains("Training speed ×"),
+        "training buildings show the training-speed factor"
+    );
+    assert!(
+        body.contains("Wall defence "),
+        "the Wall shows its defence bonus"
+    );
+    assert!(body.contains("Hides "), "the Cranny shows resources hidden");
+    assert!(
+        body.contains("Expansion slots "),
+        "the Residence shows expansion slots"
+    );
     // The resource bars are wired (fill + ETA computed client-side from these attributes).
-    assert!(body.contains("resbar") && body.contains("data-amt="), "resource bars are present");
+    assert!(
+        body.contains("resbar") && body.contains("data-amt="),
+        "resource bars are present"
+    );
+}
+
+/// 032 AC2: the Wall defence effect is tribe-correct — a Teuton's Wall shows a different bonus than a
+/// Gaul's (Teuton walls are weaker per level).
+#[sqlx::test(migrations = "../../migrations")]
+async fn wall_effect_is_tribe_correct(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let wall_line = |body: &str| -> String {
+        body.lines()
+            .find(|l| l.contains("Wall defence "))
+            .unwrap_or_default()
+            .to_owned()
+    };
+    // A Gaul and a Teuton village.
+    let g = client();
+    g.post(format!("{base}/register"))
+        .form(&[
+            ("username", unique("wg").as_str()),
+            ("email", "wg@e.com"),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let t = client();
+    t.post(format!("{base}/register"))
+        .form(&[
+            ("username", unique("wt").as_str()),
+            ("email", "wt@e.com"),
+            ("password", "secret12"),
+            ("tribe", "teutons"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let gb = g
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let tb = t
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let (gl, tl) = (wall_line(&gb), wall_line(&tb));
+    assert!(gl.contains("Wall defence ") && tl.contains("Wall defence "));
+    assert_ne!(gl, tl, "the Wall effect differs by tribe");
 }
 
 /// 031 AC1: a non-capital field at its cap shows **no** effect (the cost table runs to the higher capital
