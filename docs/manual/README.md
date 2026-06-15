@@ -35,5 +35,6 @@ manual grows as the game does.
 - [Notifications & alerts](notifications.md) — the nav bell: live, private alerts for incoming attacks, battle reports, and new messages, with a feed you can revisit.
 - [The alliance forum](alliance-forum.md) — your alliance's private threaded discussion: start threads, reply, and post locked announcements (with the Announce right).
 - [Finding players, alliances & places](search.md) — the search box: jump to a player, an alliance (by name or tag), or a map tile by coordinate.
+- [Settings & preferences](settings.md) — your own preferences, starting with per-kind notification controls.
 
 *(More chapters arrive as those features ship.)*

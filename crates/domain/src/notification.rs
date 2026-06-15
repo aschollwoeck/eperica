@@ -17,6 +17,13 @@ pub enum NotificationKind {
 }
 
 impl NotificationKind {
+    /// Every kind, for iteration (e.g. the settings page lists each one).
+    pub const ALL: [NotificationKind; 3] = [
+        NotificationKind::IncomingAttack,
+        NotificationKind::BattleReport,
+        NotificationKind::NewMessage,
+    ];
+
     /// The stable storage token (the DB `kind` column).
     pub fn as_str(self) -> &'static str {
         match self {
@@ -50,15 +57,9 @@ impl NotificationKind {
 mod tests {
     use super::*;
 
-    const ALL: [NotificationKind; 3] = [
-        NotificationKind::IncomingAttack,
-        NotificationKind::BattleReport,
-        NotificationKind::NewMessage,
-    ];
-
     #[test]
     fn codec_round_trips_every_variant() {
-        for k in ALL {
+        for k in NotificationKind::ALL {
             assert_eq!(NotificationKind::parse(k.as_str()), Some(k));
         }
     }
@@ -71,7 +72,7 @@ mod tests {
 
     #[test]
     fn labels_are_distinct_and_present() {
-        for k in ALL {
+        for k in NotificationKind::ALL {
             assert!(!k.label().is_empty());
         }
         assert_eq!(NotificationKind::IncomingAttack.label(), "Incoming attack");

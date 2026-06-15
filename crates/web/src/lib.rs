@@ -249,6 +249,11 @@ pub fn router(state: AppState) -> Router {
         .route("/stats/alliance/{id}", get(handlers::alliance_stats_page))
         .route("/profile", get(handlers::profile_page))
         .route("/profile/bio", post(handlers::profile_bio_submit))
+        .route("/settings", get(handlers::settings_page))
+        .route(
+            "/settings/notifications",
+            post(handlers::settings_notifications_submit),
+        )
         .route("/report", post(handlers::report_submit))
         .route("/mod", get(handlers::mod_queue))
         .route("/mod/account/{id}", get(handlers::mod_account))

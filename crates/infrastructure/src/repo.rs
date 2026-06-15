@@ -2992,6 +2992,9 @@ impl CombatRepository for PgAccountRepository {
                 SELECT u.id, $1, u.player_id, 'battle_report', 'report', $4, '', \
                        to_timestamp($5::double precision / 1000.0) \
                 FROM unnest($2::uuid[], $3::uuid[]) AS u(id, player_id) \
+                WHERE NOT EXISTS ( \
+                    SELECT 1 FROM notification_mutes m \
+                     WHERE m.player_id = u.player_id AND m.kind = 'battle_report') \
                 RETURNING player_id \
              ) \
              SELECT pg_notify('notifications', json_build_object( \
@@ -7220,8 +7223,12 @@ impl CommsRepository for PgAccountRepository {
              ), note AS ( \
                 INSERT INTO notifications \
                     (id, world_id, player_id, kind, ref_kind, ref_id, body, created_at) \
-                VALUES ($7, $2, $4, 'new_message', 'dm', $3::text, '', \
-                        to_timestamp($6::double precision / 1000.0)) \
+                SELECT $7, $2, $4, 'new_message', 'dm', $3::text, '', \
+                       to_timestamp($6::double precision / 1000.0) \
+                WHERE NOT EXISTS ( \
+                    SELECT 1 FROM notification_mutes m \
+                     WHERE m.player_id = $4 AND m.kind = 'new_message') \
+                RETURNING player_id \
              ) \
              SELECT pg_notify('comms', json_build_object( \
                 'keys', json_build_array( \
@@ -7232,7 +7239,7 @@ impl CommsRepository for PgAccountRepository {
              )::text) \
              UNION ALL \
              SELECT pg_notify('notifications', json_build_object( \
-                'key', 'notif:' || $4::text, 'kind', 'new_message')::text)",
+                'key', 'notif:' || player_id::text, 'kind', 'new_message')::text) FROM note",
         )
         .bind(id)
         .bind(Uuid::from_u128(self.world_id.0))
@@ -7496,6 +7503,9 @@ impl NotificationRepository for PgAccountRepository {
                        to_timestamp($8::double precision / 1000.0) \
                 FROM unnest($2::uuid[], $3::uuid[], $4::text[], $5::text[], $6::text[], $7::text[]) \
                      AS u(id, player_id, kind, ref_kind, ref_id, body) \
+                WHERE NOT EXISTS ( \
+                    SELECT 1 FROM notification_mutes m \
+                     WHERE m.player_id = u.player_id AND m.kind = u.kind) \
                 RETURNING player_id, kind \
              ) \
              SELECT pg_notify('notifications', json_build_object( \
@@ -7563,6 +7573,47 @@ impl NotificationRepository for PgAccountRepository {
         .execute(&self.pool)
         .await
         .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn muted_kinds(&self, player: PlayerId) -> Result<Vec<NotificationKind>, RepoError> {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT kind FROM notification_mutes WHERE player_id = $1")
+                .bind(Uuid::from_u128(player.0))
+                .fetch_all(&self.pool)
+                .await
+                .map_err(backend)?;
+        // Unrecognised stored kinds (e.g. from a future version) are simply ignored.
+        Ok(rows
+            .iter()
+            .filter_map(|(k,)| NotificationKind::parse(k))
+            .collect())
+    }
+
+    async fn set_mute(
+        &self,
+        player: PlayerId,
+        kind: NotificationKind,
+        muted: bool,
+    ) -> Result<(), RepoError> {
+        if muted {
+            sqlx::query(
+                "INSERT INTO notification_mutes (player_id, kind) VALUES ($1, $2) \
+                 ON CONFLICT (player_id, kind) DO NOTHING",
+            )
+            .bind(Uuid::from_u128(player.0))
+            .bind(kind.as_str())
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        } else {
+            sqlx::query("DELETE FROM notification_mutes WHERE player_id = $1 AND kind = $2")
+                .bind(Uuid::from_u128(player.0))
+                .bind(kind.as_str())
+                .execute(&self.pool)
+                .await
+                .map_err(backend)?;
+        }
         Ok(())
     }
 }
@@ -8151,6 +8202,86 @@ mod tests {
             "by tag"
         );
         assert!(repo.search_alliances("zzz", 10).await.unwrap().is_empty());
+    }
+
+    /// 029 AC2/AC3/AC4: muting a kind suppresses its generation for that player only; un-muting restores it.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn notification_mutes_gate_generation(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let a = make_account(&repo, &template, "muter").await;
+        let b = make_account(&repo, &template, "other").await;
+
+        // Default: nothing muted.
+        assert!(repo.muted_kinds(a).await.unwrap().is_empty());
+
+        // Mute NewMessage for `a` (idempotent), leave `b` alone.
+        NotificationRepository::set_mute(&repo, a, NotificationKind::NewMessage, true)
+            .await
+            .unwrap();
+        NotificationRepository::set_mute(&repo, a, NotificationKind::NewMessage, true)
+            .await
+            .unwrap(); // idempotent
+        assert_eq!(
+            repo.muted_kinds(a).await.unwrap(),
+            vec![NotificationKind::NewMessage]
+        );
+
+        // record() a NewMessage for both: `a` (muted) gets none, `b` does.
+        let note = |p: PlayerId| NewNotification {
+            player: p,
+            kind: NotificationKind::NewMessage,
+            ref_kind: Some("dm".to_owned()),
+            ref_id: None,
+            body: String::new(),
+        };
+        repo.record(&[note(a), note(b)], crate::now())
+            .await
+            .unwrap();
+        assert_eq!(
+            NotificationRepository::unread_count(&repo, a)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            NotificationRepository::unread_count(&repo, b)
+                .await
+                .unwrap(),
+            1
+        );
+
+        // A non-muted kind for `a` still records.
+        repo.record(
+            &[NewNotification {
+                player: a,
+                kind: NotificationKind::IncomingAttack,
+                ref_kind: None,
+                ref_id: None,
+                body: String::new(),
+            }],
+            crate::now(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            NotificationRepository::unread_count(&repo, a)
+                .await
+                .unwrap(),
+            1
+        );
+
+        // Un-mute → generation restored.
+        NotificationRepository::set_mute(&repo, a, NotificationKind::NewMessage, false)
+            .await
+            .unwrap();
+        assert!(repo.muted_kinds(a).await.unwrap().is_empty());
+        repo.record(&[note(a)], crate::now()).await.unwrap();
+        assert_eq!(
+            NotificationRepository::unread_count(&repo, a)
+                .await
+                .unwrap(),
+            2
+        );
     }
 
     /// 027 AC1–AC3: forum threads + posts round-trip; a reply bumps the thread's activity; `thread_head`
@@ -11129,6 +11260,12 @@ mod tests {
         .await
         .expect("attack");
 
+        // 029 AC3: the reinforcing ally mutes battle reports before the battle resolves; the gate in
+        // `apply_battle` must then skip their notification while still notifying the attacker + owner.
+        NotificationRepository::set_mute(&repo, ally, NotificationKind::BattleReport, true)
+            .await
+            .unwrap();
+
         let targets = eperica_application::process_due_combat(
             &repo,
             &repo,
@@ -11185,21 +11322,30 @@ mod tests {
         assert_eq!(defs[0], (Uuid::from_u128(defender.0), true)); // garrison owner
         assert_eq!(defs[1], (Uuid::from_u128(ally.0), false)); // reinforcer
 
-        // 026 AC2: the attacker + each distinct defending participant got a battle-report notification.
-        for (who, label) in [
-            (attacker, "attacker"),
-            (defender, "owner"),
-            (ally, "reinforcer"),
-        ] {
-            let notes = NotificationRepository::list(&repo, who, 10).await.unwrap();
-            assert!(
-                notes
-                    .iter()
-                    .any(|n| n.kind == NotificationKind::BattleReport
-                        && n.ref_id.as_deref() == Some(&reports[0].id.to_string())),
-                "the {label} got a battle-report notification"
-            );
-        }
+        // 026 AC2: the attacker + the (non-muting) owner got a battle-report notification.
+        let has_report = async |who: PlayerId| {
+            NotificationRepository::list(&repo, who, 10)
+                .await
+                .unwrap()
+                .iter()
+                .any(|n| {
+                    n.kind == NotificationKind::BattleReport
+                        && n.ref_id.as_deref() == Some(&reports[0].id.to_string())
+                })
+        };
+        assert!(
+            has_report(attacker).await,
+            "the attacker got a battle-report notification"
+        );
+        assert!(
+            has_report(defender).await,
+            "the owner got a battle-report notification"
+        );
+        // 029 AC3: the muting reinforcer got none (the apply_battle gate skipped it).
+        assert!(
+            !has_report(ally).await,
+            "the reinforcer muted battle reports and got none"
+        );
     }
 
     /// 010 AC6/AC7/AC8/AC9: scouts riding an attack scout the village in addition to the battle —
