@@ -112,6 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rules,
         build_rules: Arc::new(build_rules()?),
         unit_rules: units,
+        combat_rules: Arc::clone(&combat),
         culture_rules: culture,
         loyalty_rules: loyalty,
         alliance_rules: Arc::new(alliance_rules()?),

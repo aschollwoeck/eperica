@@ -55,6 +55,7 @@ async fn spawn(pool: sqlx::PgPool) -> String {
         rules: Arc::new(rules),
         build_rules: Arc::new(build_rules().expect("build rules")),
         unit_rules: Arc::new(unit_rules().expect("unit rules")),
+        combat_rules: Arc::new(combat_rules().expect("combat rules")),
         culture_rules: Arc::new(culture_rules().expect("culture rules")),
         loyalty_rules: Arc::new(loyalty_rules().expect("loyalty rules")),
         alliance_rules: Arc::new(alliance_rules().expect("alliance rules")),
@@ -381,6 +382,11 @@ async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
         .unwrap();
     assert!(body.contains("Phalanx"));
     assert!(body.contains("value=\"phalanx\""));
+    // 031: the smithy shows the stat gain the next level grants.
+    assert!(
+        body.contains("Att ") && body.contains('→'),
+        "smithy shows the upgrade's stat gain"
+    );
     let res = c
         .post(format!("{base}/village/smithy/upgrade"))
         .form(&[("unit", "phalanx")])
@@ -942,6 +948,15 @@ async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
     assert!(rally.contains("Rally Point"));
     assert!(rally.contains("Phalanx"));
     assert!(rally.contains("name=\"count_phalanx\""));
+    // 031: per-unit stats are plumbed for the live army preview (power / carry / speed / ETA).
+    assert!(
+        rally.contains("rally-count") && rally.contains("data-att="),
+        "rally carries per-unit stat data"
+    );
+    assert!(
+        rally.contains("rally-preview"),
+        "rally has the live preview element"
+    );
 
     // AC1/AC7: send 4 Phalanx to the target's tile; PRG back to the village.
     let res = cs
@@ -1145,6 +1160,11 @@ async fn marketplace_send_and_deliver_flow(pool: sqlx::PgPool) {
     assert!(market.contains("750")); // Gaul merchant capacity
     assert!(market.contains("free of 5"));
     assert!(market.contains("name=\"amount_wood\""));
+    // 031: the live shipment preview (merchants needed + round-trip) is wired in.
+    assert!(
+        market.contains("ship-preview") && market.contains("ship-amt"),
+        "market has the live shipment preview"
+    );
 
     // AC1/AC6: send 300 wood to the target's tile; PRG back to the village.
     let res = cs

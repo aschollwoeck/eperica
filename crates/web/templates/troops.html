@@ -37,11 +37,14 @@
         <td class="num">{{ u.time }}</td>
         <td>
           {% if u.can_order %}
-          <form method="post" action="/village/train" class="field" style="display:flex;gap:6px">
+          <form method="post" action="/village/train" class="train-form" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"
+                data-w="{{ u.cost_wood }}" data-c="{{ u.cost_clay }}" data-i="{{ u.cost_iron }}" data-cr="{{ u.cost_crop }}"
+                data-secs="{{ u.time_secs }}" data-up="{{ u.upkeep }}">
             <input type="hidden" name="village" value="{{ village_id }}">
             <input type="hidden" name="unit" value="{{ u.id }}">
             <input type="number" name="count" value="1" min="1" max="9999" required style="width:5.5em">
             <button class="btn btn--primary" type="submit">Train</button>
+            <span class="batch-total muted"></span>
           </form>
           {% else %}<span class="muted">{{ u.gate }}</span>{% endif %}
         </td>
@@ -54,6 +57,22 @@
 </section>
 
 <script>
+  // 031: live batch totals — as you change a count, show total cost / time / upkeep before you commit.
+  for (const form of document.querySelectorAll(".train-form")) {
+    const input = form.querySelector("input[name=count]");
+    const out = form.querySelector(".batch-total");
+    const d = form.dataset;
+    const fmt = (s) => { const h=Math.floor(s/3600); s-=h*3600; const m=Math.floor(s/60);
+      return `${h}:${String(m).padStart(2,"0")}:${String(s-m*60).padStart(2,"0")}`; };
+    const upd = () => {
+      const n = Math.max(0, parseInt(input.value, 10) || 0);
+      out.textContent = n
+        ? `= ${n*d.w}/${n*d.c}/${n*d.i}/${n*d.cr} · ${fmt(n*d.secs)} · −${n*d.up} crop/h`
+        : "";
+    };
+    input.addEventListener("input", upd); upd();
+  }
+
   for (const el of document.querySelectorAll(".countdown")) {
     const deadline = Number(el.dataset.deadline);
     const tick = () => {

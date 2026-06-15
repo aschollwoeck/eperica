@@ -1568,6 +1568,23 @@ pub async fn smithy(
                 iron: 0,
                 crop: 0,
             });
+            // 031: the stat gain this upgrade grants (Smithy scales attack + defence per level).
+            let effect = if cost.is_none() {
+                String::new()
+            } else {
+                let stat = |base: u32, lvl: u8| {
+                    (f64::from(base) * state.combat_rules.smithy_factor(lvl)).round() as u32
+                };
+                format!(
+                    "Att {}→{} · Def {}/{}→{}/{}",
+                    stat(spec.attack, level),
+                    stat(spec.attack, level + 1),
+                    stat(spec.defense_infantry, level),
+                    stat(spec.defense_cavalry, level),
+                    stat(spec.defense_infantry, level + 1),
+                    stat(spec.defense_cavalry, level + 1),
+                )
+            };
             SmithyRow {
                 id: spec.id.as_str().to_owned(),
                 name: spec.name.clone(),
@@ -1579,6 +1596,7 @@ pub async fn smithy(
                 cost_iron: c.iron,
                 cost_crop: c.crop,
                 time: fmt_duration(time_secs),
+                effect,
             }
         })
         .collect();
@@ -1705,6 +1723,12 @@ pub async fn troops(
                     &unit_rules.training,
                     state.world.speed,
                 )),
+                time_secs: per_unit_time_secs(
+                    spec.train_secs,
+                    building_level,
+                    &unit_rules.training,
+                    state.world.speed,
+                ),
                 can_order: batch.is_none(),
                 gate: if batch.is_some() {
                     "training in progress".to_owned()
@@ -1831,6 +1855,11 @@ pub async fn rally(
                 id: u.as_str().to_owned(),
                 name: spec.map_or_else(|| u.as_str().to_owned(), |s| s.name.clone()),
                 available: *n,
+                speed: spec.map_or(0, |s| s.speed),
+                carry: spec.map_or(0, |s| s.carry_capacity),
+                attack: spec.map_or(0, |s| s.attack),
+                def_inf: spec.map_or(0, |s| s.defense_infantry),
+                def_cav: spec.map_or(0, |s| s.defense_cavalry),
             }
         })
         .collect();
@@ -1865,6 +1894,10 @@ pub async fn rally(
         target_is_oasis,
         can_settle,
         settlers_per_village: state.culture_rules.settlers_per_village,
+        origin_x: village.coordinate.x,
+        origin_y: village.coordinate.y,
+        radius: i32::try_from(state.world.radius).unwrap_or(i32::MAX),
+        speed_mult: state.world.speed.multiplier(),
     })
 }
 
@@ -2136,6 +2169,11 @@ pub async fn market(
             capacity: 0,
             free: 0,
             total: 0,
+            merchant_speed: 0,
+            origin_x: 0,
+            origin_y: 0,
+            radius: 0,
+            speed_mult: 1.0,
         });
     }
     let committed = match state.accounts.committed_merchants(village.id).await {
@@ -2146,12 +2184,18 @@ pub async fn market(
         }
     };
     let total = state.merchant_rules.merchants_total(level);
+    let profile = state.merchant_rules.profile(tribe);
     page(&MarketTemplate {
         village_id,
         has_marketplace: true,
-        capacity: state.merchant_rules.profile(tribe).capacity,
+        capacity: profile.capacity,
         free: total.saturating_sub(committed),
         total,
+        merchant_speed: profile.speed,
+        origin_x: village.coordinate.x,
+        origin_y: village.coordinate.y,
+        radius: i32::try_from(state.world.radius).unwrap_or(i32::MAX),
+        speed_mult: state.world.speed.multiplier(),
     })
 }
 

@@ -67,13 +67,58 @@
         <tr>
           <td>{{ u.name }}</td>
           <td class="num">{{ u.available }}</td>
-          <td><input type="number" name="count_{{ u.id }}" value="0" min="0" max="{{ u.available }}" style="width:5em"></td>
+          <td><input type="number" name="count_{{ u.id }}" value="0" min="0" max="{{ u.available }}" style="width:5em"
+                     class="rally-count" data-speed="{{ u.speed }}" data-carry="{{ u.carry }}"
+                     data-att="{{ u.attack }}" data-di="{{ u.def_inf }}" data-dc="{{ u.def_cav }}"></td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
+    <p id="rally-preview" class="muted"></p>
     <button class="btn btn--primary" type="submit">Send reinforcement</button>
   </form>
   {% endif %}
 </section>
+
+<script>
+  // 031: live preview of the selected army — combined power, carry capacity, slowest speed, and (when a
+  // target is set) the travel time, matching the server's toroidal distance × world speed.
+  (function () {
+    const counts = Array.from(document.querySelectorAll(".rally-count"));
+    const out = document.getElementById("rally-preview");
+    if (!out || !counts.length) return;
+    const xEl = document.querySelector("input[name=x]"), yEl = document.querySelector("input[name=y]");
+    const W = {{ radius }} * 2 + 1, MULT = {{ speed_mult }}, OX = {{ origin_x }}, OY = {{ origin_y }};
+    const gap = (p, q) => { const m = (((p - q) % W) + W) % W; return Math.min(m, W - m); };
+    const fmt = (s) => { const h=Math.floor(s/3600); s-=h*3600; const m=Math.floor(s/60);
+      return `${h}:${String(m).padStart(2,"0")}:${String(s-m*60).padStart(2,"0")}`; };
+    const upd = () => {
+      let att=0, di=0, dc=0, carry=0, slow=Infinity, any=false;
+      for (const el of counts) {
+        const n = Math.max(0, parseInt(el.value, 10) || 0);
+        if (!n) continue;
+        any = true;
+        att += n*+el.dataset.att; di += n*+el.dataset.di; dc += n*+el.dataset.dc;
+        carry += n*+el.dataset.carry;
+        const sp = +el.dataset.speed; if (sp > 0) slow = Math.min(slow, sp);
+      }
+      if (!any) { out.textContent = ""; return; }
+      let s = `Power: atk ${att} · def ${di}/${dc} · carry ${carry}`;
+      if (slow !== Infinity) {
+        s += ` · ${slow} fields/h`;
+        const tx = parseInt(xEl.value, 10), ty = parseInt(yEl.value, 10);
+        if (Number.isInteger(tx) && Number.isInteger(ty)) {
+          const dx = gap(OX, tx), dy = gap(OY, ty);
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          const secs = Math.round((dist / (Math.max(slow,1) * MULT)) * 3600);
+          s += ` · travel ${fmt(secs)} (one way)`;
+        }
+      }
+      out.textContent = s;
+    };
+    for (const el of counts) el.addEventListener("input", upd);
+    for (const el of [xEl, yEl]) if (el) el.addEventListener("input", upd);
+    upd();
+  })();
+</script>
 {% endblock %}

@@ -18,7 +18,7 @@
     <thead>
       <tr>
         <th>Unit</th><th class="num">Level</th>
-        <th>Upgrade cost (W/C/I/Cr)</th><th class="num">Time</th><th></th>
+        <th>Upgrade cost (W/C/I/Cr)</th><th class="num">Time</th><th>Next level</th><th></th>
       </tr>
     </thead>
     <tbody>
@@ -28,6 +28,7 @@
         <td class="num">{{ u.level }}</td>
         <td><span class="num">{{ u.cost_wood }}/{{ u.cost_clay }}/{{ u.cost_iron }}/{{ u.cost_crop }}</span></td>
         <td class="num">{{ u.time }}</td>
+        <td class="muted">{{ u.effect }}</td>
         <td>
           {% if u.can_order %}
           <form method="post" action="/village/smithy/upgrade">
