@@ -104,9 +104,9 @@ impl EconomyRules {
             .map_or(0, |table| level_value(table, level))
     }
 
-    /// A single resource field's **gross** hourly production at `level`, scaled by `speed` — the same
-    /// per-field value [`production_rates`] sums. Used to show an upgrade's effect (e.g. a crop field's new
-    /// rate) without recomputing the whole village.
+    /// A single resource field's **gross, pre-oasis** hourly production at `level`, scaled by `speed` — the
+    /// per-field base [`production_rates`] sums before applying any oasis bonus. Used to show an upgrade's
+    /// effect (e.g. a crop field's new rate) without recomputing the whole village.
     #[must_use]
     pub fn field_production_per_hour(
         &self,

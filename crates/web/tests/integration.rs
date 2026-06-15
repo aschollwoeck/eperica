@@ -4568,3 +4568,41 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
         "the warehouse shows a storage effect"
     );
 }
+
+/// 031 AC1: a non-capital field at its cap shows **no** effect (the cost table runs to the higher capital
+/// cap, so the effect must be blanked explicitly — not left stale).
+#[sqlx::test(migrations = "../../migrations")]
+async fn capped_noncapital_field_shows_no_effect(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (c, _id) = register_client(&base, &pool, &unique("cap")).await;
+    // Make the village non-capital (field cap 10) and push every field above it but below the capital cap.
+    let vid: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username LIKE 'cap%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE villages SET is_capital = false WHERE id = $1")
+        .bind(vid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE village_fields SET level = 15 WHERE village_id = $1")
+        .bind(vid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let body = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("max"), "capped fields show the max state");
+    assert!(
+        !body.contains("Production "),
+        "a capped non-capital field shows no stale production effect"
+    );
+}

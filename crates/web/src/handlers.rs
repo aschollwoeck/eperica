@@ -701,8 +701,11 @@ pub async fn village(
                 field_effect(f.kind, f.level),
             );
             if f.level >= field_cap {
+                // A non-capital field caps below the cost table's end (which runs to the capital cap), so
+                // also blank the effect — there is no buildable next level here (AC1).
                 row.at_max = true;
                 row.can_order = false;
+                row.effect = String::new();
             }
             row
         })
@@ -1851,15 +1854,33 @@ pub async fn rally(
         .filter(|(_, n)| *n > 0)
         .map(|(u, n)| {
             let spec = roster.iter().find(|s| &s.id == u);
+            // For the army-power preview, count only units that fight the main battle: scouts + oasis
+            // animals never do, and a ram's attack feeds the wall, not the field battle (009/010).
+            let main_battle =
+                spec.is_some_and(|s| !matches!(s.role, UnitRole::Scout | UnitRole::Wild));
+            let counts_attack = main_battle
+                && spec.is_some_and(|s| s.siege_kind != Some(eperica_domain::SiegeKind::Ram));
             RallyUnitRow {
                 id: u.as_str().to_owned(),
                 name: spec.map_or_else(|| u.as_str().to_owned(), |s| s.name.clone()),
                 available: *n,
                 speed: spec.map_or(0, |s| s.speed),
                 carry: spec.map_or(0, |s| s.carry_capacity),
-                attack: spec.map_or(0, |s| s.attack),
-                def_inf: spec.map_or(0, |s| s.defense_infantry),
-                def_cav: spec.map_or(0, |s| s.defense_cavalry),
+                attack: if counts_attack {
+                    spec.map_or(0, |s| s.attack)
+                } else {
+                    0
+                },
+                def_inf: if main_battle {
+                    spec.map_or(0, |s| s.defense_infantry)
+                } else {
+                    0
+                },
+                def_cav: if main_battle {
+                    spec.map_or(0, |s| s.defense_cavalry)
+                } else {
+                    0
+                },
             }
         })
         .collect();
