@@ -16,10 +16,10 @@ use eperica_application::{
     OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PendingInvite, PlayerHit,
     PlayerStats, ProfileView, QuestRepository, RankingRepository, RazedBuilding, RepoError,
     ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
-    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, StarvationRepository,
-    StationedGroup, ThreadHead, ThreadSummary, TradeRepository, TradeView, TrainingRepository,
-    UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome, WonderRepository,
-    WonderStanding,
+    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, SitterActionView,
+    StarvationRepository, StationedGroup, ThreadHead, ThreadSummary, TradeRepository, TradeView,
+    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome,
+    WonderRepository, WonderStanding,
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactEffects,
@@ -870,6 +870,137 @@ impl AccountRepository for PgAccountRepository {
             })
             .collect()
     }
+
+    // ---- Account sitting (030) ----
+
+    async fn grant_sitter(&self, owner: PlayerId, sitter: PlayerId) -> Result<(), RepoError> {
+        sqlx::query(
+            "INSERT INTO account_sitters (owner_id, sitter_id) VALUES ($1, $2) \
+             ON CONFLICT (owner_id, sitter_id) DO NOTHING",
+        )
+        .bind(Uuid::from_u128(owner.0))
+        .bind(Uuid::from_u128(sitter.0))
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn revoke_sitter(&self, owner: PlayerId, sitter: PlayerId) -> Result<(), RepoError> {
+        sqlx::query("DELETE FROM account_sitters WHERE owner_id = $1 AND sitter_id = $2")
+            .bind(Uuid::from_u128(owner.0))
+            .bind(Uuid::from_u128(sitter.0))
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn is_sitter(&self, owner: PlayerId, sitter: PlayerId) -> Result<bool, RepoError> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM account_sitters WHERE owner_id = $1 AND sitter_id = $2",
+        )
+        .bind(Uuid::from_u128(owner.0))
+        .bind(Uuid::from_u128(sitter.0))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(n > 0)
+    }
+
+    async fn count_sitters(&self, owner: PlayerId) -> Result<i64, RepoError> {
+        sqlx::query_scalar("SELECT count(*) FROM account_sitters WHERE owner_id = $1")
+            .bind(Uuid::from_u128(owner.0))
+            .fetch_one(&self.pool)
+            .await
+            .map_err(backend)
+    }
+
+    async fn sitters_of(&self, owner: PlayerId) -> Result<Vec<PlayerHit>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT u.id, u.username FROM account_sitters s JOIN users u ON u.id = s.sitter_id \
+             WHERE s.owner_id = $1 ORDER BY u.username ASC",
+        )
+        .bind(Uuid::from_u128(owner.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        sitter_hits(&rows)
+    }
+
+    async fn sitting_for(&self, sitter: PlayerId) -> Result<Vec<PlayerHit>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT u.id, u.username FROM account_sitters s JOIN users u ON u.id = s.owner_id \
+             WHERE s.sitter_id = $1 ORDER BY u.username ASC",
+        )
+        .bind(Uuid::from_u128(sitter.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        sitter_hits(&rows)
+    }
+
+    async fn log_sitter_action(
+        &self,
+        owner: PlayerId,
+        sitter: PlayerId,
+        action: &str,
+        now: Timestamp,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            "INSERT INTO sitter_actions (id, owner_id, sitter_id, action, created_at) \
+             VALUES ($1, $2, $3, $4, to_timestamp($5::double precision / 1000.0))",
+        )
+        .bind(Uuid::new_v4())
+        .bind(Uuid::from_u128(owner.0))
+        .bind(Uuid::from_u128(sitter.0))
+        .bind(action)
+        .bind(now.0)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn sitter_actions(
+        &self,
+        owner: PlayerId,
+        limit: i64,
+    ) -> Result<Vec<SitterActionView>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT u.username AS sitter_name, a.action, \
+                    (EXTRACT(EPOCH FROM a.created_at) * 1000)::bigint AS created_ms \
+             FROM sitter_actions a JOIN users u ON u.id = a.sitter_id \
+             WHERE a.owner_id = $1 ORDER BY a.created_at DESC, a.id DESC LIMIT $2",
+        )
+        .bind(Uuid::from_u128(owner.0))
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                Ok(SitterActionView {
+                    sitter_name: r.try_get("sitter_name").map_err(backend)?,
+                    action: r.try_get("action").map_err(backend)?,
+                    created_ms: r.try_get("created_ms").map_err(backend)?,
+                })
+            })
+            .collect()
+    }
+}
+
+/// Map `(id, username)` rows to [`PlayerHit`]s (the sitter lists).
+fn sitter_hits(rows: &[PgRow]) -> Result<Vec<PlayerHit>, RepoError> {
+    rows.iter()
+        .map(|r| {
+            let id: Uuid = r.try_get("id").map_err(backend)?;
+            Ok(PlayerHit {
+                player: PlayerId(id.as_u128()),
+                name: r.try_get("username").map_err(backend)?,
+            })
+        })
+        .collect()
 }
 
 /// Freshness window for [`PgAccountRepository::touch_activity`] — `last_activity` is rewritten only
@@ -8140,6 +8271,52 @@ mod tests {
             ),
             "non-member cannot open the alliance channel"
         );
+    }
+
+    /// 030 AC1/AC5: sitter grant/revoke + is_sitter/count round-trip; the audit log records + reads back.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn account_sitters_and_audit_log(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let owner = make_account(&repo, &template, "owner").await;
+        let sitter = make_account(&repo, &template, "sitter").await;
+        let other = make_account(&repo, &template, "other").await;
+
+        // Default: nothing authorised.
+        assert!(!repo.is_sitter(owner, sitter).await.unwrap());
+        assert_eq!(repo.count_sitters(owner).await.unwrap(), 0);
+
+        // Grant (idempotent) → is_sitter + count + lists reflect it.
+        repo.grant_sitter(owner, sitter).await.unwrap();
+        repo.grant_sitter(owner, sitter).await.unwrap(); // idempotent
+        assert!(repo.is_sitter(owner, sitter).await.unwrap());
+        assert!(!repo.is_sitter(owner, other).await.unwrap());
+        assert_eq!(repo.count_sitters(owner).await.unwrap(), 1);
+        let sitters = repo.sitters_of(owner).await.unwrap();
+        assert_eq!(sitters.len(), 1);
+        assert_eq!(sitters[0].player, sitter);
+        assert_eq!(repo.sitting_for(sitter).await.unwrap().len(), 1);
+
+        // Audit log records sitter actions, most-recent first.
+        repo.log_sitter_action(owner, sitter, "POST /village/build", crate::now())
+            .await
+            .unwrap();
+        repo.log_sitter_action(
+            owner,
+            sitter,
+            "POST /village/train",
+            Timestamp(crate::now().0 + 1000),
+        )
+        .await
+        .unwrap();
+        let log = repo.sitter_actions(owner, 10).await.unwrap();
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].action, "POST /village/train"); // newest first
+        assert!(log[0].sitter_name.starts_with("sitter")); // make_account names are "sitter_<uuid>"
+
+        // Revoke → de-authorised.
+        repo.revoke_sitter(owner, sitter).await.unwrap();
+        assert!(!repo.is_sitter(owner, sitter).await.unwrap());
+        assert_eq!(repo.count_sitters(owner).await.unwrap(), 0);
     }
 
     /// 028 AC1/AC2/AC5: who-is search — username prefix (abandoned/NPC excluded) + alliance name/tag prefix.

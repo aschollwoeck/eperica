@@ -230,6 +230,82 @@ pub trait AccountRepository: Send + Sync {
     async fn search_players(&self, _query: &str, _limit: i64) -> Result<Vec<PlayerHit>, RepoError> {
         Ok(Vec::new())
     }
+
+    // ---- Account sitting (030). Default no-ops so non-sitting fakes are untouched. ----
+
+    /// Authorise `sitter` to operate `owner`'s account (030 AC1) — idempotent.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn grant_sitter(&self, _owner: PlayerId, _sitter: PlayerId) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// Revoke a sitter authorisation (030 AC1) — idempotent.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn revoke_sitter(&self, _owner: PlayerId, _sitter: PlayerId) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// Whether `sitter` is currently authorised for `owner` (030 AC2/AC3). Defaults to `false`.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn is_sitter(&self, _owner: PlayerId, _sitter: PlayerId) -> Result<bool, RepoError> {
+        Ok(false)
+    }
+
+    /// How many sitters `owner` has authorised (the cap check). Defaults to 0.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn count_sitters(&self, _owner: PlayerId) -> Result<i64, RepoError> {
+        Ok(0)
+    }
+
+    /// `owner`'s authorised sitters (030 AC1) — id + name. Defaults to empty.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn sitters_of(&self, _owner: PlayerId) -> Result<Vec<PlayerHit>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// The owners `sitter` is authorised to operate (030 AC2) — id + name. Defaults to empty.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn sitting_for(&self, _sitter: PlayerId) -> Result<Vec<PlayerHit>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Record a sitter's mutating action on `owner`'s account (030 AC5).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn log_sitter_action(
+        &self,
+        _owner: PlayerId,
+        _sitter: PlayerId,
+        _action: &str,
+        _now: Timestamp,
+    ) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// `owner`'s sitter-action audit log, most-recent first, capped at `limit` (030 AC5). Defaults to empty.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn sitter_actions(
+        &self,
+        _owner: PlayerId,
+        _limit: i64,
+    ) -> Result<Vec<SitterActionView>, RepoError> {
+        Ok(Vec::new())
+    }
 }
 
 /// A public player search hit (028 AC1) — id + display name only.
@@ -237,6 +313,17 @@ pub trait AccountRepository: Send + Sync {
 pub struct PlayerHit {
     pub player: PlayerId,
     pub name: String,
+}
+
+/// One entry in an owner's sitter-action audit log (030 AC5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SitterActionView {
+    /// The sitter who took the action.
+    pub sitter_name: String,
+    /// A short description (e.g. "POST /village/build").
+    pub action: String,
+    /// When it happened (Unix-ms UTC).
+    pub created_ms: i64,
 }
 
 /// A public alliance search hit (028 AC2) — id + name + tag.
