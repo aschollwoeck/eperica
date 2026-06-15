@@ -59,9 +59,9 @@
   <p class="muted">No sitter activity yet.</p>
   {% else %}
   <table class="table">
-    <thead><tr><th>Sitter</th><th>Action</th></tr></thead>
+    <thead><tr><th>Sitter</th><th>Action</th><th>When</th></tr></thead>
     <tbody>
-      {% for a in audit %}<tr><td>{{ a.sitter }}</td><td>{{ a.action }}</td></tr>{% endfor %}
+      {% for a in audit %}<tr><td>{{ a.sitter }}</td><td>{{ a.action }}</td><td class="muted">{{ a.when }}</td></tr>{% endfor %}
     </tbody>
   </table>
   {% endif %}

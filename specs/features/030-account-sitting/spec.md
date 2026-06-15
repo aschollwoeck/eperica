@@ -23,7 +23,9 @@ did). No simulation change: a sitter simply acts *as* the owner within limits.
 
 - **Restrictions (P4).** While sitting, the sitter may play the owner's game (build, train, send troops,
   trade, message, …) but **cannot**: manage the owner's sitter list, change the owner's settings or profile,
-  or start a nested sit. These are refused server-side, not merely hidden.
+  start a nested sit, or wield the owner's **moderator** powers (`/mod/*` — enforcement is never delegable).
+  These are refused server-side (prefix-matched, so a future settings/profile endpoint is restricted by
+  default), not merely hidden.
 
 - **Audit trail.** Every mutating action a sitter takes on an owner's account is recorded (the owner, the
   sitter, what, when). The owner can review this log.
@@ -63,7 +65,7 @@ did). No simulation change: a sitter simply acts *as* the owner within limits.
 |------|-----------|--------------------------|
 | **Visitor** | — (redirected to login). | Anything. |
 | **Player (owner)** | Grant/revoke their own sitters; view their own audit log. | Manage another player's sitters; grant themselves. |
-| **Player (sitter)** | Start/stop sitting an owner who authorised them; play as that owner within limits. | Sit an owner who didn't authorise them; change the owner's settings/profile/sitters; nest sits; act for a banned owner. |
+| **Player (sitter)** | Start/stop sitting an owner who authorised them; play as that owner within limits. | Sit an owner who didn't authorise them; change the owner's settings/profile/sitters; use the owner's moderator powers; nest sits; act for a banned owner. |
 | **Moderator/Administrator** | (as Player). | — |
 
 - **AC8 — Reproducibility & config.** The sitter list + audit log are persisted; the takeover is derived

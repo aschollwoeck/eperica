@@ -84,5 +84,7 @@ resolution in the auth layer, so existing gameplay handlers act as the owner unc
     a normal action (e.g. a build) runs as the owner and is **audited** (owner's log shows it, AC5);
   - the owner's audit log lists the sitter's action; reads aren't logged;
   - a banned owner cannot be operated; a banned sitter cannot sit (AC6).
-- **Performance (P11):** the per-request authorisation is one PK probe (only when `SIT_COOKIE` is set);
-  lists + log are bounded.
+- **Performance (P11):** the per-request authorisation (`is_sitter` PK probe + the owner-row read) runs
+  **only when `SIT_COOKIE` is set** — ordinary, non-sitting requests pay nothing. A sitting request resolves
+  it in a few guards/the extractor; collapsing those into one cached resolution (a request extension) is a
+  noted future optimization. Lists + log are bounded.

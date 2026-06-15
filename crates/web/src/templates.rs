@@ -894,6 +894,8 @@ pub struct SitterRow {
 pub struct AuditRow {
     pub sitter: String,
     pub action: String,
+    /// A coarse "how long ago" label.
+    pub when: String,
 }
 
 #[derive(Template)]

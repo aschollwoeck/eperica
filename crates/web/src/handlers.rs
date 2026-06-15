@@ -3046,6 +3046,20 @@ pub async fn settings_notifications_submit(
 
 // ---- Account sitting (030) ----
 
+/// A coarse "how long ago" label for an audit timestamp (030 AC5).
+fn ago(then_ms: i64, now_ms: i64) -> String {
+    let secs = ((now_ms - then_ms) / 1000).max(0);
+    if secs < 60 {
+        "just now".to_owned()
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h ago", secs / 3600)
+    } else {
+        format!("{}d ago", secs / 86_400)
+    }
+}
+
 /// The owner's name if the player is currently (and validly) sitting — from the sit cookie + a live
 /// authorisation check. Shared by the page + the status poll.
 async fn sit_owner_name(state: &AppState, jar: &PrivateCookieJar, me: PlayerId) -> Option<String> {
@@ -3094,12 +3108,14 @@ pub async fn sitting_page(
             return server_error();
         }
     };
+    let now_ms = now().0;
     let audit = match sitter_log(repo, me).await {
         Ok(log) => log
             .into_iter()
             .map(|a| AuditRow {
                 sitter: a.sitter_name,
                 action: a.action,
+                when: ago(a.created_ms, now_ms),
             })
             .collect(),
         Err(e) => {

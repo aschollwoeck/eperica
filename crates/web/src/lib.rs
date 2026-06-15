@@ -188,17 +188,18 @@ async fn action_guard(State(state): State<AppState>, req: Request, next: Next) -
     next.run(Request::from_parts(parts, body)).await
 }
 
-/// Mutating actions a sitter may **not** take on the owner's account (030 AC4) — managing the owner's
-/// sitters, changing the owner's settings/profile, or starting a nested sit.
+/// Mutating actions a sitter may **not** take on the owner's account (030 AC4). Prefix-matched so a future
+/// settings/profile endpoint is restricted by default (defense-in-depth on the takeover surface): the
+/// owner's settings + profile, the owner's moderator powers (`/mod/*` — enforcement is not delegable), and
+/// managing the owner's sitters / starting a nested sit.
 fn sitter_restricted(path: &str) -> bool {
-    matches!(
-        path,
-        "/settings/notifications"
-            | "/profile/bio"
-            | "/sitting/grant"
-            | "/sitting/revoke"
-            | "/sitting/start"
-    )
+    path.starts_with("/settings/")
+        || path.starts_with("/profile/")
+        || path.starts_with("/mod/")
+        || matches!(
+            path,
+            "/sitting/grant" | "/sitting/revoke" | "/sitting/start"
+        )
 }
 
 /// Account-sitting guard (030): on a mutating `POST` made while actively sitting, **refuse** the
