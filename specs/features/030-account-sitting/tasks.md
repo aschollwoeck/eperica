@@ -7,33 +7,33 @@ advancing. The takeover is an effective-player resolution in the auth layer; gam
 
 ## Domain
 
-- [ ] **T1 — Sitter cap rule (`domain/sitter.rs`; P3).** `MAX_SITTERS` + `can_grant_sitter(owner, target,
+- [x] **T1 — Sitter cap rule (`domain/sitter.rs`; P3).** `MAX_SITTERS` + `can_grant_sitter(owner, target,
   current_count)` (≠ self, under cap). **Unit tests:** self rejected, cap boundary (AC1).
 
 ## Persistence & ports
 
-- [ ] **T2 — Sitter tables + repository (migration `0041`).** `account_sitters` + `sitter_actions`.
+- [x] **T2 — Sitter tables + repository (migration `0041`).** `account_sitters` + `sitter_actions`.
   `AccountRepository`: `grant_sitter`/`revoke_sitter`/`is_sitter`/`count_sitters`/`sitters_of`/
   `sitting_for`/`log_sitter_action`/`sitter_actions`; `SitterActionView`. **DB tests:** grant/revoke/
   is_sitter/count round-trip; action log ordered read (AC1, AC5, AC8).
 
 ## Use-cases
 
-- [ ] **T3 — Sitting use-cases (`application/src/sitting.rs`).** `grant_sitter`/`revoke_sitter`/
+- [x] **T3 — Sitting use-cases (`application/src/sitting.rs`).** `grant_sitter`/`revoke_sitter`/
   `list_sitters`/`list_sitting_for`/`sitter_log`/`authorize_sit`/`record_sitter_action`; `SittingError`.
   `authorize_sit` = `is_sitter` ∧ owner not `account_blocked`. **Tests (fakes):** grant rejects self/
   over-cap/unknown; `authorize_sit` false for non-sitter + blocked owner; revoke de-authorises (AC1, AC2, AC6).
 
 ## Web — identity + guards
 
-- [ ] **T4 — Effective-player identity + guards (`auth.rs`, `lib.rs`).** `SIT_COOKIE`; `effective_identity`;
+- [x] **T4 — Effective-player identity + guards (`auth.rs`, `lib.rs`).** `SIT_COOKIE`; `effective_identity`;
   `AuthUser` → effective; new `RealUser` → human; `action_guard` rejects a blocked real **or** effective
   player; `sitting_guard` (refuse restricted set, else audit) ; `presence_touch` touches the effective
   player. **Tests:** covered by T5 integration.
 
 ## Web — pages
 
-- [ ] **T5 — Sitting page + controls + banner.** `GET /sitting` (RealUser), `POST /sitting/{grant,revoke,
+- [x] **T5 — Sitting page + controls + banner.** `GET /sitting` (RealUser), `POST /sitting/{grant,revoke,
   start,stop}`, `GET /sitting/status`; a `base.html` banner script + nav link. **Integration tests:**
   authorised sitter sees the owner's village while sitting; stop reverts; non-authorised cannot start;
   revoke mid-sit reverts next request; settings/profile/grant refused while sitting; a normal action runs as
