@@ -7,12 +7,12 @@ advancing. Completes the 026-deferred per-kind notification preferences.
 
 ## Domain
 
-- [ ] **T1 — `NotificationKind::ALL` (`domain/notification.rs`; P3).** The full kind set for iteration.
+- [x] **T1 — `NotificationKind::ALL` (`domain/notification.rs`; P3).** The full kind set for iteration.
   **Unit test:** `ALL` round-trips every variant via `as_str`/`parse` (AC1).
 
 ## Persistence & ports
 
-- [ ] **T2 — Mutes table + gating (migration `0040`).** `notification_mutes` (row = muted).
+- [x] **T2 — Mutes table + gating (migration `0040`).** `notification_mutes` (row = muted).
   `NotificationRepository`: `muted_kinds`, `set_mute`; gate `record` + the inline `apply_battle` /
   `send_dm` notification inserts on `NOT EXISTS (notification_mutes)` and fire the live nudge only for
   inserted rows. **DB tests:** `set_mute`/`muted_kinds` round-trip + idempotent; a muted recipient gets no
@@ -20,13 +20,13 @@ advancing. Completes the 026-deferred per-kind notification preferences.
 
 ## Use-cases
 
-- [ ] **T3 — Settings use-cases (`application/src/settings.rs`).** `notification_settings`,
+- [x] **T3 — Settings use-cases (`application/src/settings.rs`).** `notification_settings`,
   `set_notification_pref`; `SettingsError`. **Tests (fakes):** settings report enabled/disabled;
   `set_notification_pref(enabled=false)` mutes (AC1, AC2, AC4).
 
 ## Web
 
-- [ ] **T4 — Settings page + nav link.** `GET /settings` (checkbox per kind), `POST /settings/notifications`
+- [x] **T4 — Settings page + nav link.** `GET /settings` (checkbox per kind), `POST /settings/notifications`
   (owner-scoped); a Settings link in `base.html`. **Integration tests:** disabling a kind suppresses its
   notification (bell stays 0) + re-enabling restores it; Visitor redirected; one player's mute doesn't
   affect another (AC1–AC5).
