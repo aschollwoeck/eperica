@@ -12715,6 +12715,69 @@ mod tests {
             b_processing, 1,
             "world B's processing build untouched by world A's requeue"
         );
+
+        // The `home_village` path (movements/trades) is world-scoped the same way: a due reinforce in
+        // world B is invisible to world A's movement claim + requeue.
+        let arrive_past = (crate::now().0 - 60_000) as f64;
+        sqlx::query(
+            "INSERT INTO troop_movements \
+             (id, owner_id, kind, home_village, deliver_village, origin_x, origin_y, dest_x, dest_y, \
+              depart_at, arrive_at, status) \
+             VALUES ($1, $2, 'reinforce', $3, $3, 999, 999, 999, 999, \
+                     to_timestamp($4::double precision / 1000.0), \
+                     to_timestamp($4::double precision / 1000.0), 'in_transit')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(Uuid::from_u128(user.0))
+        .bind(village_b)
+        .bind(arrive_past)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // World A's movement claim takes nothing (it has no due movements of its own).
+        assert!(
+            repo.claim_due_movements(Timestamp(crate::now().0), 100)
+                .await
+                .unwrap()
+                .is_empty(),
+            "world A claims none of world B's movements"
+        );
+        // World B's reinforce is still in_transit — untouched by A's claim.
+        let b_in_transit: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM troop_movements WHERE home_village = $1 AND status = 'in_transit'",
+        )
+        .bind(village_b)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            b_in_transit, 1,
+            "world B's movement untouched by world A's claim"
+        );
+
+        // Force B's movement to 'processing'; world A's requeue must leave it.
+        sqlx::query("UPDATE troop_movements SET status = 'processing' WHERE home_village = $1")
+            .bind(village_b)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.requeue_orphaned_movements().await.unwrap(),
+            0,
+            "world A requeues none of world B's movements"
+        );
+        let b_still_processing: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM troop_movements WHERE home_village = $1 AND status = 'processing'",
+        )
+        .bind(village_b)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            b_still_processing, 1,
+            "world B's processing movement untouched by world A's requeue"
+        );
     }
 
     /// 004 AC13: a Roman village holds one field and one building order concurrently (separate

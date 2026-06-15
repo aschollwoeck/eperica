@@ -1,6 +1,6 @@
 # Feature 039 — World-scoped due processing
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 037 (players), 038 (world-scoped event store), the scheduler (001/023)
 **Roadmap:** M9 multi-world & administration, slice 4 — see [ADR 0034](../../../docs/architecture/0034-multi-world-and-administration.md).
 **Program note:** The behaviour-preserving prerequisite for **per-world schedulers** (the registry, 040).

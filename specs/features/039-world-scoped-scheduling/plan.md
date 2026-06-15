@@ -28,6 +28,14 @@ earliest due rows (now within the world) — determinism (P6/P11) holds.
   by their own `world_id` columns / the per-world config the scheduler already carries — already world
   correct; the registry (040) runs them per world.
 
+## P11 budget
+
+The added predicate is on the per-tick hot path but is **index-supported and not measurably costlier**: the
+subquery `SELECT id FROM villages WHERE world_id = $N` is served by the pre-existing `UNIQUE (world_id, x, y)`
+index (leads with `world_id`, migration 0001), and the driving claim is bounded by `LIMIT n`, so the
+semijoin is cheap. No new index is needed. The 023 `scheduler_throughput_drains_backlog` /
+`claim_takes_earliest_in_due_order` guards continue to hold, confirming no throughput/determinism regression.
+
 ## Risk
 
 - A `$N`/bind mismatch would break a scheduler flow at runtime (not compile-time). Covered by the full
