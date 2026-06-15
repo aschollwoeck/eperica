@@ -3075,6 +3075,17 @@ pub struct AdminOverview {
     pub pending_events: i64,
 }
 
+/// One world row for the admin console's worlds table (041 AC3).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdminWorld {
+    pub id: WorldId,
+    pub speed: f64,
+    pub radius: u32,
+    pub created_ms: i64,
+    /// When the world was won/frozen (Unix-ms UTC), or `None` while ongoing.
+    pub won_ms: Option<i64>,
+}
+
 /// One account row for the admin console listing (036 AC3): identity + the elevated roles + retirement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdminAccount {
@@ -3122,6 +3133,30 @@ pub trait AdminRepository: Send + Sync {
     /// [`RepoError::Backend`] on storage failure.
     async fn admin_account(&self, _player: PlayerId) -> Result<Option<AdminAccount>, RepoError> {
         Ok(None)
+    }
+
+    /// Every world, for the admin console's worlds table (041 AC3) — newest last.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn list_worlds(&self) -> Result<Vec<AdminWorld>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Create a new world row (041 AC1) — a fresh round at the given speed/radius, with a deterministic
+    /// per-world seed and the given end-game release offsets (seconds from now). Returns its id so the
+    /// caller can start its runtime/scheduler live.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn create_world(
+        &self,
+        _speed: f64,
+        _radius: u32,
+        _artifact_offset_secs: i64,
+        _wonder_offset_secs: i64,
+    ) -> Result<WorldId, RepoError> {
+        Err(RepoError::Backend("create_world unimplemented".to_owned()))
     }
 }
 

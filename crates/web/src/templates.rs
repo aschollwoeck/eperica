@@ -867,6 +867,17 @@ pub struct ModAccountTemplate {
     pub inhuman_action_rate: bool,
 }
 
+/// One world row in the admin console's worlds table (041 AC3).
+pub struct AdminWorldRow {
+    pub id: String,
+    pub speed: f64,
+    pub radius: u32,
+    pub created_ms: i64,
+    pub won: bool,
+    /// The home world (the one the web serves) — labelled in the table.
+    pub is_home: bool,
+}
+
 /// One account row in the admin console listing (036 AC3).
 pub struct AdminAccountRow {
     pub id: String,
@@ -892,6 +903,9 @@ pub struct AdminTemplate {
     pub accounts: i64,
     pub villages: i64,
     pub pending_events: i64,
+    // World management (041): every world the registry runs + the create-form bound.
+    pub worlds: Vec<AdminWorldRow>,
+    pub max_radius: u32,
     // Account role administration (036 AC3).
     /// The current search query (echoed into the box); empty for the default recent listing.
     pub query: String,

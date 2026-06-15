@@ -4,8 +4,8 @@ use crate::auth::{AuthUser, MaybeAuthUser, MaybeRealUser, RealUser, auth_cookie,
 use crate::state::AppState;
 use crate::templates::{
     AcademyRow, AcademyTemplate, AchievementRowView, ActiveView, AdminAccountRow, AdminTemplate,
-    AllianceStatsTemplate, AllianceTemplate, AlliedVillageView, ArtifactRowView, AuditRow,
-    BuildRow, ChatLineView, CompletedQuestView, ConversationRow, ConversationTemplate,
+    AdminWorldRow, AllianceStatsTemplate, AllianceTemplate, AlliedVillageView, ArtifactRowView,
+    AuditRow, BuildRow, ChatLineView, CompletedQuestView, ConversationRow, ConversationTemplate,
     CurrentQuestView, DiploRowView, ForceRow, ForumPostRow, ForumTemplate, ForumThreadRow,
     ForumThreadTemplate, GarrisonRow, HistoryPointView, IncomingView, IndexTemplate,
     LeaderboardRowView, LeaderboardTemplate, LoginTemplate, MapCellView, MapTemplate,
@@ -35,11 +35,12 @@ use eperica_application::{
     TradeRepository, TrainingRepository, UnitOrderKind, UnitRepository, Window, WonderRepository,
     account_signals, admin_overview, alliance_conflict_leaderboard,
     alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
-    authorize_sit, climbers_leaderboard, conflict_leaderboard, conversation_list, disband_alliance,
-    dm_key, dm_pair_key, edit_bio, end_protection_if_established, evaluate_achievements,
-    evaluate_quests, expel_member, file_report, found_alliance, grant_sitter, invite_player,
-    leave_alliance, list_accounts as admin_list_accounts, list_forum, list_notifications,
-    list_sitters, list_sitting_for, load_culture, load_economy, map_viewport,
+    authorize_sit, climbers_leaderboard, conflict_leaderboard, conversation_list,
+    create_world as admin_create_world_uc, disband_alliance, dm_key, dm_pair_key, edit_bio,
+    end_protection_if_established, evaluate_achievements, evaluate_quests, expel_member,
+    file_report, found_alliance, grant_sitter, invite_player, leave_alliance,
+    list_accounts as admin_list_accounts, list_forum, list_notifications, list_sitters,
+    list_sitting_for, list_worlds as admin_list_worlds, load_culture, load_economy, map_viewport,
     mark_notifications_read, notif_key, notification_settings, notification_unread, open_chat,
     open_dm, open_thread, order_attack, order_build, order_oasis_attack, order_oasis_recall,
     order_oasis_reinforce, order_reinforcement, order_research, order_return, order_scout,
@@ -3065,6 +3066,25 @@ pub async fn admin(
             is_self: a.id == player,
         })
         .collect();
+    // The worlds the registry runs (041 AC3).
+    let worlds =
+        match admin_list_worlds(state.accounts.as_ref(), state.accounts.as_ref(), player).await {
+            Ok(w) => w
+                .into_iter()
+                .map(|w| AdminWorldRow {
+                    id: w.id.0.to_string(),
+                    speed: w.speed,
+                    radius: w.radius,
+                    created_ms: w.created_ms,
+                    won: w.won_ms.is_some(),
+                    is_home: w.id == state.world_id,
+                })
+                .collect(),
+            Err(e) => {
+                tracing::error!(error = %e, "admin worlds listing failed");
+                Vec::new()
+            }
+        };
     page(&AdminTemplate {
         speed: overview.speed,
         radius: overview.radius,
@@ -3076,10 +3096,58 @@ pub async fn admin(
         accounts: overview.accounts,
         villages: overview.villages,
         pending_events: overview.pending_events,
+        max_radius: eperica_application::MAX_WORLD_RADIUS,
+        worlds,
         query: trimmed.to_owned(),
         searched,
         rows,
     })
+}
+
+/// The create-world form (041 AC1).
+#[derive(Deserialize)]
+pub struct CreateWorldForm {
+    speed: f64,
+    radius: u32,
+}
+
+/// Create a new world from the admin console and start it running live (041 AC1/AC2). Admin-gated on the
+/// real human; the new world's scheduler is started through the registry — no restart.
+pub async fn admin_world_submit(
+    State(state): State<AppState>,
+    RealUser(player): RealUser,
+    Form(form): Form<CreateWorldForm>,
+) -> Response {
+    match admin_create_world_uc(
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        player,
+        form.speed,
+        form.radius,
+    )
+    .await
+    {
+        Ok(world_id) => {
+            // Start the new world's scheduler live (AC2). The row exists regardless; if the spawn fails it
+            // will start on the next restart (the registry loads all worlds at startup).
+            let flash = match state.world_registry.start_world(world_id).await {
+                Ok(()) => "World created and started.".to_owned(),
+                Err(e) => {
+                    tracing::error!(error = %e, "world created but scheduler failed to start");
+                    "World created; its scheduler will start on the next restart.".to_owned()
+                }
+            };
+            with_flash(Redirect::to("/admin").into_response(), Some(flash))
+        }
+        Err(AdminError::NotAuthorized) => admin_forbidden(),
+        Err(e) => {
+            tracing::warn!(error = %e, "create world rejected");
+            with_flash(
+                Redirect::to("/admin").into_response(),
+                Some(user_msg(e.to_string())),
+            )
+        }
+    }
 }
 
 /// The admin console search query (036 AC3).

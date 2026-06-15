@@ -25,7 +25,29 @@
       <tr><th>Pending events</th><td class="num">{{ pending_events }}</td></tr>
     </tbody>
   </table>
-  <p class="muted">Creating, configuring and archiving worlds arrives with the multi-world slices (M9 / 040).</p>
+  <h2>Worlds</h2>
+  <table class="table">
+    <thead>
+      <tr><th>World</th><th>Speed</th><th>Radius</th><th>Created</th><th>State</th></tr>
+    </thead>
+    <tbody>
+      {% for w in worlds %}
+      <tr>
+        <td><span class="muted">{{ w.id }}</span>{% if w.is_home %} <span class="badge">Home</span>{% endif %}</td>
+        <td class="num">×{{ w.speed }}</td>
+        <td class="num">{{ w.radius }}</td>
+        <td><span data-ts="{{ w.created_ms }}">—</span></td>
+        <td>{% if w.won %}<strong>Won / frozen</strong>{% else %}<span class="muted">running</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="/admin/world" class="inline">
+    <label>Speed <input type="number" name="speed" min="0.1" step="0.1" value="1" required></label>
+    <label>Radius <input type="number" name="radius" min="1" max="{{ max_radius }}" value="100" required></label>
+    <button type="submit" class="btn btn--primary">Create world</button>
+  </form>
+  <p class="muted">A new world starts running immediately (its scheduler is registered live, no restart). Players can join it once the world-selection UI ships (042).</p>
 
   <h2>Accounts</h2>
   <form method="get" action="/admin" class="inline">

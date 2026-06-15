@@ -61,6 +61,8 @@ pub struct AppState {
     pub world: WorldConfig,
     /// The active world's id (038) — the seam the per-world scheduler/registry (039) keys on.
     pub world_id: WorldId,
+    /// The world registry (041) — starts a per-world scheduler live (admin world creation).
+    pub world_registry: Arc<crate::registry::WorldRegistry>,
     /// Whether new accounts must confirm their email before login (AC1 / Decisions).
     pub require_email_confirmation: bool,
     /// Key used to encrypt the auth cookie.

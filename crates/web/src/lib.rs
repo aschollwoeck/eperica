@@ -4,6 +4,7 @@
 
 pub mod auth;
 pub mod handlers;
+pub mod registry;
 pub mod state;
 pub mod templates;
 
@@ -320,6 +321,7 @@ pub fn router(state: AppState) -> Router {
         .route("/report", post(handlers::report_submit))
         .route("/admin", get(handlers::admin))
         .route("/admin/role", post(handlers::admin_role_submit))
+        .route("/admin/world", post(handlers::admin_world_submit))
         .route("/mod", get(handlers::mod_queue))
         .route("/mod/account/{id}", get(handlers::mod_account))
         .route("/mod/resolve", post(handlers::mod_resolve_submit))
