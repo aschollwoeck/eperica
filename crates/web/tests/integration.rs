@@ -4692,3 +4692,47 @@ async fn capped_noncapital_field_shows_no_effect(pool: sqlx::PgPool) {
         "a capped non-capital field shows no stale production effect"
     );
 }
+
+/// 033: the map shows each tile's distance from home and a send shortcut to another player's village.
+#[sqlx::test(migrations = "../../migrations")]
+async fn map_shows_distance_and_send_shortcut(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (ca, a) = register_client(&base, &pool, &unique("ma")).await;
+    let (_cb, b) = register_client(&base, &pool, &unique("mb")).await;
+    let (ax, ay): (i32, i32) = sqlx::query_as("SELECT x, y FROM villages WHERE owner_id = $1")
+        .bind(a)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    // Move the other player's village right next to ours so it's in view.
+    let (bx, by) = (ax + 1, ay);
+    sqlx::query("UPDATE villages SET x = $2, y = $3 WHERE owner_id = $1")
+        .bind(b)
+        .bind(bx)
+        .bind(by)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let body = ca
+        .get(format!("{base}/map?x={ax}&y={ay}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains("fields away"),
+        "tiles show distance from home"
+    );
+    // The neighbour's village links to the Rally Point pre-filled with its tile (& is HTML-escaped).
+    assert!(
+        body.contains(&format!("/village/rally?x={bx}&amp;y={by}")),
+        "a neighbouring village has a send shortcut"
+    );
+    // Your own village is never a send target (the home tile is the only own village in view).
+    assert!(
+        !body.contains(&format!("/village/rally?x={ax}&amp;y={ay}")),
+        "own village is not a send target"
+    );
+}
