@@ -1,6 +1,6 @@
 # Feature 034 — Action error feedback
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** every POST action handler (003 build, 005 train/research/smithy, 007/009/010/012/013
 movement, 008 trade, 015 alliance, 021 Wonder, 022 reporting, 024 messaging, 030 sitting)
 **Roadmap:** app-layer UX — a usability fix on top of the **UX information** pass (031/032/033).
