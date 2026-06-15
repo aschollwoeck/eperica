@@ -3,23 +3,23 @@
 use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, AchievementRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder,
-    AllianceHit, AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage,
-    ArtifactRepository, BattleApply, BattleReportView, BoardScope, BuildRepository,
-    CombatRepository, CommsRepository, ConflictMetric, ConquestRepository, ConversationSummary,
-    CultureRepository, DefenderReport, DiplomacyEntry, DueAttack, DueBuild, DueMovement,
-    DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining,
-    DueUnitOrder, ForumPost, HeldArtifact, IncomingAttack, LeaderboardRow, LifecycleRepository,
-    LoyaltyApply, MedalAward, MedalRepository, MedalSubjectKind, MedalView, Membership,
-    MessageView, ModerationRepository, MovementRepository, MovementView, NewBuildOrder,
-    NewNotification, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
-    NotificationRepository, NotificationView, OasisBattleApply, OasisOwnership,
-    OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PendingInvite, PlayerHit,
-    PlayerStats, ProfileView, QuestRepository, RankingRepository, RazedBuilding, RepoError,
-    ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
-    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, SitterActionView,
-    StarvationRepository, StationedGroup, ThreadHead, ThreadSummary, TradeRepository, TradeView,
-    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome,
-    WonderRepository, WonderStanding,
+    AdminAccount, AdminOverview, AdminRepository, AllianceHit, AllianceLeaderboardRow,
+    AllianceRepository, AllianceStats, AlliedVillage, ArtifactRepository, BattleApply,
+    BattleReportView, BoardScope, BuildRepository, CombatRepository, CommsRepository,
+    ConflictMetric, ConquestRepository, ConversationSummary, CultureRepository, DefenderReport,
+    DiplomacyEntry, DueAttack, DueBuild, DueMovement, DueOasisAttack, DueOasisRegrow,
+    DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, ForumPost,
+    HeldArtifact, IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply, MedalAward,
+    MedalRepository, MedalSubjectKind, MedalView, Membership, MessageView, ModerationRepository,
+    MovementRepository, MovementView, NewBuildOrder, NewNotification, NewOasisReport,
+    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, NotificationRepository,
+    NotificationView, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository,
+    OasisState, OutgoingInvite, PendingInvite, PlayerHit, PlayerStats, ProfileView,
+    QuestRepository, RankingRepository, RazedBuilding, RepoError, ReportView, ResourceWrite,
+    RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply,
+    SettleOutcome, SettleRepository, SitterActionView, StarvationRepository, StationedGroup,
+    ThreadHead, ThreadSummary, TradeRepository, TradeView, TrainingRepository, UnitOrderKind,
+    UnitRepository, UserRecord, VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactEffects,
@@ -332,6 +332,7 @@ fn row_to_user(r: &PgRow) -> Result<UserRecord, RepoError> {
         tribe,
         abandoned: r.try_get("abandoned").map_err(backend)?,
         is_moderator: r.try_get("is_moderator").map_err(backend)?,
+        is_admin: r.try_get("is_admin").map_err(backend)?,
         banned_at: r
             .try_get::<Option<i64>, _>("banned_ms")
             .map_err(backend)?
@@ -489,6 +490,7 @@ impl AccountRepository for PgAccountRepository {
             tribe: user.tribe,
             abandoned: false,
             is_moderator: false,
+            is_admin: false,
             banned_at: None,
             suspended_until: None,
         })
@@ -497,7 +499,7 @@ impl AccountRepository for PgAccountRepository {
     async fn find_user_by_username(&self, username: &str) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
             "SELECT id, username, email, password_hash, email_confirmed, tribe, \
-             (abandoned_at IS NOT NULL) AS abandoned, is_moderator, \
+             (abandoned_at IS NOT NULL) AS abandoned, is_moderator, is_admin, \
              (EXTRACT(EPOCH FROM banned_at) * 1000)::bigint AS banned_ms, \
              (EXTRACT(EPOCH FROM suspended_until) * 1000)::bigint AS suspended_ms \
              FROM users WHERE username = $1",
@@ -512,7 +514,7 @@ impl AccountRepository for PgAccountRepository {
     async fn find_user_by_id(&self, id: PlayerId) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
             "SELECT id, username, email, password_hash, email_confirmed, tribe, \
-             (abandoned_at IS NOT NULL) AS abandoned, is_moderator, \
+             (abandoned_at IS NOT NULL) AS abandoned, is_moderator, is_admin, \
              (EXTRACT(EPOCH FROM banned_at) * 1000)::bigint AS banned_ms, \
              (EXTRACT(EPOCH FROM suspended_until) * 1000)::bigint AS suspended_ms \
              FROM users WHERE id = $1",
@@ -7311,6 +7313,100 @@ impl ModerationRepository for PgAccountRepository {
         .await
         .map_err(backend)?;
         Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    }
+}
+
+/// Map a row to an admin-console account listing entry (036).
+fn row_to_admin_account(r: &PgRow) -> Result<AdminAccount, RepoError> {
+    let id: Uuid = r.try_get("id").map_err(backend)?;
+    Ok(AdminAccount {
+        id: PlayerId(id.as_u128()),
+        username: r.try_get("username").map_err(backend)?,
+        is_moderator: r.try_get("is_moderator").map_err(backend)?,
+        is_admin: r.try_get("is_admin").map_err(backend)?,
+        abandoned: r.try_get("abandoned").map_err(backend)?,
+    })
+}
+
+#[async_trait]
+impl AdminRepository for PgAccountRepository {
+    async fn set_admin(&self, player: PlayerId, is_admin: bool) -> Result<(), RepoError> {
+        sqlx::query("UPDATE users SET is_admin = $2 WHERE id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .bind(is_admin)
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn admin_overview(&self) -> Result<AdminOverview, RepoError> {
+        // The single active world row + its end-game schedule / win state.
+        let w = sqlx::query(
+            "SELECT speed, radius, seed, \
+             (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ms, \
+             (EXTRACT(EPOCH FROM artifact_release_at) * 1000)::bigint AS artifact_ms, \
+             (EXTRACT(EPOCH FROM wonder_release_at) * 1000)::bigint AS wonder_ms, \
+             (EXTRACT(EPOCH FROM won_at) * 1000)::bigint AS won_ms \
+             FROM worlds LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?
+        .ok_or_else(|| RepoError::Backend("no world row".to_owned()))?;
+
+        // Live counts — derived on read (P1/P5), each a cheap aggregate.
+        let accounts: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM users WHERE abandoned_at IS NULL")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(backend)?;
+        let villages: i64 = sqlx::query_scalar("SELECT count(*) FROM villages")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(backend)?;
+        let pending_events: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM scheduled_events WHERE status = 'pending'")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(backend)?;
+
+        Ok(AdminOverview {
+            speed: w.try_get("speed").map_err(backend)?,
+            radius: u32::try_from(w.try_get::<i32, _>("radius").map_err(backend)?).unwrap_or(0),
+            seed: w.try_get("seed").map_err(backend)?,
+            created_ms: w.try_get("created_ms").map_err(backend)?,
+            artifact_release_ms: w.try_get("artifact_ms").map_err(backend)?,
+            wonder_release_ms: w.try_get("wonder_ms").map_err(backend)?,
+            won_ms: w.try_get("won_ms").map_err(backend)?,
+            accounts,
+            villages,
+            pending_events,
+        })
+    }
+
+    async fn recent_accounts(&self, limit: i64) -> Result<Vec<AdminAccount>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, username, is_moderator, is_admin, (abandoned_at IS NOT NULL) AS abandoned \
+             FROM users ORDER BY created_at DESC LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter().map(row_to_admin_account).collect()
+    }
+
+    async fn admin_account(&self, player: PlayerId) -> Result<Option<AdminAccount>, RepoError> {
+        let row = sqlx::query(
+            "SELECT id, username, is_moderator, is_admin, (abandoned_at IS NOT NULL) AS abandoned \
+             FROM users WHERE id = $1",
+        )
+        .bind(Uuid::from_u128(player.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        row.as_ref().map(row_to_admin_account).transpose()
     }
 }
 

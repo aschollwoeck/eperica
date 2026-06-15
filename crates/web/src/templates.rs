@@ -867,6 +867,35 @@ pub struct ModAccountTemplate {
     pub inhuman_action_rate: bool,
 }
 
+/// One account row in the admin console listing (036 AC3).
+pub struct AdminAccountRow {
+    pub id: String,
+    pub username: String,
+    pub is_moderator: bool,
+    pub is_admin: bool,
+    pub abandoned: bool,
+    /// Whether this row is the viewing admin (hides the self-demote-admin control, AC3).
+    pub is_self: bool,
+}
+
+#[derive(Template)]
+#[template(path = "admin.html")]
+pub struct AdminTemplate {
+    // World/server overview (036 AC4) — read-only.
+    pub speed: f64,
+    pub radius: u32,
+    pub seed: i64,
+    pub created_ms: i64,
+    pub artifact_release_ms: Option<i64>,
+    pub wonder_release_ms: Option<i64>,
+    pub won_ms: Option<i64>,
+    pub accounts: i64,
+    pub villages: i64,
+    pub pending_events: i64,
+    // Account role administration (036 AC3).
+    pub rows: Vec<AdminAccountRow>,
+}
+
 /// A row in the conversations list (024 AC3).
 pub struct ConversationRow {
     /// Conversation key (`dm:<uuid>` / `global` / `alliance:<id>`).

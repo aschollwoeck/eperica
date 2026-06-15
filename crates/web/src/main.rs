@@ -66,6 +66,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 022: designate the operator's moderators (idempotent, P7) from the MODERATORS env list.
     bootstrap_moderators(&accounts).await;
 
+    // 036: designate the operator's administrators (idempotent) from the ADMINS env list — ensures at
+    // least one admin via config even if all in-app admins are demoted.
+    bootstrap_admins(&accounts).await;
+
     // 024: live chat fan-out — one Postgres listener per process feeds the in-memory hub.
     let chat_hub = ChatHub::new();
     tokio::spawn(run_chat_listener(pool.clone(), chat_hub.clone()));
@@ -165,6 +169,29 @@ async fn bootstrap_moderators(accounts: &PgAccountRepository) {
             }
             Ok(None) => tracing::warn!(moderator = name, "MODERATORS lists an unknown username"),
             Err(e) => tracing::error!(error = %e, moderator = name, "moderator lookup failed"),
+        }
+    }
+}
+
+/// Grant the elevated Administrator role (036 AC1) to the operator-configured `ADMINS` usernames
+/// (comma-separated), idempotently at startup. Mirrors [`bootstrap_moderators`]; unknown names are
+/// logged and skipped.
+async fn bootstrap_admins(accounts: &PgAccountRepository) {
+    use eperica_infrastructure::application::{AccountRepository, AdminRepository};
+    let Ok(list) = std::env::var("ADMINS") else {
+        return;
+    };
+    for name in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        match accounts.find_user_by_username(name).await {
+            Ok(Some(u)) => {
+                if let Err(e) = accounts.set_admin(u.id, true).await {
+                    tracing::error!(error = %e, admin = name, "failed to grant administrator");
+                } else {
+                    tracing::info!(admin = name, "granted administrator role");
+                }
+            }
+            Ok(None) => tracing::warn!(admin = name, "ADMINS lists an unknown username"),
+            Err(e) => tracing::error!(error = %e, admin = name, "admin lookup failed"),
         }
     }
 }

@@ -66,6 +66,7 @@ impl AccountRepository for InMemoryAccounts {
             tribe: user.tribe,
             abandoned: false,
             is_moderator: false,
+            is_admin: false,
             banned_at: None,
             suspended_until: None,
         };

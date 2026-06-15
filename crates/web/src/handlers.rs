@@ -3,20 +3,21 @@
 use crate::auth::{AuthUser, MaybeAuthUser, RealUser, auth_cookie, clear_cookie};
 use crate::state::AppState;
 use crate::templates::{
-    AcademyRow, AcademyTemplate, AchievementRowView, ActiveView, AllianceStatsTemplate,
-    AllianceTemplate, AlliedVillageView, ArtifactRowView, AuditRow, BuildRow, ChatLineView,
-    CompletedQuestView, ConversationRow, ConversationTemplate, CurrentQuestView, DiploRowView,
-    ForceRow, ForumPostRow, ForumTemplate, ForumThreadRow, ForumThreadTemplate, GarrisonRow,
-    HistoryPointView, IncomingView, IndexTemplate, LeaderboardRowView, LeaderboardTemplate,
-    LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MedalRowView, MemberStatRow,
-    MessagesTemplate, ModAccountTemplate, ModQueueTemplate, ModReportRow, MovementRow,
-    NotificationRowView, NotificationsTemplate, OasisRow, OutgoingInviteView, PendingInviteView,
-    PlayerStatsTemplate, ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow,
-    RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, RosterRowView,
-    ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate, SettingsTemplate,
-    SettingsToggleRow, ShipmentRow, SitterRow, SittingTemplate, SmithyRow, SmithyTemplate,
-    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
-    VillageTemplate, WonderStandingView, WonderTemplate,
+    AcademyRow, AcademyTemplate, AchievementRowView, ActiveView, AdminAccountRow, AdminTemplate,
+    AllianceStatsTemplate, AllianceTemplate, AlliedVillageView, ArtifactRowView, AuditRow,
+    BuildRow, ChatLineView, CompletedQuestView, ConversationRow, ConversationTemplate,
+    CurrentQuestView, DiploRowView, ForceRow, ForumPostRow, ForumTemplate, ForumThreadRow,
+    ForumThreadTemplate, GarrisonRow, HistoryPointView, IncomingView, IndexTemplate,
+    LeaderboardRowView, LeaderboardTemplate, LoginTemplate, MapCellView, MapTemplate,
+    MarketTemplate, MedalRowView, MemberStatRow, MessagesTemplate, ModAccountTemplate,
+    ModQueueTemplate, ModReportRow, MovementRow, NotificationRowView, NotificationsTemplate,
+    OasisRow, OutgoingInviteView, PendingInviteView, PlayerStatsTemplate, ProfileTemplate,
+    QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow,
+    ReportRow, ReportTemplate, ReportsTemplate, RosterRowView, ScoutReportTemplate,
+    ScoutResourceRow, SearchHitRow, SearchTemplate, SettingsTemplate, SettingsToggleRow,
+    ShipmentRow, SitterRow, SittingTemplate, SmithyRow, SmithyTemplate, StyleGuideTemplate,
+    TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate,
+    WonderStandingView, WonderTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -25,19 +26,20 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
-    AccountRepository, AchievementRepository, AllianceLeaderboardRow, AllianceRepository,
-    ArtifactRepository, BattleReportView, BoardScope, BuildRepository, CombatRepository,
-    CommsError, ConflictMetric, ConquestRepository, DiplomacyCommand, ForumError, LeaderboardRow,
-    LoginError, MedalRepository, MedalSubjectKind, ModerationError, ModerationRepository,
-    MovementRepository, OasisRepository, PlayerHit, QuestRepository, RegisterCommand,
-    RegisterError, ScoutIntel, ScoutReportView, ScoutRepository, TradeRepository,
-    TrainingRepository, UnitOrderKind, UnitRepository, Window, WonderRepository, account_signals,
-    alliance_conflict_leaderboard, alliance_population_leaderboard, alliance_statistics,
-    alliance_view, authenticate, authorize_sit, climbers_leaderboard, conflict_leaderboard,
-    conversation_list, disband_alliance, dm_key, dm_pair_key, edit_bio,
-    end_protection_if_established, evaluate_achievements, evaluate_quests, expel_member,
-    file_report, found_alliance, grant_sitter, invite_player, leave_alliance, list_forum,
-    list_notifications, list_sitters, list_sitting_for, load_culture, load_economy, map_viewport,
+    AccountRepository, AchievementRepository, AdminError, AllianceLeaderboardRow,
+    AllianceRepository, ArtifactRepository, BattleReportView, BoardScope, BuildRepository,
+    CombatRepository, CommsError, ConflictMetric, ConquestRepository, DiplomacyCommand,
+    ElevatedRole, ForumError, LeaderboardRow, LoginError, MedalRepository, MedalSubjectKind,
+    ModerationError, ModerationRepository, MovementRepository, OasisRepository, PlayerHit,
+    QuestRepository, RegisterCommand, RegisterError, ScoutIntel, ScoutReportView, ScoutRepository,
+    TradeRepository, TrainingRepository, UnitOrderKind, UnitRepository, Window, WonderRepository,
+    account_signals, admin_overview, alliance_conflict_leaderboard,
+    alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
+    authorize_sit, climbers_leaderboard, conflict_leaderboard, conversation_list, disband_alliance,
+    dm_key, dm_pair_key, edit_bio, end_protection_if_established, evaluate_achievements,
+    evaluate_quests, expel_member, file_report, found_alliance, grant_sitter, invite_player,
+    leave_alliance, list_accounts as admin_list_accounts, list_forum, list_notifications,
+    list_sitters, list_sitting_for, load_culture, load_economy, map_viewport,
     mark_notifications_read, notif_key, notification_settings, notification_unread, open_chat,
     open_dm, open_thread, order_attack, order_build, order_oasis_attack, order_oasis_recall,
     order_oasis_reinforce, order_reinforcement, order_research, order_return, order_scout,
@@ -45,8 +47,8 @@ use eperica_application::{
     player_statistics, population_history, population_leaderboard, register, reinforcement_reports,
     reply, resolve_report, respond_invite, review_queue, revoke_invite, revoke_sitter,
     sanction_account, search, send_chat, send_dm, set_diplomacy, set_member_role,
-    set_notification_pref, sitter_log, start_thread, transfer_founder, unread_badge, view_profile,
-    viewport_coords,
+    set_notification_pref, set_role as admin_set_role_uc, sitter_log, start_thread,
+    transfer_founder, unread_badge, view_profile, viewport_coords,
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, ChatChannel,
@@ -2999,6 +3001,104 @@ pub async fn mod_sanction_submit(
     }
 }
 
+/// The admin console (036) — read-only world/server status + account role administration. Admin-gated:
+/// a non-admin gets 403 (the use-case gate), a visitor is redirected to `/login` by `AuthUser`.
+pub async fn admin(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+    let overview =
+        match admin_overview(state.accounts.as_ref(), state.accounts.as_ref(), player).await {
+            Ok(o) => o,
+            Err(AdminError::NotAuthorized) => return forbidden(),
+            Err(e) => {
+                tracing::error!(error = %e, "admin overview failed");
+                return server_error();
+            }
+        };
+    let accounts = match admin_list_accounts(
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        player,
+        100,
+    )
+    .await
+    {
+        Ok(a) => a,
+        Err(AdminError::NotAuthorized) => return forbidden(),
+        Err(e) => {
+            tracing::error!(error = %e, "admin account list failed");
+            return server_error();
+        }
+    };
+    let rows = accounts
+        .into_iter()
+        .map(|a| AdminAccountRow {
+            id: a.id.0.to_string(),
+            username: a.username,
+            is_moderator: a.is_moderator,
+            is_admin: a.is_admin,
+            abandoned: a.abandoned,
+            is_self: a.id == player,
+        })
+        .collect();
+    page(&AdminTemplate {
+        speed: overview.speed,
+        radius: overview.radius,
+        seed: overview.seed,
+        created_ms: overview.created_ms,
+        artifact_release_ms: overview.artifact_release_ms,
+        wonder_release_ms: overview.wonder_release_ms,
+        won_ms: overview.won_ms,
+        accounts: overview.accounts,
+        villages: overview.villages,
+        pending_events: overview.pending_events,
+        rows,
+    })
+}
+
+/// The admin role-change form (036 AC3): grant/revoke Moderator or Administrator on a target account.
+#[derive(Deserialize)]
+pub struct AdminRoleForm {
+    target: String,
+    /// `"moderator"` or `"admin"`.
+    role: String,
+    grant: bool,
+}
+
+/// Grant/revoke an elevated role from the admin console (036 AC3). Admin-gated; the self-demotion guard
+/// and not-found surface as a flash on `/admin`.
+pub async fn admin_role_submit(
+    State(state): State<AppState>,
+    AuthUser(player): AuthUser,
+    Form(form): Form<AdminRoleForm>,
+) -> Response {
+    let (Some(role), Ok(target)) = (
+        ElevatedRole::from_slug(&form.role),
+        form.target.trim().parse::<u128>(),
+    ) else {
+        return Redirect::to("/admin").into_response();
+    };
+    match admin_set_role_uc(
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        state.accounts.as_ref(),
+        player,
+        PlayerId(target),
+        role,
+        form.grant,
+    )
+    .await
+    {
+        Ok(()) => Redirect::to("/admin").into_response(),
+        Err(AdminError::NotAuthorized) => forbidden(),
+        Err(e) => {
+            tracing::warn!(error = %e, "admin role change rejected");
+            with_flash(
+                Redirect::to("/admin").into_response(),
+                Some(user_msg(e.to_string())),
+            )
+        }
+    }
+}
+
 /// A player reports another account (022 AC2). Redirects back to the subject's stats page.
 pub async fn report_submit(
     State(state): State<AppState>,
@@ -3399,26 +3499,26 @@ pub async fn sitting_page(
     })
 }
 
-/// Nav probe (035) — who the viewer is, for the topbar: whether logged in and whether a moderator.
-/// Best-effort and reachable by visitors (returns `authed:false`), so the JS can render the right link
-/// set without threading auth state through every page template. Excluded from presence-touch.
+/// Nav probe (035) — who the viewer is, for the topbar: whether logged in, a moderator, and (036) an
+/// administrator. Best-effort and reachable by visitors (returns `authed:false`), so the JS can render
+/// the right link set without threading auth state through every page template. Excluded from
+/// presence-touch.
 pub async fn me(State(state): State<AppState>, MaybeAuthUser(who): MaybeAuthUser) -> Response {
     use eperica_application::AccountRepository;
-    let (authed, moderator) = match who {
+    let (authed, moderator, admin) = match who {
         Some(player) => {
-            // The moderator gate (022) keys on the *effective* player, so the link matches the action.
-            let is_mod = state
-                .accounts
-                .find_user_by_id(player)
-                .await
-                .ok()
-                .flatten()
-                .is_some_and(|u| u.is_moderator);
-            (true, is_mod)
+            // The role gates (022/036) key on the *effective* player, so each link matches its action.
+            let rec = state.accounts.find_user_by_id(player).await.ok().flatten();
+            (
+                true,
+                rec.as_ref().is_some_and(|u| u.is_moderator),
+                rec.as_ref().is_some_and(|u| u.is_admin),
+            )
         }
-        None => (false, false),
+        None => (false, false, false),
     };
-    axum::Json(serde_json::json!({ "authed": authed, "moderator": moderator })).into_response()
+    axum::Json(serde_json::json!({ "authed": authed, "moderator": moderator, "admin": admin }))
+        .into_response()
 }
 
 /// Live sitting status (030) — the owner's name when actively sitting, else empty. Drives the persistent

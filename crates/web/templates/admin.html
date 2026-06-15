@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Administration</h1>
+  <p class="muted"><a href="/village">← Back to the village</a> · <a href="/mod">Moderation queue</a></p>
+
+  <h2>World &amp; server</h2>
+  <table class="table">
+    <tbody>
+      <tr><th>Speed</th><td class="num">×{{ speed }}</td></tr>
+      <tr><th>Map radius</th><td class="num">{{ radius }}</td></tr>
+      <tr><th>Seed</th><td class="num">{{ seed }}</td></tr>
+      <tr><th>Created</th><td><span data-ts="{{ created_ms }}">—</span></td></tr>
+      <tr><th>Artifacts release</th><td>
+        {% match artifact_release_ms %}{% when Some with (t) %}<span data-ts="{{ t }}">—</span>{% when None %}<span class="muted">not scheduled</span>{% endmatch %}
+      </td></tr>
+      <tr><th>Wonder release</th><td>
+        {% match wonder_release_ms %}{% when Some with (t) %}<span data-ts="{{ t }}">—</span>{% when None %}<span class="muted">not scheduled</span>{% endmatch %}
+      </td></tr>
+      <tr><th>Win state</th><td>
+        {% match won_ms %}{% when Some with (t) %}<strong>Won / frozen</strong> <span data-ts="{{ t }}">—</span>{% when None %}<span class="muted">ongoing</span>{% endmatch %}
+      </td></tr>
+      <tr><th>Accounts (active)</th><td class="num">{{ accounts }}</td></tr>
+      <tr><th>Villages</th><td class="num">{{ villages }}</td></tr>
+      <tr><th>Pending events</th><td class="num">{{ pending_events }}</td></tr>
+    </tbody>
+  </table>
+  <p class="muted">Creating, configuring and archiving worlds arrives with the multi-world slices (M9 / 040).</p>
+
+  <h2>Accounts</h2>
+  <p class="muted">{{ rows.len() }} most-recent accounts. Roles are additive; you cannot remove your own admin role.</p>
+  <table class="table">
+    <thead>
+      <tr><th>Account</th><th>Roles</th><th>Moderator</th><th>Administrator</th></tr>
+    </thead>
+    <tbody>
+      {% for a in rows %}
+      <tr>
+        <td>
+          <a href="/stats/player/{{ a.id }}">{{ a.username }}</a>
+          {% if a.abandoned %}<span class="muted">(retired)</span>{% endif %}
+        </td>
+        <td>
+          {% if a.is_admin %}<span class="badge">Admin</span>{% endif %}
+          {% if a.is_moderator %}<span class="badge">Mod</span>{% endif %}
+        </td>
+        <td>
+          <form method="post" action="/admin/role" class="inline">
+            <input type="hidden" name="target" value="{{ a.id }}">
+            <input type="hidden" name="role" value="moderator">
+            <input type="hidden" name="grant" value="{% if a.is_moderator %}false{% else %}true{% endif %}">
+            <button type="submit" class="btn btn--secondary">{% if a.is_moderator %}Remove{% else %}Make mod{% endif %}</button>
+          </form>
+        </td>
+        <td>
+          {% if a.is_admin && a.is_self %}
+          <span class="muted">you</span>
+          {% else %}
+          <form method="post" action="/admin/role" class="inline">
+            <input type="hidden" name="target" value="{{ a.id }}">
+            <input type="hidden" name="role" value="admin">
+            <input type="hidden" name="grant" value="{% if a.is_admin %}false{% else %}true{% endif %}">
+            <button type="submit" class="btn btn--secondary">{% if a.is_admin %}Remove{% else %}Make admin{% endif %}</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+<script>
+  // Render epoch-ms timestamps to the viewer's locale (admin overview, 036).
+  document.querySelectorAll("[data-ts]").forEach(function (el) {
+    var ms = parseInt(el.getAttribute("data-ts"), 10);
+    if (ms) el.textContent = new Date(ms).toLocaleString();
+  });
+</script>
+{% endblock %}

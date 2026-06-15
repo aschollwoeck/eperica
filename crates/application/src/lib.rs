@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod achievements;
+pub mod admin;
 pub mod alliance;
 pub mod artifact;
 pub mod auth;
@@ -44,6 +45,7 @@ mod tests;
 pub use eperica_domain as domain;
 
 pub use achievements::evaluate_achievements;
+pub use admin::{AdminError, ElevatedRole, admin_overview, list_accounts, require_admin, set_role};
 pub use alliance::{
     AllianceError, AllianceOverview, DiplomacyCommand, alliance_view, disband_alliance,
     expel_member, found_alliance, invite_player, leave_alliance, respond_invite, revoke_invite,
@@ -80,24 +82,25 @@ pub use oasis::{
 };
 pub use ports::{
     AccountRepository, AchievementRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder,
-    AllianceHit, AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage,
-    ArtifactCapture, ArtifactRepository, BattleApply, BattleReportView, BoardScope,
-    BuildRepository, CombatRepository, CommsRepository, ConflictMetric, ConquestRepository,
-    ConquestTransfer, ConversationSummary, CultureRepository, DefenderContribution, DefenderReport,
-    DiplomacyEntry, DueAttack, DueBuild, DueEvent, DueMovement, DueOasisAttack, DueOasisRegrow,
-    DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, EventStore,
-    ForumPost, HeldArtifact, IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply,
-    MedalAward, MedalRepository, MedalSubjectKind, MedalView, Membership, MessageView,
-    ModerationRepository, MovementRepository, MovementView, NewBattleReport, NewBuildOrder,
-    NewNotification, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
-    NotificationRepository, NotificationView, OasisBattleApply, OasisOwnership,
-    OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PasswordHasher,
-    PendingInvite, PlanCapture, PlayerHit, PlayerStats, ProfileView, QuestRepository,
-    RankingRepository, RazedBuilding, ReinforcementReturn, RepoError, ReportView, ResourceWrite,
-    RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply,
-    SettleOutcome, SettleRepository, SitterActionView, StarvationRepository, StationedGroup,
-    ThreadHead, ThreadSummary, TradeRepository, TradeView, TrainingRepository, UnitOrderKind,
-    UnitRepository, UserRecord, VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
+    AdminAccount, AdminOverview, AdminRepository, AllianceHit, AllianceLeaderboardRow,
+    AllianceRepository, AllianceStats, AlliedVillage, ArtifactCapture, ArtifactRepository,
+    BattleApply, BattleReportView, BoardScope, BuildRepository, CombatRepository, CommsRepository,
+    ConflictMetric, ConquestRepository, ConquestTransfer, ConversationSummary, CultureRepository,
+    DefenderContribution, DefenderReport, DiplomacyEntry, DueAttack, DueBuild, DueEvent,
+    DueMovement, DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade,
+    DueTraining, DueUnitOrder, EventStore, ForumPost, HeldArtifact, IncomingAttack, LeaderboardRow,
+    LifecycleRepository, LoyaltyApply, MedalAward, MedalRepository, MedalSubjectKind, MedalView,
+    Membership, MessageView, ModerationRepository, MovementRepository, MovementView,
+    NewBattleReport, NewBuildOrder, NewNotification, NewOasisReport, NewScoutReport,
+    NewTrainingOrder, NewUnitOrder, NewUser, NotificationRepository, NotificationView,
+    OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository, OasisState,
+    OutgoingInvite, PasswordHasher, PendingInvite, PlanCapture, PlayerHit, PlayerStats,
+    ProfileView, QuestRepository, RankingRepository, RazedBuilding, ReinforcementReturn, RepoError,
+    ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
+    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, SitterActionView,
+    StarvationRepository, StationedGroup, ThreadHead, ThreadSummary, TradeRepository, TradeView,
+    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome,
+    WonderRepository, WonderStanding,
 };
 pub use profile::{ProfileError, edit_bio, view_profile};
 pub use quests::evaluate_quests;
