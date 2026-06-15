@@ -97,22 +97,28 @@ impl PgAccountRepository {
     /// Reset build orders stuck in `processing` (e.g. left by a crash) back to `pending` so they are
     /// reprocessed. `apply_build` is idempotent (it sets an absolute level), so this is safe.
     pub async fn requeue_orphaned_builds(&self) -> Result<u64, RepoError> {
-        let result =
-            sqlx::query("UPDATE build_orders SET status = 'pending' WHERE status = 'processing'")
-                .execute(&self.pool)
-                .await
-                .map_err(backend)?;
+        let result = sqlx::query(
+            "UPDATE build_orders SET status = 'pending' WHERE status = 'processing' \
+             AND village_id IN (SELECT id FROM villages WHERE world_id = $1)",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
         Ok(result.rows_affected())
     }
 
     /// Reset unit orders stuck in `processing` back to `pending` (crash recovery).
     /// `apply_unit_order` is idempotent, so reprocessing is safe.
     pub async fn requeue_orphaned_unit_orders(&self) -> Result<u64, RepoError> {
-        let result =
-            sqlx::query("UPDATE unit_orders SET status = 'pending' WHERE status = 'processing'")
-                .execute(&self.pool)
-                .await
-                .map_err(backend)?;
+        let result = sqlx::query(
+            "UPDATE unit_orders SET status = 'pending' WHERE status = 'processing' \
+             AND village_id IN (SELECT id FROM villages WHERE world_id = $1)",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
         Ok(result.rows_affected())
     }
 
@@ -120,11 +126,14 @@ impl PgAccountRepository {
     /// `apply_training` moves garrison and progress in one transaction, so a re-claim recomputes
     /// completions from the unchanged `count_done` (AC5).
     pub async fn requeue_orphaned_training(&self) -> Result<u64, RepoError> {
-        let result =
-            sqlx::query("UPDATE training_orders SET status = 'active' WHERE status = 'processing'")
-                .execute(&self.pool)
-                .await
-                .map_err(backend)?;
+        let result = sqlx::query(
+            "UPDATE training_orders SET status = 'active' WHERE status = 'processing' \
+             AND village_id IN (SELECT id FROM villages WHERE world_id = $1)",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
         Ok(result.rows_affected())
     }
 
@@ -132,8 +141,10 @@ impl PgAccountRepository {
     /// the handler re-validates from live state at fire time (AC7).
     pub async fn requeue_orphaned_starvation(&self) -> Result<u64, RepoError> {
         let result = sqlx::query(
-            "UPDATE starvation_checks SET status = 'pending' WHERE status = 'processing'",
+            "UPDATE starvation_checks SET status = 'pending' WHERE status = 'processing' \
+             AND village_id IN (SELECT id FROM villages WHERE world_id = $1)",
         )
+        .bind(Uuid::from_u128(self.world_id.0))
         .execute(&self.pool)
         .await
         .map_err(backend)?;
@@ -145,8 +156,10 @@ impl PgAccountRepository {
     /// never-committed arrival cleanly (007 AC4).
     pub async fn requeue_orphaned_movements(&self) -> Result<u64, RepoError> {
         let result = sqlx::query(
-            "UPDATE troop_movements SET status = 'in_transit' WHERE status = 'processing'",
+            "UPDATE troop_movements SET status = 'in_transit' WHERE status = 'processing' \
+             AND home_village IN (SELECT id FROM villages WHERE world_id = $1)",
         )
+        .bind(Uuid::from_u128(self.world_id.0))
         .execute(&self.pool)
         .await
         .map_err(backend)?;
@@ -158,8 +171,10 @@ impl PgAccountRepository {
     /// re-claim re-applies a never-committed delivery cleanly (008 AC4).
     pub async fn requeue_orphaned_trades(&self) -> Result<u64, RepoError> {
         let result = sqlx::query(
-            "UPDATE trade_movements SET status = 'in_transit' WHERE status = 'processing'",
+            "UPDATE trade_movements SET status = 'in_transit' WHERE status = 'processing' \
+             AND home_village IN (SELECT id FROM villages WHERE world_id = $1)",
         )
+        .bind(Uuid::from_u128(self.world_id.0))
         .execute(&self.pool)
         .await
         .map_err(backend)?;
@@ -1203,12 +1218,14 @@ impl BuildRepository for PgAccountRepository {
             "UPDATE build_orders SET status = 'processing' WHERE id IN ( \
                  SELECT id FROM build_orders \
                  WHERE status = 'pending' AND complete_at <= to_timestamp($1::double precision / 1000.0) \
+                   AND village_id IN (SELECT id FROM villages WHERE world_id = $3) \
                  ORDER BY complete_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
              ) RETURNING id, village_id, target_table, slot, building_type, target_level, \
                  (EXTRACT(EPOCH FROM complete_at) * 1000)::bigint AS complete_ms",
         )
         .bind(now.0 as f64)
         .bind(limit)
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
@@ -1447,11 +1464,13 @@ impl UnitRepository for PgAccountRepository {
             "UPDATE unit_orders SET status = 'processing' WHERE id IN ( \
                  SELECT id FROM unit_orders \
                  WHERE status = 'pending' AND complete_at <= to_timestamp($1::double precision / 1000.0) \
+                   AND village_id IN (SELECT id FROM villages WHERE world_id = $3) \
                  ORDER BY complete_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
              ) RETURNING id, village_id, kind, unit_id, target_level",
         )
         .bind(now.0 as f64)
         .bind(limit)
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
@@ -1627,12 +1646,14 @@ impl TrainingRepository for PgAccountRepository {
             "UPDATE training_orders SET status = 'processing' WHERE id IN ( \
                  SELECT id FROM training_orders \
                  WHERE status = 'active' AND next_complete_at <= to_timestamp($1::double precision / 1000.0) \
+                   AND village_id IN (SELECT id FROM villages WHERE world_id = $3) \
                  ORDER BY next_complete_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
              ) RETURNING id, village_id, unit_id, count_total, count_done, per_unit_secs, \
                          (EXTRACT(EPOCH FROM started_at) * 1000)::bigint AS started_ms",
         )
         .bind(now.0 as f64)
         .bind(limit)
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
@@ -1792,11 +1813,13 @@ impl StarvationRepository for PgAccountRepository {
             "UPDATE starvation_checks SET status = 'processing' WHERE village_id IN ( \
                  SELECT village_id FROM starvation_checks \
                  WHERE status = 'pending' AND due_at <= to_timestamp($1::double precision / 1000.0) \
+                   AND village_id IN (SELECT id FROM villages WHERE world_id = $3) \
                  ORDER BY due_at, village_id LIMIT $2 FOR UPDATE SKIP LOCKED \
              ) RETURNING village_id",
         )
         .bind(now.0 as f64)
         .bind(limit)
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
@@ -2227,12 +2250,14 @@ impl MovementRepository for PgAccountRepository {
                  SELECT id FROM troop_movements \
                  WHERE status = 'in_transit' AND kind IN ('reinforce', 'return') \
                    AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
+                   AND home_village IN (SELECT id FROM villages WHERE world_id = $3) \
                  ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
              ) RETURNING id, kind, home_village, deliver_village, \
                  loot_wood, loot_clay, loot_iron, loot_crop",
         )
         .bind(now.0 as f64)
         .bind(limit)
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
@@ -2600,6 +2625,7 @@ impl TradeRepository for PgAccountRepository {
             "UPDATE trade_movements SET status = 'processing' WHERE id IN ( \
                  SELECT id FROM trade_movements \
                  WHERE status = 'in_transit' AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
+                   AND home_village IN (SELECT id FROM villages WHERE world_id = $3) \
                  ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
              ) RETURNING id, kind, owner_id, home_village, target_village, \
                  origin_x, origin_y, dest_x, dest_y, wood, clay, iron, crop, merchants, \
@@ -2607,6 +2633,7 @@ impl TradeRepository for PgAccountRepository {
         )
         .bind(now.0 as f64)
         .bind(limit)
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
@@ -2981,6 +3008,7 @@ impl CombatRepository for PgAccountRepository {
                  SELECT id FROM troop_movements \
                  WHERE status = 'in_transit' AND kind IN ('attack', 'raid') \
                    AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
+                   AND home_village IN (SELECT id FROM villages WHERE world_id = $3) \
                  ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
              ) RETURNING id, kind, owner_id, home_village, deliver_village, \
                  origin_x, origin_y, dest_x, dest_y, scout_target, catapult_target, \
@@ -2988,6 +3016,7 @@ impl CombatRepository for PgAccountRepository {
         )
         .bind(now.0 as f64)
         .bind(limit)
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
@@ -3733,12 +3762,14 @@ impl OasisRepository for PgAccountRepository {
                  SELECT id FROM troop_movements \
                  WHERE status = 'in_transit' AND kind = 'oasis_attack' \
                    AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
+                   AND home_village IN (SELECT id FROM villages WHERE world_id = $3) \
                  ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
              ) RETURNING id, owner_id, home_village, origin_x, origin_y, dest_x, dest_y, \
                  (EXTRACT(EPOCH FROM arrive_at) * 1000)::bigint AS arrive_ms",
         )
         .bind(now.0 as f64)
         .bind(limit)
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
@@ -3933,12 +3964,14 @@ impl OasisRepository for PgAccountRepository {
                  SELECT id FROM troop_movements \
                  WHERE status = 'in_transit' AND kind = 'oasis_reinforce' \
                    AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
+                   AND home_village IN (SELECT id FROM villages WHERE world_id = $3) \
                  ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
              ) RETURNING id, owner_id, home_village, origin_x, origin_y, dest_x, dest_y, \
                  (EXTRACT(EPOCH FROM arrive_at) * 1000)::bigint AS arrive_ms",
         )
         .bind(now.0 as f64)
         .bind(limit)
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
@@ -5073,12 +5106,14 @@ impl SettleRepository for PgAccountRepository {
                  SELECT id FROM troop_movements \
                  WHERE status = 'in_transit' AND kind = 'settle' \
                    AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
+                   AND home_village IN (SELECT id FROM villages WHERE world_id = $3) \
                  ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
              ) RETURNING id, owner_id, home_village, origin_x, origin_y, dest_x, dest_y, \
                  (EXTRACT(EPOCH FROM arrive_at) * 1000)::bigint AS arrive_ms",
         )
         .bind(now.0 as f64)
         .bind(limit)
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
@@ -5443,6 +5478,7 @@ impl ScoutRepository for PgAccountRepository {
                  SELECT id FROM troop_movements \
                  WHERE status = 'in_transit' AND kind = 'scout' \
                    AND arrive_at <= to_timestamp($1::double precision / 1000.0) \
+                   AND home_village IN (SELECT id FROM villages WHERE world_id = $3) \
                  ORDER BY arrive_at, id LIMIT $2 FOR UPDATE SKIP LOCKED \
              ) RETURNING id, owner_id, home_village, deliver_village, \
                  origin_x, origin_y, dest_x, dest_y, scout_target, \
@@ -5450,6 +5486,7 @@ impl ScoutRepository for PgAccountRepository {
         )
         .bind(now.0 as f64)
         .bind(limit)
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
@@ -12589,6 +12626,157 @@ mod tests {
                 .await
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    /// 039 AC3: a repo scoped to one world claims/requeues only its own world's due work — a due build in
+    /// another world is invisible to it. This is the isolation per-world schedulers (040) rely on.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn due_claims_are_world_scoped(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        // A village in world A, owned by a real account.
+        let user = make_account(&repo, &template, "wsa").await;
+        let village_a = repo.villages_of(user).await.unwrap()[0].id;
+
+        // A second world B, with a village owned by the *same* account (one account, many worlds — 037).
+        let world_b = Uuid::new_v4();
+        sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 50, 1)")
+            .bind(world_b)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let village_b = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO villages (id, world_id, owner_id, x, y, tribe) \
+             VALUES ($1, $2, $3, 999, 999, 'gauls')",
+        )
+        .bind(village_b)
+        .bind(world_b)
+        .bind(Uuid::from_u128(user.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // A due (past) build in each world.
+        let past = (crate::now().0 - 60_000) as f64;
+        for vid in [Uuid::from_u128(village_a.0), village_b] {
+            sqlx::query(
+                "INSERT INTO build_orders \
+                 (id, village_id, target_table, slot, building_type, target_level, complete_at, status, lane) \
+                 VALUES ($1, $2, 'building', 1, 'warehouse', 1, \
+                         to_timestamp($3::double precision / 1000.0), 'pending', 'all')",
+            )
+            .bind(Uuid::new_v4())
+            .bind(vid)
+            .bind(past)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // The world-A repo claims only world A's build.
+        let due = repo
+            .claim_due_builds(Timestamp(crate::now().0), 100)
+            .await
+            .unwrap();
+        assert_eq!(due.len(), 1, "claims only world A's due build");
+        assert_eq!(due[0].village, village_a);
+
+        // World B's build is untouched — still pending.
+        let b_pending: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM build_orders WHERE village_id = $1 AND status = 'pending'",
+        )
+        .bind(village_b)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(b_pending, 1, "world B's build untouched by world A's claim");
+
+        // Requeue is likewise world-scoped: force B's build to 'processing', then A's requeue leaves it.
+        sqlx::query("UPDATE build_orders SET status = 'processing' WHERE village_id = $1")
+            .bind(village_b)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // A's claimed build is now 'processing' too; A's requeue should reset only it.
+        assert_eq!(
+            repo.requeue_orphaned_builds().await.unwrap(),
+            1,
+            "requeues only world A's processing build"
+        );
+        let b_processing: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM build_orders WHERE village_id = $1 AND status = 'processing'",
+        )
+        .bind(village_b)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            b_processing, 1,
+            "world B's processing build untouched by world A's requeue"
+        );
+
+        // The `home_village` path (movements/trades) is world-scoped the same way: a due reinforce in
+        // world B is invisible to world A's movement claim + requeue.
+        let arrive_past = (crate::now().0 - 60_000) as f64;
+        sqlx::query(
+            "INSERT INTO troop_movements \
+             (id, owner_id, kind, home_village, deliver_village, origin_x, origin_y, dest_x, dest_y, \
+              depart_at, arrive_at, status) \
+             VALUES ($1, $2, 'reinforce', $3, $3, 999, 999, 999, 999, \
+                     to_timestamp($4::double precision / 1000.0), \
+                     to_timestamp($4::double precision / 1000.0), 'in_transit')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(Uuid::from_u128(user.0))
+        .bind(village_b)
+        .bind(arrive_past)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // World A's movement claim takes nothing (it has no due movements of its own).
+        assert!(
+            repo.claim_due_movements(Timestamp(crate::now().0), 100)
+                .await
+                .unwrap()
+                .is_empty(),
+            "world A claims none of world B's movements"
+        );
+        // World B's reinforce is still in_transit — untouched by A's claim.
+        let b_in_transit: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM troop_movements WHERE home_village = $1 AND status = 'in_transit'",
+        )
+        .bind(village_b)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            b_in_transit, 1,
+            "world B's movement untouched by world A's claim"
+        );
+
+        // Force B's movement to 'processing'; world A's requeue must leave it.
+        sqlx::query("UPDATE troop_movements SET status = 'processing' WHERE home_village = $1")
+            .bind(village_b)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.requeue_orphaned_movements().await.unwrap(),
+            0,
+            "world A requeues none of world B's movements"
+        );
+        let b_still_processing: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM troop_movements WHERE home_village = $1 AND status = 'processing'",
+        )
+        .bind(village_b)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            b_still_processing, 1,
+            "world B's processing movement untouched by world A's requeue"
         );
     }
 
