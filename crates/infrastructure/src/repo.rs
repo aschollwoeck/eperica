@@ -11260,6 +11260,12 @@ mod tests {
         .await
         .expect("attack");
 
+        // 029 AC3: the reinforcing ally mutes battle reports before the battle resolves; the gate in
+        // `apply_battle` must then skip their notification while still notifying the attacker + owner.
+        NotificationRepository::set_mute(&repo, ally, NotificationKind::BattleReport, true)
+            .await
+            .unwrap();
+
         let targets = eperica_application::process_due_combat(
             &repo,
             &repo,
@@ -11316,21 +11322,30 @@ mod tests {
         assert_eq!(defs[0], (Uuid::from_u128(defender.0), true)); // garrison owner
         assert_eq!(defs[1], (Uuid::from_u128(ally.0), false)); // reinforcer
 
-        // 026 AC2: the attacker + each distinct defending participant got a battle-report notification.
-        for (who, label) in [
-            (attacker, "attacker"),
-            (defender, "owner"),
-            (ally, "reinforcer"),
-        ] {
-            let notes = NotificationRepository::list(&repo, who, 10).await.unwrap();
-            assert!(
-                notes
-                    .iter()
-                    .any(|n| n.kind == NotificationKind::BattleReport
-                        && n.ref_id.as_deref() == Some(&reports[0].id.to_string())),
-                "the {label} got a battle-report notification"
-            );
-        }
+        // 026 AC2: the attacker + the (non-muting) owner got a battle-report notification.
+        let has_report = async |who: PlayerId| {
+            NotificationRepository::list(&repo, who, 10)
+                .await
+                .unwrap()
+                .iter()
+                .any(|n| {
+                    n.kind == NotificationKind::BattleReport
+                        && n.ref_id.as_deref() == Some(&reports[0].id.to_string())
+                })
+        };
+        assert!(
+            has_report(attacker).await,
+            "the attacker got a battle-report notification"
+        );
+        assert!(
+            has_report(defender).await,
+            "the owner got a battle-report notification"
+        );
+        // 029 AC3: the muting reinforcer got none (the apply_battle gate skipped it).
+        assert!(
+            !has_report(ally).await,
+            "the reinforcer muted battle reports and got none"
+        );
     }
 
     /// 010 AC6/AC7/AC8/AC9: scouts riding an attack scout the village in addition to the battle —

@@ -4267,6 +4267,23 @@ async fn settings_notification_preferences(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert_eq!(unread(&cb).await.trim(), "0", "muted kind records nothing");
+    // ...but the DM itself is never gated — Bob still receives the message in his thread.
+    let aid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username LIKE 'st_a%'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let thread = cb
+        .get(format!("{base}/messages/c/dm:{aid}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        thread.contains("are you there"),
+        "the DM is delivered even though its notification was muted"
+    );
 
     // The settings page now shows new-message unchecked.
     let page = cb
