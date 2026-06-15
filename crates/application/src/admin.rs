@@ -6,7 +6,14 @@ use crate::ports::{
     AccountRepository, AdminAccount, AdminOverview, AdminRepository, ModerationRepository,
     RepoError,
 };
-use eperica_domain::PlayerId;
+use eperica_domain::{GameSpeed, PlayerId, WorldId};
+
+/// The largest map radius an admin may create (041 AC1) — guards against an unbounded map.
+pub const MAX_WORLD_RADIUS: u32 = 1000;
+/// Default end-game release offsets for a new world (041) — artifacts at 90 days, the Wonder at 120
+/// (GDD §13.2), matching `ensure_world`'s defaults.
+const ARTIFACT_RELEASE_DEFAULT_SECS: i64 = 90 * 24 * 60 * 60;
+const WONDER_RELEASE_DEFAULT_SECS: i64 = 120 * 24 * 60 * 60;
 
 /// Why an admin action was rejected (036).
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -20,6 +27,9 @@ pub enum AdminError {
     /// An admin tried to remove their **own** Administrator role (anti-lockout, AC3).
     #[error("you cannot remove your own administrator role")]
     SelfDemotion,
+    /// The requested world parameters are invalid (041 AC1).
+    #[error("{0}")]
+    InvalidWorld(String),
     /// A storage/backend failure.
     #[error("storage error: {0}")]
     Backend(String),
@@ -143,6 +153,60 @@ where
     Ok(())
 }
 
+/// The worlds list for the admin console (041 AC3). Admin-gated.
+///
+/// # Errors
+/// [`AdminError::NotAuthorized`] for a non-admin; otherwise a backend error.
+pub async fn list_worlds<A, D>(
+    accounts: &A,
+    admin: &D,
+    actor: PlayerId,
+) -> Result<Vec<crate::ports::AdminWorld>, AdminError>
+where
+    A: AccountRepository,
+    D: AdminRepository,
+{
+    require_admin(accounts, actor).await?;
+    Ok(admin.list_worlds().await?)
+}
+
+/// Create a new world (041 AC1) — a fresh round at `speed`/`radius`, with default end-game release
+/// offsets. Admin-gated; validates the parameters (P4). Returns the new world's id so the caller can
+/// start its runtime/scheduler live (AC2).
+///
+/// # Errors
+/// [`AdminError::NotAuthorized`] for a non-admin; [`AdminError::InvalidWorld`] for a bad speed/radius;
+/// otherwise a backend error.
+pub async fn create_world<A, D>(
+    accounts: &A,
+    admin: &D,
+    actor: PlayerId,
+    speed: f64,
+    radius: u32,
+) -> Result<WorldId, AdminError>
+where
+    A: AccountRepository,
+    D: AdminRepository,
+{
+    require_admin(accounts, actor).await?;
+    // Validate (P4): speed must be a valid game speed (finite > 0); radius in (0, MAX].
+    GameSpeed::new(speed)
+        .map_err(|_| AdminError::InvalidWorld("speed must be a positive number".to_owned()))?;
+    if radius == 0 || radius > MAX_WORLD_RADIUS {
+        return Err(AdminError::InvalidWorld(format!(
+            "radius must be between 1 and {MAX_WORLD_RADIUS}"
+        )));
+    }
+    Ok(admin
+        .create_world(
+            speed,
+            radius,
+            ARTIFACT_RELEASE_DEFAULT_SECS,
+            WONDER_RELEASE_DEFAULT_SECS,
+        )
+        .await?)
+}
+
 /// An elevated role an admin can grant/revoke from the console (036 AC3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElevatedRole {
@@ -176,6 +240,7 @@ mod tests {
         users: Mutex<Vec<UserRecord>>,
         set_admin_calls: Mutex<Vec<(u128, bool)>>,
         set_mod_calls: Mutex<Vec<(u128, bool)>>,
+        created_worlds: Mutex<Vec<(f64, u32)>>,
     }
 
     fn user(id: u128, is_admin: bool) -> UserRecord {
@@ -304,6 +369,17 @@ mod tests {
                     is_admin: u.is_admin,
                     abandoned: u.abandoned,
                 }))
+        }
+        async fn create_world(
+            &self,
+            speed: f64,
+            radius: u32,
+            _artifact: i64,
+            _wonder: i64,
+        ) -> Result<WorldId, RepoError> {
+            let mut w = self.created_worlds.lock().unwrap();
+            w.push((speed, radius));
+            Ok(WorldId(1000 + w.len() as u128))
         }
     }
 
@@ -446,5 +522,36 @@ mod tests {
             Err(AdminError::NotAuthorized)
         );
         assert!(f.set_admin_calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_world_is_gated_and_validated() {
+        let f = fake(vec![user(1, true), user(2, false)]);
+        // A non-admin cannot create a world (gate runs first).
+        assert_eq!(
+            create_world(&f, &f, PlayerId(2), 1.0, 50).await,
+            Err(AdminError::NotAuthorized)
+        );
+        assert!(f.created_worlds.lock().unwrap().is_empty());
+
+        // Invalid speed / radius are rejected (P4) — no row created.
+        assert!(matches!(
+            create_world(&f, &f, PlayerId(1), 0.0, 50).await,
+            Err(AdminError::InvalidWorld(_))
+        ));
+        assert!(matches!(
+            create_world(&f, &f, PlayerId(1), 1.0, 0).await,
+            Err(AdminError::InvalidWorld(_))
+        ));
+        assert!(matches!(
+            create_world(&f, &f, PlayerId(1), 1.0, MAX_WORLD_RADIUS + 1).await,
+            Err(AdminError::InvalidWorld(_))
+        ));
+        assert!(f.created_worlds.lock().unwrap().is_empty());
+
+        // A valid request creates the world.
+        let id = create_world(&f, &f, PlayerId(1), 5.0, 100).await.unwrap();
+        assert_eq!(id, WorldId(1001));
+        assert_eq!(*f.created_worlds.lock().unwrap(), vec![(5.0, 100)]);
     }
 }

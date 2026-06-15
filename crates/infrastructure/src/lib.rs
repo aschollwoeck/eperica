@@ -33,4 +33,9 @@ pub use db::{MIGRATOR, create_pool, run_migrations};
 pub use event_store::{PgEventStore, Scheduler, now};
 pub use repo::PgAccountRepository;
 pub use security::Argon2Hasher;
-pub use world::{World, all_worlds, ensure_world, ensure_world_with_release};
+/// Re-exported so downstream crates (the web registry, 041) can name the pool type without a direct
+/// `sqlx` dependency.
+pub use sqlx::PgPool;
+pub use world::{
+    World, all_worlds, create_world, ensure_world, ensure_world_with_release, world_by_id,
+};

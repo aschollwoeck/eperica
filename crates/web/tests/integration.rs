@@ -13,11 +13,12 @@ use eperica_domain::{
 };
 use eperica_infrastructure::{
     Argon2Hasher, ChatHub, NotificationHub, PgAccountRepository, achievement_catalogue,
-    alliance_rules, build_rules, combat_rules, culture_rules, economy_rules, ensure_world,
-    fair_play_rules, lifecycle_rules, loyalty_rules, map_rules, merchant_rules, now, oasis_rules,
-    quest_chain, ranking_rules, run_chat_listener, run_notification_listener, scout_rules,
-    starting_village, unit_rules, wonder_rules,
+    alliance_rules, artifact_catalogue, build_rules, combat_rules, culture_rules, economy_rules,
+    ensure_world, fair_play_rules, lifecycle_rules, loyalty_rules, map_rules, medal_rules,
+    merchant_rules, now, oasis_rules, quest_chain, ranking_rules, run_chat_listener,
+    run_notification_listener, scout_rules, starting_village, unit_rules, wonder_rules,
 };
+use eperica_web::registry::WorldRegistry;
 use eperica_web::router;
 use eperica_web::state::AppState;
 use reqwest::header::LOCATION;
@@ -81,6 +82,31 @@ async fn spawn(pool: sqlx::PgPool) -> String {
         map,
         world: config,
         world_id: world.id,
+        world_registry: {
+            let (tx, rx) = tokio::sync::watch::channel(false);
+            // Keep the shutdown sender alive for the test's lifetime so a scheduler the registry spawns
+            // (e.g. via POST /admin/world) does not see a closed channel and exit immediately.
+            std::mem::forget(tx);
+            Arc::new(WorldRegistry::new(
+                pool.clone(),
+                rx,
+                lifecycle_rules().unwrap().beginner_protection_secs,
+                Arc::new(economy_rules().unwrap()),
+                Arc::new(unit_rules().unwrap()),
+                Arc::new(merchant_rules().unwrap()),
+                Arc::new(combat_rules().unwrap()),
+                Arc::new(scout_rules().unwrap()),
+                Arc::new(oasis_rules().unwrap()),
+                Arc::new(culture_rules().unwrap()),
+                Arc::new(loyalty_rules().unwrap()),
+                Arc::new(ranking_rules().unwrap()),
+                Arc::new(medal_rules().unwrap()),
+                Arc::new(lifecycle_rules().unwrap()),
+                Arc::new(artifact_catalogue().unwrap()),
+                Arc::new(starting_village().unwrap()),
+                Arc::new(wonder_rules().unwrap()),
+            ))
+        },
         require_email_confirmation: false,
         cookie_key: Key::generate(),
     };
@@ -955,6 +981,95 @@ async fn admin_console_gates_and_manages_roles(pool: sqlx::PgPool) {
         me.contains("\"admin\":false"),
         "admin flag follows the real human, not the sit-effective player: {me}"
     );
+}
+
+/// 041: an admin creates a world from the console; it is persisted, started live (registry), and listed.
+/// A non-admin cannot create one, and invalid parameters are rejected.
+#[sqlx::test(migrations = "../../migrations")]
+async fn admin_creates_world_live(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let admin_name = unique("wadm");
+    let (ac, _admin_id) = register_client(&base, &pool, &admin_name).await;
+    let (plain, _pid) = register_client(&base, &pool, &unique("wplain")).await;
+
+    // A non-admin cannot create a world (server-authoritative).
+    let r = plain
+        .post(format!("{base}/admin/world"))
+        .form(&[("speed", "3"), ("radius", "50")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403, "non-admin cannot create a world");
+
+    // Promote the admin account.
+    sqlx::query("UPDATE users SET is_admin = TRUE WHERE username = $1")
+        .bind(&admin_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let worlds_before: i64 = sqlx::query_scalar("SELECT count(*) FROM worlds")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Invalid radius (over the max) is rejected with a flash — no world created.
+    let r = ac
+        .post(format!("{base}/admin/world"))
+        .form(&[("speed", "3"), ("radius", "99999")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    assert!(
+        r.headers()
+            .get_all(reqwest::header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .any(|v| v.starts_with("flash=")),
+        "invalid radius is flashed"
+    );
+    let worlds_mid: i64 = sqlx::query_scalar("SELECT count(*) FROM worlds")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        worlds_mid, worlds_before,
+        "no world created on invalid input"
+    );
+
+    // A valid create: a new world row appears with the given speed/radius, started live.
+    let r = ac
+        .post(format!("{base}/admin/world"))
+        .form(&[("speed", "3"), ("radius", "40")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let (speed, radius): (f64, i32) =
+        sqlx::query_as("SELECT speed, radius FROM worlds ORDER BY created_at DESC, id LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!((speed - 3.0).abs() < f64::EPSILON);
+    assert_eq!(radius, 40);
+    let worlds_after: i64 = sqlx::query_scalar("SELECT count(*) FROM worlds")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(worlds_after, worlds_before + 1, "exactly one world created");
+
+    // The admin console lists the new world (AC3).
+    let body = ac
+        .get(format!("{base}/admin"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("Worlds"), "worlds section shown");
+    assert!(body.contains("×3"), "the new world's speed is listed");
 }
 
 #[sqlx::test(migrations = "../../migrations")]

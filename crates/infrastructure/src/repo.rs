@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, AchievementRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder,
-    AdminAccount, AdminOverview, AdminRepository, AllianceHit, AllianceLeaderboardRow,
+    AdminAccount, AdminOverview, AdminRepository, AdminWorld, AllianceHit, AllianceLeaderboardRow,
     AllianceRepository, AllianceStats, AlliedVillage, ArtifactRepository, BattleApply,
     BattleReportView, BoardScope, BuildRepository, CombatRepository, CommsRepository,
     ConflictMetric, ConquestRepository, ConversationSummary, CultureRepository, DefenderReport,
@@ -28,8 +28,9 @@ use eperica_domain::{
     NotificationKind, OasisBonus, OasisRules, PlayerId, PlayerProgress, Quadrant, QuestDef,
     QuestId, QuestProgress, QueueLane, ReportReason, ResourceAmounts, ResourceField, ResourceKind,
     Reward, RightSet, SanctionKind, ScoutTarget, StartingVillage, TileKind, Timestamp, TradeKind,
-    Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId, WorldId, WorldMap, aggregate_effects,
-    capacities, coordinates_within, deposit_capped, oasis_garrison, protection_expiry,
+    Tribe, UnitCounts, UnitId, UnitSpec, Village, VillageId, WorldConfig, WorldId, WorldMap,
+    aggregate_effects, capacities, coordinates_within, deposit_capped, oasis_garrison,
+    protection_expiry,
 };
 use sqlx::{Acquire, PgPool, Row, postgres::PgRow};
 use std::collections::{HashMap, HashSet};
@@ -7494,6 +7495,53 @@ impl AdminRepository for PgAccountRepository {
         .await
         .map_err(backend)?;
         row.as_ref().map(row_to_admin_account).transpose()
+    }
+
+    async fn list_worlds(&self) -> Result<Vec<AdminWorld>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT id, speed, radius, \
+             (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ms, \
+             (EXTRACT(EPOCH FROM won_at) * 1000)::bigint AS won_ms \
+             FROM worlds ORDER BY created_at, id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let id: Uuid = r.try_get("id").map_err(backend)?;
+                Ok(AdminWorld {
+                    id: WorldId(id.as_u128()),
+                    speed: r.try_get("speed").map_err(backend)?,
+                    radius: u32::try_from(r.try_get::<i32, _>("radius").map_err(backend)?)
+                        .unwrap_or(0),
+                    created_ms: r.try_get("created_ms").map_err(backend)?,
+                    won_ms: r.try_get("won_ms").map_err(backend)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn create_world(
+        &self,
+        speed: f64,
+        radius: u32,
+        artifact_offset_secs: i64,
+        wonder_offset_secs: i64,
+    ) -> Result<WorldId, RepoError> {
+        let config = WorldConfig::new(
+            GameSpeed::new(speed).map_err(|e| RepoError::Backend(e.to_string()))?,
+            radius,
+        );
+        let world = crate::world::create_world(
+            &self.pool,
+            &config,
+            artifact_offset_secs,
+            wonder_offset_secs,
+        )
+        .await
+        .map_err(backend)?;
+        Ok(world.id)
     }
 }
 

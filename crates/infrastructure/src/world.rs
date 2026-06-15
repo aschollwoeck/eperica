@@ -56,6 +56,48 @@ pub async fn all_worlds(pool: &PgPool) -> Result<Vec<World>, sqlx::Error> {
     rows.iter().map(world_from_row).collect()
 }
 
+/// Load one world by id (040/041) — the registry uses this to start a freshly-created world.
+///
+/// # Errors
+/// Returns [`sqlx::Error`] on a storage failure.
+pub async fn world_by_id(pool: &PgPool, id: WorldId) -> Result<Option<World>, sqlx::Error> {
+    let row = sqlx::query(&format!("SELECT {SELECT_COLS} FROM worlds WHERE id = $1"))
+        .bind(Uuid::from_u128(id.0))
+        .fetch_optional(pool)
+        .await?;
+    row.as_ref().map(world_from_row).transpose()
+}
+
+/// Create a **new** world (041) — unlike [`ensure_world`] this always inserts a fresh row (a new round),
+/// with a deterministic per-world seed derived from its id and the given end-game release offsets.
+/// Returns the new world.
+///
+/// # Errors
+/// Returns [`sqlx::Error`] on a storage failure.
+pub async fn create_world(
+    pool: &PgPool,
+    config: &WorldConfig,
+    artifact_release_offset_secs: i64,
+    wonder_release_offset_secs: i64,
+) -> Result<World, sqlx::Error> {
+    let id = Uuid::new_v4();
+    let row = sqlx::query(&format!(
+        "INSERT INTO worlds (id, speed, radius, seed, artifact_release_at, wonder_release_at) \
+         VALUES ($1, $2, $3, hashtextextended($1::text, 0), \
+                 now() + make_interval(secs => $4::double precision), \
+                 now() + make_interval(secs => $5::double precision)) \
+         RETURNING {SELECT_COLS}"
+    ))
+    .bind(id)
+    .bind(config.speed.multiplier())
+    .bind(i32::try_from(config.radius).unwrap_or(i32::MAX))
+    .bind(artifact_release_offset_secs as f64)
+    .bind(wonder_release_offset_secs as f64)
+    .fetch_one(pool)
+    .await?;
+    world_from_row(&row)
+}
+
 /// Ensure a world exists and return it. The first call inserts it from `config` with a deterministic
 /// per-world seed derived from its id; later calls return the existing row.
 ///
