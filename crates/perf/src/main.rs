@@ -173,7 +173,7 @@ async fn measure(args: &[String]) -> Result<(), BoxErr> {
             .fetch_one(&pool)
             .await?;
     if pending > 0 {
-        let store = PgEventStore::new(pool.clone());
+        let store = PgEventStore::new(pool.clone(), repo.world_id());
         let n = now();
         let t = Instant::now();
         let mut processed = 0usize;

@@ -84,7 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Background scheduler (P1) — processes due events, builds, unit orders, training, starvation.
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let scheduler = Scheduler::new(
-        PgEventStore::new(pool.clone()),
+        PgEventStore::new(pool.clone(), world.id),
         accounts.clone(),
         Arc::clone(&rules),
         Arc::clone(&units),
@@ -132,6 +132,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         notification_hub,
         map,
         world: config.world,
+        world_id: world.id,
         require_email_confirmation: env_flag("REQUIRE_EMAIL_CONFIRMATION"),
         cookie_key: load_cookie_key(),
     };

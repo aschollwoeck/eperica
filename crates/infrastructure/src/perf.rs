@@ -103,8 +103,9 @@ pub fn seed_block_width(players: u32) -> i32 {
 /// Returns [`sqlx::Error`] on a storage failure.
 pub async fn seed_heartbeats(pool: &PgPool, n: u32) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO scheduled_events (id, kind, due_at, status) \
-         SELECT gen_random_uuid(), 'heartbeat', now() - interval '1 second', 'pending' \
+        "INSERT INTO scheduled_events (id, world_id, kind, due_at, status) \
+         SELECT gen_random_uuid(), (SELECT id FROM worlds LIMIT 1), 'heartbeat', \
+                now() - interval '1 second', 'pending' \
          FROM generate_series(1, $1) g",
     )
     .bind(i64::from(n))

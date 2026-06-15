@@ -13,7 +13,7 @@ use eperica_application::{
 use eperica_domain::{
     CombatRules, CultureRules, EconomyRules, EventKind, GameSpeed, LifecycleRules, LoyaltyRules,
     MedalRules, MerchantRules, OasisRules, RankingRules, ScoutRules, StartingVillage, Timestamp,
-    UnitRules, WorldMap,
+    UnitRules, WorldId, WorldMap,
 };
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
@@ -46,25 +46,33 @@ fn parse_kind(s: &str) -> Result<EventKind, RepoError> {
     }
 }
 
-/// SQLx-backed [`EventStore`].
+/// SQLx-backed [`EventStore`], scoped to a single world (038) — every read/write filters by `world_id`,
+/// so a per-world scheduler (039) only ever claims/requeues its own world's events.
 #[derive(Debug, Clone)]
 pub struct PgEventStore {
     pool: PgPool,
+    world_id: Uuid,
 }
 
 impl PgEventStore {
-    /// Create an event store over the given pool.
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    /// Create an event store over the given pool, scoped to `world` (038).
+    pub fn new(pool: PgPool, world: WorldId) -> Self {
+        Self {
+            pool,
+            world_id: Uuid::from_u128(world.0),
+        }
     }
 
-    /// Reset events stuck in `processing` (e.g. left by a crashed worker) back to `pending` so they
-    /// are reprocessed. Returns how many were requeued. (Once real, effectful events exist, handlers
-    /// must be idempotent or processed within a single transaction — see docs/architecture/0002.)
+    /// Reset *this world's* events stuck in `processing` (e.g. left by a crashed worker) back to
+    /// `pending` so they are reprocessed. Returns how many were requeued. World-scoped so one world's
+    /// scheduler never requeues another's (038). (Once real, effectful events exist, handlers must be
+    /// idempotent or processed within a single transaction — see docs/architecture/0002.)
     pub async fn requeue_orphaned(&self) -> Result<u64, RepoError> {
         let result = sqlx::query(
-            "UPDATE scheduled_events SET status = 'pending' WHERE status = 'processing'",
+            "UPDATE scheduled_events SET status = 'pending' \
+             WHERE status = 'processing' AND world_id = $1",
         )
+        .bind(self.world_id)
         .execute(&self.pool)
         .await
         .map_err(backend)?;
@@ -76,10 +84,11 @@ impl PgEventStore {
 impl EventStore for PgEventStore {
     async fn schedule(&self, kind: EventKind, due_at: Timestamp) -> Result<(), RepoError> {
         sqlx::query(
-            "INSERT INTO scheduled_events (id, kind, due_at, status) \
-             VALUES ($1, $2, to_timestamp($3::double precision / 1000.0), 'pending')",
+            "INSERT INTO scheduled_events (id, world_id, kind, due_at, status) \
+             VALUES ($1, $2, $3, to_timestamp($4::double precision / 1000.0), 'pending')",
         )
         .bind(Uuid::new_v4())
+        .bind(self.world_id)
         .bind(kind_str(kind))
         .bind(due_at.0 as f64)
         .execute(&self.pool)
@@ -93,7 +102,8 @@ impl EventStore for PgEventStore {
             "UPDATE scheduled_events SET status = 'processing' \
              WHERE id IN ( \
                  SELECT id FROM scheduled_events \
-                 WHERE status = 'pending' AND due_at <= to_timestamp($1::double precision / 1000.0) \
+                 WHERE world_id = $3 AND status = 'pending' \
+                 AND due_at <= to_timestamp($1::double precision / 1000.0) \
                  ORDER BY due_at, seq \
                  LIMIT $2 \
                  FOR UPDATE SKIP LOCKED \
@@ -102,6 +112,7 @@ impl EventStore for PgEventStore {
         )
         .bind(now.0 as f64)
         .bind(limit)
+        .bind(self.world_id)
         .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
@@ -614,6 +625,18 @@ impl Scheduler {
 mod tests {
     use super::*;
 
+    /// Insert a minimal world row and return its id (the event store + the FK on `scheduled_events`
+    /// need a real world to key against, 038).
+    async fn make_world(pool: &PgPool) -> WorldId {
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 10, 0)")
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+        WorldId(id.as_u128())
+    }
+
     // PROTOTYPE (sqlx::test): each test gets its own freshly-migrated database, created from a
     // cached template and dropped on completion. That removes the per-test `create_pool` +
     // `run_migrations` boilerplate *and* the `TRUNCATE scheduled_events` hack — the global event
@@ -621,7 +644,7 @@ mod tests {
     // The `migrations` path is relative to the crate manifest dir (`crates/infrastructure`).
     #[sqlx::test(migrations = "../../migrations")]
     async fn processes_due_events_once_and_leaves_future_pending(pool: PgPool) {
-        let store = PgEventStore::new(pool.clone());
+        let store = PgEventStore::new(pool.clone(), make_world(&pool).await);
         // Wide margins so a jittery dev/container clock can't flip "past"/"future".
         let due_past = Timestamp(now().0 - 600_000);
         let due_future = Timestamp(now().0 + 3_600_000);
@@ -645,5 +668,50 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(pending, 1);
+    }
+
+    /// 038 AC2: a store scoped to one world neither claims nor requeues another world's events.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn event_store_is_world_scoped(pool: PgPool) {
+        let world_a = make_world(&pool).await;
+        let world_b = make_world(&pool).await;
+        let store_a = PgEventStore::new(pool.clone(), world_a);
+        let store_b = PgEventStore::new(pool.clone(), world_b);
+        let due_past = Timestamp(now().0 - 600_000);
+
+        // One due event in each world.
+        store_a
+            .schedule(EventKind::Heartbeat, due_past)
+            .await
+            .unwrap();
+        store_b
+            .schedule(EventKind::Heartbeat, due_past)
+            .await
+            .unwrap();
+
+        // Each store claims only its own world's event.
+        assert_eq!(store_a.claim_due(now(), 100).await.unwrap().len(), 1);
+        // World B's event is still pending — store A did not touch it.
+        let b_pending: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM scheduled_events WHERE status = 'pending' AND world_id = $1",
+        )
+        .bind(Uuid::from_u128(world_b.0))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(b_pending, 1, "world B's event untouched by store A's claim");
+
+        // requeue_orphaned is likewise world-scoped: store A requeues only its own processing rows.
+        assert_eq!(store_b.claim_due(now(), 100).await.unwrap().len(), 1); // B now processing
+        assert_eq!(
+            store_a.requeue_orphaned().await.unwrap(),
+            1,
+            "store A requeues its own (now-processing) event"
+        );
+        assert_eq!(
+            store_b.requeue_orphaned().await.unwrap(),
+            1,
+            "store B requeues only its own — A's requeue did not affect it"
+        );
     }
 }
