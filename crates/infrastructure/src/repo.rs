@@ -12263,6 +12263,62 @@ mod tests {
         );
     }
 
+    /// 037 AC2: the migration backfill gives every **pre-existing** user (one that predates the players
+    /// table) exactly one player with `id = user_id`, and is idempotent. Exercised against a directly
+    /// inserted user — the path the migration runs against real data, which `create_account` does not cover.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn backfill_creates_one_player_per_existing_user(pool: PgPool) {
+        let Setup { world, .. } = setup(pool.clone()).await;
+        let world_uuid = Uuid::from_u128(world.id.0);
+
+        // A user that exists with no player row (as if it predated migration 0043).
+        let user_uuid = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO users (id, username, email, password_hash, email_confirmed, tribe) \
+             VALUES ($1, $2, $3, 'h', true, 'teutons')",
+        )
+        .bind(user_uuid)
+        .bind(format!("legacy_{}", user_uuid.simple()))
+        .bind(format!("legacy_{}@example.com", user_uuid.simple()))
+        .execute(&pool)
+        .await
+        .expect("insert legacy user");
+
+        // The backfill statement from migration 0043.
+        let backfill = "INSERT INTO players (id, user_id, world_id, tribe) \
+             SELECT u.id, u.id, w.id, u.tribe \
+             FROM users u CROSS JOIN (SELECT id FROM worlds LIMIT 1) w \
+             ON CONFLICT (user_id, world_id) DO NOTHING";
+        sqlx::query(backfill)
+            .execute(&pool)
+            .await
+            .expect("backfill");
+
+        // Exactly one player: id = user_id, the world, the user's tribe.
+        let rows: Vec<(Uuid, Uuid, String)> =
+            sqlx::query_as("SELECT id, world_id, tribe FROM players WHERE user_id = $1")
+                .bind(user_uuid)
+                .fetch_all(&pool)
+                .await
+                .expect("players");
+        assert_eq!(rows.len(), 1, "exactly one player per existing user");
+        assert_eq!(rows[0].0, user_uuid, "player id == user id (reuse-UUID)");
+        assert_eq!(rows[0].1, world_uuid, "player in the single world");
+        assert_eq!(rows[0].2, "teutons", "tribe copied from the user");
+
+        // Idempotent — re-running the backfill adds nothing.
+        sqlx::query(backfill)
+            .execute(&pool)
+            .await
+            .expect("backfill again");
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM players WHERE user_id = $1")
+            .bind(user_uuid)
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+        assert_eq!(count, 1, "backfill is idempotent");
+    }
+
     /// 006 AC6 migration-boundary guard: the world `seed` is backfilled NOT NULL with the
     /// deterministic per-world value, and adding it does not move a pre-existing village or change
     /// its fields. (The NOT NULL is guaranteed by 0009's own `SET NOT NULL`, which aborts on any
