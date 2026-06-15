@@ -3,10 +3,10 @@
 #![forbid(unsafe_code)]
 
 use axum_extra::extract::cookie::Key;
-use eperica_domain::WorldMap;
+use eperica_domain::{GameSpeed, WorldMap};
 use eperica_infrastructure::{
     AppConfig, Argon2Hasher, ChatHub, NotificationHub, PgAccountRepository, PgEventStore,
-    Scheduler, achievement_catalogue, alliance_rules, artifact_catalogue, build_rules,
+    Scheduler, achievement_catalogue, all_worlds, alliance_rules, artifact_catalogue, build_rules,
     combat_rules, create_pool, culture_rules, economy_rules, ensure_world_with_release,
     fair_play_rules, lifecycle_rules, loyalty_rules, map_rules, medal_rules, merchant_rules,
     oasis_rules, quest_chain, ranking_rules, run_chat_listener, run_migrations,
@@ -107,7 +107,68 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&wonder),
         world.wonder_release_at,
     );
-    let scheduler_handle = tokio::spawn(scheduler.run(shutdown_rx));
+    let scheduler_handle = tokio::spawn(scheduler.run(shutdown_rx.clone()));
+
+    // 040: the registry — run a scheduler per world. The home world's scheduler is already running;
+    // spawn one for every *other* world so each drains only its own due work (039) with its own
+    // speed/seed/map (built from the world row). A world with an invalid speed is logged and skipped;
+    // the web continues to operate on the home world (request-path world selection lands in 042).
+    let mut extra_handles = Vec::new();
+    match all_worlds(&pool).await {
+        Ok(worlds) => {
+            for w in worlds.into_iter().filter(|w| w.id != world.id) {
+                let Ok(speed) = GameSpeed::new(w.speed) else {
+                    tracing::error!(
+                        world = w.id.0,
+                        speed = w.speed,
+                        "skipping world: invalid speed"
+                    );
+                    continue;
+                };
+                let Ok(mr) = map_rules() else {
+                    tracing::error!(world = w.id.0, "skipping world: map rules failed to load");
+                    continue;
+                };
+                let w_map = Arc::new(WorldMap::new(w.seed as u64, w.radius, mr));
+                let w_accounts = PgAccountRepository::new(
+                    pool.clone(),
+                    w.id,
+                    w.seed,
+                    w.radius,
+                    rules.starting_amounts,
+                    lifecycle.beginner_protection_secs,
+                    speed,
+                );
+                let w_scheduler = Scheduler::new(
+                    PgEventStore::new(pool.clone(), w.id),
+                    w_accounts,
+                    Arc::clone(&rules),
+                    Arc::clone(&units),
+                    Arc::clone(&merchants),
+                    Arc::clone(&combat),
+                    Arc::clone(&scout),
+                    Arc::clone(&oases),
+                    Arc::clone(&culture),
+                    Arc::clone(&loyalty),
+                    Arc::clone(&ranking),
+                    Arc::clone(&medals),
+                    Arc::clone(&lifecycle),
+                    Arc::clone(&artifacts),
+                    Arc::clone(&template),
+                    Arc::clone(&w_map),
+                    speed,
+                    w.seed as u64,
+                    w.created_at,
+                    w.artifact_release_at,
+                    Arc::clone(&wonder),
+                    w.wonder_release_at,
+                );
+                extra_handles.push(tokio::spawn(w_scheduler.run(shutdown_rx.clone())));
+                tracing::info!(world = w.id.0, "started scheduler for world");
+            }
+        }
+        Err(e) => tracing::error!(error = %e, "failed to load worlds for the registry"),
+    }
 
     let state = AppState {
         accounts: Arc::new(accounts),
@@ -149,6 +210,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     let _ = scheduler_handle.await;
+    for h in extra_handles {
+        let _ = h.await;
+    }
     Ok(())
 }
 
