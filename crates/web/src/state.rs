@@ -3,9 +3,9 @@
 use axum::extract::FromRef;
 use axum_extra::extract::cookie::Key;
 use eperica_domain::{
-    AchievementDef, AllianceRules, BuildRules, CultureRules, EconomyRules, FairPlayRules,
-    LifecycleRules, LoyaltyRules, MerchantRules, QuestDef, RankingRules, StartingVillage,
-    UnitRules, WonderRules, WorldConfig, WorldMap,
+    AchievementDef, AllianceRules, BuildRules, CombatRules, CultureRules, EconomyRules,
+    FairPlayRules, LifecycleRules, LoyaltyRules, MerchantRules, QuestDef, RankingRules,
+    StartingVillage, UnitRules, WonderRules, WorldConfig, WorldMap,
 };
 use eperica_infrastructure::{Argon2Hasher, ChatHub, NotificationHub, PgAccountRepository};
 use std::sync::Arc;
@@ -25,6 +25,8 @@ pub struct AppState {
     pub build_rules: Arc<BuildRules>,
     /// Unit balance rules (per-tribe rosters, research, Smithy upgrades — 004).
     pub unit_rules: Arc<UnitRules>,
+    /// Combat balance (031 — used to show Smithy upgrade stat gains; combat itself runs in the scheduler).
+    pub combat_rules: Arc<CombatRules>,
     /// Culture-point + expansion balance rules (CP rate, thresholds, slots, settlers — 013).
     pub culture_rules: Arc<CultureRules>,
     /// Loyalty + conquest balance rules (regen, drop, post-conquest loyalty — 014).

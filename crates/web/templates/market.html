@@ -25,14 +25,48 @@
     <table class="table">
       <thead><tr><th>Resource</th><th>Send</th></tr></thead>
       <tbody>
-        <tr><td>Wood</td><td><input type="number" name="amount_wood" value="0" min="0" style="width:7em"></td></tr>
-        <tr><td>Clay</td><td><input type="number" name="amount_clay" value="0" min="0" style="width:7em"></td></tr>
-        <tr><td>Iron</td><td><input type="number" name="amount_iron" value="0" min="0" style="width:7em"></td></tr>
-        <tr><td>Crop</td><td><input type="number" name="amount_crop" value="0" min="0" style="width:7em"></td></tr>
+        <tr><td>Wood</td><td><input type="number" name="amount_wood" value="0" min="0" style="width:7em" class="ship-amt"></td></tr>
+        <tr><td>Clay</td><td><input type="number" name="amount_clay" value="0" min="0" style="width:7em" class="ship-amt"></td></tr>
+        <tr><td>Iron</td><td><input type="number" name="amount_iron" value="0" min="0" style="width:7em" class="ship-amt"></td></tr>
+        <tr><td>Crop</td><td><input type="number" name="amount_crop" value="0" min="0" style="width:7em" class="ship-amt"></td></tr>
       </tbody>
     </table>
+    <p id="ship-preview" class="muted"></p>
     <button class="btn btn--primary" type="submit">Send resources</button>
   </form>
+
+  <script>
+    // 031: live shipment preview — merchants needed (each carries {{ capacity }}) + round-trip time,
+    // matching the server's toroidal distance × merchant speed × world speed.
+    (function () {
+      const out = document.getElementById("ship-preview");
+      if (!out) return;
+      const amts = Array.from(document.querySelectorAll(".ship-amt"));
+      const xEl = document.querySelector("input[name=x]"), yEl = document.querySelector("input[name=y]");
+      const CAP = {{ capacity }}, FREE = {{ free }}, SPD = {{ merchant_speed }}, MULT = {{ speed_mult }};
+      const W = {{ radius }} * 2 + 1, OX = {{ origin_x }}, OY = {{ origin_y }};
+      const gap = (p, q) => { const m = (((p - q) % W) + W) % W; return Math.min(m, W - m); };
+      const fmt = (s) => { const h=Math.floor(s/3600); s-=h*3600; const m=Math.floor(s/60);
+        return `${h}:${String(m).padStart(2,"0")}:${String(s-m*60).padStart(2,"0")}`; };
+      const upd = () => {
+        const total = amts.reduce((a, el) => a + Math.max(0, parseInt(el.value, 10) || 0), 0);
+        if (!total) { out.textContent = ""; return; }
+        const need = CAP > 0 ? Math.ceil(total / CAP) : 0;
+        let s = `${total} resources → ${need} merchant(s)`;
+        if (need > FREE) s += ` (only ${FREE} free)`;
+        const tx = parseInt(xEl.value, 10), ty = parseInt(yEl.value, 10);
+        if (Number.isInteger(tx) && Number.isInteger(ty) && SPD > 0) {
+          const dx = gap(OX, tx), dy = gap(OY, ty);
+          const secs = Math.round((Math.sqrt(dx*dx + dy*dy) / (SPD * MULT)) * 3600);
+          s += ` · round trip ${fmt(secs * 2)}`;
+        }
+        out.textContent = s;
+      };
+      for (const el of amts) el.addEventListener("input", upd);
+      for (const el of [xEl, yEl]) if (el) el.addEventListener("input", upd);
+      upd();
+    })();
+  </script>
   {% endif %}
   {% endif %}
 </section>

@@ -103,6 +103,8 @@ pub struct BuildRow {
     pub at_max: bool,
     /// Whether an order can be placed now (affordable, not maxed, none active).
     pub can_order: bool,
+    /// What the next level grants (e.g. "Production 30 → 42/h · +2 pop"); empty at max level.
+    pub effect: String,
 }
 
 /// An active build/research/upgrade order, for display + countdown.
@@ -184,6 +186,8 @@ pub struct SmithyRow {
     pub cost_crop: i64,
     /// Upgrade duration at the current world speed, formatted `h:mm:ss`.
     pub time: String,
+    /// The stat gain the next level grants (031); empty at max level.
+    pub effect: String,
 }
 
 #[derive(Template)]
@@ -218,6 +222,8 @@ pub struct TrainRow {
     pub cost_crop: i64,
     /// Per-unit training time at the current building level and world speed, `h:mm:ss`.
     pub time: String,
+    /// Per-unit training time in seconds (031 — for the live batch-total JS).
+    pub time_secs: i64,
     /// The Train form is offered (no batch running at this building).
     pub can_order: bool,
     /// Why the action is unavailable; empty when orderable.
@@ -287,6 +293,12 @@ pub struct RallyUnitRow {
     pub name: String,
     /// How many are in the garrison (the input's max).
     pub available: u32,
+    /// Per-unit stats (031 — for the live carry/power/ETA preview as the army is selected).
+    pub speed: u32,
+    pub carry: u32,
+    pub attack: u32,
+    pub def_inf: u32,
+    pub def_cav: u32,
 }
 
 #[derive(Template)]
@@ -305,6 +317,12 @@ pub struct RallyTemplate {
     pub can_settle: bool,
     /// Settlers a founding consumes (shown in the settle hint).
     pub settlers_per_village: u32,
+    /// Origin coordinates + world radius + speed (031 — for the client-side travel-time/ETA preview,
+    /// matching the domain's toroidal distance × world speed).
+    pub origin_x: i32,
+    pub origin_y: i32,
+    pub radius: i32,
+    pub speed_mult: f64,
 }
 
 /// An in-flight movement line on the village page (007 AC7).
@@ -438,6 +456,13 @@ pub struct MarketTemplate {
     pub free: u32,
     /// Merchants the Marketplace provides at its current level.
     pub total: u32,
+    /// Merchant map speed (fields/h) + origin/radius/world-speed (031 — for the live merchants-needed +
+    /// round-trip-time preview, matching the domain's toroidal distance × world speed).
+    pub merchant_speed: u32,
+    pub origin_x: i32,
+    pub origin_y: i32,
+    pub radius: i32,
+    pub speed_mult: f64,
 }
 
 /// An in-flight shipment line on the village page (008 AC6).

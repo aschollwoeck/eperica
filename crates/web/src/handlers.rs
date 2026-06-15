@@ -605,12 +605,56 @@ pub async fn village(
         active.iter().any(|a| lane_of(a.target) == lane)
     };
 
+    // 031: the effect of the *next* level, so a player sees what an upgrade does — not just its cost. Pure
+    // reads off the economy rules (scaled by world speed for production, to match the displayed rates).
+    let econ = state.rules.as_ref();
+    let speed = state.world.speed;
+    let field_effect = |kind: ResourceKind, level: u8| -> String {
+        let cur = econ.field_production_per_hour(kind, level, speed);
+        let next = econ.field_production_per_hour(kind, level + 1, speed);
+        let dpop = econ.field_population(level + 1) - econ.field_population(level);
+        let mut s = format!("Production {cur} → {next}/h");
+        if dpop != 0 {
+            s.push_str(&format!(" · +{dpop} pop"));
+        }
+        s
+    };
+    let building_effect = |kind: BuildingKind, level: u8| -> String {
+        let special = match kind {
+            BuildingKind::Warehouse => Some(format!(
+                "Storage {} → {}",
+                econ.warehouse_capacity(level),
+                econ.warehouse_capacity(level + 1)
+            )),
+            BuildingKind::Granary => Some(format!(
+                "Crop storage {} → {}",
+                econ.granary_capacity(level),
+                econ.granary_capacity(level + 1)
+            )),
+            BuildingKind::Outpost => Some(format!(
+                "Holds {} → {} oases",
+                econ.outpost_capacity(level),
+                econ.outpost_capacity(level + 1)
+            )),
+            _ => None,
+        };
+        let dpop =
+            econ.building_population_at(kind, level + 1) - econ.building_population_at(kind, level);
+        let pop = (dpop != 0).then(|| format!("+{dpop} pop"));
+        [special, pop]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ")
+    };
+
     let make_row = |table: &'static str,
                     slot: u8,
                     kind: &'static str,
                     label: String,
                     level: u8,
-                    target: BuildTarget|
+                    target: BuildTarget,
+                    effect: String|
      -> BuildRow {
         let cost = build_rules.cost(target, level);
         let at_max = cost.is_none();
@@ -633,6 +677,8 @@ pub async fn village(
             cost_crop: c.crop,
             at_max,
             can_order,
+            // Blank at max (no next level to describe).
+            effect: if at_max { String::new() } else { effect },
         }
     };
 
@@ -652,10 +698,14 @@ pub async fn village(
                 format!("{} field #{slot}", resource_label(f.kind)),
                 f.level,
                 BuildTarget::Field { slot },
+                field_effect(f.kind, f.level),
             );
             if f.level >= field_cap {
+                // A non-capital field caps below the cost table's end (which runs to the capital cap), so
+                // also blank the effect — there is no buildable next level here (AC1).
                 row.at_max = true;
                 row.can_order = false;
+                row.effect = String::new();
             }
             row
         })
@@ -695,6 +745,7 @@ pub async fn village(
             building_label(kind).to_owned(),
             level,
             BuildTarget::Building { slot, kind },
+            building_effect(kind, level),
         )
     })
     .collect();
@@ -1520,6 +1571,23 @@ pub async fn smithy(
                 iron: 0,
                 crop: 0,
             });
+            // 031: the stat gain this upgrade grants (Smithy scales attack + defence per level).
+            let effect = if cost.is_none() {
+                String::new()
+            } else {
+                let stat = |base: u32, lvl: u8| {
+                    (f64::from(base) * state.combat_rules.smithy_factor(lvl)).round() as u32
+                };
+                format!(
+                    "Att {}→{} · Def {}/{}→{}/{}",
+                    stat(spec.attack, level),
+                    stat(spec.attack, level + 1),
+                    stat(spec.defense_infantry, level),
+                    stat(spec.defense_cavalry, level),
+                    stat(spec.defense_infantry, level + 1),
+                    stat(spec.defense_cavalry, level + 1),
+                )
+            };
             SmithyRow {
                 id: spec.id.as_str().to_owned(),
                 name: spec.name.clone(),
@@ -1531,6 +1599,7 @@ pub async fn smithy(
                 cost_iron: c.iron,
                 cost_crop: c.crop,
                 time: fmt_duration(time_secs),
+                effect,
             }
         })
         .collect();
@@ -1657,6 +1726,12 @@ pub async fn troops(
                     &unit_rules.training,
                     state.world.speed,
                 )),
+                time_secs: per_unit_time_secs(
+                    spec.train_secs,
+                    building_level,
+                    &unit_rules.training,
+                    state.world.speed,
+                ),
                 can_order: batch.is_none(),
                 gate: if batch.is_some() {
                     "training in progress".to_owned()
@@ -1779,10 +1854,33 @@ pub async fn rally(
         .filter(|(_, n)| *n > 0)
         .map(|(u, n)| {
             let spec = roster.iter().find(|s| &s.id == u);
+            // For the army-power preview, count only units that fight the main battle: scouts + oasis
+            // animals never do, and a ram's attack feeds the wall, not the field battle (009/010).
+            let main_battle =
+                spec.is_some_and(|s| !matches!(s.role, UnitRole::Scout | UnitRole::Wild));
+            let counts_attack = main_battle
+                && spec.is_some_and(|s| s.siege_kind != Some(eperica_domain::SiegeKind::Ram));
             RallyUnitRow {
                 id: u.as_str().to_owned(),
                 name: spec.map_or_else(|| u.as_str().to_owned(), |s| s.name.clone()),
                 available: *n,
+                speed: spec.map_or(0, |s| s.speed),
+                carry: spec.map_or(0, |s| s.carry_capacity),
+                attack: if counts_attack {
+                    spec.map_or(0, |s| s.attack)
+                } else {
+                    0
+                },
+                def_inf: if main_battle {
+                    spec.map_or(0, |s| s.defense_infantry)
+                } else {
+                    0
+                },
+                def_cav: if main_battle {
+                    spec.map_or(0, |s| s.defense_cavalry)
+                } else {
+                    0
+                },
             }
         })
         .collect();
@@ -1817,6 +1915,10 @@ pub async fn rally(
         target_is_oasis,
         can_settle,
         settlers_per_village: state.culture_rules.settlers_per_village,
+        origin_x: village.coordinate.x,
+        origin_y: village.coordinate.y,
+        radius: i32::try_from(state.world.radius).unwrap_or(i32::MAX),
+        speed_mult: state.world.speed.multiplier(),
     })
 }
 
@@ -2088,6 +2190,11 @@ pub async fn market(
             capacity: 0,
             free: 0,
             total: 0,
+            merchant_speed: 0,
+            origin_x: 0,
+            origin_y: 0,
+            radius: 0,
+            speed_mult: 1.0,
         });
     }
     let committed = match state.accounts.committed_merchants(village.id).await {
@@ -2098,12 +2205,18 @@ pub async fn market(
         }
     };
     let total = state.merchant_rules.merchants_total(level);
+    let profile = state.merchant_rules.profile(tribe);
     page(&MarketTemplate {
         village_id,
         has_marketplace: true,
-        capacity: state.merchant_rules.profile(tribe).capacity,
+        capacity: profile.capacity,
         free: total.saturating_sub(committed),
         total,
+        merchant_speed: profile.speed,
+        origin_x: village.coordinate.x,
+        origin_y: village.coordinate.y,
+        radius: i32::try_from(state.world.radius).unwrap_or(i32::MAX),
+        speed_mult: state.world.speed.multiplier(),
     })
 }
 
