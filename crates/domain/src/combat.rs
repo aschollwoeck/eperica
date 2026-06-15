@@ -80,6 +80,12 @@ impl CombatRules {
     pub fn smithy_factor(&self, level: u8) -> f64 {
         1.0 + f64::from(level) * self.smithy_bonus_per_level
     }
+
+    /// The Wall defence-multiplier **bonus** for `tribe` at Wall `level` (e.g. `0.03` ⇒ +3 %); `0.0` if
+    /// the tribe has no Wall profile. Used to show a Wall upgrade's effect (031).
+    pub fn wall_bonus(&self, tribe: Tribe, level: u8) -> f64 {
+        self.wall(tribe).map_or(0.0, |w| w.bonus(level))
+    }
 }
 
 /// A side's split attack power (Smithy-scaled), with ram force tracked separately for the Wall.

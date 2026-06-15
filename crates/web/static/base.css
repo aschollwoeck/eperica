@@ -163,6 +163,20 @@ a { color: var(--c-gold); }
   font-weight: 700;
 }
 
+/* 031: resource bars — a fill track under each resource line. */
+.resource-list { list-style: none; padding: 0; }
+.resbar { display: flex; flex-direction: column; gap: 4px; padding: var(--space-2) 0; }
+.resbar__track {
+  height: 8px; border-radius: 999px; overflow: hidden;
+  background: color-mix(in srgb, var(--c-ink-muted) 25%, transparent);
+}
+.resbar__fill { display: block; height: 100%; width: 0; background: var(--c-gold); transition: width 0.3s; }
+.resbar__fill--warn { background: var(--c-warning); }
+.res--wood .resbar__fill { background: var(--c-lumber); }
+.res--clay .resbar__fill { background: var(--c-clay); }
+.res--iron .resbar__fill { background: var(--c-iron-res); }
+.res--crop .resbar__fill { background: var(--c-crop); }
+
 /* 030: account-sitting banner — a persistent bar while operating another player's account. */
 .banner {
   padding: var(--space-2) var(--space-3);

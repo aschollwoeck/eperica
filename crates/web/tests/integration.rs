@@ -4567,6 +4567,13 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
         body.contains("Storage "),
         "the warehouse shows a storage effect"
     );
+    // Buildings whose rules live outside the economy show their effects too.
+    assert!(body.contains("Merchants "), "the Marketplace shows merchant count");
+    assert!(body.contains("Build speed ×"), "the Main Building shows the build-speed factor");
+    assert!(body.contains("Culture +"), "the Town Hall shows culture gain");
+    assert!(body.contains("Training speed ×"), "training buildings show the training-speed factor");
+    // The resource bars are wired (fill + ETA computed client-side from these attributes).
+    assert!(body.contains("resbar") && body.contains("data-amt="), "resource bars are present");
 }
 
 /// 031 AC1: a non-capital field at its cap shows **no** effect (the cost table runs to the higher capital
