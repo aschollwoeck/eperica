@@ -71,13 +71,15 @@ Sequenced so low-risk, independently-valuable pieces land first and the heavy re
 |-----|-------|------|----------|
 | 036 | **Admin role + dashboard shell** | Low | `is_admin` + `ADMINS` bootstrap, `require_admin`, gated `/admin`: in-app mod/admin promotion + account management, **read-only** world/server status. Operates on the single world; no multi-world yet. Independently useful. |
 | 037 | **Account↔player split** | High | The `players` table + migration/backfill; re-key `PlayerId` semantics from user to player. Pure refactor, no user-visible change. The keystone. |
-| 038 | **World context plumbing** | Med | World selection in session; resolve player per `(user, world)`; world-scope the remaining player state + `scheduled_events`. Code is world-aware end-to-end; still one live world. |
-| 039 | **World registry runtime** | High | Many `WorldRuntime`s + per-world scheduler. Two+ worlds run concurrently. |
-| 040 | **World lifecycle admin** | Med | Create/start/archive worlds live from the dashboard (registry add/remove, no restart, others undisturbed). |
-| 041 | **Player multi-world UX** | Med | Post-login world lobby, join-world flow, nav world switcher. |
+| 038 | **World-scoped event store** | Med | `WorldId` threaded end-to-end; `scheduled_events.world_id`; the event store scoped by world. Foundational; single-world behaviour unchanged. |
+| 039 | **World-scoped due processing** | Med | The repo's per-tick due-claims + requeues filter to the repo's world. Behaviour-preserving; the prerequisite for per-world schedulers. |
+| 040 | **World registry runtime** | High | Load all worlds at startup; a `WorldRuntime` (map/speed/repo/event-store) per world; a **scheduler per world** concurrently. The web stays on the home world. |
+| 041 | **World lifecycle admin** | Med | Create/start/archive worlds live from the dashboard (registry add/remove, no restart, others undisturbed). |
+| 042 | **Player multi-world UX** | Med | Post-login world lobby, join-world flow, nav world switcher, and resolving the player per `(user, world)` in the request path. |
 
-036 stands alone (useful even if paused after). 037–039 are the heavy lift that must all land to reach
-real multi-world. 040–041 turn it on for admins and players.
+036 stands alone (useful even if paused after). 037–040 are the heavy lift that must all land to reach
+real multi-world. 041–042 turn it on for admins and players. (038/039 split the original "world context
+plumbing"; the request-path player resolution moved to 042 with world selection.)
 
 ## Reuse / decisions
 - **Reuse the freeze-guard for archival** (021) and **the sanctions/role pattern for admin** (022) rather

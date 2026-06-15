@@ -12780,6 +12780,105 @@ mod tests {
         );
     }
 
+    /// 040 AC1: `all_worlds` loads every world with its own speed + radius (the registry spawns a
+    /// scheduler per row).
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn all_worlds_loads_each_with_its_config(pool: PgPool) {
+        let Setup { world, .. } = setup(pool.clone()).await; // the home world (speed 1.0, radius 50)
+        // A second world with a distinct speed + radius.
+        let world_b = Uuid::new_v4();
+        sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 5.0, 33, 7)")
+            .bind(world_b)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let worlds = crate::all_worlds(&pool).await.unwrap();
+        assert_eq!(worlds.len(), 2);
+        let home = worlds.iter().find(|w| w.id == world.id).unwrap();
+        assert!((home.speed - 1.0).abs() < f64::EPSILON);
+        assert_eq!(home.radius, 50);
+        let b = worlds.iter().find(|w| w.id.0 == world_b.as_u128()).unwrap();
+        assert!((b.speed - 5.0).abs() < f64::EPSILON);
+        assert_eq!(b.radius, 33);
+    }
+
+    /// 040 AC5: a repo built per world processes only its own world's due work — the registry premise.
+    /// Two repos over two worlds each claim only their world's due build.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn per_world_repos_claim_independently(pool: PgPool) {
+        let Setup {
+            repo: repo_a,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let beginner = crate::lifecycle_rules().unwrap().beginner_protection_secs;
+
+        // World A: a real account + a due build.
+        let user = make_account(&repo_a, &template, "pw").await;
+        let village_a = repo_a.villages_of(user).await.unwrap()[0].id;
+
+        // World B: its own row + repo + a village (same account, second world) + a due build.
+        let world_b = Uuid::new_v4();
+        sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 50, 2)")
+            .bind(world_b)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let repo_b = PgAccountRepository::new(
+            pool.clone(),
+            WorldId(world_b.as_u128()),
+            2,
+            50,
+            econ.starting_amounts,
+            beginner,
+            GameSpeed::new(1.0).unwrap(),
+        );
+        let village_b = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO villages (id, world_id, owner_id, x, y, tribe) \
+             VALUES ($1, $2, $3, 998, 998, 'gauls')",
+        )
+        .bind(village_b)
+        .bind(world_b)
+        .bind(Uuid::from_u128(user.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let past = (crate::now().0 - 60_000) as f64;
+        for vid in [Uuid::from_u128(village_a.0), village_b] {
+            sqlx::query(
+                "INSERT INTO build_orders \
+                 (id, village_id, target_table, slot, building_type, target_level, complete_at, status, lane) \
+                 VALUES ($1, $2, 'building', 1, 'warehouse', 1, \
+                         to_timestamp($3::double precision / 1000.0), 'pending', 'all')",
+            )
+            .bind(Uuid::new_v4())
+            .bind(vid)
+            .bind(past)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Each world's repo claims only its own world's build.
+        let due_a = repo_a
+            .claim_due_builds(Timestamp(crate::now().0), 100)
+            .await
+            .unwrap();
+        assert_eq!(due_a.len(), 1);
+        assert_eq!(due_a[0].village, village_a);
+
+        let due_b = repo_b
+            .claim_due_builds(Timestamp(crate::now().0), 100)
+            .await
+            .unwrap();
+        assert_eq!(due_b.len(), 1);
+        assert_eq!(due_b[0].village.0, village_b.as_u128());
+    }
+
     /// 004 AC13: a Roman village holds one field and one building order concurrently (separate
     /// lanes), but never two of the same lane; a non-Roman village is limited to one in total
     /// (single 'all' lane) — both DB-enforced under races by the partial unique index.

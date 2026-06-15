@@ -10,6 +10,10 @@ use uuid::Uuid;
 pub struct World {
     /// Stable identity.
     pub id: WorldId,
+    /// The world's speed multiplier (P7) — each world may run at its own pace (040).
+    pub speed: f64,
+    /// The map radius (006) — each world has its own size (040).
+    pub radius: u32,
     /// The map-generation seed (P6).
     pub seed: i64,
     /// When the world was created (Unix-ms UTC) — anchors the weekly medal periods (017).
@@ -20,7 +24,8 @@ pub struct World {
     pub wonder_release_at: Option<Timestamp>,
 }
 
-const SELECT_COLS: &str = "id, seed, (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ms, \
+const SELECT_COLS: &str = "id, speed, radius, seed, \
+    (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ms, \
     (EXTRACT(EPOCH FROM artifact_release_at) * 1000)::bigint AS artifact_ms, \
     (EXTRACT(EPOCH FROM wonder_release_at) * 1000)::bigint AS wonder_ms";
 
@@ -28,11 +33,27 @@ fn world_from_row(row: &sqlx::postgres::PgRow) -> Result<World, sqlx::Error> {
     let id: Uuid = row.try_get("id")?;
     Ok(World {
         id: WorldId(id.as_u128()),
+        speed: row.try_get("speed")?,
+        radius: u32::try_from(row.try_get::<i32, _>("radius")?).unwrap_or(0),
         seed: row.try_get("seed")?,
         created_at: Timestamp(row.try_get("created_ms")?),
         artifact_release_at: row.try_get::<Option<i64>, _>("artifact_ms")?.map(Timestamp),
         wonder_release_at: row.try_get::<Option<i64>, _>("wonder_ms")?.map(Timestamp),
     })
+}
+
+/// Load every world (040) — the registry runtime spawns a scheduler per row. Ordered by creation so the
+/// home world (created first) is stable.
+///
+/// # Errors
+/// Returns [`sqlx::Error`] on a storage failure.
+pub async fn all_worlds(pool: &PgPool) -> Result<Vec<World>, sqlx::Error> {
+    let rows = sqlx::query(&format!(
+        "SELECT {SELECT_COLS} FROM worlds ORDER BY created_at, id"
+    ))
+    .fetch_all(pool)
+    .await?;
+    rows.iter().map(world_from_row).collect()
 }
 
 /// Ensure a world exists and return it. The first call inserts it from `config` with a deterministic
