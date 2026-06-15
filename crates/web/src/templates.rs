@@ -884,6 +884,31 @@ pub struct NotificationsTemplate {
     pub notifications: Vec<NotificationRowView>,
 }
 
+/// A player row on the account-sitting page (030) — a sitter you authorised, or an owner you sit for.
+pub struct SitterRow {
+    pub id: String,
+    pub name: String,
+}
+
+/// One entry in the sitter-action audit log (030).
+pub struct AuditRow {
+    pub sitter: String,
+    pub action: String,
+}
+
+#[derive(Template)]
+#[template(path = "sitting.html")]
+pub struct SittingTemplate {
+    /// Sitters the player has authorised for their own account.
+    pub my_sitters: Vec<SitterRow>,
+    /// Owners who authorised the player to sit for them.
+    pub sitting_for: Vec<SitterRow>,
+    /// The player's own audit log (what their sitters did).
+    pub audit: Vec<AuditRow>,
+    /// If the player is currently sitting someone, that owner's name.
+    pub currently_sitting: Option<String>,
+}
+
 /// One notification-kind toggle on the settings page (029).
 pub struct SettingsToggleRow {
     /// The kind's stable token (the checkbox `name`).

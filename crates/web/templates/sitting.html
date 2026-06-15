@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Account sitting</h1>
+  <p class="muted"><a href="/village">← Back to the village</a></p>
+
+  {% if let Some(owner) = currently_sitting %}
+  <p class="banner">You are currently sitting for <strong>{{ owner }}</strong>.
+    <form method="post" action="/sitting/stop" class="inline"><button type="submit">Stop sitting</button></form>
+  </p>
+  {% endif %}
+
+  <h2>Your sitters</h2>
+  <p class="muted">Players you trust to operate your account while you're away. They cannot change your
+    settings or manage your sitters, and everything they do is logged below.</p>
+  {% if my_sitters.is_empty() %}
+  <p class="muted">You haven't authorised any sitters.</p>
+  {% else %}
+  <table class="table">
+    <tbody>
+      {% for s in my_sitters %}
+      <tr>
+        <td>{{ s.name }}</td>
+        <td><form method="post" action="/sitting/revoke" class="inline">
+          <input type="hidden" name="sitter" value="{{ s.id }}">
+          <button type="submit">Revoke</button>
+        </form></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <form method="post" action="/sitting/grant" class="form">
+    <label>Add a sitter <input type="text" name="username" placeholder="username" required></label>
+    <button class="btn btn--primary" type="submit">Authorise</button>
+  </form>
+
+  <h2>Accounts you sit for</h2>
+  {% if sitting_for.is_empty() %}
+  <p class="muted">No one has authorised you as a sitter.</p>
+  {% else %}
+  <table class="table">
+    <tbody>
+      {% for o in sitting_for %}
+      <tr>
+        <td>{{ o.name }}</td>
+        <td><form method="post" action="/sitting/start" class="inline">
+          <input type="hidden" name="owner" value="{{ o.id }}">
+          <button type="submit">Sit</button>
+        </form></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <h2>Recent sitter activity (your account)</h2>
+  {% if audit.is_empty() %}
+  <p class="muted">No sitter activity yet.</p>
+  {% else %}
+  <table class="table">
+    <thead><tr><th>Sitter</th><th>Action</th></tr></thead>
+    <tbody>
+      {% for a in audit %}<tr><td>{{ a.sitter }}</td><td>{{ a.action }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endblock %}

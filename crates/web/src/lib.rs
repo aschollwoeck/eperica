@@ -45,15 +45,17 @@ async fn presence_touch(State(state): State<AppState>, req: Request, next: Next)
         || path == "/messages/unread"
         || path.starts_with("/messages/stream")
         || path == "/notifications/unread"
-        || path == "/notifications/stream";
+        || path == "/notifications/stream"
+        || path == "/sitting/status";
     if background {
         return next.run(req).await;
     }
     let (mut parts, body) = req.into_parts();
-    if let Some(player) = session_player(&mut parts, &state).await
+    // 030: touch the *effective* player — operating an account via a sit keeps the owner active.
+    if let Some((real, sitting_owner)) = auth::effective_identity(&mut parts, &state).await
         && let Err(e) = state
             .accounts
-            .touch_activity(player, Timestamp(now().0))
+            .touch_activity(sitting_owner.unwrap_or(real), Timestamp(now().0))
             .await
     {
         tracing::error!(error = %e, "presence touch failed");
@@ -163,19 +165,71 @@ async fn action_guard(State(state): State<AppState>, req: Request, next: Next) -
         Err(e) => tracing::error!(error = %e, "action guard failed to read world state"),
     }
 
-    // Per-account sanction (022): reject a blocked logged-in player's mutating action.
+    // Per-account sanction (022): reject when either the real actor **or** the effective player (030 — the
+    // owner being sat) is banned/suspended. A banned sitter cannot act; a sanctioned owner cannot be
+    // operated via a sit.
     let (mut parts, body) = req.into_parts();
-    if let Some(player) = session_player(&mut parts, &state).await {
-        match state.accounts.find_user_by_id(player).await {
-            Ok(Some(u)) if account_blocked(u.banned_at, u.suspended_until, Timestamp(now().0)) => {
-                return (
-                    StatusCode::FORBIDDEN,
-                    "Your account is suspended or banned for a fair-play violation.",
-                )
-                    .into_response();
+    if let Some((real, sitting_owner)) = auth::effective_identity(&mut parts, &state).await {
+        let now_ts = Timestamp(now().0);
+        for who in std::iter::once(real).chain(sitting_owner) {
+            match state.accounts.find_user_by_id(who).await {
+                Ok(Some(u)) if account_blocked(u.banned_at, u.suspended_until, now_ts) => {
+                    return (
+                        StatusCode::FORBIDDEN,
+                        "Your account is suspended or banned for a fair-play violation.",
+                    )
+                        .into_response();
+                }
+                Ok(_) => {}
+                Err(e) => tracing::error!(error = %e, "action guard failed to read account"),
             }
-            Ok(_) => {}
-            Err(e) => tracing::error!(error = %e, "action guard failed to read account"),
+        }
+    }
+    next.run(Request::from_parts(parts, body)).await
+}
+
+/// Mutating actions a sitter may **not** take on the owner's account (030 AC4) — managing the owner's
+/// sitters, changing the owner's settings/profile, or starting a nested sit.
+fn sitter_restricted(path: &str) -> bool {
+    matches!(
+        path,
+        "/settings/notifications"
+            | "/profile/bio"
+            | "/sitting/grant"
+            | "/sitting/revoke"
+            | "/sitting/start"
+    )
+}
+
+/// Account-sitting guard (030): on a mutating `POST` made while actively sitting, **refuse** the
+/// owner-only actions (AC4) and **audit** everything else (AC5). Runs after the freeze/sanction guard, so
+/// only actions that would proceed are recorded.
+async fn sitting_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    if req.method() != Method::POST {
+        return next.run(req).await;
+    }
+    let path = req.uri().path().to_owned();
+    let (mut parts, body) = req.into_parts();
+    if let Some((real, Some(owner))) = auth::effective_identity(&mut parts, &state).await {
+        // Actively sitting `owner` as `real`.
+        if sitter_restricted(&path) {
+            return (
+                StatusCode::FORBIDDEN,
+                "A sitter cannot change the owner's account settings.",
+            )
+                .into_response();
+        }
+        // Audit the action (best-effort — a logging glitch must not block gameplay).
+        if let Err(e) = eperica_application::record_sitter_action(
+            state.accounts.as_ref(),
+            owner,
+            real,
+            &format!("POST {path}"),
+            Timestamp(now().0),
+        )
+        .await
+        {
+            tracing::error!(error = %e, "failed to record sitter action");
         }
     }
     next.run(Request::from_parts(parts, body)).await
@@ -254,6 +308,12 @@ pub fn router(state: AppState) -> Router {
             "/settings/notifications",
             post(handlers::settings_notifications_submit),
         )
+        .route("/sitting", get(handlers::sitting_page))
+        .route("/sitting/status", get(handlers::sitting_status))
+        .route("/sitting/grant", post(handlers::sitting_grant))
+        .route("/sitting/revoke", post(handlers::sitting_revoke))
+        .route("/sitting/start", post(handlers::sitting_start))
+        .route("/sitting/stop", post(handlers::sitting_stop))
         .route("/report", post(handlers::report_submit))
         .route("/mod", get(handlers::mod_queue))
         .route("/mod/account/{id}", get(handlers::mod_account))
@@ -261,6 +321,12 @@ pub fn router(state: AppState) -> Router {
         .route("/mod/sanction", post(handlers::mod_sanction_submit))
         .route("/styleguide", get(handlers::styleguide))
         .nest_service("/static", ServeDir::new("crates/web/static"))
+        // Innermost guard (runs just before the handler, after the freeze/sanction guard): restrict +
+        // audit sitter actions (030).
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            sitting_guard,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             action_guard,
