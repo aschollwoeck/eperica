@@ -103,6 +103,43 @@ impl EconomyRules {
             .get(&kind)
             .map_or(0, |table| level_value(table, level))
     }
+
+    /// A single resource field's **gross** hourly production at `level`, scaled by `speed` — the same
+    /// per-field value [`production_rates`] sums. Used to show an upgrade's effect (e.g. a crop field's new
+    /// rate) without recomputing the whole village.
+    #[must_use]
+    pub fn field_production_per_hour(
+        &self,
+        kind: ResourceKind,
+        level: u8,
+        speed: GameSpeed,
+    ) -> i64 {
+        scale(self.field_production(kind, level), speed)
+    }
+
+    /// Population contributed by a resource field at `level` (clamped to the table).
+    #[must_use]
+    pub fn field_population(&self, level: u8) -> i64 {
+        level_value(&self.field_population_per_level, level)
+    }
+
+    /// Population contributed by a building of `kind` at `level` (0 for an unknown kind / level 0).
+    #[must_use]
+    pub fn building_population_at(&self, kind: BuildingKind, level: u8) -> i64 {
+        self.building_population(kind, level)
+    }
+
+    /// Warehouse storage capacity (wood/clay/iron) at `level` (level 0 = the base, no Warehouse).
+    #[must_use]
+    pub fn warehouse_capacity(&self, level: u8) -> i64 {
+        level_value(&self.warehouse_capacity_per_level, level)
+    }
+
+    /// Granary storage capacity (crop) at `level` (level 0 = the base, no Granary).
+    #[must_use]
+    pub fn granary_capacity(&self, level: u8) -> i64 {
+        level_value(&self.granary_capacity_per_level, level)
+    }
 }
 
 /// Total village population — each point consumes 1 crop/hour.
@@ -267,6 +304,23 @@ mod tests {
 
     fn field(kind: ResourceKind, level: u8) -> ResourceField {
         ResourceField { kind, level }
+    }
+
+    // --- 031: per-level effect accessors (for the upgrade-effect display) ---
+    #[test]
+    fn level_accessors_report_next_level_values() {
+        let r = rules();
+        let s = GameSpeed::new(2.0).unwrap();
+        // Field production is the table value × speed; clamps past the table end.
+        assert_eq!(r.field_production_per_hour(ResourceKind::Wood, 0, s), 20);
+        assert_eq!(r.field_production_per_hour(ResourceKind::Wood, 1, s), 40);
+        assert_eq!(r.field_production_per_hour(ResourceKind::Wood, 9, s), 80); // clamped to 40 × 2
+        // Population + capacity tables, clamped.
+        assert_eq!(r.field_population(2), 2);
+        assert_eq!(r.field_population(9), 2);
+        assert_eq!(r.building_population_at(BuildingKind::MainBuilding, 1), 2);
+        assert_eq!(r.warehouse_capacity(2), 1700);
+        assert_eq!(r.granary_capacity(0), 800);
     }
 
     // --- AC1: accrual ---

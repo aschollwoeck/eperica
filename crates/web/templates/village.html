@@ -188,7 +188,7 @@
 <section class="panel">
   <h2>Buildings</h2>
   <table class="table">
-    <thead><tr><th>Building</th><th class="num">Level</th><th>Next cost (W/C/I/Cr)</th><th></th></tr></thead>
+    <thead><tr><th>Building</th><th class="num">Level</th><th>Next cost (W/C/I/Cr)</th><th>Next level</th><th></th></tr></thead>
     <tbody>
       {% for b in buildings %}
       <tr>
@@ -199,6 +199,7 @@
           <span class="num">{{ b.cost_wood }}/{{ b.cost_clay }}/{{ b.cost_iron }}/{{ b.cost_crop }}</span>
           {% endif %}
         </td>
+        <td class="muted">{{ b.effect }}</td>
         <td>
           {% if b.at_max %}<span class="muted">max</span>{% else if b.can_order %}
           <form method="post" action="/village/build">
@@ -219,7 +220,7 @@
 <section class="panel">
   <h2>Resource fields</h2>
   <table class="table">
-    <thead><tr><th>Field</th><th class="num">Level</th><th>Next cost (W/C/I/Cr)</th><th></th></tr></thead>
+    <thead><tr><th>Field</th><th class="num">Level</th><th>Next cost (W/C/I/Cr)</th><th>Next level</th><th></th></tr></thead>
     <tbody>
       {% for f in fields %}
       <tr>
@@ -230,6 +231,7 @@
           <span class="num">{{ f.cost_wood }}/{{ f.cost_clay }}/{{ f.cost_iron }}/{{ f.cost_crop }}</span>
           {% endif %}
         </td>
+        <td class="muted">{{ f.effect }}</td>
         <td>
           {% if f.at_max %}<span class="muted">max</span>{% else if f.can_order %}
           <form method="post" action="/village/build">

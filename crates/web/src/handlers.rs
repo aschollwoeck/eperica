@@ -605,12 +605,56 @@ pub async fn village(
         active.iter().any(|a| lane_of(a.target) == lane)
     };
 
+    // 031: the effect of the *next* level, so a player sees what an upgrade does — not just its cost. Pure
+    // reads off the economy rules (scaled by world speed for production, to match the displayed rates).
+    let econ = state.rules.as_ref();
+    let speed = state.world.speed;
+    let field_effect = |kind: ResourceKind, level: u8| -> String {
+        let cur = econ.field_production_per_hour(kind, level, speed);
+        let next = econ.field_production_per_hour(kind, level + 1, speed);
+        let dpop = econ.field_population(level + 1) - econ.field_population(level);
+        let mut s = format!("Production {cur} → {next}/h");
+        if dpop != 0 {
+            s.push_str(&format!(" · +{dpop} pop"));
+        }
+        s
+    };
+    let building_effect = |kind: BuildingKind, level: u8| -> String {
+        let special = match kind {
+            BuildingKind::Warehouse => Some(format!(
+                "Storage {} → {}",
+                econ.warehouse_capacity(level),
+                econ.warehouse_capacity(level + 1)
+            )),
+            BuildingKind::Granary => Some(format!(
+                "Crop storage {} → {}",
+                econ.granary_capacity(level),
+                econ.granary_capacity(level + 1)
+            )),
+            BuildingKind::Outpost => Some(format!(
+                "Holds {} → {} oases",
+                econ.outpost_capacity(level),
+                econ.outpost_capacity(level + 1)
+            )),
+            _ => None,
+        };
+        let dpop =
+            econ.building_population_at(kind, level + 1) - econ.building_population_at(kind, level);
+        let pop = (dpop != 0).then(|| format!("+{dpop} pop"));
+        [special, pop]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ")
+    };
+
     let make_row = |table: &'static str,
                     slot: u8,
                     kind: &'static str,
                     label: String,
                     level: u8,
-                    target: BuildTarget|
+                    target: BuildTarget,
+                    effect: String|
      -> BuildRow {
         let cost = build_rules.cost(target, level);
         let at_max = cost.is_none();
@@ -633,6 +677,8 @@ pub async fn village(
             cost_crop: c.crop,
             at_max,
             can_order,
+            // Blank at max (no next level to describe).
+            effect: if at_max { String::new() } else { effect },
         }
     };
 
@@ -652,6 +698,7 @@ pub async fn village(
                 format!("{} field #{slot}", resource_label(f.kind)),
                 f.level,
                 BuildTarget::Field { slot },
+                field_effect(f.kind, f.level),
             );
             if f.level >= field_cap {
                 row.at_max = true;
@@ -695,6 +742,7 @@ pub async fn village(
             building_label(kind).to_owned(),
             level,
             BuildTarget::Building { slot, kind },
+            building_effect(kind, level),
         )
     })
     .collect();

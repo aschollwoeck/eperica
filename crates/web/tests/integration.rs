@@ -4521,3 +4521,30 @@ async fn account_sitting_respects_sanctions(pool: sqlx::PgPool) {
     ban(sitter, true).await;
     assert_eq!(start(&js).await, 403, "a banned sitter cannot sit");
 }
+
+/// 031: the village build/field tables show each upgrade's effect (production / storage / population),
+/// not just its cost.
+#[sqlx::test(migrations = "../../migrations")]
+async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (c, _id) = register_client(&base, &pool, &unique("eff")).await;
+    let body = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    // A resource field shows its next-level production.
+    assert!(
+        body.contains("Production "),
+        "fields show a production effect"
+    );
+    assert!(body.contains('→'), "the effect reads current → next");
+    // The Warehouse shows its next-level storage capacity.
+    assert!(
+        body.contains("Storage "),
+        "the warehouse shows a storage effect"
+    );
+}

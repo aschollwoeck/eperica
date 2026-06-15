@@ -103,6 +103,8 @@ pub struct BuildRow {
     pub at_max: bool,
     /// Whether an order can be placed now (affordable, not maxed, none active).
     pub can_order: bool,
+    /// What the next level grants (e.g. "Production 30 → 42/h · +2 pop"); empty at max level.
+    pub effect: String,
 }
 
 /// An active build/research/upgrade order, for display + countdown.
