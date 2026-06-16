@@ -1078,3 +1078,33 @@ pub struct ConversationTemplate {
     /// History (oldest→newest).
     pub lines: Vec<ChatLineView>,
 }
+
+/// The world lobby (045): the worlds the account plays + the worlds it can join.
+#[derive(Template)]
+#[template(path = "worlds.html")]
+pub struct WorldsTemplate {
+    /// Worlds the account already has a player in (with the current one marked).
+    pub joined: Vec<JoinedWorldRow>,
+    /// Running worlds the account has not joined yet.
+    pub joinable: Vec<JoinableWorldRow>,
+}
+
+/// A world the account plays in (045 AC2).
+pub struct JoinedWorldRow {
+    pub id: String,
+    pub speed: f64,
+    pub radius: u32,
+    /// The account's tribe in this world.
+    pub tribe: String,
+    /// The currently-selected world (per the `world` cookie).
+    pub is_current: bool,
+    /// The home world (the one the web serves by default).
+    pub is_home: bool,
+}
+
+/// A world the account can join (045 AC3).
+pub struct JoinableWorldRow {
+    pub id: String,
+    pub speed: f64,
+    pub radius: u32,
+}

@@ -1,8 +1,8 @@
 //! HTTP handlers for the register / login / village flow.
 
 use crate::auth::{
-    AuthUser, GameContext, MaybeAuthUser, MaybeRealUser, RealUser, auth_cookie, clear_cookie,
-    world_cookie,
+    AuthUser, GameContext, MaybeAuthUser, MaybeRealUser, RealUser, WORLD_COOKIE, auth_cookie,
+    clear_cookie, world_cookie,
 };
 use crate::state::AppState;
 use crate::templates::{
@@ -11,16 +11,16 @@ use crate::templates::{
     AuditRow, BuildRow, ChatLineView, CompletedQuestView, ConversationRow, ConversationTemplate,
     CurrentQuestView, DiploRowView, ForceRow, ForumPostRow, ForumTemplate, ForumThreadRow,
     ForumThreadTemplate, GarrisonRow, HistoryPointView, IncomingView, IndexTemplate,
-    LeaderboardRowView, LeaderboardTemplate, LoginTemplate, MapCellView, MapTemplate,
-    MarketTemplate, MedalRowView, MemberStatRow, MessagesTemplate, ModAccountTemplate,
-    ModQueueTemplate, ModReportRow, MovementRow, NotificationRowView, NotificationsTemplate,
-    OasisRow, OutgoingInviteView, PendingInviteView, PlayerStatsTemplate, ProfileTemplate,
-    QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow,
-    ReportRow, ReportTemplate, ReportsTemplate, RosterRowView, ScoutReportTemplate,
-    ScoutResourceRow, SearchHitRow, SearchTemplate, SettingsTemplate, SettingsToggleRow,
-    ShipmentRow, SitterRow, SittingTemplate, SmithyRow, SmithyTemplate, StyleGuideTemplate,
-    TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate,
-    WonderStandingView, WonderTemplate,
+    JoinableWorldRow, JoinedWorldRow, LeaderboardRowView, LeaderboardTemplate, LoginTemplate,
+    MapCellView, MapTemplate, MarketTemplate, MedalRowView, MemberStatRow, MessagesTemplate,
+    ModAccountTemplate, ModQueueTemplate, ModReportRow, MovementRow, NotificationRowView,
+    NotificationsTemplate, OasisRow, OutgoingInviteView, PendingInviteView, PlayerStatsTemplate,
+    ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate,
+    ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, RosterRowView,
+    ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate, SettingsTemplate,
+    SettingsToggleRow, ShipmentRow, SitterRow, SittingTemplate, SmithyRow, SmithyTemplate,
+    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
+    VillageTemplate, WonderStandingView, WonderTemplate, WorldsTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -29,14 +29,14 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
-    AccountRepository, AchievementRepository, AdminError, AllianceLeaderboardRow,
+    AccountRepository, AchievementRepository, AdminError, AdminRepository, AllianceLeaderboardRow,
     AllianceRepository, ArtifactRepository, BattleReportView, BoardScope, BuildRepository,
     CombatRepository, CommsError, ConflictMetric, ConquestRepository, DiplomacyCommand,
     ElevatedRole, ForumError, LeaderboardRow, LoginError, MedalRepository, MedalSubjectKind,
     ModerationError, ModerationRepository, MovementRepository, OasisRepository, PlayerHit,
-    QuestRepository, RegisterCommand, RegisterError, ScoutIntel, ScoutReportView, ScoutRepository,
-    TradeRepository, TrainingRepository, UnitOrderKind, UnitRepository, Window, WonderRepository,
-    account_signals, admin_overview, alliance_conflict_leaderboard,
+    QuestRepository, RegisterCommand, RegisterError, RepoError, ScoutIntel, ScoutReportView,
+    ScoutRepository, TradeRepository, TrainingRepository, UnitOrderKind, UnitRepository, Window,
+    WonderRepository, account_signals, admin_overview, alliance_conflict_leaderboard,
     alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
     authorize_sit, climbers_leaderboard, conflict_leaderboard, conversation_list,
     create_world as admin_create_world_uc, disband_alliance, dm_key, dm_pair_key, edit_bio,
@@ -514,6 +514,107 @@ pub async fn select_world(
     match state.accounts.player_in_world(account, world).await {
         Ok(Some(_)) => (jar.add(world_cookie(world.0)), Redirect::to("/village")).into_response(),
         _ => Redirect::to("/village").into_response(),
+    }
+}
+
+/// The world lobby (045 AC2): the worlds the account plays (with the current one marked) + the running
+/// worlds it can join. Login required.
+pub async fn worlds_page(
+    State(state): State<AppState>,
+    jar: PrivateCookieJar,
+    AuthUser(account): AuthUser,
+) -> Response {
+    let current = jar
+        .get(WORLD_COOKIE)
+        .and_then(|c| c.value().parse::<u128>().ok())
+        .map(WorldId)
+        .unwrap_or(state.world_id);
+    let joined_worlds = match state.accounts.worlds_of_user(account).await {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::error!(error = %e, "worlds_of_user failed");
+            return server_error();
+        }
+    };
+    let all_worlds = match state.accounts.list_worlds().await {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::error!(error = %e, "list_worlds failed");
+            return server_error();
+        }
+    };
+    let joined_ids: std::collections::HashSet<WorldId> =
+        joined_worlds.iter().map(|w| w.world).collect();
+    // World metadata (speed/radius) by id, from the global worlds listing.
+    let meta: std::collections::HashMap<WorldId, (f64, u32)> = all_worlds
+        .iter()
+        .map(|w| (w.id, (w.speed, w.radius)))
+        .collect();
+    let joined = joined_worlds
+        .iter()
+        .map(|w| {
+            let (speed, radius) = meta.get(&w.world).copied().unwrap_or((1.0, 0));
+            JoinedWorldRow {
+                id: w.world.0.to_string(),
+                speed,
+                radius,
+                tribe: w.tribe.slug().to_owned(),
+                is_current: w.world == current,
+                is_home: w.world == state.world_id,
+            }
+        })
+        .collect();
+    // Joinable = running worlds (in the listing) that are not won and not already joined.
+    let joinable = all_worlds
+        .iter()
+        .filter(|w| !joined_ids.contains(&w.id) && w.won_ms.is_none())
+        .map(|w| JoinableWorldRow {
+            id: w.id.0.to_string(),
+            speed: w.speed,
+            radius: w.radius,
+        })
+        .collect();
+    page(&WorldsTemplate { joined, joinable })
+}
+
+/// The join-world form (045 AC3): the world to join + the tribe to play.
+#[derive(Deserialize)]
+pub struct JoinWorldForm {
+    world: String,
+    tribe: String,
+}
+
+/// Join a world (045 AC3): create the account's player there (042 primitive) + select it. Server-
+/// authoritative — only a world the registry runs and the account has not already joined; a re-join is a
+/// no-op. Drops the player into that world's village.
+pub async fn join_world(
+    State(state): State<AppState>,
+    jar: PrivateCookieJar,
+    AuthUser(account): AuthUser,
+    Form(form): Form<JoinWorldForm>,
+) -> Response {
+    let Ok(world) = form.world.trim().parse::<u128>().map(WorldId) else {
+        return Redirect::to("/worlds").into_response();
+    };
+    let Some(tribe) = Tribe::from_slug(form.tribe.trim()) else {
+        return Redirect::to("/worlds").into_response();
+    };
+    // The world must be one the registry runs — `context_for` yields its (world-scoped) repo for the join.
+    let Some((repo, _map, _speed, _radius)) = state.world_registry.context_for(world).await else {
+        return Redirect::to("/worlds").into_response();
+    };
+    match repo
+        .create_player_in_world(account, tribe, state.template.as_ref())
+        .await
+    {
+        // Joined now, or already joined (idempotent) — select the world and drop into its village.
+        Ok(_) | Err(RepoError::Duplicate) => {
+            (jar.add(world_cookie(world.0)), Redirect::to("/village")).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "join world failed");
+            server_error()
+        }
     }
 }
 

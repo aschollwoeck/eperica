@@ -252,6 +252,8 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/logout", post(handlers::logout))
         .route("/world/select", post(handlers::select_world))
+        .route("/worlds", get(handlers::worlds_page))
+        .route("/worlds/join", post(handlers::join_world))
         .route("/village", get(handlers::village))
         .route("/village/build", post(handlers::build_submit))
         .route("/map", get(handlers::map))
