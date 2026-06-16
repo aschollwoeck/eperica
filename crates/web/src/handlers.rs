@@ -1393,9 +1393,10 @@ pub struct BuildForm {
 /// Order an upgrade/construction for the selected village, then return to it (Player only, P4).
 pub async fn build_submit(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<BuildForm>,
 ) -> Response {
+    let player = ctx.player;
     let target = match form.table.as_str() {
         "field" => BuildTarget::Field { slot: form.slot },
         "building" => match parse_building_kind(form.kind.as_deref()) {
@@ -1411,13 +1412,13 @@ pub async fn build_submit(
     };
 
     let flash = order_build(
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
         state.rules.as_ref(),
         state.build_rules.as_ref(),
         state.unit_rules.as_ref(),
-        state.world.speed,
+        ctx.speed,
         now(),
         player,
         selected_village(form.village.as_deref()),
@@ -1531,9 +1532,10 @@ async fn village_view_data(
 /// The Academy: the tribe's roster with research state and actions (004 AC15; Player only, P4).
 pub async fn academy(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Query(q): Query<VillageQuery>,
 ) -> Response {
+    let player = ctx.player;
     let (village, amounts) =
         match village_view_data(&state, player, selected_village(q.village.as_deref())).await {
             Ok(v) => v,
@@ -1544,8 +1546,8 @@ pub async fn academy(
         return server_error();
     };
     let (researched, orders) = match tokio::try_join!(
-        state.accounts.researched_units(village.id),
-        state.accounts.active_unit_orders(village.id),
+        ctx.accounts.researched_units(village.id),
+        ctx.accounts.active_unit_orders(village.id),
     ) {
         Ok(t) => t,
         Err(e) => {
@@ -1573,7 +1575,7 @@ pub async fn academy(
             let (cost, time_secs) = spec.research.as_ref().map_or((None, 0), |r| {
                 (
                     Some(r.cost),
-                    scaled_time_secs(r.time_secs, state.world.speed),
+                    scaled_time_secs(r.time_secs, ctx.speed),
                 )
             });
             let mut gate = String::new();
@@ -1645,9 +1647,10 @@ pub async fn academy(
 /// The Smithy: researched units with upgrade levels and actions (004 AC15; Player only, P4).
 pub async fn smithy(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Query(q): Query<VillageQuery>,
 ) -> Response {
+    let player = ctx.player;
     let (village, amounts) =
         match village_view_data(&state, player, selected_village(q.village.as_deref())).await {
             Ok(v) => v,
@@ -1658,9 +1661,9 @@ pub async fn smithy(
         return server_error();
     };
     let (researched, levels, orders) = match tokio::try_join!(
-        state.accounts.researched_units(village.id),
-        state.accounts.unit_levels(village.id),
-        state.accounts.active_unit_orders(village.id),
+        ctx.accounts.researched_units(village.id),
+        ctx.accounts.unit_levels(village.id),
+        ctx.accounts.active_unit_orders(village.id),
     ) {
         Ok(t) => t,
         Err(e) => {
@@ -1696,7 +1699,7 @@ pub async fn smithy(
             let time_secs = unit_rules
                 .smithy
                 .base_time_secs(level)
-                .map_or(0, |t| scaled_time_secs(t, state.world.speed));
+                .map_or(0, |t| scaled_time_secs(t, ctx.speed));
             let mut gate = String::new();
             let mut can_order = false;
             match can_upgrade(spec, true, level, &village.buildings, &unit_rules.smithy) {
@@ -1775,16 +1778,17 @@ pub struct UnitForm {
 /// Order a unit research for the player's village, then return to the Academy (Player only, P4).
 pub async fn research_submit(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<UnitForm>,
 ) -> Response {
+    let player = ctx.player;
     let flash = order_research(
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
         state.rules.as_ref(),
         state.unit_rules.as_ref(),
-        state.world.speed,
+        ctx.speed,
         now(),
         player,
         selected_village(form.village.as_deref()),
@@ -1964,16 +1968,17 @@ pub async fn train_submit(
 /// Order a Smithy upgrade for the player's village, then return to the Smithy (Player only, P4).
 pub async fn smithy_upgrade_submit(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<UnitForm>,
 ) -> Response {
+    let player = ctx.player;
     let flash = order_smithy_upgrade(
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
         state.rules.as_ref(),
         state.unit_rules.as_ref(),
-        state.world.speed,
+        ctx.speed,
         now(),
         player,
         selected_village(form.village.as_deref()),
