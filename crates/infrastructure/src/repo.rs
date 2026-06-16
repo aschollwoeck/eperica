@@ -79,6 +79,152 @@ impl PgAccountRepository {
         self.world_id
     }
 
+    /// Place a starting village for `owner` (a player) in **this repo's world** within `tx`, on the first
+    /// free valley in the deterministic ring order, then seed the culture accumulator. Shared by
+    /// registration ([`create_account`]) and joining another world (042). Each placement attempt is a
+    /// SAVEPOINT so a coordinate clash rolls back just that insert.
+    async fn place_starting_village(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        owner: Uuid,
+        tribe: Tribe,
+        template: &StartingVillage,
+    ) -> Result<(), RepoError> {
+        let world_uuid = Uuid::from_u128(self.world_id.0);
+        let mut placed = false;
+        for coord in coordinates_within(self.map.radius()) {
+            let Some(TileKind::Valley(distribution)) = self.map.tile_at(coord) else {
+                continue;
+            };
+            let village_uuid = Uuid::new_v4();
+            let village = Village::found(
+                VillageId(village_uuid.as_u128()),
+                PlayerId(owner.as_u128()),
+                coord,
+                tribe,
+                distribution,
+                template,
+            );
+
+            let mut sp = (&mut *tx).begin().await.map_err(backend)?;
+            let insert_village = sqlx::query(
+                "INSERT INTO villages (id, world_id, owner_id, x, y, tribe) \
+                 VALUES ($1, $2, $3, $4, $5, $6)",
+            )
+            .bind(village_uuid)
+            .bind(world_uuid)
+            .bind(owner)
+            .bind(coord.x)
+            .bind(coord.y)
+            .bind(tribe.slug())
+            .execute(&mut *sp)
+            .await;
+
+            match insert_village {
+                Ok(_) => {
+                    for (slot, f) in village.fields.iter().enumerate() {
+                        sqlx::query(
+                            "INSERT INTO village_fields (village_id, slot, resource_type, level) \
+                             VALUES ($1, $2, $3, $4)",
+                        )
+                        .bind(village_uuid)
+                        .bind(slot as i16)
+                        .bind(resource_str(f.kind))
+                        .bind(i16::from(f.level))
+                        .execute(&mut *sp)
+                        .await
+                        .map_err(backend)?;
+                    }
+                    for (slot, b) in village.buildings.iter().enumerate() {
+                        sqlx::query(
+                            "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+                             VALUES ($1, $2, $3, $4)",
+                        )
+                        .bind(village_uuid)
+                        .bind(slot as i16)
+                        .bind(building_str(b.kind))
+                        .bind(i16::from(b.level))
+                        .execute(&mut *sp)
+                        .await
+                        .map_err(backend)?;
+                    }
+                    sqlx::query(
+                        "INSERT INTO village_resources (village_id, wood, clay, iron, crop, updated_at) \
+                         VALUES ($1, $2, $3, $4, $5, now())",
+                    )
+                    .bind(village_uuid)
+                    .bind(self.starting_amounts.wood)
+                    .bind(self.starting_amounts.clay)
+                    .bind(self.starting_amounts.iron)
+                    .bind(self.starting_amounts.crop)
+                    .execute(&mut *sp)
+                    .await
+                    .map_err(backend)?;
+
+                    sp.commit().await.map_err(backend)?;
+                    placed = true;
+                    break;
+                }
+                Err(e) if is_unique_violation(&e) => {
+                    sp.rollback().await.map_err(backend)?;
+                }
+                Err(e) => return Err(backend(e)),
+            }
+        }
+
+        if !placed {
+            return Err(RepoError::WorldFull);
+        }
+
+        // Seed the per-player culture accumulator (013): value 0, anchored now; the rate accrues live
+        // from this village's Town Hall (none yet) on read.
+        sqlx::query(
+            "INSERT INTO player_culture (player_id, value, updated_at) VALUES ($1, 0, now())",
+        )
+        .bind(owner)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
+
+    /// Create a **player** for an existing account in this repo's world (042): a fresh player id + a
+    /// starting village placed on this world's map. The home world's player reuses the user id (037); a
+    /// second world's player gets a fresh id. Returns the new player id.
+    ///
+    /// # Errors
+    /// [`RepoError::Duplicate`] if the account already has a player in this world; [`RepoError::WorldFull`]
+    /// if no free valley remains; otherwise a backend error.
+    pub async fn create_player_in_world(
+        &self,
+        user: PlayerId,
+        tribe: Tribe,
+        template: &StartingVillage,
+    ) -> Result<PlayerId, RepoError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        let player_uuid = Uuid::new_v4();
+        let insert_player = sqlx::query(
+            "INSERT INTO players (id, user_id, world_id, tribe) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(player_uuid)
+        .bind(Uuid::from_u128(user.0))
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(tribe.slug())
+        .execute(&mut *tx)
+        .await;
+        if let Err(e) = insert_player {
+            return Err(if is_unique_violation(&e) {
+                RepoError::Duplicate // already joined this world
+            } else {
+                backend(e)
+            });
+        }
+        self.place_starting_village(&mut tx, player_uuid, tribe, template)
+            .await?;
+        tx.commit().await.map_err(backend)?;
+        Ok(PlayerId(player_uuid.as_u128()))
+    }
+
     /// The artifact effects in force for a village (020 AC6), folded into its read like the oasis bonus:
     /// the village's own **small** holdings plus the account's **large/unique**. `NONE` for a Natar/NPC
     /// village (it never benefits from the artifacts it guards) or when the owner holds none.
@@ -395,12 +541,10 @@ impl AccountRepository for PgAccountRepository {
             });
         }
 
-        let owner = PlayerId(user_id.as_u128());
         let world_uuid = Uuid::from_u128(self.world_id.0);
 
-        // The per-world player profile (037): one row per (user, world). In the single world a player's
-        // id equals the user's id, so `villages.owner_id` (= user_id) already identifies this player and
-        // no game data is re-pointed. Same transaction as the user + village.
+        // The per-world player profile (037): one row per (user, world). In the home world a player's id
+        // equals the user's id; villages.owner_id (042) references players(id).
         sqlx::query("INSERT INTO players (id, user_id, world_id, tribe) VALUES ($1, $1, $2, $3)")
             .bind(user_id)
             .bind(world_uuid)
@@ -409,107 +553,13 @@ impl AccountRepository for PgAccountRepository {
             .await
             .map_err(backend)?;
 
-        // Place the village on the first free **valley** in the deterministic ring order (oases and
-        // Natar are skipped, 006 AC5); its fields come from that valley's distribution. Each attempt
-        // is a SAVEPOINT so a coordinate clash rolls back just that insert (not the whole tx).
-        let mut placed = false;
-        for coord in coordinates_within(self.map.radius()) {
-            let Some(TileKind::Valley(distribution)) = self.map.tile_at(coord) else {
-                continue;
-            };
-            let village_uuid = Uuid::new_v4();
-            let village = Village::found(
-                VillageId(village_uuid.as_u128()),
-                owner,
-                coord,
-                user.tribe,
-                distribution,
-                template,
-            );
-
-            let mut sp = tx.begin().await.map_err(backend)?;
-            let insert_village = sqlx::query(
-                "INSERT INTO villages (id, world_id, owner_id, x, y, tribe) \
-                 VALUES ($1, $2, $3, $4, $5, $6)",
-            )
-            .bind(village_uuid)
-            .bind(world_uuid)
-            .bind(user_id)
-            .bind(coord.x)
-            .bind(coord.y)
-            .bind(user.tribe.slug())
-            .execute(&mut *sp)
-            .await;
-
-            match insert_village {
-                Ok(_) => {
-                    for (slot, f) in village.fields.iter().enumerate() {
-                        sqlx::query(
-                            "INSERT INTO village_fields (village_id, slot, resource_type, level) \
-                             VALUES ($1, $2, $3, $4)",
-                        )
-                        .bind(village_uuid)
-                        .bind(slot as i16)
-                        .bind(resource_str(f.kind))
-                        .bind(i16::from(f.level))
-                        .execute(&mut *sp)
-                        .await
-                        .map_err(backend)?;
-                    }
-                    for (slot, b) in village.buildings.iter().enumerate() {
-                        sqlx::query(
-                            "INSERT INTO village_buildings (village_id, slot, building_type, level) \
-                             VALUES ($1, $2, $3, $4)",
-                        )
-                        .bind(village_uuid)
-                        .bind(slot as i16)
-                        .bind(building_str(b.kind))
-                        .bind(i16::from(b.level))
-                        .execute(&mut *sp)
-                        .await
-                        .map_err(backend)?;
-                    }
-                    sqlx::query(
-                        "INSERT INTO village_resources (village_id, wood, clay, iron, crop, updated_at) \
-                         VALUES ($1, $2, $3, $4, $5, now())",
-                    )
-                    .bind(village_uuid)
-                    .bind(self.starting_amounts.wood)
-                    .bind(self.starting_amounts.clay)
-                    .bind(self.starting_amounts.iron)
-                    .bind(self.starting_amounts.crop)
-                    .execute(&mut *sp)
-                    .await
-                    .map_err(backend)?;
-
-                    sp.commit().await.map_err(backend)?;
-                    placed = true;
-                    break;
-                }
-                Err(e) if is_unique_violation(&e) => {
-                    sp.rollback().await.map_err(backend)?;
-                }
-                Err(e) => return Err(backend(e)),
-            }
-        }
-
-        if !placed {
-            return Err(RepoError::WorldFull);
-        }
-
-        // Seed the per-player culture accumulator (013): value 0, anchored now; the rate accrues live
-        // from this village's Town Hall (none yet) on read.
-        sqlx::query(
-            "INSERT INTO player_culture (player_id, value, updated_at) VALUES ($1, 0, now())",
-        )
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(backend)?;
+        // Place the starting village + seed the culture accumulator for this player, in this world.
+        self.place_starting_village(&mut tx, user_id, user.tribe, template)
+            .await?;
 
         tx.commit().await.map_err(backend)?;
         Ok(UserRecord {
-            id: owner,
+            id: PlayerId(user_id.as_u128()),
             username: user.username,
             email: user.email,
             password_hash: user.password_hash,
@@ -6794,6 +6844,17 @@ impl ArtifactRepository for PgAccountRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(backend)?;
+        // The NPC's per-world player (042) — id = NPC user id (reuse-UUID, like the home backfill), so
+        // NPC villages satisfy the players FK and every owner→user read for the NPC still resolves.
+        sqlx::query(
+            "INSERT INTO players (id, user_id, world_id, tribe) VALUES ($1, $1, $2, 'romans') \
+             ON CONFLICT (user_id, world_id) DO NOTHING",
+        )
+        .bind(npc)
+        .bind(world)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
         // The reserved Natar tiles, in deterministic ring order (P6) — one per artifact.
         let natar_tiles: Vec<Coordinate> = coordinates_within(self.map.radius())
             .filter(|c| matches!(self.map.tile_at(*c), Some(TileKind::Natar)))
@@ -6947,6 +7008,17 @@ impl WonderRepository for PgAccountRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(backend)?;
+        // The NPC's per-world player (042) — id = NPC user id (reuse-UUID, like the home backfill), so
+        // NPC villages satisfy the players FK and every owner→user read for the NPC still resolves.
+        sqlx::query(
+            "INSERT INTO players (id, user_id, world_id, tribe) VALUES ($1, $1, $2, 'romans') \
+             ON CONFLICT (user_id, world_id) DO NOTHING",
+        )
+        .bind(npc)
+        .bind(world)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
         // Reserved Natar tiles not already taken by the artifact release (placed earlier) — deterministic
         // ring order (P6). Sites first, then plan vaults.
         let occupied: HashSet<(i32, i32)> =
@@ -12925,6 +12997,74 @@ mod tests {
             .unwrap();
         assert_eq!(due_b.len(), 1);
         assert_eq!(due_b[0].village.0, village_b.as_u128());
+    }
+
+    /// 042 AC3: an existing account joins a second world — a fresh player (id ≠ user id) + a starting
+    /// village are created there; re-joining is rejected. `create_account` (the home world) is unchanged.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn account_joins_a_second_world(pool: PgPool) {
+        let Setup {
+            repo: home,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let beginner = crate::lifecycle_rules().unwrap().beginner_protection_secs;
+        let user = make_account(&home, &template, "join").await;
+
+        // A second world + its repo (its own map for placement).
+        let world_b = Uuid::new_v4();
+        sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 3.0, 40, 9)")
+            .bind(world_b)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let repo_b = PgAccountRepository::new(
+            pool.clone(),
+            WorldId(world_b.as_u128()),
+            9,
+            40,
+            econ.starting_amounts,
+            beginner,
+            GameSpeed::new(3.0).unwrap(),
+        );
+
+        // Join: a fresh player id (not the user id) + a starting village in world B.
+        let player_b = repo_b
+            .create_player_in_world(user, Tribe::Teutons, &template)
+            .await
+            .expect("join");
+        assert_ne!(player_b, user, "a second world's player gets a fresh id");
+
+        // Resolution finds the new player; the account now participates in two worlds.
+        assert_eq!(
+            repo_b
+                .player_in_world(user, WorldId(world_b.as_u128()))
+                .await
+                .unwrap(),
+            Some(player_b)
+        );
+        let worlds = home.worlds_of_user(user).await.unwrap();
+        assert_eq!(worlds.len(), 2, "home world + the joined world");
+
+        // The starting village exists in world B, owned by the new player, with fields.
+        let villages = repo_b.villages_of(player_b).await.unwrap();
+        assert_eq!(villages.len(), 1);
+        assert_eq!(villages[0].fields.len(), 18);
+        let vworld: Uuid = sqlx::query_scalar("SELECT world_id FROM villages WHERE owner_id = $1")
+            .bind(Uuid::from_u128(player_b.0))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(vworld, world_b, "the village is in the joined world");
+
+        // Re-joining the same world is rejected.
+        assert!(matches!(
+            repo_b
+                .create_player_in_world(user, Tribe::Teutons, &template)
+                .await,
+            Err(RepoError::Duplicate)
+        ));
     }
 
     /// 004 AC13: a Roman village holds one field and one building order concurrently (separate

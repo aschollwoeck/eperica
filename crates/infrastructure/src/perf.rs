@@ -39,18 +39,36 @@ pub async fn seed_world(
     // Compact square so a realistic map viewport overlaps many villages; width ≥ √N keeps tiles distinct.
     let width = ((players as f64).sqrt().ceil() as i32 + 1).max(1);
 
+    // Accounts first, then a player per account in this world (042: villages.owner_id references
+    // players(id); the player id reuses the user id like the home backfill). Separate statements so the
+    // villages FK check below sees the players (same-statement CTE inserts are not visible to it).
     sqlx::query(
-        "WITH ins_users AS ( \
-             INSERT INTO users (id, username, email, password_hash, email_confirmed, tribe) \
-             SELECT gen_random_uuid(), 'perf_' || g, 'perf_' || g || '@perf.local', '!', true, 'romans' \
-             FROM generate_series(1, $2) g \
-             ON CONFLICT (username) DO NOTHING \
-             RETURNING id, (split_part(username, '_', 2))::int AS g \
+        "INSERT INTO users (id, username, email, password_hash, email_confirmed, tribe) \
+         SELECT gen_random_uuid(), 'perf_' || g, 'perf_' || g || '@perf.local', '!', true, 'romans' \
+         FROM generate_series(1, $1) g \
+         ON CONFLICT (username) DO NOTHING",
+    )
+    .bind(i64::from(players))
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO players (id, user_id, world_id, tribe) \
+         SELECT id, id, $1, 'romans' FROM users WHERE username LIKE 'perf\\_%' \
+         ON CONFLICT (user_id, world_id) DO NOTHING",
+    )
+    .bind(world)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "WITH perf AS ( \
+             SELECT id, (split_part(username, '_', 2))::int AS g \
+             FROM users WHERE username LIKE 'perf\\_%' \
          ), \
          ins_villages AS ( \
              INSERT INTO villages (id, world_id, owner_id, x, y, tribe) \
-             SELECT gen_random_uuid(), $1, u.id, ((u.g - 1) % $3), ((u.g - 1) / $3), 'romans' \
-             FROM ins_users u \
+             SELECT gen_random_uuid(), $1, p.id, ((p.g - 1) % $2), ((p.g - 1) / $2), 'romans' \
+             FROM perf p \
              ON CONFLICT (world_id, x, y) DO NOTHING \
              RETURNING id \
          ), \
@@ -68,7 +86,6 @@ pub async fn seed_world(
          SELECT id, 0, 'main_building', 3 FROM ins_villages",
     )
     .bind(world)
-    .bind(i64::from(players))
     .bind(width)
     .execute(pool)
     .await?;
