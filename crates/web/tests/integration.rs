@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 async fn spawn(pool: sqlx::PgPool) -> String {
     let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
     let world = ensure_world(&pool, &config).await.expect("ensure world");
-    let world_rules = Arc::new(load_world_rules().expect("world rules"));
+    let world_rules = Arc::new(load_world_rules(&world.rule_preset).expect("world rules"));
     let map = Arc::new(WorldMap::new(
         world.seed as u64,
         config.radius,

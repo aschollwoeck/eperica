@@ -111,6 +111,9 @@ pub enum BalanceError {
     /// The balance file could not be parsed as TOML.
     #[error("failed to parse balance data: {0}")]
     Parse(#[from] toml::de::Error),
+    /// The requested rule preset is not a known one (049).
+    #[error("unknown rule preset: {0}")]
+    UnknownPreset(String),
     /// An unknown resource name appeared in the data.
     #[error("unknown resource: {0}")]
     UnknownResource(String),

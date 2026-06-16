@@ -29,7 +29,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.wonder_release_offset_secs,
     )
     .await?;
-    let world_rules = Arc::new(load_world_rules()?);
+    // 049: the home world's preset (classic until an admin picks another, 052). 050 has the registry
+    // resolve each world's preset; today AppState + the registry share this one global bundle.
+    let world_rules = Arc::new(load_world_rules(&world.rule_preset)?);
     let fair_play = Arc::new(fair_play_rules()?);
     let map = Arc::new(WorldMap::new(
         world.seed as u64,
