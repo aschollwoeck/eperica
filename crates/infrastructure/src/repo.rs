@@ -964,17 +964,21 @@ impl AccountRepository for PgAccountRepository {
     async fn search_players(&self, query: &str, limit: i64) -> Result<Vec<PlayerHit>, RepoError> {
         // Case-insensitive username **prefix**, abandoned/NPC excluded (like the leaderboard). The LIKE
         // pattern escapes the user's `%`/`_`/`\` so they are literal, and the anchored prefix uses the
-        // 0039 functional index (P11).
+        // 0039 functional index (P11). 046: scoped to this repo's world — drive from `users` (the prefix
+        // index), join `players` for the world player id, and return that id (so `/stats/player/{id}`
+        // resolves under the same selected-world repo).
         let rows = sqlx::query(
-            "SELECT id, username FROM users \
-             WHERE abandoned_at IS NULL AND is_npc = false \
-               AND lower(username) LIKE \
+            "SELECT p.id, u.username FROM users u \
+             JOIN players p ON p.user_id = u.id AND p.world_id = $3 \
+             WHERE u.abandoned_at IS NULL AND u.is_npc = false \
+               AND lower(u.username) LIKE \
                    replace(replace(replace(lower($1), '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%' \
                    ESCAPE '\\' \
-             ORDER BY username ASC LIMIT $2",
+             ORDER BY u.username ASC LIMIT $2",
         )
         .bind(query)
         .bind(limit)
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
