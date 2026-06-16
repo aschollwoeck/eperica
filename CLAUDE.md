@@ -56,9 +56,11 @@ world-scoped boards/stat pages/search) are all built and Verified. The dependenc
 - **`specs/social-and-meta-features.md`** — app-layer features (chat, profiles, UX) — not sim rules.
 - **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the per-slice specs. The original dependency-ordered
   roadmap (slices **001–046**, through the M9 multi-world & administration program) is **complete and
-  Verified**. The active work is the **per-world configuration** program ([ADR 0035](docs/architecture/0035-per-world-configuration.md)):
-  slice **047** (per-world end-game schedule) is done; slices **048–05x** (per-world rule presets) are
-  planned. New unrelated work (e.g. visual theming/imagery) starts as a fresh `NNN-slug` slice.
+  Verified**, as is the **per-world configuration** program ([ADR 0035](docs/architecture/0035-per-world-configuration.md),
+  slices **047–053**: per-world end-game schedule, the `WorldRules` bundle, named `rule_preset` per world,
+  the registry serving each world's preset, and an operator-selectable `speed` preset authored as a full
+  `specs/balance/presets/<name>/` directory). New unrelated work (e.g. visual theming/imagery) starts as a
+  fresh `NNN-slug` slice.
 
 If behavior must change, **update the spec first**, then the code.
 

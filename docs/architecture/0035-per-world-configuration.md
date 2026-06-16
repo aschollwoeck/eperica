@@ -1,8 +1,11 @@
 # Per-world configuration — operator-tunable worlds & per-world rule presets
 
-**Status:** Accepted (in progress) · **Date:** 2026-06-16 · **Slices:** 047 (end-game schedule) +
-048–05x (per-world rule presets). **Built & merged:** 047, 048, 049, 050 (050 absorbed the planned 051).
-**Remaining:** 052 (admin selector + a real 2nd preset + the balance-authoring mechanism), 053 (acceptance).
+**Status:** Accepted · **Date:** 2026-06-16 · **Slices:** 047 (end-game schedule) + 048–053 (per-world rule
+presets). **Built & merged — program complete:** 047 (end-game schedule), 048 (`WorldRules` bundle), 049
+(`worlds.rule_preset` + name-aware loader), 050 (registry serves each world's preset; absorbed the planned
+051 handler sweep), 052 (admin preset selector + the `speed` preset, authored as a **full preset directory**
+under `specs/balance/presets/<name>/`), 053 (acceptance: the registry serves classic vs `speed` worlds
+divergent rules at the same `GameSpeed`).
 **Depends on:** ADR 0034 (multi-world & administration; the `worlds` row, the registry, `GameContext`/
 `WorldScope`, the per-world scheduler).
 
@@ -80,11 +83,11 @@ behaviour-preserving, gated per slice by the reviewer/PR.
 | 049 | **Preset loader + `worlds.rule_preset`** | Med | Add the column (default `classic`); make `load_world_rules(preset)` name-aware with a `KNOWN_PRESETS` allow-list (`classic`-only today); boot world uses `classic`. Kept lean — balance was **not** relocated into `presets/classic/`; that directory-vs-overlay mechanism is deferred to 052 when the first non-`classic` preset is authored. Single preset in practice ⇒ behaviour-preserving. |
 | 050 | **Registry serves per-world rules + handlers read from context** | High | `WorldRegistry` caches `preset → Arc<WorldRules>`; `context_for` returns it; the per-world scheduler uses its world's bundle; `GameContext`/`WorldScope` carry `Arc<WorldRules>` and game handlers read `ctx.rules.*`/`world.rules.*` (the handler sweep, mirrors 044). **Absorbed the planned 051** — the context carrying rules is inert unless handlers read it, so the two landed together. Still all-`classic` ⇒ preserving. |
 | ~~051~~ | **(folded into 050)** | — | The handler sweep landed with 050; no separate slice. |
-| 052 | **Admin preset selection + a real 2nd preset** | Med | Preset dropdown on the create form (server-authoritative: only a known preset); ship a genuine **2nd** preset so per-world rules are actually exercised end-to-end. Decides the balance-authoring mechanism (overlay deltas vs full `presets/<name>/` directory). |
-| 053 | **Acceptance + docs** | Low | Two worlds on different presets prove divergent rules (e.g. protection duration); home parity; ADR → Accepted. |
+| 052 | **Admin preset selection + a real 2nd preset** | Med | Preset dropdown on the create form (server-authoritative: only a known preset); ship a genuine **`speed`** preset (shorter protection, 2× troop speed, 1.5× merchants) so per-world rules are exercised end-to-end. **Decided the balance-authoring mechanism: a full `presets/<name>/` directory** (each preset a complete, byte-explicit set of files) over overlay deltas — simplest loader, fully auditable; the cost (duplication) is accepted. |
+| 053 | **Acceptance + docs** | Low | Two worlds (classic vs `speed`) at the same `GameSpeed` are served divergent rules by the registry (protection + troop speed); home parity; ADR → Accepted. |
 
 047 stands alone. 048–050 are the heavy lift that must all land to reach per-world rules (050 absorbed the
-planned 051 handler sweep). 052–053 turn it on for operators and prove it.
+planned 051 handler sweep). 052–053 turned it on for operators and proved it. **The program is complete.**
 
 ## Reuse / decisions
 
