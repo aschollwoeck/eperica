@@ -845,7 +845,7 @@ impl AccountRepository for PgAccountRepository {
         let rows = sqlx::query(
             "SELECT v.x, v.y, u.username, al.tag AS alliance_tag, \
              (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity_ms \
-             FROM villages v JOIN users u ON u.id = v.owner_id \
+             FROM villages v JOIN players pu ON pu.id = v.owner_id JOIN users u ON u.id = pu.user_id \
              LEFT JOIN alliance_members am ON am.player_id = v.owner_id \
              LEFT JOIN alliances al ON al.id = am.alliance_id \
              WHERE v.world_id = $1 AND (v.x, v.y) IN (SELECT * FROM unnest($2::int[], $3::int[]))",
@@ -2230,7 +2230,7 @@ impl MovementRepository for PgAccountRepository {
             "SELECT r.home_village, r.unit_id, r.count, hv.x, hv.y, hv.tribe, u.username \
              FROM reinforcements r \
              JOIN villages hv ON hv.id = r.home_village \
-             JOIN users u ON u.id = hv.owner_id \
+             JOIN players pu ON pu.id = hv.owner_id JOIN users u ON u.id = pu.user_id \
              WHERE r.host_village = $1 ORDER BY r.home_village, r.unit_id",
         )
         .bind(Uuid::from_u128(village.0))
@@ -2254,7 +2254,7 @@ impl MovementRepository for PgAccountRepository {
              FROM reinforcements r \
              JOIN villages homev ON homev.id = r.home_village \
              JOIN villages hostv ON hostv.id = r.host_village \
-             JOIN users u ON u.id = hostv.owner_id \
+             JOIN players pu ON pu.id = hostv.owner_id JOIN users u ON u.id = pu.user_id \
              WHERE homev.owner_id = $1 ORDER BY r.host_village, r.unit_id",
         )
         .bind(Uuid::from_u128(owner.0))
@@ -2995,9 +2995,9 @@ const REPORT_SELECT: &str = "SELECT br.id, \
     br.razed_building, br.razed_before, br.razed_after, \
     br.loyalty_before, br.loyalty_after, br.conquered \
     FROM battle_reports br \
-    JOIN users au ON au.id = br.attacker_player \
+    JOIN players pau ON pau.id = br.attacker_player JOIN users au ON au.id = pau.user_id \
     LEFT JOIN villages av ON av.id = br.attacker_village \
-    LEFT JOIN users du ON du.id = br.defender_player \
+    LEFT JOIN players pdu ON pdu.id = br.defender_player LEFT JOIN users du ON du.id = pdu.user_id \
     LEFT JOIN villages dv ON dv.id = br.defender_village";
 
 #[async_trait]
@@ -3753,7 +3753,7 @@ impl OasisRepository for PgAccountRepository {
         let rows = sqlx::query(
             "SELECT o.x, o.y, u.username FROM oases o \
              JOIN villages v ON v.id = o.owner_village \
-             JOIN users u ON u.id = v.owner_id \
+             JOIN players pu ON pu.id = v.owner_id JOIN users u ON u.id = pu.user_id \
              WHERE o.world_id = $1 AND o.owner_village IS NOT NULL \
                AND (o.x, o.y) IN (SELECT * FROM unnest($2::int[], $3::int[]))",
         )
@@ -4455,7 +4455,7 @@ impl AllianceRepository for PgAccountRepository {
         // Order by rank (founder, leader, member) then name for a stable roster.
         let rows = sqlx::query(
             "SELECT m.player_id, u.username, m.role, m.rights FROM alliance_members m \
-             JOIN users u ON u.id = m.player_id \
+             JOIN players pm ON pm.id = m.player_id JOIN users u ON u.id = pm.user_id \
              WHERE m.alliance_id = $1 \
              ORDER BY CASE m.role WHEN 'founder' THEN 0 WHEN 'leader' THEN 1 ELSE 2 END, u.username",
         )
@@ -4590,7 +4590,7 @@ impl AllianceRepository for PgAccountRepository {
     async fn invites_of(&self, alliance: AllianceId) -> Result<Vec<OutgoingInvite>, RepoError> {
         let rows = sqlx::query(
             "SELECT i.invitee_id, u.username FROM alliance_invitations i \
-             JOIN users u ON u.id = i.invitee_id \
+             JOIN players pi ON pi.id = i.invitee_id JOIN users u ON u.id = pi.user_id \
              WHERE i.alliance_id = $1 ORDER BY u.username",
         )
         .bind(Uuid::from_u128(alliance.0))
@@ -4852,7 +4852,7 @@ impl AllianceRepository for PgAccountRepository {
         let rows = sqlx::query(
             "SELECT m.player_id, u.username, v.id, v.x, v.y \
              FROM alliance_members m \
-             JOIN users u ON u.id = m.player_id \
+             JOIN players pm ON pm.id = m.player_id JOIN users u ON u.id = pm.user_id \
              JOIN villages v ON v.owner_id = m.player_id \
              WHERE m.alliance_id = ANY($1) \
              ORDER BY u.username, v.id",
@@ -4970,7 +4970,7 @@ impl AllianceRepository for PgAccountRepository {
             "SELECT t.id, t.title, u.username AS author_name, t.announcement, \
                     (EXTRACT(EPOCH FROM t.last_post_at) * 1000)::bigint AS last_post_ms, \
                     (SELECT count(*) FROM alliance_posts p WHERE p.thread_id = t.id) AS post_count \
-             FROM alliance_threads t JOIN users u ON u.id = t.author_id \
+             FROM alliance_threads t JOIN players pt ON pt.id = t.author_id JOIN users u ON u.id = pt.user_id \
              WHERE t.world_id = $1 AND t.alliance_id = $2 \
              ORDER BY t.last_post_at DESC, t.id DESC LIMIT $3",
         )
@@ -5057,7 +5057,7 @@ impl AllianceRepository for PgAccountRepository {
         let mut rows = sqlx::query(
             "SELECT u.username AS author_name, p.body, \
                     (EXTRACT(EPOCH FROM p.created_at) * 1000)::bigint AS created_ms \
-             FROM alliance_posts p JOIN users u ON u.id = p.author_id \
+             FROM alliance_posts p JOIN players pa ON pa.id = p.author_id JOIN users u ON u.id = pa.user_id \
              WHERE p.world_id = $1 AND p.thread_id = $2 \
              ORDER BY p.created_at DESC, p.id DESC LIMIT $3",
         )
@@ -5430,9 +5430,9 @@ const SCOUT_REPORT_SELECT: &str = "SELECT sr.id, \
     sr.scouter_player, sr.target_player, sr.target_type, \
     sr.scouts_sent, sr.scouts_lost, sr.detected, sr.standalone, sr.intel \
     FROM scout_reports sr \
-    JOIN users su ON su.id = sr.scouter_player \
+    JOIN players psu ON psu.id = sr.scouter_player JOIN users su ON su.id = psu.user_id \
     JOIN villages sv ON sv.id = sr.scouter_village \
-    JOIN users tu ON tu.id = sr.target_player";
+    JOIN players ptu ON ptu.id = sr.target_player JOIN users tu ON tu.id = ptu.user_id";
 
 /// Map a joined `scout_reports` row to a [`ScoutReportView`], applying target-side redaction (P4):
 /// a non-scouter viewer sees only the notification (scouts destroyed) — never the intel or the
@@ -13069,6 +13069,58 @@ mod tests {
                 .await,
             Err(RepoError::Duplicate)
         ));
+    }
+
+    /// 045 AC1: a **second-world** player's name resolves through `players`. The player's id ≠ the user id,
+    /// so the old `JOIN users ON u.id = owner_id` found nothing; the re-pointed `owner → players → users`
+    /// join resolves the account's username on the map owner read.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn second_world_player_name_resolves_through_players(pool: PgPool) {
+        let Setup {
+            repo: home,
+            econ,
+            template,
+            ..
+        } = setup(pool.clone()).await;
+        let beginner = crate::lifecycle_rules().unwrap().beginner_protection_secs;
+        let user = make_account(&home, &template, "name").await;
+        let username: String = sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
+            .bind(Uuid::from_u128(user.0))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        // A second world + the account's player (fresh id ≠ user id) + starting village in it.
+        let world_b = Uuid::new_v4();
+        sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 2.0, 40, 77)")
+            .bind(world_b)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let repo_b = PgAccountRepository::new(
+            pool.clone(),
+            WorldId(world_b.as_u128()),
+            77,
+            40,
+            econ.starting_amounts,
+            beginner,
+            GameSpeed::new(2.0).unwrap(),
+        );
+        let player_b = repo_b
+            .create_player_in_world(user, Tribe::Teutons, &template)
+            .await
+            .expect("join");
+        assert_ne!(player_b, user, "the second-world player has a fresh id");
+
+        // The map owner read for that village resolves the account's username through `players`.
+        let villages = repo_b.villages_of(player_b).await.unwrap();
+        let coord = villages[0].coordinate;
+        let markers = repo_b.villages_at(&[coord]).await.unwrap();
+        assert_eq!(markers.len(), 1, "the second-world village is on the map");
+        assert_eq!(
+            markers[0].owner_name, username,
+            "the second-world player's name resolves via owner → players → users"
+        );
     }
 
     /// 042 AC2: the single global Natar NPC player (id = NPC user id) is created idempotently and is
