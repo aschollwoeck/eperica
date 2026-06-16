@@ -1,6 +1,6 @@
 # Feature 042 — Player-FK switch-over
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 037 (players table + backfill), 020/021 (Natar/Wonder NPC)
 **Roadmap:** M9 multi-world & administration — the first of the **player multi-world UX** sub-program
 (042 FK switch-over → 043 request context → 044 handler migration → 045 lobby/join/switch). See
