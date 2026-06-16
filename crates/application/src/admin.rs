@@ -10,10 +10,6 @@ use eperica_domain::{GameSpeed, PlayerId, WorldId};
 
 /// The largest map radius an admin may create (041 AC1) — guards against an unbounded map.
 pub const MAX_WORLD_RADIUS: u32 = 1000;
-/// Default end-game release offsets for a new world (041) — artifacts at 90 days, the Wonder at 120
-/// (GDD §13.2), matching `ensure_world`'s defaults.
-const ARTIFACT_RELEASE_DEFAULT_SECS: i64 = 90 * 24 * 60 * 60;
-const WONDER_RELEASE_DEFAULT_SECS: i64 = 120 * 24 * 60 * 60;
 
 /// Why an admin action was rejected (036).
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -174,15 +170,20 @@ where
 /// offsets. Admin-gated; validates the parameters (P4). Returns the new world's id so the caller can
 /// start its runtime/scheduler live (AC2).
 ///
+/// `artifact_offset_secs`/`wonder_offset_secs` are the end-game release schedule (seconds after creation,
+/// 047) — the caller resolves them from the operator's input or the configured defaults.
+///
 /// # Errors
-/// [`AdminError::NotAuthorized`] for a non-admin; [`AdminError::InvalidWorld`] for a bad speed/radius;
-/// otherwise a backend error.
+/// [`AdminError::NotAuthorized`] for a non-admin; [`AdminError::InvalidWorld`] for a bad speed/radius or an
+/// invalid schedule (`0 < artifact < wonder`); otherwise a backend error.
 pub async fn create_world<A, D>(
     accounts: &A,
     admin: &D,
     actor: PlayerId,
     speed: f64,
     radius: u32,
+    artifact_offset_secs: i64,
+    wonder_offset_secs: i64,
 ) -> Result<WorldId, AdminError>
 where
     A: AccountRepository,
@@ -197,13 +198,19 @@ where
             "radius must be between 1 and {MAX_WORLD_RADIUS}"
         )));
     }
+    // The Wonder phase must follow the artifact phase, and both must be in the future (GDD §13.2/§11.3).
+    if artifact_offset_secs <= 0 {
+        return Err(AdminError::InvalidWorld(
+            "artifact release must be a positive number of days".to_owned(),
+        ));
+    }
+    if wonder_offset_secs <= artifact_offset_secs {
+        return Err(AdminError::InvalidWorld(
+            "Wonder release must be later than the artifact release".to_owned(),
+        ));
+    }
     Ok(admin
-        .create_world(
-            speed,
-            radius,
-            ARTIFACT_RELEASE_DEFAULT_SECS,
-            WONDER_RELEASE_DEFAULT_SECS,
-        )
+        .create_world(speed, radius, artifact_offset_secs, wonder_offset_secs)
         .await?)
 }
 
@@ -240,7 +247,7 @@ mod tests {
         users: Mutex<Vec<UserRecord>>,
         set_admin_calls: Mutex<Vec<(u128, bool)>>,
         set_mod_calls: Mutex<Vec<(u128, bool)>>,
-        created_worlds: Mutex<Vec<(f64, u32)>>,
+        created_worlds: Mutex<Vec<(f64, u32, i64, i64)>>,
     }
 
     fn user(id: u128, is_admin: bool) -> UserRecord {
@@ -374,11 +381,11 @@ mod tests {
             &self,
             speed: f64,
             radius: u32,
-            _artifact: i64,
-            _wonder: i64,
+            artifact: i64,
+            wonder: i64,
         ) -> Result<WorldId, RepoError> {
             let mut w = self.created_worlds.lock().unwrap();
-            w.push((speed, radius));
+            w.push((speed, radius, artifact, wonder));
             Ok(WorldId(1000 + w.len() as u128))
         }
     }
@@ -527,31 +534,44 @@ mod tests {
     #[tokio::test]
     async fn create_world_is_gated_and_validated() {
         let f = fake(vec![user(1, true), user(2, false)]);
+        // Default end-game offsets (seconds): artifacts at 90 days, the Wonder at 120.
+        let (a, w) = (90 * 86_400_i64, 120 * 86_400_i64);
         // A non-admin cannot create a world (gate runs first).
         assert_eq!(
-            create_world(&f, &f, PlayerId(2), 1.0, 50).await,
+            create_world(&f, &f, PlayerId(2), 1.0, 50, a, w).await,
             Err(AdminError::NotAuthorized)
         );
         assert!(f.created_worlds.lock().unwrap().is_empty());
 
         // Invalid speed / radius are rejected (P4) — no row created.
         assert!(matches!(
-            create_world(&f, &f, PlayerId(1), 0.0, 50).await,
+            create_world(&f, &f, PlayerId(1), 0.0, 50, a, w).await,
             Err(AdminError::InvalidWorld(_))
         ));
         assert!(matches!(
-            create_world(&f, &f, PlayerId(1), 1.0, 0).await,
+            create_world(&f, &f, PlayerId(1), 1.0, 0, a, w).await,
             Err(AdminError::InvalidWorld(_))
         ));
         assert!(matches!(
-            create_world(&f, &f, PlayerId(1), 1.0, MAX_WORLD_RADIUS + 1).await,
+            create_world(&f, &f, PlayerId(1), 1.0, MAX_WORLD_RADIUS + 1, a, w).await,
+            Err(AdminError::InvalidWorld(_))
+        ));
+        // 047: an invalid end-game schedule is rejected — non-positive artifact, or Wonder ≤ artifact.
+        assert!(matches!(
+            create_world(&f, &f, PlayerId(1), 1.0, 50, 0, w).await,
+            Err(AdminError::InvalidWorld(_))
+        ));
+        assert!(matches!(
+            create_world(&f, &f, PlayerId(1), 1.0, 50, w, a).await,
             Err(AdminError::InvalidWorld(_))
         ));
         assert!(f.created_worlds.lock().unwrap().is_empty());
 
-        // A valid request creates the world.
-        let id = create_world(&f, &f, PlayerId(1), 5.0, 100).await.unwrap();
+        // A valid request creates the world, propagating the schedule offsets.
+        let id = create_world(&f, &f, PlayerId(1), 5.0, 100, a, w)
+            .await
+            .unwrap();
         assert_eq!(id, WorldId(1001));
-        assert_eq!(*f.created_worlds.lock().unwrap(), vec![(5.0, 100)]);
+        assert_eq!(*f.created_worlds.lock().unwrap(), vec![(5.0, 100, a, w)]);
     }
 }

@@ -3277,12 +3277,15 @@ pub async fn admin_world_submit(
     RealUser(player): RealUser,
     Form(form): Form<CreateWorldForm>,
 ) -> Response {
+    // T2 replaces these inline defaults with the env-configured defaults + the form's per-world override.
     match admin_create_world_uc(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
         player,
         form.speed,
         form.radius,
+        90 * 86_400,
+        120 * 86_400,
     )
     .await
     {
