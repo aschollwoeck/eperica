@@ -444,7 +444,6 @@ impl Scheduler {
                 self.world_start,
                 now(),
                 &self.lifecycle_rules,
-                self.speed,
             )
             .await
             {

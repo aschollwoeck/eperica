@@ -3,8 +3,8 @@
 
 use crate::ports::{AccountRepository, LifecycleRepository, RepoError};
 use eperica_domain::{
-    EconomyRules, GameSpeed, LifecycleRules, PlayerId, Timestamp, abandon_cutoff, is_protected,
-    period_index, population, protection_ended_by_population,
+    EconomyRules, LifecycleRules, PlayerId, Timestamp, abandon_cutoff, is_protected, period_index,
+    population, protection_ended_by_population,
 };
 
 /// End `player`'s beginner's protection early if they are now **established** — total population at or
@@ -45,7 +45,6 @@ pub async fn process_due_lifecycle<R>(
     world_start: Timestamp,
     now: Timestamp,
     rules: &LifecycleRules,
-    speed: GameSpeed,
 ) -> Result<Vec<(i64, usize)>, RepoError>
 where
     R: LifecycleRepository,
@@ -63,7 +62,6 @@ where
             world_start,
             rules.sweep_interval_secs,
             rules.abandon_after_secs,
-            speed,
         );
         let count = repo.sweep_abandoned(next, cutoff).await?;
         swept.push((next, count));

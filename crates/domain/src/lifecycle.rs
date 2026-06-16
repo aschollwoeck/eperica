@@ -1,23 +1,27 @@
 //! Account-lifecycle rules (019): beginner's protection and the inactivity → abandonment lifecycle.
-//! Pure (P3) — no I/O. Time-based durations **scale by world speed** (P7); the abandonment sweep reuses
-//! the medal period arithmetic ([`crate::medals::period_start`]) for a state-driven, reproducible cadence.
+//! Pure (P3) — no I/O. **Beginner's protection** scales by world speed (P7); the **inactivity → abandonment**
+//! windows are measured in **real wall-clock time** (054) — they gate on a real person's login recency
+//! (`last_activity`), not in-game time, so a faster server does not shorten them. The abandonment sweep
+//! reuses the medal period arithmetic ([`crate::medals::period_start`]) for a state-driven, reproducible
+//! cadence.
 
 use crate::event::Timestamp;
 use crate::medals::period_start;
 use crate::units::scaled_time_secs;
 use crate::world::GameSpeed;
 
-/// Tunable lifecycle balance (P7). All `_secs` are **base** durations; the time-based ones are scaled by
-/// world speed at use. `sweep_interval_secs` is the abandonment-sweep cadence (the period length).
+/// Tunable lifecycle balance (P7). `beginner_protection_secs` is a **base** duration scaled by world speed;
+/// the inactivity/abandonment `_secs` are **real-time** wall-clock durations (054). `sweep_interval_secs`
+/// is the abandonment-sweep cadence (the period length).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LifecycleRules {
     /// Beginner's-protection window granted at spawn (base seconds, speed-scaled).
     pub beginner_protection_secs: i64,
     /// Population at which a protected player is "established" and protection ends early.
     pub protection_population_threshold: i64,
-    /// Idle time after which a player is **inactive** (farmable / greyed) — base seconds, speed-scaled.
+    /// Idle time after which a player is **inactive** (farmable / greyed) — **real-time** seconds (054).
     pub inactive_after_secs: i64,
-    /// Idle time after which a player is **abandoned** (villages freed) — base seconds, speed-scaled.
+    /// Idle time after which a player is **abandoned** (villages freed) — **real-time** seconds (054).
     pub abandon_after_secs: i64,
     /// The abandonment-sweep cadence / period length (real-time seconds).
     pub sweep_interval_secs: i64,
@@ -38,29 +42,24 @@ pub fn protection_expiry(now: Timestamp, base_secs: i64, speed: GameSpeed) -> Ti
 }
 
 /// Whether a player whose last activity was `last_activity` is **inactive** (farmable) at `now` — idle
-/// longer than the speed-scaled `inactive_after_secs`.
-pub fn is_inactive(
-    last_activity: Timestamp,
-    now: Timestamp,
-    inactive_after_secs: i64,
-    speed: GameSpeed,
-) -> bool {
-    now.0 - last_activity.0 > scaled_time_secs(inactive_after_secs, speed) * 1000
+/// longer than `inactive_after_secs` in **real wall-clock time** (054). Not speed-scaled: a real person's
+/// absence is measured against the real clock, so a faster server does not grey them sooner.
+pub fn is_inactive(last_activity: Timestamp, now: Timestamp, inactive_after_secs: i64) -> bool {
+    now.0 - last_activity.0 > inactive_after_secs * 1000
 }
 
 /// The activity cutoff for the abandonment sweep of period `P`: accounts whose `last_activity` is
 /// **before** this instant are abandoned in period `P`. Anchored to the period boundary
-/// (`period_start(P+1) − scaled(abandon_after_secs)`) so a given period always abandons the same set
-/// from the same persisted activity data (P2/P6).
+/// (`period_start(P+1) − abandon_after_secs`) so a given period always abandons the same set from the same
+/// persisted activity data (P2/P6). The window is **real-time** (054) — not speed-scaled.
 pub fn abandon_cutoff(
     period: i64,
     world_start: Timestamp,
     sweep_interval_secs: i64,
     abandon_after_secs: i64,
-    speed: GameSpeed,
 ) -> Timestamp {
     let boundary = period_start(period + 1, world_start, sweep_interval_secs);
-    Timestamp(boundary.0 - scaled_time_secs(abandon_after_secs, speed) * 1000)
+    Timestamp(boundary.0 - abandon_after_secs * 1000)
 }
 
 /// Whether a protected player has grown enough that protection should end early (AC4).
@@ -106,32 +105,43 @@ mod tests {
     }
 
     #[test]
-    fn inactivity_threshold_edge_and_scaling() {
+    fn inactivity_threshold_edge_is_real_time() {
         let last = Timestamp(0);
-        // base 100s at 1×: idle of exactly 100s is not yet inactive; 100.001s is.
-        assert!(!is_inactive(last, Timestamp(100_000), 100, speed(1.0)));
-        assert!(is_inactive(last, Timestamp(100_001), 100, speed(1.0)));
-        // at 2× the threshold halves to 50s.
-        assert!(!is_inactive(last, Timestamp(50_000), 100, speed(2.0)));
-        assert!(is_inactive(last, Timestamp(50_001), 100, speed(2.0)));
+        // 100s real: idle of exactly 100s is not yet inactive; 100.001s is.
+        assert!(!is_inactive(last, Timestamp(100_000), 100));
+        assert!(is_inactive(last, Timestamp(100_001), 100));
     }
 
     #[test]
     fn abandon_cutoff_anchored_to_period_boundary() {
         let world_start = Timestamp(0);
         // sweep interval 1000s ⇒ period 0 ends at 1000s; abandon_after 200s ⇒ cutoff = 1000s − 200s.
-        let cut = abandon_cutoff(0, world_start, 1000, 200, speed(1.0));
+        let cut = abandon_cutoff(0, world_start, 1000, 200);
         assert_eq!(cut, Timestamp(800_000));
         // period 1 ends at 2000s ⇒ cutoff = 2000s − 200s.
         assert_eq!(
-            abandon_cutoff(1, world_start, 1000, 200, speed(1.0)),
+            abandon_cutoff(1, world_start, 1000, 200),
             Timestamp(1_800_000)
         );
-        // at 2× the abandon window halves (100s), so the cutoff moves later.
+    }
+
+    /// 054: inactivity and abandonment are measured in real wall-clock time — world speed must not change
+    /// them (unlike beginner protection, which still scales). These take no `speed`, so the property is
+    /// structural; this guards the intent against a regression that re-introduces scaling.
+    #[test]
+    fn inactivity_and_abandonment_are_speed_independent() {
+        let last = Timestamp(0);
+        // 7 "days" (in this test's units) of idle is inactive regardless of any world speed — the function
+        // has no speed input, so the same real elapsed time always yields the same verdict.
+        assert!(is_inactive(last, Timestamp(700_001), 700));
+        assert!(!is_inactive(last, Timestamp(699_999), 700));
+        // The abandon cutoff depends only on real-time inputs (period, sweep interval, abandon window).
         assert_eq!(
-            abandon_cutoff(0, world_start, 1000, 200, speed(2.0)),
-            Timestamp(900_000)
+            abandon_cutoff(0, Timestamp(0), 1000, 200),
+            Timestamp(800_000)
         );
+        // Protection, by contrast, DOES still scale with speed (019 unchanged) — see
+        // `protection_window_scales_with_speed`.
     }
 
     #[test]
