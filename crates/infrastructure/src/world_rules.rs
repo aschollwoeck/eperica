@@ -77,29 +77,29 @@ pub fn known_preset(name: &str) -> bool {
 /// # Errors
 /// [`BalanceError`] if the preset is unknown or any balance file fails to parse/validate.
 pub fn load_world_rules(preset: &str) -> Result<WorldRules, BalanceError> {
-    if preset != "classic" {
-        return Err(BalanceError::UnknownPreset(preset.to_owned()));
-    }
+    // Resolve the preset to its complete balance directory (052); an unknown name is a clear error (P4).
+    let d = balance::preset_data(preset)
+        .ok_or_else(|| BalanceError::UnknownPreset(preset.to_owned()))?;
     Ok(WorldRules {
-        economy: balance::economy_rules()?,
-        build: balance::build_rules()?,
-        units: balance::unit_rules()?,
-        combat: balance::combat_rules()?,
-        culture: balance::culture_rules()?,
-        loyalty: balance::loyalty_rules()?,
-        alliance: balance::alliance_rules()?,
-        ranking: balance::ranking_rules()?,
-        achievements: balance::achievement_catalogue()?,
-        quests: balance::quest_chain()?,
-        lifecycle: balance::lifecycle_rules()?,
-        merchant: balance::merchant_rules()?,
-        wonder: balance::wonder_rules()?,
-        oasis: balance::oasis_rules()?,
-        scout: balance::scout_rules()?,
-        artifacts: balance::artifact_catalogue()?,
-        medals: balance::medal_rules()?,
-        map_rules: balance::map_rules()?,
-        starting_village: balance::starting_village()?,
+        economy: balance::parse_economy_rules(d.economy)?,
+        build: balance::parse_build_rules(d.construction)?,
+        units: balance::parse_unit_rules(d.units)?,
+        combat: balance::parse_combat_rules(d.combat)?,
+        culture: balance::parse_culture_rules(d.culture)?,
+        loyalty: balance::parse_loyalty_rules(d.conquest)?,
+        alliance: balance::parse_alliance_rules(d.alliance)?,
+        ranking: balance::parse_ranking_rules(d.ranking)?,
+        achievements: balance::parse_achievement_catalogue(d.achievements)?,
+        quests: balance::parse_quest_chain(d.quests)?,
+        lifecycle: balance::parse_lifecycle_rules(d.lifecycle)?,
+        merchant: balance::parse_merchant_rules(d.trade)?,
+        wonder: balance::parse_wonder_rules(d.wonder)?,
+        oasis: balance::parse_oasis_rules(d.units)?,
+        scout: balance::parse_scout_rules(d.combat)?,
+        artifacts: balance::parse_artifact_catalogue(d.artifacts)?,
+        medals: balance::parse_medal_rules(d.medals)?,
+        map_rules: balance::parse_map_rules(d.map)?,
+        starting_village: balance::parse_starting_village(d.starting_village)?,
     })
 }
 
