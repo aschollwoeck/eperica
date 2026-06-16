@@ -81,15 +81,19 @@ pub fn load_world_rules(preset: &str) -> Result<WorldRules, BalanceError> {
     // Resolve the preset to its complete balance directory (052); an unknown name is a clear error (P4).
     let d = balance::preset_data(preset)
         .ok_or_else(|| BalanceError::UnknownPreset(preset.to_owned()))?;
+    // Parse the preset's units once: ranking point values derive from this **same** roster (preset
+    // isolation — 052), not the classic one.
+    let units = balance::parse_unit_rules(d.units)?;
+    let ranking = balance::parse_ranking_rules(d.ranking, &units)?;
     Ok(WorldRules {
         economy: balance::parse_economy_rules(d.economy)?,
         build: balance::parse_build_rules(d.construction)?,
-        units: balance::parse_unit_rules(d.units)?,
+        units,
         combat: balance::parse_combat_rules(d.combat)?,
         culture: balance::parse_culture_rules(d.culture)?,
         loyalty: balance::parse_loyalty_rules(d.conquest)?,
         alliance: balance::parse_alliance_rules(d.alliance)?,
-        ranking: balance::parse_ranking_rules(d.ranking)?,
+        ranking,
         achievements: balance::parse_achievement_catalogue(d.achievements)?,
         quests: balance::parse_quest_chain(d.quests)?,
         lifecycle: balance::parse_lifecycle_rules(d.lifecycle)?,
@@ -129,16 +133,27 @@ mod tests {
     fn speed_preset_loads_and_diverges_from_classic() {
         let classic = load_world_rules("classic").expect("classic loads");
         let speed = load_world_rules("speed").expect("speed loads");
-        // Shorter base beginner protection (independent of the world-speed multiplier).
+        // Shorter base beginner protection (independent of the world-speed multiplier) — the ADR example.
         assert!(
             speed.lifecycle.beginner_protection_secs < classic.lifecycle.beginner_protection_secs,
             "speed shortens beginner protection"
         );
-        // Faster troops: every shared unit moves at least as fast, and the rosters are not identical.
+        // Faster merchants (1.5× the classic map speed).
         assert!(
             speed.merchant.profile(eperica_domain::Tribe::Gauls).speed
                 > classic.merchant.profile(eperica_domain::Tribe::Gauls).speed,
             "speed has faster merchants"
+        );
+        // Faster troops: every unit's map speed is doubled. Check a concrete pair (same roster order).
+        let g_speed = speed.units.roster(eperica_domain::Tribe::Gauls);
+        let g_classic = classic.units.roster(eperica_domain::Tribe::Gauls);
+        assert_eq!(g_speed.len(), g_classic.len(), "same Gaul roster size");
+        assert!(
+            g_speed
+                .iter()
+                .zip(g_classic.iter())
+                .all(|(s, c)| s.speed == c.speed * 2),
+            "every speed-preset unit moves at exactly 2× the classic map speed"
         );
     }
 }

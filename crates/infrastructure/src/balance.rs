@@ -826,13 +826,17 @@ struct RankingDto {
 /// # Errors
 /// Returns [`BalanceError`] if either dataset cannot be parsed.
 pub fn ranking_rules() -> Result<RankingRules, BalanceError> {
-    parse_ranking_rules(CLASSIC.ranking)
+    parse_ranking_rules(CLASSIC.ranking, &unit_rules()?)
 }
 
-/// Parse [`ranking_rules`] balance from a preset's TOML (052) — the per-preset core.
-pub(crate) fn parse_ranking_rules(src: &str) -> Result<RankingRules, BalanceError> {
+/// Parse [`ranking_rules`] balance from a preset's TOML (052) — the per-preset core. The per-unit kill
+/// **point values** come from the **same preset's** `units` (passed in), so a preset that retunes unit
+/// upkeep gets matching ranking points (preset isolation — 052).
+pub(crate) fn parse_ranking_rules(
+    src: &str,
+    units: &UnitRules,
+) -> Result<RankingRules, BalanceError> {
     let dto: RankingDto = toml::from_str(src)?;
-    let units = unit_rules()?;
     // Point values keyed by unit id (shared ids across tribes carry the same value, so the map
     // collapses them harmlessly — combat losses are keyed by id too).
     let mut point_value = HashMap::new();
