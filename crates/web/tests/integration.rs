@@ -81,6 +81,8 @@ async fn spawn(pool: sqlx::PgPool) -> String {
             hub
         },
         map,
+        artifact_release_offset_secs: 90 * 86_400,
+        wonder_release_offset_secs: 120 * 86_400,
         world: config,
         world_id: world.id,
         world_registry: {
@@ -1072,6 +1074,111 @@ async fn admin_creates_world_live(pool: sqlx::PgPool) {
         .unwrap();
     assert!(body.contains("Worlds"), "worlds section shown");
     assert!(body.contains("×3"), "the new world's speed is listed");
+}
+
+/// 047 AC1/AC2/AC4: an admin sets a custom end-game schedule on world creation; an invalid schedule
+/// (Wonder ≤ artifact) is rejected with no world created; omitting the fields uses the env default.
+#[sqlx::test(migrations = "../../migrations")]
+async fn admin_world_creation_sets_endgame_schedule(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let admin_name = unique("wsched");
+    let (ac, _admin_id) = register_client(&base, &pool, &admin_name).await;
+    sqlx::query("UPDATE users SET is_admin = TRUE WHERE username = $1")
+        .bind(&admin_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let before: i64 = sqlx::query_scalar("SELECT count(*) FROM worlds")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // A custom schedule (artifacts at 30 days, Wonder at 45) is stored on the new world.
+    let r = ac
+        .post(format!("{base}/admin/world"))
+        .form(&[
+            ("speed", "2"),
+            ("radius", "40"),
+            ("artifact_days", "30"),
+            ("wonder_days", "45"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    // The newest world carries release dates ~30/45 days after creation (within a day's tolerance).
+    let (a_days, w_days): (f64, f64) = sqlx::query_as(
+        "SELECT (EXTRACT(EPOCH FROM (artifact_release_at - created_at)) / 86400.0)::float8, \
+                (EXTRACT(EPOCH FROM (wonder_release_at - created_at)) / 86400.0)::float8 \
+         FROM worlds ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        (a_days - 30.0).abs() < 1.0,
+        "artifact at ~30 days, got {a_days}"
+    );
+    assert!(
+        (w_days - 45.0).abs() < 1.0,
+        "Wonder at ~45 days, got {w_days}"
+    );
+
+    // An invalid schedule (Wonder ≤ artifact) is rejected — no world created, flashed.
+    let r = ac
+        .post(format!("{base}/admin/world"))
+        .form(&[
+            ("speed", "2"),
+            ("radius", "40"),
+            ("artifact_days", "60"),
+            ("wonder_days", "50"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    assert!(
+        r.headers()
+            .get_all(reqwest::header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .any(|v| v.starts_with("flash=")),
+        "an invalid schedule is flashed"
+    );
+    let after_invalid: i64 = sqlx::query_scalar("SELECT count(*) FROM worlds")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        after_invalid,
+        before + 1,
+        "the invalid schedule created no world"
+    );
+
+    // Omitting the schedule uses the env default (90/120 days in the test harness).
+    let r = ac
+        .post(format!("{base}/admin/world"))
+        .form(&[("speed", "2"), ("radius", "40")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let (a_days, w_days): (f64, f64) = sqlx::query_as(
+        "SELECT (EXTRACT(EPOCH FROM (artifact_release_at - created_at)) / 86400.0)::float8, \
+                (EXTRACT(EPOCH FROM (wonder_release_at - created_at)) / 86400.0)::float8 \
+         FROM worlds ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        (a_days - 90.0).abs() < 1.0,
+        "default artifact at ~90 days, got {a_days}"
+    );
+    assert!(
+        (w_days - 120.0).abs() < 1.0,
+        "default Wonder at ~120 days, got {w_days}"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]

@@ -59,6 +59,10 @@ pub struct AppState {
     pub map: Arc<WorldMap>,
     /// World configuration (speed, radius — P7).
     pub world: WorldConfig,
+    /// Operator-configured default end-game release offsets (seconds, from env — 047): the form defaults +
+    /// the fallback when a create-world request omits a per-world schedule.
+    pub artifact_release_offset_secs: i64,
+    pub wonder_release_offset_secs: i64,
     /// The active world's id (038) — the seam the per-world scheduler/registry (039) keys on.
     pub world_id: WorldId,
     /// The world registry (041) — starts a per-world scheduler live (admin world creation).

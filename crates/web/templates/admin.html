@@ -45,6 +45,8 @@
   <form method="post" action="/admin/world" class="inline">
     <label>Speed <input type="number" name="speed" min="0.1" step="0.1" value="1" required></label>
     <label>Radius <input type="number" name="radius" min="1" max="{{ max_radius }}" value="100" required></label>
+    <label>Artifacts (days) <input type="number" name="artifact_days" min="1" value="{{ default_artifact_days }}" required></label>
+    <label>Wonder (days) <input type="number" name="wonder_days" min="1" value="{{ default_wonder_days }}" required></label>
     <button type="submit" class="btn btn--primary">Create world</button>
   </form>
   <p class="muted">A new world starts running immediately (its scheduler is registered live, no restart). Players can join it once the world-selection UI ships (042).</p>

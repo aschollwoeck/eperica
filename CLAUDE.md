@@ -54,10 +54,11 @@ world-scoped boards/stat pages/search) are all built and Verified. The dependenc
 - **`specs/roles.md`** — user roles & permissions; every spec must address each applicable role.
 - **`specs/roadmap.md`** — dependency-ordered build order (slices 001 → end-game).
 - **`specs/social-and-meta-features.md`** — app-layer features (chat, profiles, UX) — not sim rules.
-- **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the per-slice specs. The dependency-ordered
+- **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the per-slice specs. The original dependency-ordered
   roadmap (slices **001–046**, through the M9 multi-world & administration program) is **complete and
-  Verified**; there is no active slice in flight. New work (e.g. visual theming/imagery, or app-layer
-  social/meta features) starts as a fresh `NNN-slug` slice.
+  Verified**. The active work is the **per-world configuration** program ([ADR 0035](docs/architecture/0035-per-world-configuration.md)):
+  slice **047** (per-world end-game schedule) is done; slices **048–05x** (per-world rule presets) are
+  planned. New unrelated work (e.g. visual theming/imagery) starts as a fresh `NNN-slug` slice.
 
 If behavior must change, **update the spec first**, then the code.
 

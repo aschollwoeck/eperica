@@ -16,8 +16,8 @@ use eperica_application::{
 };
 use eperica_domain::{Coordinate, PlayerId};
 use eperica_infrastructure::{
-    AppConfig, PgAccountRepository, PgEventStore, create_pool, economy_rules, ensure_world,
-    lifecycle_rules, now, perf, run_migrations,
+    AppConfig, PgAccountRepository, PgEventStore, create_pool, economy_rules,
+    ensure_world_with_release, lifecycle_rules, now, perf, run_migrations,
 };
 use std::time::Instant;
 
@@ -71,7 +71,15 @@ async fn open_repo() -> Result<
     let config = AppConfig::from_env()?;
     let pool = create_pool(&config.database_url).await?;
     run_migrations(&pool).await?;
-    let world = ensure_world(&pool, &config.world).await?;
+    // 047: bootstrap with the operator's configured end-game schedule (not the hardcoded fallback), so
+    // the perf world matches the production boot path.
+    let world = ensure_world_with_release(
+        &pool,
+        &config.world,
+        config.artifact_release_offset_secs,
+        config.wonder_release_offset_secs,
+    )
+    .await?;
     let econ = economy_rules()?;
     let lifecycle = lifecycle_rules()?;
     let repo = PgAccountRepository::new(

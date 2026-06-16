@@ -3256,6 +3256,8 @@ pub async fn admin(
         villages: overview.villages,
         pending_events: overview.pending_events,
         max_radius: eperica_application::MAX_WORLD_RADIUS,
+        default_artifact_days: state.artifact_release_offset_secs / 86_400,
+        default_wonder_days: state.wonder_release_offset_secs / 86_400,
         worlds,
         query: trimmed.to_owned(),
         searched,
@@ -3268,6 +3270,11 @@ pub async fn admin(
 pub struct CreateWorldForm {
     speed: f64,
     radius: u32,
+    /// End-game release schedule in **days** (047) — omitted ⇒ the operator's env default.
+    #[serde(default)]
+    artifact_days: Option<i64>,
+    #[serde(default)]
+    wonder_days: Option<i64>,
 }
 
 /// Create a new world from the admin console and start it running live (041 AC1/AC2). Admin-gated on the
@@ -3277,12 +3284,28 @@ pub async fn admin_world_submit(
     RealUser(player): RealUser,
     Form(form): Form<CreateWorldForm>,
 ) -> Response {
+    // Resolve the end-game schedule: the form's per-world override (days → seconds), or the operator's
+    // env-configured default when a field is omitted (047). Bounds (`0 < artifact < wonder`) are enforced
+    // server-side in the use case.
+    const SECS_PER_DAY: i64 = 86_400;
+    let artifact_offset = form
+        .artifact_days
+        .map_or(state.artifact_release_offset_secs, |d| {
+            d.saturating_mul(SECS_PER_DAY)
+        });
+    let wonder_offset = form
+        .wonder_days
+        .map_or(state.wonder_release_offset_secs, |d| {
+            d.saturating_mul(SECS_PER_DAY)
+        });
     match admin_create_world_uc(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
         player,
         form.speed,
         form.radius,
+        artifact_offset,
+        wonder_offset,
     )
     .await
     {
