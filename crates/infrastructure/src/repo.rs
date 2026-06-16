@@ -5811,21 +5811,25 @@ impl RankingRepository for PgAccountRepository {
     ) -> Result<Vec<LeaderboardRow>, RepoError> {
         let (table, val, pid, occ) = conflict_source(metric);
         let qf = quadrant_filter(pid, "$3");
+        // 046: the player id is world-specific, so `JOIN players … AND world_id = $5` both world-scopes
+        // (battle tables carry no world_id) and resolves the name (`p.user_id → users`).
         let sql = format!(
-            "SELECT u.id, u.username, COALESCE(SUM({val}), 0)::bigint AS total, \
+            "SELECT p.id, u.username, COALESCE(SUM({val}), 0)::bigint AS total, \
                     (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity \
-             FROM {table} JOIN users u ON u.id = {pid} \
+             FROM {table} JOIN players p ON p.id = {pid} AND p.world_id = $5 \
+             JOIN users u ON u.id = p.user_id \
              WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
                AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) AND {qf} \
                AND u.abandoned_at IS NULL AND u.is_npc = false \
-             GROUP BY u.id, u.username, u.last_activity HAVING COALESCE(SUM({val}), 0) > 0 \
-             ORDER BY total DESC, u.id ASC LIMIT $4"
+             GROUP BY p.id, u.username, u.last_activity HAVING COALESCE(SUM({val}), 0) > 0 \
+             ORDER BY total DESC, p.id ASC LIMIT $4"
         );
         let rows: Vec<(Uuid, String, i64, i64)> = sqlx::query_as(&sql)
             .bind(since.map(|t| t.0 as f64))
             .bind(until.map(|t| t.0 as f64))
             .bind(scope_code(scope))
             .bind(limit)
+            .bind(Uuid::from_u128(self.world_id.0))
             .fetch_all(&self.pool)
             .await
             .map_err(backend)?;
@@ -5875,11 +5879,13 @@ impl RankingRepository for PgAccountRepository {
     ) -> Result<Vec<AllianceLeaderboardRow>, RepoError> {
         let (table, val, pid, occ) = conflict_source(metric);
         let qf = quadrant_filter("am.player_id", "$3");
+        // 046: world-scope the members to this world's players (`p.world_id = $5`) + resolve the name.
         let sql = format!(
             "SELECT a.id, a.name, a.tag, COALESCE(SUM(pv.val), 0)::bigint AS total \
              FROM alliances a \
              JOIN alliance_members am ON am.alliance_id = a.id \
-             JOIN users u ON u.id = am.player_id \
+             JOIN players p ON p.id = am.player_id AND p.world_id = $5 \
+             JOIN users u ON u.id = p.user_id \
              JOIN (SELECT {pid} AS pid, SUM({val}) AS val FROM {table} \
                    WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
                      AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) \
@@ -5893,6 +5899,7 @@ impl RankingRepository for PgAccountRepository {
             .bind(until.map(|t| t.0 as f64))
             .bind(scope_code(scope))
             .bind(limit)
+            .bind(Uuid::from_u128(self.world_id.0))
             .fetch_all(&self.pool)
             .await
             .map_err(backend)?;
