@@ -5725,14 +5725,16 @@ fn population_board_sql(qf: &str) -> String {
               ON bp.kind = vb.building_type AND bp.lvl = vb.level \
             WHERE v.world_id = $1 GROUP BY v.owner_id \
          ) \
-         SELECT u.id, u.username, (COALESCE(f.pop, 0) + COALESCE(b.pop, 0))::bigint AS total, \
+         SELECT p.id, u.username, (COALESCE(f.pop, 0) + COALESCE(b.pop, 0))::bigint AS total, \
                 (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity \
-         FROM users u \
-         LEFT JOIN field_pop f ON f.oid = u.id \
-         LEFT JOIN bldg_pop b ON b.oid = u.id \
+         FROM (SELECT oid FROM field_pop UNION SELECT oid FROM bldg_pop) owners \
+         JOIN players p ON p.id = owners.oid \
+         JOIN users u ON u.id = p.user_id \
+         LEFT JOIN field_pop f ON f.oid = owners.oid \
+         LEFT JOIN bldg_pop b ON b.oid = owners.oid \
          WHERE u.abandoned_at IS NULL AND u.is_npc = false AND {qf} \
            AND (COALESCE(f.pop, 0) + COALESCE(b.pop, 0)) > 0 \
-         ORDER BY total DESC, u.id ASC LIMIT $7"
+         ORDER BY total DESC, p.id ASC LIMIT $7"
     )
 }
 
@@ -5784,7 +5786,7 @@ impl RankingRepository for PgAccountRepository {
         limit: i64,
     ) -> Result<Vec<LeaderboardRow>, RepoError> {
         let (fields, kinds, levels, pops) = population_arrays(econ);
-        let sql = population_board_sql(&quadrant_filter("u.id", "$6"));
+        let sql = population_board_sql(&quadrant_filter("p.id", "$6"));
         let rows: Vec<(Uuid, String, i64, i64)> = sqlx::query_as(&sql)
             .bind(Uuid::from_u128(self.world_id.0))
             .bind(&fields)
@@ -6378,10 +6380,11 @@ impl MedalRepository for PgAccountRepository {
         let qf = quadrant_filter("cur.player_id", "$4");
         let delta = CLIMBER_DELTA;
         let sql = format!(
-            "SELECT u.id, u.username, {delta}::bigint AS delta, \
+            "SELECT cur.player_id, u.username, {delta}::bigint AS delta, \
                     (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity \
              FROM population_snapshots cur \
-             JOIN users u ON u.id = cur.player_id \
+             JOIN players p ON p.id = cur.player_id \
+             JOIN users u ON u.id = p.user_id \
              LEFT JOIN population_snapshots prev \
                ON prev.world_id = cur.world_id AND prev.player_id = cur.player_id AND prev.period = $2 \
              WHERE cur.world_id = $1 AND cur.period = $3 AND {delta} > 0 AND {qf} \
