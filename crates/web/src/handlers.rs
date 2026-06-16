@@ -599,6 +599,19 @@ pub async fn join_world(
     let Some(tribe) = Tribe::from_slug(form.tribe.trim()) else {
         return Redirect::to("/worlds").into_response();
     };
+    // Server-authoritative (P4, AC3): the target must be a real, **not-won** world — never trust the
+    // posted id beyond what the joinable list offers. A won (frozen, 021) world cannot be joined.
+    match state.accounts.list_worlds().await {
+        Ok(worlds) => {
+            if !worlds.iter().any(|w| w.id == world && w.won_ms.is_none()) {
+                return Redirect::to("/worlds").into_response();
+            }
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "join world: list_worlds failed");
+            return server_error();
+        }
+    }
     // The world must be one the registry runs — `context_for` yields its (world-scoped) repo for the join.
     let Some((repo, _map, _speed, _radius)) = state.world_registry.context_for(world).await else {
         return Redirect::to("/worlds").into_response();

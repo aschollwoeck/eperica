@@ -4347,6 +4347,54 @@ async fn lobby_join_play_and_switch_back(pool: sqlx::PgPool) {
     );
 }
 
+/// 045 AC3 (server-authoritative denial, P4): `POST /worlds/join` rejects a **won** world and a garbage
+/// world id — no player is created and the player stays on the home world.
+#[sqlx::test(migrations = "../../migrations")]
+async fn joining_a_won_or_unknown_world_is_rejected(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (c, user) = register_client(&base, &pool, &unique("lobby")).await;
+
+    // A won (frozen, 021) world — offered nowhere, but a crafted POST must still be refused.
+    let won = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO worlds (id, speed, radius, seed, won_at) VALUES ($1, 1.0, 30, 5, now())",
+    )
+    .bind(won)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    for world in [
+        won.as_u128().to_string(),
+        uuid::Uuid::new_v4().as_u128().to_string(),
+    ] {
+        let r = c
+            .post(format!("{base}/worlds/join"))
+            .form(&[("world", world.as_str()), ("tribe", "teutons")])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 303);
+    }
+
+    // No player was created for this account in the won world (nor anywhere but home).
+    let player_count: i64 = sqlx::query_scalar("SELECT count(*) FROM players WHERE user_id = $1")
+        .bind(user)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        player_count, 1,
+        "only the home-world player exists — the join was refused"
+    );
+    let won_players: i64 = sqlx::query_scalar("SELECT count(*) FROM players WHERE world_id = $1")
+        .bind(won)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(won_players, 0, "no player was created in the won world");
+}
+
 /// 024 AC2–AC4: a DM appears for both parties; opening it clears the recipient's unread.
 #[sqlx::test(migrations = "../../migrations")]
 async fn dm_conversation_flow(pool: sqlx::PgPool) {
