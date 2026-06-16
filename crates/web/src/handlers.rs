@@ -1390,7 +1390,6 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
                             marker.owner_last_activity,
                             now(),
                             ctx.rules.lifecycle.inactive_after_secs,
-                            ctx.speed,
                         );
                         if inactive {
                             class.push_str(" map-grid__cell--inactive");

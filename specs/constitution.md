@@ -50,9 +50,15 @@ are reproducible and auditable.
 *Rationale: testability, fairness, and being able to explain "what happened to my army."*
 
 ### P7 — Time scale is a parameter.
-Game speed (1x, 5x, …) is server configuration. No duration, production rate, or cost is hardcoded to
-a wall-clock value; all derive from base design values × speed.
-*Rationale: configurable speed is a day-one requirement, and retrofitting it is painful.*
+Game speed (1x, 5x, …) is server configuration. No **in-game** duration, production rate, or cost is hardcoded
+to a wall-clock value; all derive from base design values × speed. **Exception — real-person timers:** durations
+that gate on a real human's out-of-game behaviour (inactivity → farmable/greyed, account abandonment — 019/054)
+are measured in **real wall-clock time**, *not* scaled by speed: they track the person, not the simulation, so
+a faster server must not grey or abandon an active human sooner. They are still configurable data (no hardcoded
+wall-clock in code — `lifecycle.toml`), just not multiplied by speed. Beginner's protection is an *in-game*
+grace period and remains speed-scaled.
+*Rationale: configurable speed is a day-one requirement, and retrofitting it is painful; but compressing a real
+person's real-world clock is a category error.*
 
 ### P8 — Spec before behavior.
 Behavior is defined by a spec with testable acceptance criteria **before** it is built or changed.

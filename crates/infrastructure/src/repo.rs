@@ -10379,12 +10379,7 @@ mod tests {
     /// catches up, then no-ops when caught up.
     #[sqlx::test(migrations = "../../migrations")]
     async fn process_due_lifecycle_settles_complete_periods(pool: PgPool) {
-        let Setup {
-            repo,
-            template,
-            config,
-            ..
-        } = setup(pool.clone()).await;
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
         let gone = make_account(&repo, &template, "abandon").await;
         let gone_v = repo.villages_of(gone).await.unwrap()[0].clone();
         sqlx::query("UPDATE users SET last_activity = to_timestamp(0) WHERE id = $1")
@@ -10403,15 +10398,9 @@ mod tests {
         let world_start = Timestamp(0);
         let now = Timestamp(60_000); // period 6 ⇒ periods 0..=5 are complete
 
-        let swept = eperica_application::process_due_lifecycle(
-            &repo,
-            world_start,
-            now,
-            &rules,
-            config.speed,
-        )
-        .await
-        .unwrap();
+        let swept = eperica_application::process_due_lifecycle(&repo, world_start, now, &rules)
+            .await
+            .unwrap();
         assert_eq!(swept.len(), 6, "periods 0..=5 each settle once");
         let total: usize = swept.iter().map(|(_, c)| *c).sum();
         assert_eq!(
@@ -10423,15 +10412,9 @@ mod tests {
             "the abandoned account's valley is freed"
         );
         // Caught up: a second run settles nothing.
-        let again = eperica_application::process_due_lifecycle(
-            &repo,
-            world_start,
-            now,
-            &rules,
-            config.speed,
-        )
-        .await
-        .unwrap();
+        let again = eperica_application::process_due_lifecycle(&repo, world_start, now, &rules)
+            .await
+            .unwrap();
         assert!(again.is_empty(), "no further periods to settle");
     }
 
