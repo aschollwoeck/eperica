@@ -13,11 +13,10 @@ use eperica_domain::{
     coordinates_within,
 };
 use eperica_infrastructure::{
-    Argon2Hasher, ChatHub, NotificationHub, PgAccountRepository, achievement_catalogue,
-    alliance_rules, artifact_catalogue, build_rules, combat_rules, culture_rules, economy_rules,
-    ensure_world, fair_play_rules, lifecycle_rules, loyalty_rules, map_rules, medal_rules,
-    merchant_rules, now, oasis_rules, quest_chain, ranking_rules, run_chat_listener,
-    run_notification_listener, scout_rules, starting_village, unit_rules, wonder_rules,
+    Argon2Hasher, ChatHub, NotificationHub, PgAccountRepository, combat_rules, culture_rules,
+    economy_rules, ensure_world, fair_play_rules, lifecycle_rules, load_world_rules, loyalty_rules,
+    map_rules, merchant_rules, now, oasis_rules, ranking_rules, run_chat_listener,
+    run_notification_listener, scout_rules, starting_village, unit_rules,
 };
 use eperica_web::registry::WorldRegistry;
 use eperica_web::router;
@@ -34,11 +33,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 async fn spawn(pool: sqlx::PgPool) -> String {
     let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
     let world = ensure_world(&pool, &config).await.expect("ensure world");
-    let rules = economy_rules().expect("economy rules");
+    let world_rules = Arc::new(load_world_rules().expect("world rules"));
     let map = Arc::new(WorldMap::new(
         world.seed as u64,
         config.radius,
-        map_rules().expect("map rules"),
+        world_rules.map_rules.clone(),
     ));
     let state = AppState {
         accounts: Arc::new(PgAccountRepository::new(
@@ -46,27 +45,12 @@ async fn spawn(pool: sqlx::PgPool) -> String {
             world.id,
             world.seed,
             config.radius,
-            rules.starting_amounts,
-            lifecycle_rules()
-                .expect("lifecycle rules")
-                .beginner_protection_secs,
+            world_rules.economy.starting_amounts,
+            world_rules.lifecycle.beginner_protection_secs,
             config.speed,
         )),
         hasher: Arc::new(Argon2Hasher),
-        template: Arc::new(starting_village().unwrap()),
-        rules: Arc::new(rules),
-        build_rules: Arc::new(build_rules().expect("build rules")),
-        unit_rules: Arc::new(unit_rules().expect("unit rules")),
-        combat_rules: Arc::new(combat_rules().expect("combat rules")),
-        culture_rules: Arc::new(culture_rules().expect("culture rules")),
-        loyalty_rules: Arc::new(loyalty_rules().expect("loyalty rules")),
-        alliance_rules: Arc::new(alliance_rules().expect("alliance rules")),
-        ranking_rules: Arc::new(ranking_rules().expect("ranking rules")),
-        achievement_catalogue: Arc::new(achievement_catalogue().expect("achievement catalogue")),
-        quest_chain: Arc::new(quest_chain().expect("quest chain")),
-        lifecycle_rules: Arc::new(lifecycle_rules().expect("lifecycle rules")),
-        merchant_rules: Arc::new(merchant_rules().expect("merchant rules")),
-        wonder_rules: Arc::new(wonder_rules().expect("wonder rules")),
+        world_rules: Arc::clone(&world_rules),
         fair_play_rules: Arc::new(fair_play_rules().expect("fair-play rules")),
         // Tests trust the forwarded headers so they can control the client IP deterministically.
         trust_proxy: true,
@@ -93,22 +77,8 @@ async fn spawn(pool: sqlx::PgPool) -> String {
             Arc::new(WorldRegistry::new(
                 pool.clone(),
                 rx,
-                lifecycle_rules().unwrap().beginner_protection_secs,
-                Arc::new(economy_rules().unwrap()),
-                Arc::new(unit_rules().unwrap()),
-                Arc::new(merchant_rules().unwrap()),
-                Arc::new(combat_rules().unwrap()),
-                Arc::new(scout_rules().unwrap()),
-                Arc::new(oasis_rules().unwrap()),
-                Arc::new(culture_rules().unwrap()),
-                Arc::new(loyalty_rules().unwrap()),
-                Arc::new(ranking_rules().unwrap()),
-                Arc::new(medal_rules().unwrap()),
-                Arc::new(lifecycle_rules().unwrap()),
-                Arc::new(artifact_catalogue().unwrap()),
-                Arc::new(starting_village().unwrap()),
-                Arc::new(wonder_rules().unwrap()),
-                map_rules().unwrap(),
+                world_rules.lifecycle.beginner_protection_secs,
+                Arc::clone(&world_rules),
             ))
         },
         require_email_confirmation: false,
