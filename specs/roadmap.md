@@ -151,7 +151,10 @@ is sequenced so the low-risk pieces land first and the heavy refactors are isola
 | 039 ✅ | **World-scoped due processing** — the repo's per-tick due-claims + requeues filter to the repo's world (via the row's village), so a scheduler on a world-scoped repo only drains its own world. Behaviour-preserving. | 038 | The prerequisite for per-world schedulers. | §13.3 |
 | 040 | **World registry runtime** — load all worlds at startup; build a `WorldRuntime` (map/speed/repo/event-store) per world; run a **scheduler per world** concurrently. The web operates on the home world (request-path world selection lands with the player UX, 042). | 039 | Many worlds' schedulers run at once, each with its own speed/map/seed. | §13.3 |
 | 041 | **World lifecycle admin** — create/start/archive worlds live from the dashboard (registry add/remove, no restart, others undisturbed; archival reuses the 021 freeze-guard). | 040 | Operators run rounds without a process restart. | §13.2–13.3 |
-| 042 | **Player multi-world UX** — post-login world lobby, join-world flow, nav world switcher, and resolving the player per `(user, world)` in the request path. | 041 | Players self-select and play across worlds. | §13.3 |
+| 042 | **Player-FK switch-over** — re-point the per-world game FKs `users(id)`→`players(id)` (so a non-account player — the Natar NPC, or a second-world player — can own game state); the NPC gains a per-world player (reuse-UUID). Behaviour-preserving. | 037, 020/021 | The foundation that lets a non-account player exist. | §13.3 |
+| 043 | **Request world-context** — a `world` cookie + `GameContext` extractor resolving the selected world's repo/map/speed + the `(user, world)` player; behaviour-preserving for the home world. | 042 | The per-request multi-world seam. | §13.3 |
+| 044 | **Game-handler migration** — move the ~40 game handlers onto `GameContext`; account handlers stay on `AuthUser`/`RealUser`. | 043 | Handlers operate in the selected world. | §13.3 |
+| 045 | **Player multi-world UX** — post-login world lobby, join-world flow, nav switcher; re-point `owner→user` reads through `players` for second-world players. | 044 | Players self-select and play across worlds. | §13.3 |
 
 ---
 
