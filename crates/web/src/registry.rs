@@ -3,17 +3,26 @@
 //! no process restart (040 spawns at startup; this lets `main.rs` and the admin handler share one path).
 
 use eperica_domain::{
-    CombatRules, CultureRules, EconomyRules, GameSpeed, LifecycleRules, LoyaltyRules, MedalRules,
-    MerchantRules, OasisRules, RankingRules, ScoutRules, StartingVillage, UnitRules, WonderRules,
-    WorldId, WorldMap,
+    CombatRules, CultureRules, EconomyRules, GameSpeed, LifecycleRules, LoyaltyRules, MapRules,
+    MedalRules, MerchantRules, OasisRules, RankingRules, ScoutRules, StartingVillage, UnitRules,
+    WonderRules, WorldId, WorldMap,
 };
 use eperica_infrastructure::{
-    ArtifactCatalogue, PgAccountRepository, PgEventStore, PgPool, Scheduler, map_rules, world_by_id,
+    ArtifactCatalogue, PgAccountRepository, PgEventStore, PgPool, Scheduler, world_by_id,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
+
+/// A running world's immutable config (043) — cached so a game request can build its world-scoped repo +
+/// map without a DB round-trip (the map is generate-on-read, so cheap to construct).
+#[derive(Debug, Clone, Copy)]
+pub struct WorldMeta {
+    pub seed: i64,
+    pub radius: u32,
+    pub speed: GameSpeed,
+}
 
 /// Holds the shared scheduler rules + the machinery to start a scheduler for any world.
 pub struct WorldRegistry {
@@ -34,6 +43,10 @@ pub struct WorldRegistry {
     artifacts: Arc<ArtifactCatalogue>,
     template: Arc<StartingVillage>,
     wonder: Arc<WonderRules>,
+    /// The map balance rules, loaded once — every world's `WorldMap` shares them.
+    map_rules: MapRules,
+    /// Per-world config (043), recorded when a world is started; drives `context_for`.
+    meta: Mutex<HashMap<WorldId, WorldMeta>>,
     /// The worlds whose scheduler is **claimed** (starting or running) — the key's presence is the
     /// atomic idempotency guard; the value is the join handle once spawned (`None` while starting).
     running: Mutex<HashMap<WorldId, Option<JoinHandle<()>>>>,
@@ -60,6 +73,7 @@ impl WorldRegistry {
         artifacts: Arc<ArtifactCatalogue>,
         template: Arc<StartingVillage>,
         wonder: Arc<WonderRules>,
+        map_rules: MapRules,
     ) -> Self {
         Self {
             pool,
@@ -79,8 +93,49 @@ impl WorldRegistry {
             artifacts,
             template,
             wonder,
+            map_rules,
+            meta: Mutex::new(HashMap::new()),
             running: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The selected world's game runtime (043): a freshly-built world-scoped `PgAccountRepository` + its
+    /// `WorldMap` + speed + radius, from the cached meta. The map is generate-on-read, so building the
+    /// runtime is cheap; the cache is populated on first access from the world row (one DB lookup), then
+    /// reused. `None` if the world does not exist or its speed is invalid.
+    pub async fn context_for(
+        &self,
+        world_id: WorldId,
+    ) -> Option<(PgAccountRepository, Arc<WorldMap>, GameSpeed, u32)> {
+        let cached = self.meta.lock().unwrap().get(&world_id).copied();
+        let meta = match cached {
+            Some(m) => m,
+            None => {
+                let world = world_by_id(&self.pool, world_id).await.ok()??;
+                let m = WorldMeta {
+                    seed: world.seed,
+                    radius: world.radius,
+                    speed: GameSpeed::new(world.speed).ok()?,
+                };
+                self.meta.lock().unwrap().insert(world_id, m);
+                m
+            }
+        };
+        let map = Arc::new(WorldMap::new(
+            meta.seed as u64,
+            meta.radius,
+            self.map_rules.clone(),
+        ));
+        let repo = PgAccountRepository::new(
+            self.pool.clone(),
+            world_id,
+            meta.seed,
+            meta.radius,
+            self.economy.starting_amounts,
+            self.beginner_secs,
+            meta.speed,
+        );
+        Some((repo, map, meta.speed, meta.radius))
     }
 
     /// Start the scheduler for `world_id`, building its world-scoped runtime (map/repo/event-store from
@@ -121,10 +176,19 @@ impl WorldRegistry {
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "world not found".to_owned())?;
         let speed = GameSpeed::new(world.speed).map_err(|e| e.to_string())?;
+        // Cache the world's config (043) so game requests resolve their world-scoped repo without a DB hit.
+        self.meta.lock().unwrap().insert(
+            world_id,
+            WorldMeta {
+                seed: world.seed,
+                radius: world.radius,
+                speed,
+            },
+        );
         let map = Arc::new(WorldMap::new(
             world.seed as u64,
             world.radius,
-            map_rules().map_err(|e| e.to_string())?,
+            self.map_rules.clone(),
         ));
         let accounts = PgAccountRepository::new(
             self.pool.clone(),

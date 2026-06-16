@@ -1,6 +1,9 @@
 //! HTTP handlers for the register / login / village flow.
 
-use crate::auth::{AuthUser, MaybeAuthUser, MaybeRealUser, RealUser, auth_cookie, clear_cookie};
+use crate::auth::{
+    AuthUser, GameContext, MaybeAuthUser, MaybeRealUser, RealUser, auth_cookie, clear_cookie,
+    world_cookie,
+};
 use crate::state::AppState;
 use crate::templates::{
     AcademyRow, AcademyTemplate, AchievementRowView, ActiveView, AdminAccountRow, AdminTemplate,
@@ -56,7 +59,7 @@ use eperica_domain::{
     Coordinate, DiplomacyStance, DiplomacyStatus, MedalCategory, MovementKind, OasisBonus,
     PlayerId, Presence, Quadrant, QuestReward, QueueLane, ReportReason, ResearchDenied,
     ResourceAmounts, ResourceKind, RightSet, SanctionKind, ScoutTarget, TileKind, Timestamp,
-    TradeKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, VillageId,
+    TradeKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, VillageId, WorldId,
     can_access_channel, can_afford, can_research, can_upgrade, current_quest, expansion_slots,
     garrison_upkeep, is_inactive, per_unit_time_secs, presence, queue_lane, regenerate_loyalty,
     scaled_time_secs,
@@ -490,15 +493,41 @@ pub async fn logout(jar: PrivateCookieJar) -> Response {
     (jar, Redirect::to("/")).into_response()
 }
 
+/// The world-switch form (043): the world to make current.
+#[derive(Deserialize)]
+pub struct SelectWorldForm {
+    world: String,
+}
+
+/// Select the current world (043) — sets the encrypted `world` cookie so subsequent game requests operate
+/// in it. Only a world the **account** has joined is honoured (server-authoritative); an unknown/unjoined
+/// world is ignored (stays on the current selection). The lobby that lists worlds + posts here is 045.
+pub async fn select_world(
+    State(state): State<AppState>,
+    jar: PrivateCookieJar,
+    AuthUser(account): AuthUser,
+    Form(form): Form<SelectWorldForm>,
+) -> Response {
+    let Ok(world) = form.world.trim().parse::<u128>().map(WorldId) else {
+        return Redirect::to("/village").into_response();
+    };
+    match state.accounts.player_in_world(account, world).await {
+        Ok(Some(_)) => (jar.add(world_cookie(world.0)), Redirect::to("/village")).into_response(),
+        _ => Redirect::to("/village").into_response(),
+    }
+}
+
 /// A player's village with its live economy, switchable across all their villages (Player only —
 /// AC3/AC4/AC7, 013 AC11). `?village=<id>` selects which to show; absent ⇒ the capital / first.
 pub async fn village(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Query(q): Query<VillageQuery>,
 ) -> Response {
+    let player = ctx.player;
+    let account = ctx.account;
     let selected = selected_village(q.village.as_deref());
-    let user = match state.accounts.find_user_by_id(player).await {
+    let user = match ctx.accounts.find_user_by_id(account).await {
         Ok(Some(u)) => u,
         Ok(None) => return Redirect::to("/login").into_response(),
         Err(e) => {
@@ -510,7 +539,7 @@ pub async fn village(
     // 017: lazily grant any achievements this player has newly earned (server-authoritative,
     // idempotent). Best-effort — a failure here must not break the village view.
     if let Err(e) = evaluate_achievements(
-        state.accounts.as_ref(),
+        &ctx.accounts,
         state.rules.as_ref(),
         state.unit_rules.as_ref(),
         state.achievement_catalogue.as_ref(),
@@ -524,7 +553,7 @@ pub async fn village(
     // 018: lazily complete any onboarding quests now satisfied (server-authoritative, idempotent,
     // stage-gated). Best-effort — a failure here must not break the village view.
     if let Err(e) = evaluate_quests(
-        state.accounts.as_ref(),
+        &ctx.accounts,
         state.rules.as_ref(),
         state.quest_chain.as_ref(),
         player,
@@ -536,14 +565,14 @@ pub async fn village(
 
     // 019: this authenticated view is the activity signal (throttled), and the natural place to end
     // beginner's protection once the player is established. Best-effort.
-    if let Err(e) = state.accounts.touch_activity(player, now()).await {
+    if let Err(e) = ctx.accounts.touch_activity(account, now()).await {
         tracing::error!(error = %e, "activity touch failed");
     }
     if let Err(e) = end_protection_if_established(
-        state.accounts.as_ref(),
+        &ctx.accounts,
         state.rules.as_ref(),
         state.lifecycle_rules.as_ref(),
-        player,
+        account,
         now(),
     )
     .await
@@ -551,7 +580,7 @@ pub async fn village(
         tracing::error!(error = %e, "protection threshold check failed");
     }
     // The remaining protection window, if any, for the view.
-    let protected_until = match state.accounts.protection_of(player).await {
+    let protected_until = match ctx.accounts.protection_of(account).await {
         Ok(p) => p,
         Err(e) => {
             tracing::error!(error = %e, "protection lookup failed");
@@ -560,12 +589,12 @@ pub async fn village(
     };
 
     // 020 AC8: the artifacts this player holds, with the holding village's coordinate.
-    let held = state
+    let held = ctx
         .accounts
         .held_by_player(player)
         .await
         .unwrap_or_default();
-    let owned = state.accounts.villages_of(player).await.unwrap_or_default();
+    let owned = ctx.accounts.villages_of(player).await.unwrap_or_default();
     let artifacts: Vec<ArtifactRowView> = held
         .iter()
         .map(|h| ArtifactRowView {
@@ -579,10 +608,10 @@ pub async fn village(
         .collect();
 
     let economy = match load_economy(
-        state.accounts.as_ref(),
+        &ctx.accounts,
         state.rules.as_ref(),
         state.unit_rules.as_ref(),
-        state.world.speed,
+        ctx.speed,
         now(),
         player,
         selected,
@@ -645,7 +674,7 @@ pub async fn village(
     .map(|(_, label, href)| (label, href))
     .collect();
 
-    let active = match state.accounts.active_builds(village.id).await {
+    let active = match ctx.accounts.active_builds(village.id).await {
         Ok(a) => a,
         Err(e) => {
             tracing::error!(error = %e, "active build lookup failed");
@@ -666,7 +695,7 @@ pub async fn village(
     // 031: the effect of the *next* level, so a player sees what an upgrade does — not just its cost. Pure
     // reads off the economy rules (scaled by world speed for production, to match the displayed rates).
     let econ = state.rules.as_ref();
-    let speed = state.world.speed;
+    let speed = ctx.speed;
     let field_effect = |kind: ResourceKind, level: u8| -> String {
         let cur = econ.field_production_per_hour(kind, level, speed);
         let next = econ.field_production_per_hour(kind, level + 1, speed);
@@ -866,21 +895,21 @@ pub async fn village(
         .collect();
 
     // Troop movements + stationed reinforcements (007 AC7).
-    let movements_view = match state.accounts.active_movements(player).await {
+    let movements_view = match ctx.accounts.active_movements(player).await {
         Ok(m) => m,
         Err(e) => {
             tracing::error!(error = %e, "movements lookup failed");
             return server_error();
         }
     };
-    let here = match state.accounts.reinforcements_at(village.id).await {
+    let here = match ctx.accounts.reinforcements_at(village.id).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "reinforcements-here lookup failed");
             return server_error();
         }
     };
-    let abroad = match state.accounts.reinforcements_of(player).await {
+    let abroad = match ctx.accounts.reinforcements_of(player).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "reinforcements-abroad lookup failed");
@@ -943,7 +972,7 @@ pub async fn village(
         })
         .collect();
 
-    let trades = match state.accounts.active_trades(player).await {
+    let trades = match ctx.accounts.active_trades(player).await {
         Ok(t) => t,
         Err(e) => {
             tracing::error!(error = %e, "trades lookup failed");
@@ -969,7 +998,7 @@ pub async fn village(
         .collect();
 
     // The oases this village holds (012 AC12): their tile, bonus, and a recall action.
-    let oases: Vec<OasisRow> = match state.accounts.occupied_oases(village.id).await {
+    let oases: Vec<OasisRow> = match ctx.accounts.occupied_oases(village.id).await {
         Ok(o) => o
             .iter()
             .map(|(c, b)| OasisRow {
@@ -985,7 +1014,7 @@ pub async fn village(
     };
 
     // The village switcher: every owned village, the capital badged (013 AC11).
-    let owned = match state.accounts.villages_of(player).await {
+    let owned = match ctx.accounts.villages_of(player).await {
         Ok(v) => v,
         Err(e) => {
             tracing::error!(error = %e, "villages lookup failed");
@@ -1004,8 +1033,8 @@ pub async fn village(
 
     // The player's pooled culture points + the expansion-slot gate (013 AC1/AC4/AC11).
     let culture = match load_culture(
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
+        &ctx.accounts,
+        &ctx.accounts,
         state.culture_rules.as_ref(),
         now(),
         player,
@@ -1021,12 +1050,12 @@ pub async fn village(
     let has_free_slot = culture.used_slots < culture.allowed_villages;
 
     // The shown village's loyalty, regenerated to now (014 AC1).
-    let loyalty = match state.accounts.village_loyalty(village.id).await {
+    let loyalty = match ctx.accounts.village_loyalty(village.id).await {
         Ok(Some((value, updated))) => regenerate_loyalty(
             value,
             (now().0 - updated.0) / 1000,
             state.loyalty_rules.as_ref(),
-            state.world.speed,
+            ctx.speed,
         ),
         Ok(None) => state.loyalty_rules.starting_loyalty,
         Err(e) => {
@@ -1036,7 +1065,7 @@ pub async fn village(
     };
 
     // The round-over notice (021 AC7) — best-effort; a lookup error must not break the village view.
-    let world_won = matches!(state.accounts.world_ended().await, Ok(Some(_)));
+    let world_won = matches!(ctx.accounts.world_ended().await, Ok(Some(_)));
 
     page(&VillageTemplate {
         username: user.username,

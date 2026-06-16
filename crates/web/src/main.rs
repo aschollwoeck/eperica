@@ -49,10 +49,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wonder = Arc::new(wonder_rules()?);
     let fair_play = Arc::new(fair_play_rules()?);
     let template = Arc::new(starting_village()?);
+    let map_rules = map_rules()?;
     let map = Arc::new(WorldMap::new(
         world.seed as u64,
         config.world.radius,
-        map_rules()?,
+        map_rules.clone(),
     ));
     let accounts = PgAccountRepository::new(
         pool.clone(),
@@ -104,6 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&artifacts),
         Arc::clone(&template),
         Arc::clone(&wonder),
+        map_rules,
     ));
     match all_worlds(&pool).await {
         Ok(worlds) => {

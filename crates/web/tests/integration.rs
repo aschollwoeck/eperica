@@ -9,7 +9,8 @@ use eperica_application::{
     process_due_settles, process_due_trades,
 };
 use eperica_domain::{
-    Coordinate, GameSpeed, TileKind, Timestamp, WorldConfig, WorldMap, coordinates_within,
+    Coordinate, GameSpeed, PlayerId, TileKind, Timestamp, Tribe, WorldConfig, WorldId, WorldMap,
+    coordinates_within,
 };
 use eperica_infrastructure::{
     Argon2Hasher, ChatHub, NotificationHub, PgAccountRepository, achievement_catalogue,
@@ -105,6 +106,7 @@ async fn spawn(pool: sqlx::PgPool) -> String {
                 Arc::new(artifact_catalogue().unwrap()),
                 Arc::new(starting_village().unwrap()),
                 Arc::new(wonder_rules().unwrap()),
+                map_rules().unwrap(),
             ))
         },
         require_email_confirmation: false,
@@ -3882,6 +3884,173 @@ async fn register_client(
         .await
         .unwrap();
     (c, id)
+}
+
+/// 043: selecting a second world makes game requests operate in it — the village page renders **that
+/// world's** village (a different village than the home one). The account login is unaffected.
+#[sqlx::test(migrations = "../../migrations")]
+async fn selecting_a_world_switches_the_village_page(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (c, user) = register_client(&base, &pool, &unique("mw")).await;
+    let home_vid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE owner_id = $1")
+        .bind(user)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // A second world + the account's player + starting village in it (the 042 join primitive).
+    let world_b = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 30, 4242)")
+        .bind(world_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repo_b = PgAccountRepository::new(
+        pool.clone(),
+        WorldId(world_b.as_u128()),
+        4242,
+        30,
+        economy_rules().unwrap().starting_amounts,
+        lifecycle_rules().unwrap().beginner_protection_secs,
+        GameSpeed::new(1.0).unwrap(),
+    );
+    let player_b = repo_b
+        .create_player_in_world(
+            PlayerId(user.as_u128()),
+            Tribe::Teutons,
+            &starting_village().unwrap(),
+        )
+        .await
+        .unwrap();
+    let b_vid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE owner_id = $1")
+        .bind(uuid::Uuid::from_u128(player_b.0))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_ne!(home_vid, b_vid);
+
+    // By default the village page shows the home world's village.
+    let body = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains(&home_vid.as_u128().to_string()),
+        "default shows the home village"
+    );
+    assert!(!body.contains(&b_vid.as_u128().to_string()));
+
+    // Select world B → the village page now operates in world B.
+    let r = c
+        .post(format!("{base}/world/select"))
+        .form(&[("world", world_b.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let body = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains(&b_vid.as_u128().to_string()),
+        "after selecting world B the page shows world B's village"
+    );
+    assert!(
+        !body.contains(&home_vid.as_u128().to_string()),
+        "the home village is no longer shown"
+    );
+
+    // The account login (account-level) is unaffected by the world selection.
+    let me = c
+        .get(format!("{base}/me"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(me.contains("\"authed\":true"));
+}
+
+/// 043 AC4 (server-authoritative denial): `POST /world/select` with a world the account has **not**
+/// joined (and with a garbage id) is ignored — the village page keeps rendering the home village.
+#[sqlx::test(migrations = "../../migrations")]
+async fn selecting_an_unjoined_world_is_ignored(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (c, user) = register_client(&base, &pool, &unique("mw")).await;
+    let home_vid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE owner_id = $1")
+        .bind(user)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // A second world exists, but the account never joined it (no player row in it).
+    let world_b = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 30, 4242)")
+        .bind(world_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Selecting the unjoined world is ignored (server-authoritative) → village stays home.
+    let r = c
+        .post(format!("{base}/world/select"))
+        .form(&[("world", world_b.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    // The handler's own guard must not set the `world` cookie (independent of the GameContext
+    // home-fallback backstop) — a regression that set it would be caught here directly.
+    assert!(
+        !r.headers()
+            .get_all("set-cookie")
+            .iter()
+            .any(|v| v.to_str().map(|s| s.starts_with("world=")).unwrap_or(false)),
+        "an unjoined world must not set the world cookie"
+    );
+    let body = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains(&home_vid.as_u128().to_string()),
+        "an unjoined world is ignored — the home village still renders"
+    );
+
+    // A garbage (non-existent) world id is likewise ignored.
+    let r = c
+        .post(format!("{base}/world/select"))
+        .form(&[("world", uuid::Uuid::new_v4().as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let body = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains(&home_vid.as_u128().to_string()),
+        "a garbage world id is ignored — the home village still renders"
+    );
 }
 
 /// 024 AC2–AC4: a DM appears for both parties; opening it clears the recipient's unread.

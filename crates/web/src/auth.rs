@@ -20,6 +20,19 @@ pub const AUTH_COOKIE: &str = "uid";
 /// Name of the encrypted cookie holding the owner a sitter is currently operating (030).
 pub const SIT_COOKIE: &str = "sit";
 
+/// Name of the encrypted cookie holding the world the player has currently selected (043).
+pub const WORLD_COOKIE: &str = "world";
+
+/// Build the world-selection cookie for `world_id` (043) — set by the world switcher (045).
+pub fn world_cookie(world_id: u128) -> Cookie<'static> {
+    base_cookie(WORLD_COOKIE, world_id.to_string())
+}
+
+/// A removal cookie that clears the world selection (back to the home world).
+pub fn clear_world_cookie() -> Cookie<'static> {
+    base_cookie(WORLD_COOKIE, String::new())
+}
+
 /// Build the auth cookie for `player_id` (encrypted by the `PrivateCookieJar`).
 pub fn auth_cookie(player_id: u128) -> Cookie<'static> {
     base_cookie(AUTH_COOKIE, player_id.to_string())
@@ -162,5 +175,83 @@ impl FromRequestParts<AppState> for MaybeAuthUser {
         Ok(MaybeAuthUser(effective_identity(parts, state).await.map(
             |(real, sitting_owner)| sitting_owner.unwrap_or(real),
         )))
+    }
+}
+
+/// The **game** identity for a request (043): the selected world's repo/map/speed/radius + the account's
+/// player in that world. Game handlers use this instead of the home `AppState` fields + `AuthUser`. The
+/// selected world comes from the `world` cookie (default home); if the account has no player in it (or the
+/// registry is not running it) it falls back to the **home** world (always joined). Resolves to the
+/// effective account (sit-aware), so a sit transparently plays the owner's world. A missing/invalid auth
+/// cookie redirects to `/login`.
+pub struct GameContext {
+    /// The selected world's account repository (world-scoped reads/writes).
+    pub accounts: eperica_infrastructure::PgAccountRepository,
+    /// The selected world's seeded map.
+    pub map: std::sync::Arc<eperica_domain::WorldMap>,
+    /// The account's player **in the selected world** (game state keys on this).
+    pub player: PlayerId,
+    /// The **account** (the human / effective user) — account-level reads (username, protection,
+    /// activity) key on this. Equals `player` in the home world; differs in a second world.
+    pub account: PlayerId,
+    /// The selected world.
+    pub world_id: eperica_domain::WorldId,
+    /// The selected world's speed (P7) and radius (006).
+    pub speed: eperica_domain::GameSpeed,
+    pub radius: u32,
+}
+
+impl FromRequestParts<AppState> for GameContext {
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        use eperica_infrastructure::application::AccountRepository;
+        let Some((real, sitting_owner)) = effective_identity(parts, state).await else {
+            return Err(Redirect::to("/login").into_response());
+        };
+        let account = sitting_owner.unwrap_or(real);
+
+        // The selected world from the `world` cookie, defaulting to the home world.
+        let jar: PrivateCookieJar = PrivateCookieJar::from_request_parts(parts, state)
+            .await
+            .map_err(|_| Redirect::to("/login").into_response())?;
+        let selected = jar
+            .get(WORLD_COOKIE)
+            .and_then(|c| c.value().parse::<u128>().ok())
+            .map(eperica_domain::WorldId)
+            .unwrap_or(state.world_id);
+
+        // Resolve the account's player in the selected world; fall back to home if not joined, or if the
+        // registry is not running the selected world.
+        let resolve = |world: eperica_domain::WorldId| async move {
+            let player = state
+                .accounts
+                .player_in_world(account, world)
+                .await
+                .ok()??;
+            let ctx = state.world_registry.context_for(world).await?;
+            Some((world, player, ctx))
+        };
+        let (world_id, player, (accounts, map, speed, radius)) = match resolve(selected).await {
+            Some(found) => found,
+            None => match resolve(state.world_id).await {
+                Some(home) => home,
+                // The account has no player even in the home world (should not happen for a real login).
+                None => return Err(Redirect::to("/login").into_response()),
+            },
+        };
+
+        Ok(GameContext {
+            accounts,
+            map,
+            player,
+            account,
+            world_id,
+            speed,
+            radius,
+        })
     }
 }
