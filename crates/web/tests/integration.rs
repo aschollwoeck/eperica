@@ -4500,6 +4500,65 @@ async fn registry_serves_each_worlds_preset_bundle(pool: sqlx::PgPool) {
     );
 }
 
+/// 053 AC1/AC2 (acceptance): two worlds at the **same** `GameSpeed` but different presets are served
+/// **divergent** rules by the registry (the full resolve path), so the difference is the preset itself, not
+/// the speed multiplier. The `speed` world gets shorter beginner protection (the ADR example) and 2× unit
+/// map speed; the home world stays `classic`.
+#[sqlx::test(migrations = "../../migrations")]
+async fn classic_and_speed_worlds_are_served_divergent_rules(pool: sqlx::PgPool) {
+    // Home world: classic at 1×.
+    let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 30);
+    let home = ensure_world(&pool, &config).await.expect("home world");
+    // A `speed` world at the **same** 1× speed — only the preset differs.
+    let speed_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO worlds (id, speed, radius, seed, rule_preset) VALUES ($1, 1.0, 30, 55, 'speed')",
+    )
+    .bind(speed_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let boot = Arc::new(load_world_rules(&home.rule_preset).expect("classic bundle"));
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    std::mem::forget(tx);
+    let registry = WorldRegistry::new(
+        pool.clone(),
+        rx,
+        0,
+        home.rule_preset.clone(),
+        Arc::clone(&boot),
+    );
+
+    let (_r1, _m1, _s1, _rad1, home_rules) =
+        registry.context_for(home.id).await.expect("home context");
+    let (_r2, _m2, _s2, _rad2, speed_rules) = registry
+        .context_for(WorldId(speed_id.as_u128()))
+        .await
+        .expect("speed context");
+
+    // AC2: the home world is served the classic bundle (the boot bundle, unchanged by the speed world).
+    assert!(Arc::ptr_eq(&home_rules, &boot), "home stays classic");
+
+    // AC1: the speed world is served divergent rules — shorter beginner protection …
+    assert!(
+        speed_rules.lifecycle.beginner_protection_secs
+            < home_rules.lifecycle.beginner_protection_secs,
+        "the speed world has shorter beginner protection"
+    );
+    // … and 2× unit map speed (same roster, every unit doubled).
+    let g_speed = speed_rules.units.roster(Tribe::Gauls);
+    let g_home = home_rules.units.roster(Tribe::Gauls);
+    assert_eq!(g_speed.len(), g_home.len());
+    assert!(
+        g_speed
+            .iter()
+            .zip(g_home.iter())
+            .all(|(s, c)| s.speed == c.speed * 2),
+        "the speed world's troops move at 2× the classic map speed"
+    );
+}
+
 /// 045 AC2–AC5 (end-to-end): from the lobby a player joins a second world → lands in its village → its
 /// name resolves on the map (re-pointed reads) → switches back to the home world.
 #[sqlx::test(migrations = "../../migrations")]
