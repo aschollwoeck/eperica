@@ -5707,14 +5707,16 @@ fn village_pop_expr(
 
 /// Flatten the economy population balance into array binds: `(field_pops, b_kinds, b_levels, b_pops)`
 /// (the per-level field table, and the building (kind, level, pop) triples).
-/// Set-based per-user population board SQL (023 tuning) — two grouped aggregations over the world's
-/// `village_fields`/`village_buildings` joined to users, instead of [`village_pop_expr`]'s two correlated
-/// subqueries per village (O(villages)). `qf` is the quadrant filter on `u.id`. Placeholders: `$1` world,
-/// `$2` field-pops, `$3`/`$4`/`$5` building kinds/levels/pops, `$6` quadrant, `$7` limit.
+/// Set-based per-player population board SQL (023 tuning) — two grouped aggregations over the world's
+/// `village_fields`/`village_buildings`, instead of [`village_pop_expr`]'s two correlated subqueries per
+/// village (O(villages)). `qf` is the quadrant filter on `p.id`. Placeholders: `$1` world, `$2` field-pops,
+/// `$3`/`$4`/`$5` building kinds/levels/pops, `$6` quadrant, `$7` limit.
 ///
-/// Driven `FROM users` (the CTEs are world-scoped via `v.world_id = $1`, and the `> 0` filter prunes users
-/// with no village in this world) — single-world today. A multi-world deployment would scope this to users
-/// owning a village in the world to avoid a global `users` scan.
+/// Driven `FROM (field_pop ∪ bldg_pop) owners` — the population CTEs are world-scoped (`v.world_id = $1`),
+/// so each owner is a world-`$1` village owner = a world-`$1` player; the board then **PK-joins** `players`
+/// (`p.id = owners.oid`) → `users` for the name (046). This both world-scopes and name-resolves without a
+/// global `players`/`users` scan (keeping the 023/P11 scale budget) — second-world players (`p.id !=
+/// user.id`) resolve correctly; home parity holds via the reuse-UUID invariant.
 fn population_board_sql(qf: &str) -> String {
     format!(
         "WITH field_pop AS ( \
@@ -5993,12 +5995,19 @@ impl RankingRepository for PgAccountRepository {
         alliance: AllianceId,
     ) -> Result<Option<AllianceStats>, RepoError> {
         let aid = Uuid::from_u128(alliance.0);
-        let Some((name, tag)): Option<(String, String)> =
-            sqlx::query_as("SELECT name, tag FROM alliances WHERE id = $1")
-                .bind(aid)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(backend)?
+        // 046: an alliance with no member in this repo's world is not in this world — treat as not found
+        // (symmetry with `player_stats`' world guard), so a foreign-world alliance id yields no page.
+        let Some((name, tag)): Option<(String, String)> = sqlx::query_as(
+            "SELECT a.name, a.tag FROM alliances a \
+             WHERE a.id = $1 AND EXISTS (SELECT 1 FROM alliance_members am \
+               JOIN players p ON p.id = am.player_id \
+               WHERE am.alliance_id = a.id AND p.world_id = $2)",
+        )
+        .bind(aid)
+        .bind(Uuid::from_u128(self.world_id.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?
         else {
             return Ok(None);
         };
