@@ -56,9 +56,10 @@ pub struct WorldRules {
     pub starting_village: StartingVillage,
 }
 
-/// The rule presets an operator may run a world under (049). `classic` is the shipped balance; a real
-/// second preset (with its balance overlay) lands in 052.
-pub const KNOWN_PRESETS: &[&str] = &["classic"];
+/// The rule presets an operator may run a world under. `classic` is the shipped balance (049); `speed` is a
+/// blitz server with shorter protection and faster troops/merchants (052). Each is a full balance directory
+/// under `specs/balance/presets/<name>/`; the order here is the order the admin form lists them.
+pub const KNOWN_PRESETS: &[&str] = &["classic", "speed"];
 
 /// The default preset — every world without an explicit choice plays `classic` (matches the
 /// `worlds.rule_preset` DB default).
@@ -77,29 +78,33 @@ pub fn known_preset(name: &str) -> bool {
 /// # Errors
 /// [`BalanceError`] if the preset is unknown or any balance file fails to parse/validate.
 pub fn load_world_rules(preset: &str) -> Result<WorldRules, BalanceError> {
-    if preset != "classic" {
-        return Err(BalanceError::UnknownPreset(preset.to_owned()));
-    }
+    // Resolve the preset to its complete balance directory (052); an unknown name is a clear error (P4).
+    let d = balance::preset_data(preset)
+        .ok_or_else(|| BalanceError::UnknownPreset(preset.to_owned()))?;
+    // Parse the preset's units once: ranking point values derive from this **same** roster (preset
+    // isolation — 052), not the classic one.
+    let units = balance::parse_unit_rules(d.units)?;
+    let ranking = balance::parse_ranking_rules(d.ranking, &units)?;
     Ok(WorldRules {
-        economy: balance::economy_rules()?,
-        build: balance::build_rules()?,
-        units: balance::unit_rules()?,
-        combat: balance::combat_rules()?,
-        culture: balance::culture_rules()?,
-        loyalty: balance::loyalty_rules()?,
-        alliance: balance::alliance_rules()?,
-        ranking: balance::ranking_rules()?,
-        achievements: balance::achievement_catalogue()?,
-        quests: balance::quest_chain()?,
-        lifecycle: balance::lifecycle_rules()?,
-        merchant: balance::merchant_rules()?,
-        wonder: balance::wonder_rules()?,
-        oasis: balance::oasis_rules()?,
-        scout: balance::scout_rules()?,
-        artifacts: balance::artifact_catalogue()?,
-        medals: balance::medal_rules()?,
-        map_rules: balance::map_rules()?,
-        starting_village: balance::starting_village()?,
+        economy: balance::parse_economy_rules(d.economy)?,
+        build: balance::parse_build_rules(d.construction)?,
+        units,
+        combat: balance::parse_combat_rules(d.combat)?,
+        culture: balance::parse_culture_rules(d.culture)?,
+        loyalty: balance::parse_loyalty_rules(d.conquest)?,
+        alliance: balance::parse_alliance_rules(d.alliance)?,
+        ranking,
+        achievements: balance::parse_achievement_catalogue(d.achievements)?,
+        quests: balance::parse_quest_chain(d.quests)?,
+        lifecycle: balance::parse_lifecycle_rules(d.lifecycle)?,
+        merchant: balance::parse_merchant_rules(d.trade)?,
+        wonder: balance::parse_wonder_rules(d.wonder)?,
+        oasis: balance::parse_oasis_rules(d.units)?,
+        scout: balance::parse_scout_rules(d.combat)?,
+        artifacts: balance::parse_artifact_catalogue(d.artifacts)?,
+        medals: balance::parse_medal_rules(d.medals)?,
+        map_rules: balance::parse_map_rules(d.map)?,
+        starting_village: balance::parse_starting_village(d.starting_village)?,
     })
 }
 
@@ -110,14 +115,45 @@ mod tests {
     #[test]
     fn classic_loads_and_unknown_preset_errors() {
         assert!(known_preset("classic"));
-        assert!(!known_preset("speed"));
+        assert!(known_preset("speed"));
+        assert!(!known_preset("nonesuch"));
         assert_eq!(DEFAULT_PRESET, "classic");
         // The classic bundle assembles from the shipped balance.
         load_world_rules("classic").expect("classic preset loads");
         // An unknown preset is a clear, server-authoritative rejection (049).
         assert!(matches!(
-            load_world_rules("speed"),
-            Err(BalanceError::UnknownPreset(p)) if p == "speed"
+            load_world_rules("nonesuch"),
+            Err(BalanceError::UnknownPreset(p)) if p == "nonesuch"
         ));
+    }
+
+    /// 052 AC2: the `speed` preset loads and genuinely diverges from `classic` — shorter beginner
+    /// protection (the ADR-0035 acceptance example), faster troops, faster merchants.
+    #[test]
+    fn speed_preset_loads_and_diverges_from_classic() {
+        let classic = load_world_rules("classic").expect("classic loads");
+        let speed = load_world_rules("speed").expect("speed loads");
+        // Shorter base beginner protection (independent of the world-speed multiplier) — the ADR example.
+        assert!(
+            speed.lifecycle.beginner_protection_secs < classic.lifecycle.beginner_protection_secs,
+            "speed shortens beginner protection"
+        );
+        // Faster merchants (1.5× the classic map speed).
+        assert!(
+            speed.merchant.profile(eperica_domain::Tribe::Gauls).speed
+                > classic.merchant.profile(eperica_domain::Tribe::Gauls).speed,
+            "speed has faster merchants"
+        );
+        // Faster troops: every unit's map speed is doubled. Check a concrete pair (same roster order).
+        let g_speed = speed.units.roster(eperica_domain::Tribe::Gauls);
+        let g_classic = classic.units.roster(eperica_domain::Tribe::Gauls);
+        assert_eq!(g_speed.len(), g_classic.len(), "same Gaul roster size");
+        assert!(
+            g_speed
+                .iter()
+                .zip(g_classic.iter())
+                .all(|(s, c)| s.speed == c.speed * 2),
+            "every speed-preset unit moves at exactly 2× the classic map speed"
+        );
     }
 }

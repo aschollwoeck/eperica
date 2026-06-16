@@ -1,0 +1,19 @@
+# Culture points & expansion balance (013, interim/tunable). CP gates how many villages a player may
+# hold; it is never spent. Rates are per-hour at world speed 1x.
+
+# Culture points every village contributes per hour, even with no Town Hall.
+base_cp_per_village = 2
+
+# Extra culture points per hour a Town Hall adds, by level (index = level; level 0 = none).
+town_hall_cp_per_level = [0, 6, 10, 16, 24, 34, 46, 60, 78, 100, 128]
+
+# Cumulative CP needed to be allowed the Nth village (index = village count; [0] unused, [1] = 0 so the
+# first village is free). A rising table that paces expansion.
+cp_thresholds = [0, 0, 200, 500, 1000, 1800, 3000, 4800, 7400, 11000, 16000]
+
+# Expansion slots a single Residence/Palace grants, by its level (index = level).
+expansion_slots_per_level = [0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3]
+
+# Settlers consumed to found a new village, and the settler unit's id (tribe-agnostic in the roster).
+settlers_per_village = 3
+settler_id = "settler"

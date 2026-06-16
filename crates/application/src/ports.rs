@@ -3155,6 +3155,7 @@ pub trait AdminRepository: Send + Sync {
         _radius: u32,
         _artifact_offset_secs: i64,
         _wonder_offset_secs: i64,
+        _rule_preset: &str,
     ) -> Result<WorldId, RepoError> {
         Err(RepoError::Backend("create_world unimplemented".to_owned()))
     }

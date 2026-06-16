@@ -1047,6 +1047,62 @@ async fn admin_creates_world_live(pool: sqlx::PgPool) {
     assert!(body.contains("×3"), "the new world's speed is listed");
 }
 
+/// 052 AC3: an admin picks a world's rule preset on creation. A valid `speed` preset is persisted and the
+/// world is serviceable under it; an unknown preset is rejected (server-authoritative, P4) with no row.
+#[sqlx::test(migrations = "../../migrations")]
+async fn admin_creates_world_with_chosen_preset(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let admin_name = unique("wpreset");
+    let (ac, _admin_id) = register_client(&base, &pool, &admin_name).await;
+    sqlx::query("UPDATE users SET is_admin = TRUE WHERE username = $1")
+        .bind(&admin_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The create form offers the preset choices (the allow-list).
+    let form = ac.get(format!("{base}/admin")).send().await.unwrap();
+    let form_body = form.text().await.unwrap();
+    assert!(
+        form_body.contains("name=\"preset\"") && form_body.contains(">speed<"),
+        "the create form lists the speed preset"
+    );
+
+    let before: i64 = sqlx::query_scalar("SELECT count(*) FROM worlds")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // An unknown preset is rejected — no world created (P4).
+    let r = ac
+        .post(format!("{base}/admin/world"))
+        .form(&[("speed", "2"), ("radius", "40"), ("preset", "bogus")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let mid: i64 = sqlx::query_scalar("SELECT count(*) FROM worlds")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(mid, before, "an unknown preset creates no world");
+
+    // A valid `speed` world is persisted with its preset.
+    let r = ac
+        .post(format!("{base}/admin/world"))
+        .form(&[("speed", "2"), ("radius", "40"), ("preset", "speed")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let preset: String =
+        sqlx::query_scalar("SELECT rule_preset FROM worlds ORDER BY created_at DESC, id LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(preset, "speed", "the chosen preset is persisted");
+}
+
 /// 047 AC1/AC2/AC4: an admin sets a custom end-game schedule on world creation; an invalid schedule
 /// (Wonder ≤ artifact) is rejected with no world created; omitting the fields uses the env default.
 #[sqlx::test(migrations = "../../migrations")]
@@ -4432,7 +4488,7 @@ async fn registry_serves_each_worlds_preset_bundle(pool: sqlx::PgPool) {
     // A world on an unknown preset is not serviceable (AC1) — resolved to None, never a panic (P4).
     let bad = uuid::Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO worlds (id, speed, radius, seed, rule_preset) VALUES ($1, 1.0, 30, 9, 'speed')",
+        "INSERT INTO worlds (id, speed, radius, seed, rule_preset) VALUES ($1, 1.0, 30, 9, 'nonesuch')",
     )
     .bind(bad)
     .execute(&pool)

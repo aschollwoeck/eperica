@@ -1,0 +1,37 @@
+# Onboarding quest chain (018, GDD §12.1) — interim, tunable. ORDERED: each quest unlocks the next.
+#
+# Each [[quests]]: a stable `id`, a `description`, a `condition`, and an optional `reward`.
+# condition.kind: field_level (level) | building_level (building, level) | train_troops | send_raid
+#                 | population (population)
+# reward: any of wood/clay/iron/crop, culture, and troop_unit + troop_count (a unit added to the
+#         capital garrison). Omit a reward for none.
+
+[[quests]]
+id = "upgrade_field"
+description = "Upgrade a resource field to level 2."
+condition = { kind = "field_level", level = 2 }
+reward = { wood = 200, clay = 200, iron = 200, crop = 100 }
+
+[[quests]]
+id = "build_warehouse"
+description = "Build a Warehouse to store more resources."
+condition = { kind = "building_level", building = "warehouse", level = 1 }
+reward = { wood = 300, clay = 300, iron = 200, crop = 100 }
+
+[[quests]]
+id = "train_troops"
+description = "Train your first troops at a military building."
+condition = { kind = "train_troops" }
+reward = { culture = 50 }
+
+[[quests]]
+id = "send_raid"
+description = "Send a raid against another village."
+condition = { kind = "send_raid" }
+reward = { wood = 400, clay = 400, iron = 400, crop = 200 }
+
+[[quests]]
+id = "grow_population"
+description = "Grow your village to 50 population."
+condition = { kind = "population", population = 50 }
+reward = { culture = 100 }

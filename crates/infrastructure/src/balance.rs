@@ -20,90 +20,219 @@ use std::collections::HashMap;
 /// Embedded starting-village balance data.
 const STARTING_VILLAGE_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/starting-village.toml"
+    "/../../specs/balance/presets/classic/starting-village.toml"
 ));
 
 /// Embedded economy balance data.
 const ECONOMY_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/economy.toml"
+    "/../../specs/balance/presets/classic/economy.toml"
 ));
 
 /// Embedded construction balance data.
 const CONSTRUCTION_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/construction.toml"
+    "/../../specs/balance/presets/classic/construction.toml"
 ));
 
 /// Embedded unit balance data.
 const UNITS_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/units.toml"
+    "/../../specs/balance/presets/classic/units.toml"
 ));
 
 /// Embedded world-map balance data.
 const MAP_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/map.toml"
+    "/../../specs/balance/presets/classic/map.toml"
 ));
 
 /// Embedded trade/merchant balance data.
 const TRADE_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/trade.toml"
+    "/../../specs/balance/presets/classic/trade.toml"
 ));
 
 /// Embedded combat balance data.
 const COMBAT_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/combat.toml"
+    "/../../specs/balance/presets/classic/combat.toml"
 ));
 
 /// Embedded culture/expansion balance data.
 const CULTURE_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/culture.toml"
+    "/../../specs/balance/presets/classic/culture.toml"
 ));
 const CONQUEST_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/conquest.toml"
+    "/../../specs/balance/presets/classic/conquest.toml"
 ));
 const ALLIANCE_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/alliance.toml"
+    "/../../specs/balance/presets/classic/alliance.toml"
 ));
 const RANKING_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/ranking.toml"
+    "/../../specs/balance/presets/classic/ranking.toml"
 ));
 const MEDALS_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/medals.toml"
+    "/../../specs/balance/presets/classic/medals.toml"
 ));
 const ACHIEVEMENTS_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/achievements.toml"
+    "/../../specs/balance/presets/classic/achievements.toml"
 ));
 const QUESTS_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/quests.toml"
+    "/../../specs/balance/presets/classic/quests.toml"
 ));
 const LIFECYCLE_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/lifecycle.toml"
+    "/../../specs/balance/presets/classic/lifecycle.toml"
 ));
 const ARTIFACTS_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/artifacts.toml"
+    "/../../specs/balance/presets/classic/artifacts.toml"
 ));
 const WONDER_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/balance/wonder.toml"
+    "/../../specs/balance/presets/classic/wonder.toml"
 ));
 const FAIRPLAY_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../specs/balance/fairplay.toml"
 ));
+
+/// One preset's complete set of `WorldRules` balance files (052) — the raw TOML, embedded at compile time.
+/// Each preset is a full directory under `specs/balance/presets/<name>/`; `fairplay.toml` is process-global
+/// (048) and so is **not** here. The `parse_*` cores turn a field into a rule set; [`preset_data`] resolves a
+/// preset name to its `PresetData`.
+pub(crate) struct PresetData {
+    pub(crate) starting_village: &'static str,
+    pub(crate) economy: &'static str,
+    pub(crate) construction: &'static str,
+    pub(crate) units: &'static str,
+    pub(crate) map: &'static str,
+    pub(crate) trade: &'static str,
+    pub(crate) combat: &'static str,
+    pub(crate) culture: &'static str,
+    pub(crate) conquest: &'static str,
+    pub(crate) alliance: &'static str,
+    pub(crate) ranking: &'static str,
+    pub(crate) medals: &'static str,
+    pub(crate) achievements: &'static str,
+    pub(crate) quests: &'static str,
+    pub(crate) lifecycle: &'static str,
+    pub(crate) artifacts: &'static str,
+    pub(crate) wonder: &'static str,
+}
+
+/// The shipped `classic` balance (= today's values), assembled from the embedded `presets/classic/` files.
+const CLASSIC: PresetData = PresetData {
+    starting_village: STARTING_VILLAGE_TOML,
+    economy: ECONOMY_TOML,
+    construction: CONSTRUCTION_TOML,
+    units: UNITS_TOML,
+    map: MAP_TOML,
+    trade: TRADE_TOML,
+    combat: COMBAT_TOML,
+    culture: CULTURE_TOML,
+    conquest: CONQUEST_TOML,
+    alliance: ALLIANCE_TOML,
+    ranking: RANKING_TOML,
+    medals: MEDALS_TOML,
+    achievements: ACHIEVEMENTS_TOML,
+    quests: QUESTS_TOML,
+    lifecycle: LIFECYCLE_TOML,
+    artifacts: ARTIFACTS_TOML,
+    wonder: WONDER_TOML,
+};
+
+/// The `speed` preset (052) — a blitz server: shorter beginner protection + inactivity windows
+/// (lifecycle), 2× troop map speed (units), and 1.5× merchant speed (trade); all other files match
+/// classic. Assembled from the embedded `presets/speed/` directory.
+const SPEED: PresetData = PresetData {
+    starting_village: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/starting-village.toml"
+    )),
+    economy: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/economy.toml"
+    )),
+    construction: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/construction.toml"
+    )),
+    units: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/units.toml"
+    )),
+    map: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/map.toml"
+    )),
+    trade: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/trade.toml"
+    )),
+    combat: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/combat.toml"
+    )),
+    culture: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/culture.toml"
+    )),
+    conquest: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/conquest.toml"
+    )),
+    alliance: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/alliance.toml"
+    )),
+    ranking: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/ranking.toml"
+    )),
+    medals: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/medals.toml"
+    )),
+    achievements: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/achievements.toml"
+    )),
+    quests: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/quests.toml"
+    )),
+    lifecycle: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/lifecycle.toml"
+    )),
+    artifacts: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/artifacts.toml"
+    )),
+    wonder: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/wonder.toml"
+    )),
+};
+
+/// Resolve a preset name (049) to its embedded balance files (052). `None` for an unknown name — the
+/// server-authoritative allow-list lives in [`crate::world_rules::KNOWN_PRESETS`].
+pub(crate) fn preset_data(preset: &str) -> Option<&'static PresetData> {
+    match preset {
+        "classic" => Some(&CLASSIC),
+        "speed" => Some(&SPEED),
+        _ => None,
+    }
+}
 
 /// Errors that can occur while loading balance data.
 #[derive(Debug, thiserror::Error)]
@@ -170,10 +299,11 @@ struct BuildingDto {
 /// # Errors
 /// Returns [`BalanceError`] if the data cannot be parsed or does not form a valid template.
 pub fn starting_village() -> Result<StartingVillage, BalanceError> {
-    parse_starting_village(STARTING_VILLAGE_TOML)
+    parse_starting_village(CLASSIC.starting_village)
 }
 
-fn parse_starting_village(toml_src: &str) -> Result<StartingVillage, BalanceError> {
+/// Parse [`starting_village`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_starting_village(toml_src: &str) -> Result<StartingVillage, BalanceError> {
     let dto: StartingVillageDto = toml::from_str(toml_src)?;
 
     let mut fields = Vec::new();
@@ -283,7 +413,12 @@ struct AmountsDto {
 /// # Errors
 /// Returns [`BalanceError`] if the data cannot be parsed.
 pub fn economy_rules() -> Result<EconomyRules, BalanceError> {
-    let dto: EconomyDto = toml::from_str(ECONOMY_TOML)?;
+    parse_economy_rules(CLASSIC.economy)
+}
+
+/// Parse [`economy_rules`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_economy_rules(src: &str) -> Result<EconomyRules, BalanceError> {
+    let dto: EconomyDto = toml::from_str(src)?;
     let mut building_population_per_level = HashMap::new();
     for (name, table) in dto.population.buildings {
         building_population_per_level.insert(parse_building(&name)?, table);
@@ -398,7 +533,12 @@ fn prereqs(dto: &LevelSpecDto) -> Result<Vec<(BuildingKind, u8)>, BalanceError> 
 /// # Errors
 /// Returns [`BalanceError`] if the data cannot be parsed or names an unknown building.
 pub fn build_rules() -> Result<BuildRules, BalanceError> {
-    let dto: ConstructionDto = toml::from_str(CONSTRUCTION_TOML)?;
+    parse_build_rules(CLASSIC.construction)
+}
+
+/// Parse [`build_rules`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_build_rules(src: &str) -> Result<BuildRules, BalanceError> {
+    let dto: ConstructionDto = toml::from_str(src)?;
     let mut buildings = HashMap::new();
     let mut prerequisites = HashMap::new();
     for (kind, spec_dto) in [
@@ -480,7 +620,12 @@ impl From<&MerchantProfileDto> for MerchantProfile {
 /// # Errors
 /// Returns [`BalanceError`] if the data cannot be parsed or does not form valid merchant rules.
 pub fn merchant_rules() -> Result<MerchantRules, BalanceError> {
-    let dto: TradeDto = toml::from_str(TRADE_TOML)?;
+    parse_merchant_rules(CLASSIC.trade)
+}
+
+/// Parse [`merchant_rules`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_merchant_rules(src: &str) -> Result<MerchantRules, BalanceError> {
+    let dto: TradeDto = toml::from_str(src)?;
     let profiles = HashMap::from([
         (Tribe::Romans, MerchantProfile::from(&dto.tribes.romans)),
         (Tribe::Teutons, MerchantProfile::from(&dto.tribes.teutons)),
@@ -540,7 +685,12 @@ impl From<&WallDto> for WallProfile {
 /// # Errors
 /// Returns [`BalanceError`] if the data cannot be parsed.
 pub fn combat_rules() -> Result<CombatRules, BalanceError> {
-    let dto: CombatDto = toml::from_str(COMBAT_TOML)?;
+    parse_combat_rules(CLASSIC.combat)
+}
+
+/// Parse [`combat_rules`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_combat_rules(src: &str) -> Result<CombatRules, BalanceError> {
+    let dto: CombatDto = toml::from_str(src)?;
     Ok(CombatRules {
         loss_exponent: dto.loss_exponent,
         luck_range: dto.luck_range,
@@ -563,7 +713,12 @@ pub fn combat_rules() -> Result<CombatRules, BalanceError> {
 /// # Errors
 /// Returns [`BalanceError`] if the data cannot be parsed.
 pub fn scout_rules() -> Result<ScoutRules, BalanceError> {
-    let dto: CombatDto = toml::from_str(COMBAT_TOML)?;
+    parse_scout_rules(CLASSIC.combat)
+}
+
+/// Parse [`scout_rules`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_scout_rules(src: &str) -> Result<ScoutRules, BalanceError> {
+    let dto: CombatDto = toml::from_str(src)?;
     Ok(ScoutRules {
         loss_exponent: dto.scouting.loss_exponent,
     })
@@ -584,7 +739,12 @@ struct CultureDto {
 /// # Errors
 /// Returns [`BalanceError`] if the data cannot be parsed.
 pub fn culture_rules() -> Result<CultureRules, BalanceError> {
-    let dto: CultureDto = toml::from_str(CULTURE_TOML)?;
+    parse_culture_rules(CLASSIC.culture)
+}
+
+/// Parse [`culture_rules`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_culture_rules(src: &str) -> Result<CultureRules, BalanceError> {
+    let dto: CultureDto = toml::from_str(src)?;
     Ok(CultureRules {
         base_cp_per_village: dto.base_cp_per_village,
         town_hall_cp_per_level: dto.town_hall_cp_per_level,
@@ -610,7 +770,12 @@ struct ConquestDto {
 /// # Errors
 /// Returns [`BalanceError`] if the data cannot be parsed.
 pub fn loyalty_rules() -> Result<LoyaltyRules, BalanceError> {
-    let dto: ConquestDto = toml::from_str(CONQUEST_TOML)?;
+    parse_loyalty_rules(CLASSIC.conquest)
+}
+
+/// Parse [`loyalty_rules`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_loyalty_rules(src: &str) -> Result<LoyaltyRules, BalanceError> {
+    let dto: ConquestDto = toml::from_str(src)?;
     Ok(LoyaltyRules {
         starting_loyalty: dto.starting_loyalty,
         post_conquest_loyalty: dto.post_conquest_loyalty,
@@ -633,7 +798,12 @@ struct AllianceDto {
 /// # Errors
 /// Returns [`BalanceError`] if the data cannot be parsed.
 pub fn alliance_rules() -> Result<AllianceRules, BalanceError> {
-    let dto: AllianceDto = toml::from_str(ALLIANCE_TOML)?;
+    parse_alliance_rules(CLASSIC.alliance)
+}
+
+/// Parse [`alliance_rules`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_alliance_rules(src: &str) -> Result<AllianceRules, BalanceError> {
+    let dto: AllianceDto = toml::from_str(src)?;
     Ok(AllianceRules {
         max_members: dto.max_members,
         join_embassy_level: dto.join_embassy_level,
@@ -656,8 +826,17 @@ struct RankingDto {
 /// # Errors
 /// Returns [`BalanceError`] if either dataset cannot be parsed.
 pub fn ranking_rules() -> Result<RankingRules, BalanceError> {
-    let dto: RankingDto = toml::from_str(RANKING_TOML)?;
-    let units = unit_rules()?;
+    parse_ranking_rules(CLASSIC.ranking, &unit_rules()?)
+}
+
+/// Parse [`ranking_rules`] balance from a preset's TOML (052) — the per-preset core. The per-unit kill
+/// **point values** come from the **same preset's** `units` (passed in), so a preset that retunes unit
+/// upkeep gets matching ranking points (preset isolation — 052).
+pub(crate) fn parse_ranking_rules(
+    src: &str,
+    units: &UnitRules,
+) -> Result<RankingRules, BalanceError> {
+    let dto: RankingDto = toml::from_str(src)?;
     // Point values keyed by unit id (shared ids across tribes carry the same value, so the map
     // collapses them harmlessly — combat losses are keyed by id too).
     let mut point_value = HashMap::new();
@@ -685,7 +864,12 @@ struct MedalsDto {
 /// # Errors
 /// Returns [`BalanceError`] if the data cannot be parsed or names an unknown medal category.
 pub fn medal_rules() -> Result<MedalRules, BalanceError> {
-    let dto: MedalsDto = toml::from_str(MEDALS_TOML)?;
+    parse_medal_rules(CLASSIC.medals)
+}
+
+/// Parse [`medal_rules`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_medal_rules(src: &str) -> Result<MedalRules, BalanceError> {
+    let dto: MedalsDto = toml::from_str(src)?;
     let categories = dto
         .categories
         .iter()
@@ -727,7 +911,12 @@ struct InactivityDto {
 
 /// Load the account-lifecycle rules (019, P7) from `lifecycle.toml`.
 pub fn lifecycle_rules() -> Result<LifecycleRules, BalanceError> {
-    let dto: LifecycleDto = toml::from_str(LIFECYCLE_TOML)?;
+    parse_lifecycle_rules(CLASSIC.lifecycle)
+}
+
+/// Parse [`lifecycle_rules`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_lifecycle_rules(src: &str) -> Result<LifecycleRules, BalanceError> {
+    let dto: LifecycleDto = toml::from_str(src)?;
     Ok(LifecycleRules {
         beginner_protection_secs: dto.protection.beginner_protection_secs,
         protection_population_threshold: dto.protection.population_threshold,
@@ -849,7 +1038,12 @@ fn parse_artifact_scope(s: &str) -> Result<ArtifactScope, BalanceError> {
 /// Load the artifact catalogue (020, P7) from `artifacts.toml`, fail-fast on unknown kind/scope or a
 /// duplicate id.
 pub fn artifact_catalogue() -> Result<ArtifactCatalogue, BalanceError> {
-    let dto: ArtifactsDto = toml::from_str(ARTIFACTS_TOML)?;
+    parse_artifact_catalogue(CLASSIC.artifacts)
+}
+
+/// Parse [`artifact_catalogue`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_artifact_catalogue(src: &str) -> Result<ArtifactCatalogue, BalanceError> {
+    let dto: ArtifactsDto = toml::from_str(src)?;
     let mut seen = std::collections::HashSet::with_capacity(dto.artifacts.len());
     let artifacts = dto
         .artifacts
@@ -898,7 +1092,12 @@ struct WonderInnerDto {
 
 /// Load the Wonder-of-the-World rules (021, P7) from `wonder.toml`.
 pub fn wonder_rules() -> Result<WonderRules, BalanceError> {
-    let dto: WonderDto = toml::from_str(WONDER_TOML)?;
+    parse_wonder_rules(CLASSIC.wonder)
+}
+
+/// Parse [`wonder_rules`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_wonder_rules(src: &str) -> Result<WonderRules, BalanceError> {
+    let dto: WonderDto = toml::from_str(src)?;
     let w = dto.wonder;
     Ok(WonderRules {
         base_cost: ResourceAmounts {
@@ -973,7 +1172,12 @@ fn parse_reward(dto: &RewardDto) -> Reward {
 /// # Errors
 /// Returns [`BalanceError`] if the data cannot be parsed or names an unknown achievement kind.
 pub fn achievement_catalogue() -> Result<Vec<AchievementDef>, BalanceError> {
-    let dto: AchievementsDto = toml::from_str(ACHIEVEMENTS_TOML)?;
+    parse_achievement_catalogue(CLASSIC.achievements)
+}
+
+/// Parse [`achievement_catalogue`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_achievement_catalogue(src: &str) -> Result<Vec<AchievementDef>, BalanceError> {
+    let dto: AchievementsDto = toml::from_str(src)?;
     dto.achievements
         .iter()
         .map(|a| {
@@ -1064,7 +1268,12 @@ fn quest_reward(dto: &QuestRewardDto) -> QuestReward {
 /// # Errors
 /// Returns [`BalanceError`] if the data cannot be parsed or names an unknown condition/building.
 pub fn quest_chain() -> Result<Vec<QuestDef>, BalanceError> {
-    let dto: QuestsDto = toml::from_str(QUESTS_TOML)?;
+    parse_quest_chain(CLASSIC.quests)
+}
+
+/// Parse [`quest_chain`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_quest_chain(src: &str) -> Result<Vec<QuestDef>, BalanceError> {
+    let dto: QuestsDto = toml::from_str(src)?;
     let mut seen = std::collections::HashSet::with_capacity(dto.quests.len());
     dto.quests
         .iter()
@@ -1257,10 +1466,11 @@ fn wild_animal_spec(dto: &WildAnimalDto) -> UnitSpec {
 /// Returns [`BalanceError`] if the data cannot be parsed, names an unknown building/role, or does
 /// not form complete rosters.
 pub fn unit_rules() -> Result<UnitRules, BalanceError> {
-    parse_unit_rules(UNITS_TOML)
+    parse_unit_rules(CLASSIC.units)
 }
 
-fn parse_unit_rules(toml_src: &str) -> Result<UnitRules, BalanceError> {
+/// Parse [`unit_rules`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_unit_rules(toml_src: &str) -> Result<UnitRules, BalanceError> {
     let dto: UnitsDto = toml::from_str(toml_src)?;
     let mut rosters = HashMap::new();
     for (tribe, tribe_dto) in [
@@ -1293,7 +1503,12 @@ fn parse_unit_rules(toml_src: &str) -> Result<UnitRules, BalanceError> {
 /// # Errors
 /// Returns [`BalanceError`] if the data cannot be parsed.
 pub fn oasis_rules() -> Result<OasisRules, BalanceError> {
-    let dto: UnitsDto = toml::from_str(UNITS_TOML)?;
+    parse_oasis_rules(CLASSIC.units)
+}
+
+/// Parse [`oasis_rules`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_oasis_rules(src: &str) -> Result<OasisRules, BalanceError> {
+    let dto: UnitsDto = toml::from_str(src)?;
     Ok(OasisRules {
         base_count: dto.oasis_garrison.base_count,
         extra_per_step: dto.oasis_garrison.extra_per_step,
@@ -1339,10 +1554,11 @@ struct OasisBonusDto {
 /// # Errors
 /// Returns [`BalanceError`] if the data cannot be parsed or does not form valid map rules.
 pub fn map_rules() -> Result<MapRules, BalanceError> {
-    parse_map_rules(MAP_TOML)
+    parse_map_rules(CLASSIC.map)
 }
 
-fn parse_map_rules(toml_src: &str) -> Result<MapRules, BalanceError> {
+/// Parse [`map_rules`] balance from a preset's TOML (052) — the per-preset core.
+pub(crate) fn parse_map_rules(toml_src: &str) -> Result<MapRules, BalanceError> {
     let dto: MapDto = toml::from_str(toml_src)?;
     let mut distributions = Vec::with_capacity(dto.distributions.len());
     for d in &dto.distributions {

@@ -1,0 +1,644 @@
+# Unit balance — SPEED preset (052). Every unit's map `speed` is 2× the classic value (independent of the
+# world-speed multiplier, which scales movement separately): a blitz server's troops cover ground faster.
+# All other unit stats match classic. Compare specs/balance/presets/classic/units.toml.
+#
+# Each tribe has exactly 10 units; the unit WITHOUT a [research] entry is the tribe's tier-1 unit,
+# researched from the start (004 AC9). `speed` is map fields/hour; `crop_upkeep` is crop/hour;
+# costs are per unit trained. Research `requirements` are building levels (current building max is
+# 10, so every requirement stays reachable). Stats follow the classic Travian profile.
+#
+# Smithy upgrades: cost = unit training cost x cost_permille/1000 (per resource), per target level;
+# durations are global per target level. Max unit level = table length (20), additionally capped by
+# the Smithy's building level.
+
+# Training-speed multiplier by training-building level (index = level; >= 1, higher => faster).
+# Shared by Barracks/Stable/Workshop. Index 0 and 1 equal: level 1 is the baseline.
+[training]
+building_factor = [1.0, 1.0, 1.11, 1.23, 1.37, 1.52, 1.69, 1.87, 2.08, 2.31, 2.57]
+
+[smithy]
+cost_permille_per_level = [
+    1500, 1900, 2410, 3060, 3890, 4940, 6270, 7960, 10110, 12840,
+    16310, 20710, 26300, 33400, 42420, 53870, 68420, 86890, 110350, 140140,
+]
+time_secs_per_level = [
+    3600, 4180, 4850, 5620, 6520, 7560, 8770, 10170, 11800, 13690,
+    15880, 18420, 21370, 24790, 28760, 33360, 38700, 44890, 52070, 60400,
+]
+
+# ---------------------------------------------------------------- Romans
+
+[[romans.units]]
+id = "legionnaire"
+name = "Legionnaire"
+role = "infantry"
+attack = 40
+defense_infantry = 35
+defense_cavalry = 50
+speed = 12
+carry_capacity = 50
+crop_upkeep = 1
+train_secs = 1600
+trained_in = "barracks"
+cost = { wood = 120, clay = 100, iron = 150, crop = 30 }
+
+[[romans.units]]
+id = "praetorian"
+name = "Praetorian"
+role = "infantry"
+attack = 30
+defense_infantry = 65
+defense_cavalry = 35
+speed = 10
+carry_capacity = 20
+crop_upkeep = 1
+train_secs = 1760
+trained_in = "barracks"
+cost = { wood = 100, clay = 130, iron = 160, crop = 70 }
+research = { time_secs = 5800, cost = { wood = 700, clay = 620, iron = 1480, crop = 580 }, requirements = [
+    { building = "academy", level = 1 },
+    { building = "smithy", level = 1 },
+] }
+
+[[romans.units]]
+id = "imperian"
+name = "Imperian"
+role = "infantry"
+attack = 70
+defense_infantry = 40
+defense_cavalry = 25
+speed = 14
+carry_capacity = 50
+crop_upkeep = 1
+train_secs = 1920
+trained_in = "barracks"
+cost = { wood = 150, clay = 160, iron = 210, crop = 80 }
+research = { time_secs = 7400, cost = { wood = 1000, clay = 740, iron = 1880, crop = 640 }, requirements = [
+    { building = "academy", level = 5 },
+    { building = "smithy", level = 1 },
+] }
+
+[[romans.units]]
+id = "equites_legati"
+name = "Equites Legati"
+role = "scout"
+attack = 0
+defense_infantry = 20
+defense_cavalry = 10
+scouting = 20
+speed = 32
+carry_capacity = 0
+crop_upkeep = 2
+train_secs = 1360
+trained_in = "stable"
+cost = { wood = 140, clay = 160, iron = 20, crop = 40 }
+research = { time_secs = 5400, cost = { wood = 940, clay = 740, iron = 360, crop = 400 }, requirements = [
+    { building = "academy", level = 5 },
+    { building = "stable", level = 1 },
+] }
+
+[[romans.units]]
+id = "equites_imperatoris"
+name = "Equites Imperatoris"
+role = "cavalry"
+attack = 120
+defense_infantry = 65
+defense_cavalry = 50
+speed = 28
+carry_capacity = 100
+crop_upkeep = 3
+train_secs = 2640
+trained_in = "stable"
+cost = { wood = 550, clay = 440, iron = 320, crop = 100 }
+research = { time_secs = 8700, cost = { wood = 3400, clay = 1860, iron = 2760, crop = 760 }, requirements = [
+    { building = "academy", level = 5 },
+    { building = "stable", level = 5 },
+] }
+
+[[romans.units]]
+id = "equites_caesaris"
+name = "Equites Caesaris"
+role = "cavalry"
+attack = 180
+defense_infantry = 80
+defense_cavalry = 105
+speed = 20
+carry_capacity = 70
+crop_upkeep = 4
+train_secs = 3520
+trained_in = "stable"
+cost = { wood = 550, clay = 640, iron = 800, crop = 180 }
+research = { time_secs = 11300, cost = { wood = 3400, clay = 2660, iron = 6600, crop = 1320 }, requirements = [
+    { building = "academy", level = 5 },
+    { building = "stable", level = 10 },
+] }
+
+[[romans.units]]
+id = "battering_ram"
+siege = "ram"
+name = "Battering Ram"
+role = "siege"
+attack = 60
+defense_infantry = 30
+defense_cavalry = 75
+speed = 8
+carry_capacity = 0
+crop_upkeep = 3
+train_secs = 4600
+trained_in = "workshop"
+cost = { wood = 900, clay = 360, iron = 500, crop = 70 }
+research = { time_secs = 14600, cost = { wood = 5500, clay = 1540, iron = 4200, crop = 580 }, requirements = [
+    { building = "academy", level = 10 },
+    { building = "workshop", level = 1 },
+] }
+
+[[romans.units]]
+id = "fire_catapult"
+siege = "catapult"
+name = "Fire Catapult"
+role = "siege"
+attack = 75
+defense_infantry = 60
+defense_cavalry = 10
+speed = 6
+carry_capacity = 0
+crop_upkeep = 6
+train_secs = 9000
+trained_in = "workshop"
+cost = { wood = 950, clay = 1350, iron = 600, crop = 90 }
+research = { time_secs = 18000, cost = { wood = 5800, clay = 5500, iron = 5000, crop = 700 }, requirements = [
+    { building = "academy", level = 10 },
+    { building = "workshop", level = 10 },
+] }
+
+[[romans.units]]
+id = "senator"
+name = "Senator"
+role = "expansion"
+attack = 50
+defense_infantry = 40
+defense_cavalry = 30
+speed = 8
+carry_capacity = 0
+crop_upkeep = 5
+train_secs = 90700
+trained_in = "residence"
+cost = { wood = 30750, clay = 27200, iron = 45000, crop = 37500 }
+research = { time_secs = 24600, cost = { wood = 15880, clay = 13800, iron = 36400, crop = 22660 }, requirements = [
+    { building = "academy", level = 10 },
+    { building = "rally_point", level = 5 },
+] }
+
+[[romans.units]]
+id = "settler"
+name = "Settler"
+role = "expansion"
+attack = 0
+defense_infantry = 80
+defense_cavalry = 80
+speed = 10
+carry_capacity = 3000
+crop_upkeep = 1
+train_secs = 26900
+trained_in = "residence"
+cost = { wood = 4600, clay = 4200, iron = 5800, crop = 4400 }
+research = { time_secs = 9000, cost = { wood = 2400, clay = 2200, iron = 2600, crop = 2200 }, requirements = [
+    { building = "main_building", level = 10 },
+] }
+
+# ---------------------------------------------------------------- Teutons
+
+[[teutons.units]]
+id = "clubswinger"
+name = "Clubswinger"
+role = "infantry"
+attack = 40
+defense_infantry = 20
+defense_cavalry = 5
+speed = 14
+carry_capacity = 60
+crop_upkeep = 1
+train_secs = 720
+trained_in = "barracks"
+cost = { wood = 95, clay = 75, iron = 40, crop = 40 }
+
+[[teutons.units]]
+id = "spearman"
+name = "Spearman"
+role = "infantry"
+attack = 10
+defense_infantry = 35
+defense_cavalry = 60
+speed = 14
+carry_capacity = 40
+crop_upkeep = 1
+train_secs = 1120
+trained_in = "barracks"
+cost = { wood = 145, clay = 70, iron = 85, crop = 40 }
+research = { time_secs = 4600, cost = { wood = 970, clay = 380, iron = 880, crop = 400 }, requirements = [
+    { building = "academy", level = 1 },
+] }
+
+[[teutons.units]]
+id = "axeman"
+name = "Axeman"
+role = "infantry"
+attack = 60
+defense_infantry = 30
+defense_cavalry = 30
+speed = 12
+carry_capacity = 50
+crop_upkeep = 1
+train_secs = 1200
+trained_in = "barracks"
+cost = { wood = 130, clay = 120, iron = 170, crop = 70 }
+research = { time_secs = 5400, cost = { wood = 880, clay = 580, iron = 1560, crop = 580 }, requirements = [
+    { building = "academy", level = 3 },
+    { building = "smithy", level = 1 },
+] }
+
+[[teutons.units]]
+id = "scout"
+name = "Scout"
+role = "scout"
+attack = 0
+defense_infantry = 10
+defense_cavalry = 5
+scouting = 10
+speed = 18
+carry_capacity = 0
+crop_upkeep = 1
+train_secs = 1120
+trained_in = "barracks"
+cost = { wood = 160, clay = 100, iron = 50, crop = 50 }
+research = { time_secs = 4900, cost = { wood = 1380, clay = 770, iron = 440, crop = 450 }, requirements = [
+    { building = "academy", level = 1 },
+] }
+
+[[teutons.units]]
+id = "paladin"
+name = "Paladin"
+role = "cavalry"
+attack = 55
+defense_infantry = 100
+defense_cavalry = 40
+speed = 20
+carry_capacity = 110
+crop_upkeep = 2
+train_secs = 2400
+trained_in = "stable"
+cost = { wood = 370, clay = 270, iron = 290, crop = 75 }
+research = { time_secs = 7300, cost = { wood = 2160, clay = 1550, iron = 1710, crop = 450 }, requirements = [
+    { building = "academy", level = 5 },
+    { building = "stable", level = 3 },
+] }
+
+[[teutons.units]]
+id = "teutonic_knight"
+name = "Teutonic Knight"
+role = "cavalry"
+attack = 150
+defense_infantry = 50
+defense_cavalry = 75
+speed = 18
+carry_capacity = 80
+crop_upkeep = 3
+train_secs = 2960
+trained_in = "stable"
+cost = { wood = 450, clay = 515, iron = 480, crop = 80 }
+research = { time_secs = 8500, cost = { wood = 2580, clay = 2940, iron = 2760, crop = 450 }, requirements = [
+    { building = "academy", level = 10 },
+    { building = "stable", level = 10 },
+] }
+
+[[teutons.units]]
+id = "ram"
+siege = "ram"
+name = "Ram"
+role = "siege"
+attack = 65
+defense_infantry = 30
+defense_cavalry = 80
+speed = 8
+carry_capacity = 0
+crop_upkeep = 3
+train_secs = 4200
+trained_in = "workshop"
+cost = { wood = 1000, clay = 300, iron = 350, crop = 70 }
+research = { time_secs = 14000, cost = { wood = 5950, clay = 1730, iron = 2040, crop = 420 }, requirements = [
+    { building = "academy", level = 10 },
+    { building = "workshop", level = 1 },
+] }
+
+[[teutons.units]]
+id = "catapult"
+siege = "catapult"
+name = "Catapult"
+role = "siege"
+attack = 50
+defense_infantry = 60
+defense_cavalry = 10
+speed = 6
+carry_capacity = 0
+crop_upkeep = 6
+train_secs = 9000
+trained_in = "workshop"
+cost = { wood = 900, clay = 1200, iron = 600, crop = 60 }
+research = { time_secs = 18000, cost = { wood = 5330, clay = 7110, iron = 3540, crop = 360 }, requirements = [
+    { building = "academy", level = 10 },
+    { building = "workshop", level = 10 },
+] }
+
+[[teutons.units]]
+id = "chief"
+name = "Chief"
+role = "expansion"
+attack = 40
+defense_infantry = 60
+defense_cavalry = 40
+speed = 8
+carry_capacity = 0
+crop_upkeep = 4
+train_secs = 70500
+trained_in = "residence"
+cost = { wood = 35500, clay = 26600, iron = 25000, crop = 27200 }
+research = { time_secs = 24000, cost = { wood = 23210, clay = 17200, iron = 16100, crop = 17530 }, requirements = [
+    { building = "academy", level = 10 },
+    { building = "rally_point", level = 5 },
+] }
+
+[[teutons.units]]
+id = "settler"
+name = "Settler"
+role = "expansion"
+attack = 10
+defense_infantry = 80
+defense_cavalry = 80
+speed = 10
+carry_capacity = 3000
+crop_upkeep = 1
+train_secs = 31000
+trained_in = "residence"
+cost = { wood = 5800, clay = 4400, iron = 4600, crop = 5200 }
+research = { time_secs = 9000, cost = { wood = 2600, clay = 2200, iron = 2300, crop = 2500 }, requirements = [
+    { building = "main_building", level = 10 },
+] }
+
+# ---------------------------------------------------------------- Gauls
+
+[[gauls.units]]
+id = "phalanx"
+name = "Phalanx"
+role = "infantry"
+attack = 15
+defense_infantry = 40
+defense_cavalry = 50
+speed = 14
+carry_capacity = 35
+crop_upkeep = 1
+train_secs = 1040
+trained_in = "barracks"
+cost = { wood = 100, clay = 130, iron = 55, crop = 30 }
+
+[[gauls.units]]
+id = "swordsman"
+name = "Swordsman"
+role = "infantry"
+attack = 65
+defense_infantry = 35
+defense_cavalry = 20
+speed = 12
+carry_capacity = 45
+crop_upkeep = 1
+train_secs = 1440
+trained_in = "barracks"
+cost = { wood = 140, clay = 150, iron = 185, crop = 60 }
+research = { time_secs = 5200, cost = { wood = 940, clay = 700, iron = 1680, crop = 520 }, requirements = [
+    { building = "academy", level = 1 },
+    { building = "smithy", level = 1 },
+] }
+
+[[gauls.units]]
+id = "pathfinder"
+name = "Pathfinder"
+role = "scout"
+attack = 0
+defense_infantry = 20
+defense_cavalry = 10
+scouting = 20
+speed = 34
+carry_capacity = 0
+crop_upkeep = 2
+train_secs = 1360
+trained_in = "stable"
+cost = { wood = 170, clay = 150, iron = 20, crop = 40 }
+research = { time_secs = 5400, cost = { wood = 1120, clay = 700, iron = 360, crop = 400 }, requirements = [
+    { building = "academy", level = 5 },
+    { building = "stable", level = 1 },
+] }
+
+[[gauls.units]]
+id = "theutates_thunder"
+name = "Theutates Thunder"
+role = "cavalry"
+attack = 90
+defense_infantry = 25
+defense_cavalry = 40
+speed = 38
+carry_capacity = 75
+crop_upkeep = 2
+train_secs = 2480
+trained_in = "stable"
+cost = { wood = 350, clay = 450, iron = 230, crop = 60 }
+research = { time_secs = 7100, cost = { wood = 2200, clay = 1900, iron = 2040, crop = 520 }, requirements = [
+    { building = "academy", level = 5 },
+    { building = "stable", level = 3 },
+] }
+
+[[gauls.units]]
+id = "druidrider"
+name = "Druidrider"
+role = "cavalry"
+attack = 45
+defense_infantry = 115
+defense_cavalry = 55
+speed = 32
+carry_capacity = 35
+crop_upkeep = 2
+train_secs = 2560
+trained_in = "stable"
+cost = { wood = 360, clay = 330, iron = 280, crop = 120 }
+research = { time_secs = 7900, cost = { wood = 2160, clay = 1940, iron = 1960, crop = 760 }, requirements = [
+    { building = "academy", level = 5 },
+    { building = "stable", level = 5 },
+] }
+
+[[gauls.units]]
+id = "haeduan"
+name = "Haeduan"
+role = "cavalry"
+attack = 140
+defense_infantry = 60
+defense_cavalry = 165
+speed = 26
+carry_capacity = 65
+crop_upkeep = 3
+train_secs = 3120
+trained_in = "stable"
+cost = { wood = 500, clay = 620, iron = 675, crop = 170 }
+research = { time_secs = 9700, cost = { wood = 2890, clay = 3320, iron = 3240, crop = 610 }, requirements = [
+    { building = "academy", level = 10 },
+    { building = "stable", level = 10 },
+] }
+
+[[gauls.units]]
+id = "ram"
+siege = "ram"
+name = "Ram"
+role = "siege"
+attack = 50
+defense_infantry = 30
+defense_cavalry = 105
+speed = 8
+carry_capacity = 0
+crop_upkeep = 3
+train_secs = 5000
+trained_in = "workshop"
+cost = { wood = 950, clay = 555, iron = 330, crop = 75 }
+research = { time_secs = 14500, cost = { wood = 5500, clay = 2420, iron = 2400, crop = 640 }, requirements = [
+    { building = "academy", level = 10 },
+    { building = "workshop", level = 1 },
+] }
+
+[[gauls.units]]
+id = "trebuchet"
+siege = "catapult"
+name = "Trebuchet"
+role = "siege"
+attack = 70
+defense_infantry = 45
+defense_cavalry = 10
+speed = 6
+carry_capacity = 0
+crop_upkeep = 6
+train_secs = 9000
+trained_in = "workshop"
+cost = { wood = 960, clay = 1450, iron = 630, crop = 90 }
+research = { time_secs = 18200, cost = { wood = 5860, clay = 7700, iron = 3850, crop = 600 }, requirements = [
+    { building = "academy", level = 10 },
+    { building = "workshop", level = 10 },
+] }
+
+[[gauls.units]]
+id = "chieftain"
+name = "Chieftain"
+role = "expansion"
+attack = 40
+defense_infantry = 50
+defense_cavalry = 50
+speed = 10
+carry_capacity = 0
+crop_upkeep = 4
+train_secs = 90700
+trained_in = "residence"
+cost = { wood = 30750, clay = 45400, iron = 31000, crop = 37500 }
+research = { time_secs = 24700, cost = { wood = 30750, clay = 33280, iron = 36880, crop = 29700 }, requirements = [
+    { building = "academy", level = 10 },
+    { building = "rally_point", level = 5 },
+] }
+
+[[gauls.units]]
+id = "settler"
+name = "Settler"
+role = "expansion"
+attack = 0
+defense_infantry = 80
+defense_cavalry = 80
+speed = 10
+carry_capacity = 3000
+crop_upkeep = 1
+train_secs = 22700
+trained_in = "residence"
+cost = { wood = 4400, clay = 5600, iron = 4200, crop = 3900 }
+research = { time_secs = 9000, cost = { wood = 2300, clay = 2800, iron = 2100, crop = 2000 }, requirements = [
+    { building = "main_building", level = 10 },
+] }
+
+# ---------------------------------------------------------------- Wild animals (012)
+#
+# Oasis defenders (GDD §7.4). Not a tribe and not trainable — defence-only (attack 0). Listed in
+# rising-strength order; the seeded oasis garrison picks a tier by distance from the origin.
+
+[[wild_animals]]
+id = "rat"
+name = "Rat"
+defense_infantry = 25
+defense_cavalry = 20
+
+[[wild_animals]]
+id = "spider"
+name = "Spider"
+defense_infantry = 35
+defense_cavalry = 40
+
+[[wild_animals]]
+id = "snake"
+name = "Snake"
+defense_infantry = 40
+defense_cavalry = 60
+
+[[wild_animals]]
+id = "bat"
+name = "Bat"
+defense_infantry = 66
+defense_cavalry = 50
+
+[[wild_animals]]
+id = "boar"
+name = "Wild Boar"
+defense_infantry = 100
+defense_cavalry = 70
+
+[[wild_animals]]
+id = "wolf"
+name = "Wolf"
+defense_infantry = 100
+defense_cavalry = 150
+
+[[wild_animals]]
+id = "bear"
+name = "Bear"
+defense_infantry = 250
+defense_cavalry = 140
+
+[[wild_animals]]
+id = "crocodile"
+name = "Crocodile"
+defense_infantry = 450
+defense_cavalry = 380
+
+[[wild_animals]]
+id = "tiger"
+name = "Tiger"
+defense_infantry = 200
+defense_cavalry = 250
+
+[[wild_animals]]
+id = "elephant"
+name = "Elephant"
+defense_infantry = 600
+defense_cavalry = 440
+
+# Seeded oasis-garrison generation (012): count grows with distance from the origin (every
+# `tiles_per_step` tiles adds `extra_per_step`, capped at `max_count`); the animal strength tier rises
+# every `tiles_per_tier` tiles.
+[oasis_garrison]
+base_count = 5
+extra_per_step = 3
+tiles_per_step = 5
+max_count = 80
+tiles_per_tier = 18
+# A cleared, unoccupied oasis regrows its animals (012 AC9): regrow_per_step animals every
+# regrow_secs (pre-speed-scaling) until it is back to its seeded strength.
+regrow_secs = 3600
+regrow_per_step = 4

@@ -1,0 +1,20 @@
+# Trade & merchant balance — SPEED preset (052). Merchants travel 1.5× faster than classic (capacities
+# unchanged); a blitz server moves resources around the map quicker. Compare specs/balance/presets/classic/.
+
+# Merchants available by Marketplace level (index = level; level 0 = no Marketplace = no merchants).
+[merchants]
+per_level = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+# Per-tribe merchant profile: `capacity` = total resources one merchant carries; `speed` = map
+# fields/hour (GDD §5: Gauls fastest, Teutons carry most). 1.5× the classic speeds.
+[tribes.romans]
+capacity = 500
+speed = 24
+
+[tribes.teutons]
+capacity = 1000
+speed = 18
+
+[tribes.gauls]
+capacity = 750
+speed = 36

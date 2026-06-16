@@ -65,6 +65,7 @@ use eperica_domain::{
     scaled_time_secs,
 };
 use eperica_infrastructure::now;
+use eperica_infrastructure::{DEFAULT_PRESET, KNOWN_PRESETS, known_preset};
 use serde::Deserialize;
 
 fn resource_label(kind: ResourceKind) -> &'static str {
@@ -3193,6 +3194,8 @@ pub async fn admin(
         max_radius: eperica_application::MAX_WORLD_RADIUS,
         default_artifact_days: state.artifact_release_offset_secs / 86_400,
         default_wonder_days: state.wonder_release_offset_secs / 86_400,
+        presets: KNOWN_PRESETS.iter().map(|p| (*p).to_owned()).collect(),
+        default_preset: DEFAULT_PRESET.to_owned(),
         worlds,
         query: trimmed.to_owned(),
         searched,
@@ -3210,6 +3213,9 @@ pub struct CreateWorldForm {
     artifact_days: Option<i64>,
     #[serde(default)]
     wonder_days: Option<i64>,
+    /// The rule preset the world plays under (052) — omitted ⇒ `classic` (the default).
+    #[serde(default)]
+    preset: Option<String>,
 }
 
 /// Create a new world from the admin console and start it running live (041 AC1/AC2). Admin-gated on the
@@ -3233,6 +3239,15 @@ pub async fn admin_world_submit(
         .map_or(state.wonder_release_offset_secs, |d| {
             d.saturating_mul(SECS_PER_DAY)
         });
+    // The chosen preset (052), defaulting to `classic`. Validate against the server-authoritative allow-list
+    // here (P4) — an unknown name is rejected before any row is written.
+    let preset = form.preset.as_deref().unwrap_or(DEFAULT_PRESET);
+    if !known_preset(preset) {
+        return with_flash(
+            Redirect::to("/admin").into_response(),
+            Some("Unknown rule preset.".to_owned()),
+        );
+    }
     match admin_create_world_uc(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
@@ -3241,6 +3256,7 @@ pub async fn admin_world_submit(
         form.radius,
         artifact_offset,
         wonder_offset,
+        preset,
     )
     .await
     {

@@ -909,6 +909,10 @@ pub struct AdminTemplate {
     /// 047: the operator's env-default end-game schedule (days), prefilled into the create-world form.
     pub default_artifact_days: i64,
     pub default_wonder_days: i64,
+    /// 052: the rule presets an admin may pick for a new world (the server-authoritative allow-list), and
+    /// the default selection.
+    pub presets: Vec<String>,
+    pub default_preset: String,
     // Account role administration (036 AC3).
     /// The current search query (echoed into the box); empty for the default recent listing.
     pub query: String,

@@ -1,0 +1,106 @@
+# Artifact catalogue (020, GDD §11.3) — interim, tunable. The released set materializes into Natar
+# villages at the world's artifact-release date. Each [[artifacts]]: a stable id, a kind, a scope, and a
+# magnitude (a multiplicative factor interpreted per kind — >1 boosts, <1 reduces).
+#
+# kind: speed | storage | sustenance | trainer | architect | eyes | confuser | fool
+# scope: small (holding village) | large (account-wide) | unique (account-wide, strongest)
+
+# Treasury level required to hold an artifact of each scope (the building caps at level 10).
+[treasury]
+small = 3
+large = 6
+unique = 10
+
+# The seeded defensive garrison each Natar village holds (deterministic per village, T3).
+[garrison]
+unit = "praetorian"
+base_count = 500
+# Extra defenders added per Natar village index (so later vaults are tougher).
+per_index = 120
+
+# --- Large (account-wide) — one of every kind ---
+[[artifacts]]
+id = "speed_large"
+kind = "speed"
+scope = "large"
+magnitude = 2.0
+
+[[artifacts]]
+id = "storage_large"
+kind = "storage"
+scope = "large"
+magnitude = 2.0
+
+[[artifacts]]
+id = "sustenance_large"
+kind = "sustenance"
+scope = "large"
+magnitude = 0.75
+
+[[artifacts]]
+id = "trainer_large"
+kind = "trainer"
+scope = "large"
+magnitude = 0.5
+
+[[artifacts]]
+id = "architect_large"
+kind = "architect"
+scope = "large"
+magnitude = 0.5
+
+[[artifacts]]
+id = "eyes_large"
+kind = "eyes"
+scope = "large"
+magnitude = 1.5
+
+[[artifacts]]
+id = "confuser_large"
+kind = "confuser"
+scope = "large"
+magnitude = 1.5
+
+[[artifacts]]
+id = "fool_large"
+kind = "fool"
+scope = "large"
+magnitude = 1.5
+
+# --- Small (single village) — a faithful subset ---
+[[artifacts]]
+id = "speed_small"
+kind = "speed"
+scope = "small"
+magnitude = 1.5
+
+[[artifacts]]
+id = "storage_small"
+kind = "storage"
+scope = "small"
+magnitude = 1.5
+
+[[artifacts]]
+id = "architect_small"
+kind = "architect"
+scope = "small"
+magnitude = 0.7
+
+# --- Unique (account-wide, strongest; one per kind) ---
+[[artifacts]]
+id = "speed_unique"
+kind = "speed"
+scope = "unique"
+magnitude = 2.5
+
+[[artifacts]]
+id = "storage_unique"
+kind = "storage"
+scope = "unique"
+magnitude = 3.0
+
+[[artifacts]]
+id = "trainer_unique"
+kind = "trainer"
+scope = "unique"
+magnitude = 0.33

@@ -1,0 +1,45 @@
+# Combat balance (interim, tunable). The battle model is power-law casualties with morale + seeded
+# luck and a (ram-reduced) Wall multiplier (GDD §9). Exact constants live here, not in code (P7).
+
+# Power-law casualty exponent k (a small power edge → a large casualty edge).
+loss_exponent = 1.5
+# Luck spread L: the per-battle factor lies in [1 - L, 1 + L], drawn from the seeded RNG (P6).
+luck_range = 0.25
+# Morale exponent e: morale = min(1, (defenderPop / attackerPop)^e); dampens a much larger attacker.
+morale_exponent = 0.2
+# A village's small innate defence (before the Wall multiplier).
+base_defense = 10.0
+# Combat-strength bonus per Smithy upgrade level (0.015 ⇒ +1.5% attack/defence per level).
+smithy_bonus_per_level = 0.015
+# Catapult attack power needed to raze one level of a targeted building (011); like ram durability but
+# for buildings. Surviving catapults raze floor(catapultPower / durability) levels of the target.
+catapult_durability = 110.0
+
+# Loot (011, GDD §8.4 / §9.4 step 6). A Teuton attacker digs past this fraction of a defender's Cranny
+# protection (GDD §5.2); other tribes face the full protection. `cranny_protection_per_level` is the
+# quantity of **each** resource a Cranny hides from looting, by Cranny level (index = level; level 0
+# protects nothing).
+[loot]
+teuton_cranny_bypass = 0.5
+cranny_protection_per_level = [0, 800, 1200, 1700, 2300, 3000, 3800, 4700, 5700, 6800, 8000]
+
+# Scouting / espionage (010, GDD §9.4 step 1). Unlike the main battle this has no luck, no morale, and
+# no Wall bonus — only the attacking scouts can die, by a power-law in the defender/attacker scouting
+# power ratio. `loss_exponent` is that exponent k (matches the main battle's curve).
+[scouting]
+loss_exponent = 1.5
+
+# Per-tribe Wall: `bonus_per_level` is the defence multiplier bonus by Wall level (index = level);
+# `ram_durability` is the ram attack power needed to raze one level (GDD §5 — Romans highest bonus /
+# fragile, Teutons lowest bonus / toughest, Gauls balanced).
+[walls.romans]
+bonus_per_level = [0.0, 0.03, 0.061, 0.092, 0.125, 0.158, 0.193, 0.228, 0.265, 0.302, 0.341]
+ram_durability = 90.0
+
+[walls.teutons]
+bonus_per_level = [0.0, 0.02, 0.04, 0.061, 0.082, 0.104, 0.126, 0.149, 0.172, 0.196, 0.221]
+ram_durability = 180.0
+
+[walls.gauls]
+bonus_per_level = [0.0, 0.025, 0.051, 0.077, 0.103, 0.13, 0.157, 0.185, 0.213, 0.242, 0.271]
+ram_durability = 130.0

@@ -263,7 +263,13 @@ mod tests {
             Arc::ptr_eq(&a, &b),
             "the classic bundle is cached, not reloaded"
         );
+        // A known second preset (052) resolves and caches too.
+        let s = reg.rules_for("speed").expect("speed resolves");
+        assert!(Arc::ptr_eq(
+            &s,
+            &reg.rules_for("speed").expect("speed cached")
+        ));
         // An unknown preset is a serviceability failure (None), never a panic (P4).
-        assert!(reg.rules_for("speed").is_none());
+        assert!(reg.rules_for("nonesuch").is_none());
     }
 }

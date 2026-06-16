@@ -1,0 +1,202 @@
+# Construction balance (interim, tunable). Arrays are indexed by the level being reached minus 1,
+# i.e. index 0 = cost/time to go from level 0 to level 1. Max level = array length (10).
+
+# Construction-speed multiplier by Main Building level (index = MB level; >= 1, higher => faster).
+# Index 0 and 1 are intentionally equal: villages start at Main Building level 1 (the baseline).
+[speed]
+main_building_factor = [1.0, 1.0, 1.12, 1.25, 1.4, 1.56, 1.74, 1.94, 2.16, 2.41, 2.69]
+
+# Resource fields (shared by wood/clay/iron/crop). The cost/time tables run to the **capital** cap
+# (20); a normal village stops at `max_level` (10), the capital at `capital_max_level` (013 §3.4).
+[field]
+max_level = 10
+capital_max_level = 20
+time_secs = [600, 1020, 1530, 2160, 2940, 3900, 5100, 6600, 8460, 10800, 13800, 17700, 22700, 29100, 37200, 47600, 60900, 78000, 99800, 127700]
+[field.cost]
+wood = [40, 65, 110, 185, 310, 520, 870, 1450, 2420, 4050, 6750, 11250, 18750, 31250, 52100, 86800, 144700, 241200, 402000, 670000]
+clay = [40, 65, 110, 185, 310, 520, 870, 1450, 2420, 4050, 6750, 11250, 18750, 31250, 52100, 86800, 144700, 241200, 402000, 670000]
+iron = [40, 65, 110, 185, 310, 520, 870, 1450, 2420, 4050, 6750, 11250, 18750, 31250, 52100, 86800, 144700, 241200, 402000, 670000]
+crop = [10, 15, 25, 40, 65, 110, 180, 300, 500, 840, 1400, 2330, 3880, 6470, 10780, 17970, 29950, 49920, 83200, 138700]
+
+[buildings.main_building]
+time_secs = [900, 1400, 2050, 2900, 4000, 5400, 7200, 9500, 12400, 16000]
+prerequisites = []
+[buildings.main_building.cost]
+wood = [70, 110, 175, 280, 445, 710, 1130, 1810, 2890, 4630]
+clay = [40, 65, 100, 160, 255, 405, 650, 1040, 1660, 2650]
+iron = [60, 95, 150, 240, 385, 615, 985, 1575, 2520, 4035]
+crop = [20, 30, 50, 80, 130, 205, 330, 525, 840, 1345]
+
+[buildings.rally_point]
+time_secs = [800, 1300, 1900, 2700, 3700, 5000, 6700, 8900, 11700, 15200]
+prerequisites = []
+[buildings.rally_point.cost]
+wood = [110, 175, 280, 445, 715, 1145, 1830, 2930, 4690, 7500]
+clay = [160, 255, 410, 655, 1050, 1680, 2685, 4300, 6875, 11000]
+iron = [90, 145, 230, 370, 590, 945, 1515, 2420, 3875, 6200]
+crop = [70, 110, 180, 290, 460, 740, 1180, 1890, 3025, 4840]
+
+[buildings.warehouse]
+time_secs = [1000, 1500, 2150, 3000, 4100, 5500, 7300, 9600, 12500, 16100]
+prerequisites = [{ building = "main_building", level = 1 }]
+[buildings.warehouse.cost]
+wood = [130, 165, 215, 275, 350, 445, 570, 730, 935, 1200]
+clay = [160, 205, 260, 335, 430, 550, 705, 900, 1155, 1475]
+iron = [90, 115, 145, 190, 240, 310, 395, 505, 645, 825]
+crop = [40, 50, 65, 85, 105, 135, 175, 220, 285, 365]
+
+[buildings.granary]
+time_secs = [1000, 1500, 2150, 3000, 4100, 5500, 7300, 9600, 12500, 16100]
+prerequisites = [{ building = "main_building", level = 1 }]
+[buildings.granary.cost]
+wood = [80, 100, 130, 170, 215, 275, 350, 445, 570, 730]
+clay = [100, 130, 165, 210, 270, 345, 440, 565, 720, 925]
+iron = [70, 90, 115, 145, 190, 240, 310, 395, 505, 645]
+crop = [20, 25, 35, 45, 55, 70, 90, 115, 145, 185]
+
+[buildings.marketplace]
+time_secs = [1300, 1850, 2550, 3450, 4600, 6050, 7900, 10200, 13100, 16700]
+prerequisites = [{ building = "main_building", level = 1 }]
+[buildings.marketplace.cost]
+wood = [80, 100, 130, 170, 215, 275, 350, 445, 570, 730]
+clay = [70, 90, 115, 145, 190, 240, 310, 395, 505, 645]
+iron = [120, 155, 195, 250, 320, 410, 530, 675, 865, 1105]
+crop = [70, 90, 115, 145, 190, 240, 310, 395, 505, 645]
+
+[buildings.embassy]
+time_secs = [2000, 2620, 3430, 4480, 5860, 7650, 9990, 13040, 17020, 22210]
+prerequisites = [{ building = "main_building", level = 1 }]
+[buildings.embassy.cost]
+wood = [180, 230, 295, 375, 480, 615, 790, 1010, 1290, 1655]
+clay = [130, 165, 210, 270, 345, 440, 565, 725, 930, 1190]
+iron = [150, 190, 245, 315, 400, 510, 655, 840, 1075, 1375]
+crop = [80, 100, 130, 165, 210, 270, 345, 440, 565, 725]
+
+[buildings.wall]
+time_secs = [1000, 1450, 2000, 2700, 3600, 4750, 6200, 8000, 10300, 13200]
+prerequisites = []
+[buildings.wall.cost]
+wood = [70, 90, 115, 145, 190, 240, 310, 395, 505, 645]
+clay = [90, 115, 145, 190, 240, 310, 395, 505, 645, 825]
+iron = [170, 220, 280, 360, 460, 590, 755, 965, 1235, 1580]
+crop = [70, 90, 115, 145, 190, 240, 310, 395, 505, 645]
+
+[buildings.cranny]
+time_secs = [100, 150, 220, 300, 410, 540, 710, 920, 1190, 1530]
+prerequisites = []
+[buildings.cranny.cost]
+wood = [40, 50, 65, 85, 105, 135, 175, 220, 285, 360]
+clay = [50, 65, 80, 105, 135, 170, 220, 280, 355, 455]
+iron = [30, 40, 50, 65, 80, 105, 130, 170, 215, 275]
+crop = [10, 15, 15, 20, 25, 35, 45, 55, 70, 90]
+
+[buildings.outpost]
+time_secs = [1300, 1850, 2550, 3400, 4500, 5900, 7700, 9900, 12700, 16200]
+prerequisites = [
+    { building = "main_building", level = 3 },
+    { building = "rally_point", level = 1 },
+]
+[buildings.outpost.cost]
+wood = [180, 230, 295, 375, 480, 615, 790, 1010, 1290, 1650]
+clay = [130, 165, 210, 270, 345, 440, 565, 720, 925, 1185]
+iron = [150, 190, 245, 315, 400, 515, 660, 845, 1080, 1385]
+crop = [80, 105, 130, 170, 215, 275, 355, 455, 580, 745]
+
+[buildings.residence]
+time_secs = [2000, 2750, 3650, 4750, 6100, 7800, 9900, 12500, 15800, 19900]
+prerequisites = [{ building = "main_building", level = 5 }]
+[buildings.residence.cost]
+wood = [580, 740, 950, 1215, 1555, 1990, 2550, 3260, 4175, 5345]
+clay = [460, 590, 755, 965, 1235, 1580, 2025, 2590, 3315, 4245]
+iron = [350, 450, 575, 735, 940, 1205, 1540, 1975, 2525, 3235]
+crop = [180, 230, 295, 380, 485, 620, 795, 1015, 1300, 1665]
+
+# The Palace designates the capital (only one per player); pricier than the Residence.
+[buildings.palace]
+time_secs = [5500, 7200, 9300, 11900, 15100, 19100, 24000, 30100, 37700, 47100]
+prerequisites = [{ building = "main_building", level = 5 }]
+[buildings.palace.cost]
+wood = [550, 705, 900, 1155, 1475, 1890, 2420, 3095, 3960, 5070]
+clay = [800, 1025, 1310, 1675, 2145, 2745, 3515, 4500, 5760, 7370]
+iron = [750, 960, 1230, 1575, 2015, 2580, 3300, 4225, 5410, 6925]
+crop = [250, 320, 410, 525, 670, 860, 1100, 1410, 1805, 2310]
+
+[buildings.town_hall]
+time_secs = [2400, 3300, 4400, 5800, 7500, 9700, 12400, 15800, 20000, 25300]
+prerequisites = [
+    { building = "main_building", level = 5 },
+    { building = "academy", level = 10 },
+]
+[buildings.town_hall.cost]
+wood = [1250, 1600, 2050, 2625, 3360, 4300, 5500, 7040, 9010, 11530]
+clay = [1110, 1420, 1820, 2330, 2980, 3815, 4880, 6250, 8000, 10240]
+iron = [1450, 1855, 2375, 3040, 3890, 4980, 6375, 8160, 10445, 13370]
+crop = [630, 805, 1030, 1320, 1690, 2160, 2765, 3540, 4530, 5800]
+
+[buildings.barracks]
+time_secs = [1000, 1550, 2200, 3000, 4050, 5400, 7100, 9300, 12100, 15600]
+prerequisites = [{ building = "main_building", level = 3 }]
+[buildings.barracks.cost]
+wood = [210, 270, 345, 440, 565, 720, 925, 1180, 1515, 1935]
+clay = [140, 180, 230, 295, 375, 480, 615, 790, 1010, 1290]
+iron = [260, 335, 425, 545, 700, 895, 1145, 1465, 1875, 2400]
+crop = [120, 155, 195, 250, 320, 410, 530, 675, 865, 1105]
+
+[buildings.academy]
+time_secs = [1700, 2400, 3250, 4300, 5650, 7350, 9500, 12200, 15600, 19800]
+prerequisites = [
+    { building = "main_building", level = 3 },
+    { building = "barracks", level = 3 },
+]
+[buildings.academy.cost]
+wood = [220, 280, 360, 460, 590, 755, 970, 1240, 1585, 2030]
+clay = [160, 205, 260, 335, 430, 550, 705, 900, 1155, 1475]
+iron = [90, 115, 145, 190, 240, 310, 395, 505, 645, 825]
+crop = [40, 50, 65, 85, 105, 135, 175, 220, 285, 365]
+
+[buildings.smithy]
+time_secs = [1600, 2250, 3050, 4050, 5300, 6900, 8950, 11500, 14800, 18900]
+prerequisites = [
+    { building = "main_building", level = 3 },
+    { building = "academy", level = 1 },
+]
+[buildings.smithy.cost]
+wood = [180, 230, 295, 375, 480, 615, 790, 1010, 1290, 1650]
+clay = [250, 320, 410, 525, 670, 860, 1100, 1405, 1800, 2305]
+iron = [500, 640, 820, 1050, 1340, 1720, 2200, 2815, 3605, 4610]
+crop = [160, 205, 260, 335, 430, 550, 705, 900, 1155, 1475]
+
+[buildings.stable]
+time_secs = [2200, 3000, 4000, 5200, 6700, 8600, 11000, 14000, 17700, 22300]
+prerequisites = [
+    { building = "academy", level = 5 },
+    { building = "smithy", level = 1 },
+]
+[buildings.stable.cost]
+wood = [260, 335, 425, 545, 700, 895, 1145, 1465, 1875, 2400]
+clay = [140, 180, 230, 295, 375, 480, 615, 790, 1010, 1290]
+iron = [220, 280, 360, 460, 590, 755, 970, 1240, 1585, 2030]
+crop = [100, 130, 165, 210, 270, 345, 440, 565, 720, 925]
+
+[buildings.workshop]
+time_secs = [3000, 4000, 5300, 6900, 8900, 11400, 14500, 18400, 23300, 29400]
+prerequisites = [
+    { building = "main_building", level = 5 },
+    { building = "academy", level = 10 },
+]
+[buildings.workshop.cost]
+wood = [460, 590, 755, 970, 1240, 1585, 2030, 2595, 3320, 4250]
+clay = [510, 655, 835, 1070, 1370, 1750, 2240, 2870, 3670, 4700]
+iron = [600, 770, 985, 1260, 1615, 2065, 2640, 3380, 4325, 5535]
+crop = [320, 410, 525, 670, 860, 1100, 1405, 1800, 2305, 2950]
+
+# Treasury (020) — required to hold an artifact; its level gates the artifact scope (small/large/unique).
+# An end-game building gated behind a developed Main Building.
+[buildings.treasury]
+time_secs = [8800, 11200, 14300, 18200, 23200, 29600, 37700, 48100, 61300, 78100]
+prerequisites = [{ building = "main_building", level = 10 }]
+[buildings.treasury.cost]
+wood = [1850, 2370, 3030, 3880, 4965, 6355, 8135, 10415, 13330, 17065]
+clay = [1700, 2175, 2785, 3565, 4565, 5840, 7475, 9570, 12250, 15680]
+iron = [1950, 2495, 3195, 4090, 5235, 6700, 8580, 10980, 14055, 17990]
+crop = [800, 1025, 1310, 1680, 2150, 2750, 3520, 4505, 5770, 7385]

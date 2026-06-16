@@ -1,0 +1,9 @@
+# Alliance & diplomacy balance (015, GDD §10).
+#
+# The membership cap bounds an alliance's size (faithful Travian default ~60); the Embassy levels gate
+# joining vs. founding (level 1 to join, level 3 to found). All are world-config (P7) — no hardcoded
+# sizes or levels in code.
+
+max_members = 60
+join_embassy_level = 1
+found_embassy_level = 3

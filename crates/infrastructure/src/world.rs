@@ -83,13 +83,15 @@ pub async fn create_world(
     config: &WorldConfig,
     artifact_release_offset_secs: i64,
     wonder_release_offset_secs: i64,
+    rule_preset: &str,
 ) -> Result<World, sqlx::Error> {
     let id = Uuid::new_v4();
     let row = sqlx::query(&format!(
-        "INSERT INTO worlds (id, speed, radius, seed, artifact_release_at, wonder_release_at) \
+        "INSERT INTO worlds \
+           (id, speed, radius, seed, artifact_release_at, wonder_release_at, rule_preset) \
          VALUES ($1, $2, $3, hashtextextended($1::text, 0), \
                  now() + make_interval(secs => $4::double precision), \
-                 now() + make_interval(secs => $5::double precision)) \
+                 now() + make_interval(secs => $5::double precision), $6) \
          RETURNING {SELECT_COLS}"
     ))
     .bind(id)
@@ -97,6 +99,7 @@ pub async fn create_world(
     .bind(i32::try_from(config.radius).unwrap_or(i32::MAX))
     .bind(artifact_release_offset_secs as f64)
     .bind(wonder_release_offset_secs as f64)
+    .bind(rule_preset)
     .fetch_one(pool)
     .await?;
     world_from_row(&row)

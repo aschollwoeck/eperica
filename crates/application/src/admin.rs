@@ -176,6 +176,9 @@ where
 /// # Errors
 /// [`AdminError::NotAuthorized`] for a non-admin; [`AdminError::InvalidWorld`] for a bad speed/radius or an
 /// invalid schedule (`0 < artifact < wonder`); otherwise a backend error.
+// A validated pass-through: each parameter is a distinct, named world attribute the handler resolved from
+// the form. Bundling them into a struct would not add clarity over the flat, well-named list.
+#[allow(clippy::too_many_arguments)]
 pub async fn create_world<A, D>(
     accounts: &A,
     admin: &D,
@@ -184,12 +187,20 @@ pub async fn create_world<A, D>(
     radius: u32,
     artifact_offset_secs: i64,
     wonder_offset_secs: i64,
+    rule_preset: &str,
 ) -> Result<WorldId, AdminError>
 where
     A: AccountRepository,
     D: AdminRepository,
 {
     require_admin(accounts, actor).await?;
+    // The preset name must be present (the web edge checks it against the server-authoritative allow-list of
+    // loadable presets — that mapping is an infrastructure concern, 052).
+    if rule_preset.is_empty() {
+        return Err(AdminError::InvalidWorld(
+            "a rule preset is required".to_owned(),
+        ));
+    }
     // Validate (P4): speed must be a valid game speed (finite > 0); radius in (0, MAX].
     GameSpeed::new(speed)
         .map_err(|_| AdminError::InvalidWorld("speed must be a positive number".to_owned()))?;
@@ -210,7 +221,13 @@ where
         ));
     }
     Ok(admin
-        .create_world(speed, radius, artifact_offset_secs, wonder_offset_secs)
+        .create_world(
+            speed,
+            radius,
+            artifact_offset_secs,
+            wonder_offset_secs,
+            rule_preset,
+        )
         .await?)
 }
 
@@ -241,13 +258,16 @@ mod tests {
     use eperica_domain::Tribe;
     use std::sync::Mutex;
 
+    /// A recorded `create_world` call: (speed, radius, artifact_offset, wonder_offset, rule_preset).
+    type CreatedWorld = (f64, u32, i64, i64, String);
+
     /// A minimal account+admin fake: a roster of (id, is_moderator, is_admin) with recorded role writes.
     #[derive(Default)]
     struct Fake {
         users: Mutex<Vec<UserRecord>>,
         set_admin_calls: Mutex<Vec<(u128, bool)>>,
         set_mod_calls: Mutex<Vec<(u128, bool)>>,
-        created_worlds: Mutex<Vec<(f64, u32, i64, i64)>>,
+        created_worlds: Mutex<Vec<CreatedWorld>>,
     }
 
     fn user(id: u128, is_admin: bool) -> UserRecord {
@@ -383,9 +403,10 @@ mod tests {
             radius: u32,
             artifact: i64,
             wonder: i64,
+            rule_preset: &str,
         ) -> Result<WorldId, RepoError> {
             let mut w = self.created_worlds.lock().unwrap();
-            w.push((speed, radius, artifact, wonder));
+            w.push((speed, radius, artifact, wonder, rule_preset.to_owned()));
             Ok(WorldId(1000 + w.len() as u128))
         }
     }
@@ -538,40 +559,58 @@ mod tests {
         let (a, w) = (90 * 86_400_i64, 120 * 86_400_i64);
         // A non-admin cannot create a world (gate runs first).
         assert_eq!(
-            create_world(&f, &f, PlayerId(2), 1.0, 50, a, w).await,
+            create_world(&f, &f, PlayerId(2), 1.0, 50, a, w, "classic").await,
             Err(AdminError::NotAuthorized)
         );
         assert!(f.created_worlds.lock().unwrap().is_empty());
 
         // Invalid speed / radius are rejected (P4) — no row created.
         assert!(matches!(
-            create_world(&f, &f, PlayerId(1), 0.0, 50, a, w).await,
+            create_world(&f, &f, PlayerId(1), 0.0, 50, a, w, "classic").await,
             Err(AdminError::InvalidWorld(_))
         ));
         assert!(matches!(
-            create_world(&f, &f, PlayerId(1), 1.0, 0, a, w).await,
+            create_world(&f, &f, PlayerId(1), 1.0, 0, a, w, "classic").await,
             Err(AdminError::InvalidWorld(_))
         ));
         assert!(matches!(
-            create_world(&f, &f, PlayerId(1), 1.0, MAX_WORLD_RADIUS + 1, a, w).await,
+            create_world(
+                &f,
+                &f,
+                PlayerId(1),
+                1.0,
+                MAX_WORLD_RADIUS + 1,
+                a,
+                w,
+                "classic"
+            )
+            .await,
             Err(AdminError::InvalidWorld(_))
         ));
         // 047: an invalid end-game schedule is rejected — non-positive artifact, or Wonder ≤ artifact.
         assert!(matches!(
-            create_world(&f, &f, PlayerId(1), 1.0, 50, 0, w).await,
+            create_world(&f, &f, PlayerId(1), 1.0, 50, 0, w, "classic").await,
             Err(AdminError::InvalidWorld(_))
         ));
         assert!(matches!(
-            create_world(&f, &f, PlayerId(1), 1.0, 50, w, a).await,
+            create_world(&f, &f, PlayerId(1), 1.0, 50, w, a, "classic").await,
+            Err(AdminError::InvalidWorld(_))
+        ));
+        // 052: an empty preset is rejected (the web edge supplies a validated, allow-listed name).
+        assert!(matches!(
+            create_world(&f, &f, PlayerId(1), 1.0, 50, a, w, "").await,
             Err(AdminError::InvalidWorld(_))
         ));
         assert!(f.created_worlds.lock().unwrap().is_empty());
 
-        // A valid request creates the world, propagating the schedule offsets.
-        let id = create_world(&f, &f, PlayerId(1), 5.0, 100, a, w)
+        // A valid request creates the world, propagating the schedule offsets + the chosen preset.
+        let id = create_world(&f, &f, PlayerId(1), 5.0, 100, a, w, "speed")
             .await
             .unwrap();
         assert_eq!(id, WorldId(1001));
-        assert_eq!(*f.created_worlds.lock().unwrap(), vec![(5.0, 100, a, w)]);
+        assert_eq!(
+            *f.created_worlds.lock().unwrap(),
+            vec![(5.0, 100, a, w, "speed".to_owned())]
+        );
     }
 }
