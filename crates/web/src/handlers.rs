@@ -1819,10 +1819,11 @@ fn parse_troop_building(slug: &str) -> Option<BuildingKind> {
 /// Player only, P4).
 pub async fn troops(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     axum::extract::Path(building_slug): axum::extract::Path<String>,
     Query(q): Query<VillageQuery>,
 ) -> Response {
+    let player = ctx.player;
     let Some(building) = parse_troop_building(&building_slug) else {
         return Redirect::to("/village").into_response();
     };
@@ -1836,8 +1837,8 @@ pub async fn troops(
         return server_error();
     };
     let (researched, active) = match tokio::try_join!(
-        state.accounts.researched_units(village.id),
-        state.accounts.active_training(village.id),
+        ctx.accounts.researched_units(village.id),
+        ctx.accounts.active_training(village.id),
     ) {
         Ok(t) => t,
         Err(e) => {
@@ -1883,13 +1884,13 @@ pub async fn troops(
                     spec.train_secs,
                     building_level,
                     &unit_rules.training,
-                    state.world.speed,
+                    ctx.speed,
                 )),
                 time_secs: per_unit_time_secs(
                     spec.train_secs,
                     building_level,
                     &unit_rules.training,
-                    state.world.speed,
+                    ctx.speed,
                 ),
                 can_order: batch.is_none(),
                 gate: if batch.is_some() {
@@ -1924,18 +1925,19 @@ pub struct TrainForm {
 /// only, P4).
 pub async fn train_submit(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<TrainForm>,
 ) -> Response {
+    let player = ctx.player;
     let unit = UnitId(form.unit);
     let flash = order_train(
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
         state.rules.as_ref(),
         state.unit_rules.as_ref(),
-        state.world.speed,
+        ctx.speed,
         now(),
         player,
         selected_village(form.village.as_deref()),
@@ -1999,9 +2001,10 @@ pub async fn smithy_upgrade_submit(
 /// The Rally Point: the garrison troops that can be sent to reinforce (007 AC7; Player only, P4).
 pub async fn rally(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Query(q): Query<MapQuery>,
 ) -> Response {
+    let player = ctx.player;
     let (village, _amounts) =
         match village_view_data(&state, player, selected_village(q.village.as_deref())).await {
             Ok(v) => v,
@@ -2011,7 +2014,7 @@ pub async fn rally(
         tracing::error!(?player, "village has no tribe");
         return server_error();
     };
-    let garrison = match state.accounts.garrison(village.id).await {
+    let garrison = match ctx.accounts.garrison(village.id).await {
         Ok(g) => g,
         Err(e) => {
             tracing::error!(error = %e, "garrison lookup failed");
@@ -2060,11 +2063,11 @@ pub async fn rally(
         (Some(x), Some(y)) => Some(Coordinate::new(x, y)),
         _ => None,
     };
-    let target_is_oasis = target.is_some_and(|c| state.map.oasis_bonus_at(c).is_some());
+    let target_is_oasis = target.is_some_and(|c| ctx.map.oasis_bonus_at(c).is_some());
     // The Settle order is offered only with a free expansion slot (013 AC11).
     let can_settle = match load_culture(
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
+        &ctx.accounts,
+        &ctx.accounts,
         state.culture_rules.as_ref(),
         now(),
         player,
@@ -2087,8 +2090,8 @@ pub async fn rally(
         settlers_per_village: state.culture_rules.settlers_per_village,
         origin_x: village.coordinate.x,
         origin_y: village.coordinate.y,
-        radius: i32::try_from(state.world.radius).unwrap_or(i32::MAX),
-        speed_mult: state.world.speed.multiplier(),
+        radius: i32::try_from(ctx.radius).unwrap_or(i32::MAX),
+        speed_mult: ctx.speed.multiplier(),
     })
 }
 
@@ -2098,9 +2101,10 @@ pub async fn rally(
 /// parsed and re-validated server-side (P4) — the use-case rejects anything over the garrison.
 pub async fn rally_send(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
+    let player = ctx.player;
     let village = form.get("village").map(String::as_str);
     let selected = selected_village(village);
     let x = form.get("x").and_then(|s| s.trim().parse::<i32>().ok());
@@ -2128,15 +2132,15 @@ pub async fn rally_send(
         Some("settle") => {
             // Found a new village: send the settler group to a free valley tile (013 AC6/AC11).
             order_settle(
-                state.accounts.as_ref(),
-                state.accounts.as_ref(),
-                state.accounts.as_ref(),
-                state.accounts.as_ref(),
+                &ctx.accounts,
+                &ctx.accounts,
+                &ctx.accounts,
+                &ctx.accounts,
                 state.rules.as_ref(),
                 state.unit_rules.as_ref(),
                 state.culture_rules.as_ref(),
-                state.map.as_ref(),
-                state.world.speed,
+                ctx.map.as_ref(),
+                ctx.speed,
                 now(),
                 player,
                 selected,
@@ -2150,13 +2154,13 @@ pub async fn rally_send(
             })
         }
         Some("scout") => order_scout(
-            state.accounts.as_ref(),
-            state.accounts.as_ref(),
-            state.accounts.as_ref(),
+            &ctx.accounts,
+            &ctx.accounts,
+            &ctx.accounts,
             state.rules.as_ref(),
             state.unit_rules.as_ref(),
-            state.map.as_ref(),
-            state.world.speed,
+            ctx.map.as_ref(),
+            ctx.speed,
             now(),
             player,
             selected,
@@ -2173,15 +2177,15 @@ pub async fn rally_send(
         Some(mode @ ("attack" | "raid")) => {
             // An oasis tile (no village) routes to the oasis-attack use-case (012); a village tile
             // to the 009 attack/raid.
-            if state.map.oasis_bonus_at(target).is_some() {
+            if ctx.map.oasis_bonus_at(target).is_some() {
                 order_oasis_attack(
-                    state.accounts.as_ref(),
-                    state.accounts.as_ref(),
-                    state.accounts.as_ref(),
+                    &ctx.accounts,
+                    &ctx.accounts,
+                    &ctx.accounts,
                     state.rules.as_ref(),
                     state.unit_rules.as_ref(),
-                    state.map.as_ref(),
-                    state.world.speed,
+                    ctx.map.as_ref(),
+                    ctx.speed,
                     now(),
                     player,
                     selected,
@@ -2201,14 +2205,14 @@ pub async fn rally_send(
                     AttackMode::Attack
                 };
                 order_attack(
-                    state.accounts.as_ref(),
-                    state.accounts.as_ref(),
-                    state.accounts.as_ref(),
-                    state.accounts.as_ref(),
+                    &ctx.accounts,
+                    &ctx.accounts,
+                    &ctx.accounts,
+                    &ctx.accounts,
                     state.rules.as_ref(),
                     state.unit_rules.as_ref(),
-                    state.map.as_ref(),
-                    state.world.speed,
+                    ctx.map.as_ref(),
+                    ctx.speed,
                     now(),
                     player,
                     selected,
@@ -2228,15 +2232,15 @@ pub async fn rally_send(
         }
         _ => {
             // Reinforcing an oasis tile stations troops on it (012); a village tile defends it (007).
-            if state.map.oasis_bonus_at(target).is_some() {
+            if ctx.map.oasis_bonus_at(target).is_some() {
                 order_oasis_reinforce(
-                    state.accounts.as_ref(),
-                    state.accounts.as_ref(),
-                    state.accounts.as_ref(),
+                    &ctx.accounts,
+                    &ctx.accounts,
+                    &ctx.accounts,
                     state.rules.as_ref(),
                     state.unit_rules.as_ref(),
-                    state.map.as_ref(),
-                    state.world.speed,
+                    ctx.map.as_ref(),
+                    ctx.speed,
                     now(),
                     player,
                     selected,
@@ -2251,13 +2255,13 @@ pub async fn rally_send(
                 })
             } else {
                 order_reinforcement(
-                    state.accounts.as_ref(),
-                    state.accounts.as_ref(),
-                    state.accounts.as_ref(),
+                    &ctx.accounts,
+                    &ctx.accounts,
+                    &ctx.accounts,
                     state.rules.as_ref(),
                     state.unit_rules.as_ref(),
-                    state.map.as_ref(),
-                    state.world.speed,
+                    ctx.map.as_ref(),
+                    ctx.speed,
                     now(),
                     player,
                     selected,
@@ -2288,18 +2292,19 @@ pub struct RallyReturnForm {
 /// Recall the player's troops stationed at a host, then return to the village (Player only, P4).
 pub async fn rally_return(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<RallyReturnForm>,
 ) -> Response {
+    let player = ctx.player;
     let Ok(host) = form.host.trim().parse::<u128>() else {
         return Redirect::to("/village").into_response();
     };
     let flash = order_return(
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
+        &ctx.accounts,
+        &ctx.accounts,
         state.unit_rules.as_ref(),
-        state.map.as_ref(),
-        state.world.speed,
+        ctx.map.as_ref(),
+        ctx.speed,
         now(),
         player,
         VillageId(host),
@@ -2327,16 +2332,17 @@ pub struct OasisRecallForm {
 /// Player only, P4).
 pub async fn oasis_recall(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<OasisRecallForm>,
 ) -> Response {
+    let player = ctx.player;
     let target = Coordinate::new(form.x, form.y);
     let flash = order_oasis_recall(
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
+        &ctx.accounts,
+        &ctx.accounts,
         state.unit_rules.as_ref(),
-        state.map.as_ref(),
-        state.world.speed,
+        ctx.map.as_ref(),
+        ctx.speed,
         now(),
         player,
         selected_village(form.village.as_deref()),
