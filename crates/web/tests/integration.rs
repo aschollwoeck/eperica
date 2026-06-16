@@ -14,10 +14,10 @@ use eperica_domain::{
 };
 use eperica_infrastructure::{
     Argon2Hasher, ChatHub, NotificationHub, PgAccountRepository, achievement_catalogue,
-    alliance_rules, artifact_catalogue, build_rules, combat_rules, culture_rules, economy_rules,
-    ensure_world, fair_play_rules, lifecycle_rules, loyalty_rules, map_rules, medal_rules,
-    merchant_rules, now, oasis_rules, quest_chain, ranking_rules, run_chat_listener,
-    run_notification_listener, scout_rules, starting_village, unit_rules, wonder_rules,
+    alliance_rules, build_rules, combat_rules, culture_rules, economy_rules, ensure_world,
+    fair_play_rules, lifecycle_rules, load_world_rules, loyalty_rules, map_rules, merchant_rules,
+    now, oasis_rules, quest_chain, ranking_rules, run_chat_listener, run_notification_listener,
+    scout_rules, starting_village, unit_rules, wonder_rules,
 };
 use eperica_web::registry::WorldRegistry;
 use eperica_web::router;
@@ -94,21 +94,7 @@ async fn spawn(pool: sqlx::PgPool) -> String {
                 pool.clone(),
                 rx,
                 lifecycle_rules().unwrap().beginner_protection_secs,
-                Arc::new(economy_rules().unwrap()),
-                Arc::new(unit_rules().unwrap()),
-                Arc::new(merchant_rules().unwrap()),
-                Arc::new(combat_rules().unwrap()),
-                Arc::new(scout_rules().unwrap()),
-                Arc::new(oasis_rules().unwrap()),
-                Arc::new(culture_rules().unwrap()),
-                Arc::new(loyalty_rules().unwrap()),
-                Arc::new(ranking_rules().unwrap()),
-                Arc::new(medal_rules().unwrap()),
-                Arc::new(lifecycle_rules().unwrap()),
-                Arc::new(artifact_catalogue().unwrap()),
-                Arc::new(starting_village().unwrap()),
-                Arc::new(wonder_rules().unwrap()),
-                map_rules().unwrap(),
+                Arc::new(load_world_rules().unwrap()),
             ))
         },
         require_email_confirmation: false,

@@ -6,11 +6,10 @@ use axum_extra::extract::cookie::Key;
 use eperica_domain::WorldMap;
 use eperica_infrastructure::{
     AppConfig, Argon2Hasher, ChatHub, NotificationHub, PgAccountRepository, achievement_catalogue,
-    all_worlds, alliance_rules, artifact_catalogue, build_rules, combat_rules, create_pool,
-    culture_rules, economy_rules, ensure_world_with_release, fair_play_rules, lifecycle_rules,
-    loyalty_rules, map_rules, medal_rules, merchant_rules, oasis_rules, quest_chain, ranking_rules,
-    run_chat_listener, run_migrations, run_notification_listener, scout_rules, starting_village,
-    unit_rules, wonder_rules,
+    all_worlds, alliance_rules, build_rules, combat_rules, create_pool, culture_rules,
+    economy_rules, ensure_world_with_release, fair_play_rules, lifecycle_rules, load_world_rules,
+    loyalty_rules, map_rules, merchant_rules, quest_chain, ranking_rules, run_chat_listener,
+    run_migrations, run_notification_listener, starting_village, unit_rules, wonder_rules,
 };
 use eperica_web::registry::WorldRegistry;
 use eperica_web::router;
@@ -36,16 +35,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let units = Arc::new(unit_rules()?);
     let merchants = Arc::new(merchant_rules()?);
     let combat = Arc::new(combat_rules()?);
-    let scout = Arc::new(scout_rules()?);
-    let oases = Arc::new(oasis_rules()?);
     let culture = Arc::new(culture_rules()?);
     let loyalty = Arc::new(loyalty_rules()?);
     let ranking = Arc::new(ranking_rules()?);
-    let medals = Arc::new(medal_rules()?);
     let achievements = Arc::new(achievement_catalogue()?);
     let quests = Arc::new(quest_chain()?);
     let lifecycle = Arc::new(lifecycle_rules()?);
-    let artifacts = Arc::new(artifact_catalogue()?);
     let wonder = Arc::new(wonder_rules()?);
     let fair_play = Arc::new(fair_play_rules()?);
     let template = Arc::new(starting_village()?);
@@ -87,25 +82,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // per world. It is the one spawn path: `main.rs` starts every existing world here, and the admin
     // create-world handler starts a freshly-created world live through the same `start_world`.
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let world_rules = Arc::new(load_world_rules()?);
     let registry = Arc::new(WorldRegistry::new(
         pool.clone(),
         shutdown_rx,
         lifecycle.beginner_protection_secs,
-        Arc::clone(&rules),
-        Arc::clone(&units),
-        Arc::clone(&merchants),
-        Arc::clone(&combat),
-        Arc::clone(&scout),
-        Arc::clone(&oases),
-        Arc::clone(&culture),
-        Arc::clone(&loyalty),
-        Arc::clone(&ranking),
-        Arc::clone(&medals),
-        Arc::clone(&lifecycle),
-        Arc::clone(&artifacts),
-        Arc::clone(&template),
-        Arc::clone(&wonder),
-        map_rules,
+        Arc::clone(&world_rules),
     ));
     match all_worlds(&pool).await {
         Ok(worlds) => {

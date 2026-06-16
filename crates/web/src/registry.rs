@@ -2,13 +2,9 @@
 //! can **spawn a per-world scheduler on demand**, so an admin can create a world that starts running with
 //! no process restart (040 spawns at startup; this lets `main.rs` and the admin handler share one path).
 
-use eperica_domain::{
-    CombatRules, CultureRules, EconomyRules, GameSpeed, LifecycleRules, LoyaltyRules, MapRules,
-    MedalRules, MerchantRules, OasisRules, RankingRules, ScoutRules, StartingVillage, UnitRules,
-    WonderRules, WorldId, WorldMap,
-};
+use eperica_domain::{GameSpeed, WorldId, WorldMap};
 use eperica_infrastructure::{
-    ArtifactCatalogue, PgAccountRepository, PgEventStore, PgPool, Scheduler, world_by_id,
+    PgAccountRepository, PgEventStore, PgPool, Scheduler, WorldRules, world_by_id,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -29,22 +25,9 @@ pub struct WorldRegistry {
     pool: PgPool,
     shutdown_rx: watch::Receiver<bool>,
     beginner_secs: i64,
-    economy: Arc<EconomyRules>,
-    units: Arc<UnitRules>,
-    merchants: Arc<MerchantRules>,
-    combat: Arc<CombatRules>,
-    scout: Arc<ScoutRules>,
-    oases: Arc<OasisRules>,
-    culture: Arc<CultureRules>,
-    loyalty: Arc<LoyaltyRules>,
-    ranking: Arc<RankingRules>,
-    medals: Arc<MedalRules>,
-    lifecycle: Arc<LifecycleRules>,
-    artifacts: Arc<ArtifactCatalogue>,
-    template: Arc<StartingVillage>,
-    wonder: Arc<WonderRules>,
-    /// The map balance rules, loaded once — every world's `WorldMap` shares them.
-    map_rules: MapRules,
+    /// The world rule bundle (048) — every per-world sim rule set in one value. Single `classic` preset
+    /// today; 050 makes the registry serve a per-world preset. The map rules live inside it.
+    world_rules: Arc<WorldRules>,
     /// Per-world config (043), recorded when a world is started; drives `context_for`.
     meta: Mutex<HashMap<WorldId, WorldMeta>>,
     /// The worlds whose scheduler is **claimed** (starting or running) — the key's presence is the
@@ -53,47 +36,18 @@ pub struct WorldRegistry {
 }
 
 impl WorldRegistry {
-    /// Build the registry from the shared rules + the process shutdown signal.
-    #[allow(clippy::too_many_arguments)]
+    /// Build the registry from the world rule bundle + the process shutdown signal.
     pub fn new(
         pool: PgPool,
         shutdown_rx: watch::Receiver<bool>,
         beginner_secs: i64,
-        economy: Arc<EconomyRules>,
-        units: Arc<UnitRules>,
-        merchants: Arc<MerchantRules>,
-        combat: Arc<CombatRules>,
-        scout: Arc<ScoutRules>,
-        oases: Arc<OasisRules>,
-        culture: Arc<CultureRules>,
-        loyalty: Arc<LoyaltyRules>,
-        ranking: Arc<RankingRules>,
-        medals: Arc<MedalRules>,
-        lifecycle: Arc<LifecycleRules>,
-        artifacts: Arc<ArtifactCatalogue>,
-        template: Arc<StartingVillage>,
-        wonder: Arc<WonderRules>,
-        map_rules: MapRules,
+        world_rules: Arc<WorldRules>,
     ) -> Self {
         Self {
             pool,
             shutdown_rx,
             beginner_secs,
-            economy,
-            units,
-            merchants,
-            combat,
-            scout,
-            oases,
-            culture,
-            loyalty,
-            ranking,
-            medals,
-            lifecycle,
-            artifacts,
-            template,
-            wonder,
-            map_rules,
+            world_rules,
             meta: Mutex::new(HashMap::new()),
             running: Mutex::new(HashMap::new()),
         }
@@ -124,14 +78,14 @@ impl WorldRegistry {
         let map = Arc::new(WorldMap::new(
             meta.seed as u64,
             meta.radius,
-            self.map_rules.clone(),
+            self.world_rules.map_rules.clone(),
         ));
         let repo = PgAccountRepository::new(
             self.pool.clone(),
             world_id,
             meta.seed,
             meta.radius,
-            self.economy.starting_amounts,
+            self.world_rules.economy.starting_amounts,
             self.beginner_secs,
             meta.speed,
         );
@@ -188,39 +142,42 @@ impl WorldRegistry {
         let map = Arc::new(WorldMap::new(
             world.seed as u64,
             world.radius,
-            self.map_rules.clone(),
+            self.world_rules.map_rules.clone(),
         ));
         let accounts = PgAccountRepository::new(
             self.pool.clone(),
             world.id,
             world.seed,
             world.radius,
-            self.economy.starting_amounts,
+            self.world_rules.economy.starting_amounts,
             self.beginner_secs,
             speed,
         );
+        // Derive the scheduler's per-rule `Arc`s from the world's bundle (048). Per spawn (boot / admin
+        // create), not per request — cheap; and the seam where 050 plugs in a per-world preset.
+        let r = &self.world_rules;
         let scheduler = Scheduler::new(
             PgEventStore::new(self.pool.clone(), world.id),
             accounts,
-            Arc::clone(&self.economy),
-            Arc::clone(&self.units),
-            Arc::clone(&self.merchants),
-            Arc::clone(&self.combat),
-            Arc::clone(&self.scout),
-            Arc::clone(&self.oases),
-            Arc::clone(&self.culture),
-            Arc::clone(&self.loyalty),
-            Arc::clone(&self.ranking),
-            Arc::clone(&self.medals),
-            Arc::clone(&self.lifecycle),
-            Arc::clone(&self.artifacts),
-            Arc::clone(&self.template),
+            Arc::new(r.economy.clone()),
+            Arc::new(r.units.clone()),
+            Arc::new(r.merchant.clone()),
+            Arc::new(r.combat.clone()),
+            Arc::new(r.scout.clone()),
+            Arc::new(r.oasis),
+            Arc::new(r.culture.clone()),
+            Arc::new(r.loyalty.clone()),
+            Arc::new(r.ranking.clone()),
+            Arc::new(r.medals.clone()),
+            Arc::new(r.lifecycle.clone()),
+            Arc::new(r.artifacts.clone()),
+            Arc::new(r.starting_village.clone()),
             Arc::clone(&map),
             speed,
             world.seed as u64,
             world.created_at,
             world.artifact_release_at,
-            Arc::clone(&self.wonder),
+            Arc::new(r.wonder.clone()),
             world.wonder_release_at,
         );
         Ok(tokio::spawn(scheduler.run(self.shutdown_rx.clone())))
