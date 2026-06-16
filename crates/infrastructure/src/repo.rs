@@ -5849,7 +5849,8 @@ impl RankingRepository for PgAccountRepository {
             "SELECT a.id, a.name, a.tag, COALESCE(SUM({pop}), 0)::bigint AS total \
              FROM alliances a \
              JOIN alliance_members am ON am.alliance_id = a.id \
-             JOIN users u ON u.id = am.player_id \
+             JOIN players p ON p.id = am.player_id AND p.world_id = $1 \
+             JOIN users u ON u.id = p.user_id \
              JOIN villages v ON v.owner_id = am.player_id AND v.world_id = $1 \
              WHERE {qf} AND u.abandoned_at IS NULL AND u.is_npc = false \
              GROUP BY a.id, a.name, a.tag HAVING COALESCE(SUM({pop}), 0) > 0 \
@@ -5912,11 +5913,14 @@ impl RankingRepository for PgAccountRepository {
         player: PlayerId,
     ) -> Result<Option<PlayerStats>, RepoError> {
         let pid = Uuid::from_u128(player.0);
-        // 019 AC8: an abandoned account is hidden from its stat page (treated as not found).
+        // 019 AC8: an abandoned account is hidden from its stat page (treated as not found). 046: the name
+        // resolves through `players`, and a player not in this repo's world is treated as not found.
         let Some(name): Option<String> = sqlx::query_scalar(
-            "SELECT username FROM users WHERE id = $1 AND abandoned_at IS NULL AND is_npc = false",
+            "SELECT u.username FROM players p JOIN users u ON u.id = p.user_id \
+             WHERE p.id = $1 AND p.world_id = $2 AND u.abandoned_at IS NULL AND u.is_npc = false",
         )
         .bind(pid)
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_optional(&self.pool)
         .await
         .map_err(backend)?
@@ -5997,12 +6001,12 @@ impl RankingRepository for PgAccountRepository {
         let pop = village_pop_expr("v.id", "$3", "$4", "$5", "$6");
         let (fields, kinds, levels, pops) = population_arrays(econ);
         let sql = format!(
-            "SELECT u.id, u.username, \
-               COALESCE((SELECT SUM({pop}) FROM villages v WHERE v.owner_id = u.id AND v.world_id = $2), 0)::bigint AS pop, \
-               COALESCE((SELECT SUM(attack_points) FROM battle_reports WHERE attacker_player = u.id), 0)::bigint AS atk, \
-               COALESCE((SELECT SUM(defense_points) FROM battle_defenders WHERE player_id = u.id), 0)::bigint AS def \
-             FROM alliance_members am JOIN users u ON u.id = am.player_id \
-             WHERE am.alliance_id = $1 ORDER BY pop DESC, u.id ASC"
+            "SELECT am.player_id, u.username, \
+               COALESCE((SELECT SUM({pop}) FROM villages v WHERE v.owner_id = am.player_id AND v.world_id = $2), 0)::bigint AS pop, \
+               COALESCE((SELECT SUM(attack_points) FROM battle_reports WHERE attacker_player = am.player_id), 0)::bigint AS atk, \
+               COALESCE((SELECT SUM(defense_points) FROM battle_defenders WHERE player_id = am.player_id), 0)::bigint AS def \
+             FROM alliance_members am JOIN players p ON p.id = am.player_id JOIN users u ON u.id = p.user_id \
+             WHERE am.alliance_id = $1 ORDER BY pop DESC, am.player_id ASC"
         );
         let rows: Vec<(Uuid, String, i64, i64, i64)> = sqlx::query_as(&sql)
             .bind(aid)
