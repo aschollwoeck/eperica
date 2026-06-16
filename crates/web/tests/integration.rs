@@ -77,8 +77,8 @@ async fn spawn(pool: sqlx::PgPool) -> String {
             Arc::new(WorldRegistry::new(
                 pool.clone(),
                 rx,
-                lifecycle_rules().unwrap().beginner_protection_secs,
-                Arc::new(load_world_rules().unwrap()),
+                world_rules.lifecycle.beginner_protection_secs,
+                Arc::clone(&world_rules),
             ))
         },
         require_email_confirmation: false,
