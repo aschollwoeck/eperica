@@ -104,6 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&artifacts),
         Arc::clone(&template),
         Arc::clone(&wonder),
+        map_rules()?,
     ));
     match all_worlds(&pool).await {
         Ok(worlds) => {
