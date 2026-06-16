@@ -4083,8 +4083,9 @@ fn rights_summary(role: AllianceRole, rights: RightSet) -> String {
 
 /// The alliance / Embassy page (015 AC8/AC9/AC11): the founder/join controls when alliance-less, or the
 /// roster + diplomacy + incoming-defence overview + management controls when in one.
-pub async fn alliance(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
-    let repo = state.accounts.as_ref();
+pub async fn alliance(State(state): State<AppState>, ctx: GameContext) -> Response {
+    let player = ctx.player;
+    let repo = &ctx.accounts;
     let rules = state.alliance_rules.as_ref();
     match alliance_view(repo, player).await {
         Ok(Some(ov)) => {
@@ -4235,11 +4236,12 @@ pub struct FoundForm {
 
 pub async fn alliance_found(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<FoundForm>,
 ) -> Response {
+    let player = ctx.player;
     let flash = found_alliance(
-        state.accounts.as_ref(),
+        &ctx.accounts,
         state.alliance_rules.as_ref(),
         player,
         form.name.trim(),
@@ -4273,11 +4275,12 @@ async fn resolve_player(state: &AppState, username: &str) -> Option<PlayerId> {
 
 pub async fn alliance_invite(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<UsernameForm>,
 ) -> Response {
+    let player = ctx.player;
     let flash = match resolve_player(&state, &form.username).await {
-        Some(invitee) => invite_player(state.accounts.as_ref(), player, invitee)
+        Some(invitee) => invite_player(&ctx.accounts, player, invitee)
             .await
             .err()
             .map(|e| {
@@ -4291,11 +4294,12 @@ pub async fn alliance_invite(
 
 pub async fn alliance_revoke(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<UsernameForm>,
 ) -> Response {
+    let player = ctx.player;
     let flash = match resolve_player(&state, &form.username).await {
-        Some(invitee) => revoke_invite(state.accounts.as_ref(), player, invitee)
+        Some(invitee) => revoke_invite(&ctx.accounts, player, invitee)
             .await
             .err()
             .map(|e| {
@@ -4315,12 +4319,13 @@ pub struct RespondForm {
 
 pub async fn alliance_respond(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<RespondForm>,
 ) -> Response {
+    let player = ctx.player;
     let flash = match form.alliance.parse::<u128>() {
         Ok(id) => respond_invite(
-            state.accounts.as_ref(),
+            &ctx.accounts,
             state.alliance_rules.as_ref(),
             player,
             eperica_domain::AllianceId(id),
@@ -4337,8 +4342,9 @@ pub async fn alliance_respond(
     with_flash(Redirect::to("/alliance").into_response(), flash)
 }
 
-pub async fn alliance_leave(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
-    let flash = leave_alliance(state.accounts.as_ref(), player)
+pub async fn alliance_leave(ctx: GameContext) -> Response {
+    let player = ctx.player;
+    let flash = leave_alliance(&ctx.accounts, player)
         .await
         .err()
         .map(|e| {
@@ -4349,10 +4355,10 @@ pub async fn alliance_leave(State(state): State<AppState>, AuthUser(player): Aut
 }
 
 pub async fn alliance_disband(
-    State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
 ) -> Response {
-    let flash = disband_alliance(state.accounts.as_ref(), player)
+    let player = ctx.player;
+    let flash = disband_alliance(&ctx.accounts, player)
         .await
         .err()
         .map(|e| {
@@ -4368,12 +4374,12 @@ pub struct TargetForm {
 }
 
 pub async fn alliance_expel(
-    State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<TargetForm>,
 ) -> Response {
+    let player = ctx.player;
     let flash = match form.target.parse::<u128>() {
-        Ok(id) => expel_member(state.accounts.as_ref(), player, PlayerId(id))
+        Ok(id) => expel_member(&ctx.accounts, player, PlayerId(id))
             .await
             .err()
             .map(|e| {
@@ -4386,12 +4392,12 @@ pub async fn alliance_expel(
 }
 
 pub async fn alliance_transfer(
-    State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<TargetForm>,
 ) -> Response {
+    let player = ctx.player;
     let flash = match form.target.parse::<u128>() {
-        Ok(id) => transfer_founder(state.accounts.as_ref(), player, PlayerId(id))
+        Ok(id) => transfer_founder(&ctx.accounts, player, PlayerId(id))
             .await
             .err()
             .map(|e| {
@@ -4420,10 +4426,10 @@ pub struct RoleForm {
 }
 
 pub async fn alliance_role(
-    State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<RoleForm>,
 ) -> Response {
+    let player = ctx.player;
     let Ok(id) = form.target.parse::<u128>() else {
         return Redirect::to("/alliance").into_response();
     };
@@ -4447,7 +4453,7 @@ pub async fn alliance_role(
     if form.manage_roles {
         rights = rights.with(AllianceRight::ManageRoles);
     }
-    let flash = set_member_role(state.accounts.as_ref(), player, PlayerId(id), role, rights)
+    let flash = set_member_role(&ctx.accounts, player, PlayerId(id), role, rights)
         .await
         .err()
         .map(|e| {
@@ -4464,10 +4470,10 @@ pub struct DiplomacyForm {
 }
 
 pub async fn alliance_diplomacy(
-    State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<DiplomacyForm>,
 ) -> Response {
+    let player = ctx.player;
     let Ok(id) = form.other.parse::<u128>() else {
         return Redirect::to("/alliance").into_response();
     };
@@ -4479,7 +4485,7 @@ pub async fn alliance_diplomacy(
         _ => return Redirect::to("/alliance").into_response(),
     };
     let flash = set_diplomacy(
-        state.accounts.as_ref(),
+        &ctx.accounts,
         player,
         eperica_domain::AllianceId(id),
         command,
@@ -4497,8 +4503,9 @@ pub async fn alliance_diplomacy(
 
 /// The alliance forum thread list (027 AC1, members only). Shows the announcement checkbox only when the
 /// viewer holds the `Announce` right.
-pub async fn forum_page(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
-    let repo = state.accounts.as_ref();
+pub async fn forum_page(ctx: GameContext) -> Response {
+    let player = ctx.player;
+    let repo = &ctx.accounts;
     let threads = match list_forum(repo, player).await {
         Ok(t) => t,
         Err(ForumError::NotAMember) => return forbidden(),
@@ -4539,13 +4546,13 @@ pub struct NewThreadForm {
 
 /// Start a forum thread (027 AC2/AC4, member; announcement needs `Announce`).
 pub async fn forum_new(
-    State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<NewThreadForm>,
 ) -> Response {
+    let player = ctx.player;
     let announcement = form.announcement.as_deref() == Some("1");
     match start_thread(
-        state.accounts.as_ref(),
+        &ctx.accounts,
         player,
         &form.title,
         &form.body,
@@ -4562,14 +4569,14 @@ pub async fn forum_new(
 
 /// A single forum thread + its posts (027 AC1, members of the owning alliance only).
 pub async fn forum_thread_page(
-    State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Path(id): Path<String>,
 ) -> Response {
+    let player = ctx.player;
     let Ok(tid) = id.parse::<u128>() else {
         return not_found();
     };
-    match open_thread(state.accounts.as_ref(), player, tid).await {
+    match open_thread(&ctx.accounts, player, tid).await {
         Ok((head, posts)) => page(&ForumThreadTemplate {
             thread_id: id,
             title: head.title,
@@ -4599,15 +4606,15 @@ pub struct ForumReplyForm {
 
 /// Reply to a forum thread (027 AC3, member; locked threads rejected).
 pub async fn forum_reply(
-    State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Path(id): Path<String>,
     Form(form): Form<ForumReplyForm>,
 ) -> Response {
+    let player = ctx.player;
     let Ok(tid) = id.parse::<u128>() else {
         return not_found();
     };
-    match reply(state.accounts.as_ref(), player, tid, &form.body, now()).await {
+    match reply(&ctx.accounts, player, tid, &form.body, now()).await {
         Ok(_) => Redirect::to(&format!("/alliance/forum/{id}")).into_response(),
         Err(ForumError::NotAMember) => forbidden(),
         Err(ForumError::NotFound) => not_found(),
