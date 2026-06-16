@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Worlds</h1>
+  <p class="muted">Each world is a separate game with its own map, speed and standings. Switch between the
+    worlds you play, or join a new one.</p>
+
+  <h2>Your worlds</h2>
+  {% if joined.is_empty() %}
+  <p class="muted">You have not joined any world yet.</p>
+  {% else %}
+  <table class="table">
+    <thead><tr><th>World</th><th class="num">Speed</th><th class="num">Size</th><th>Tribe</th><th></th></tr></thead>
+    <tbody>
+      {% for w in joined %}
+      <tr>
+        <td>
+          {% if w.is_home %}<strong>Home world</strong>{% else %}<span class="mono">{{ w.id }}</span>{% endif %}
+          {% if w.is_current %} <span class="badge">★ Current</span>{% endif %}
+        </td>
+        <td class="num">{{ w.speed }}×</td>
+        <td class="num">{{ w.radius }}</td>
+        <td>{{ w.tribe }}</td>
+        <td>
+          {% if w.is_current %}
+          <span class="muted">selected</span>
+          {% else %}
+          <form method="post" action="/world/select">
+            <input type="hidden" name="world" value="{{ w.id }}">
+            <button class="btn" type="submit">Switch to this world</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <h2>Join a world</h2>
+  {% if joinable.is_empty() %}
+  <p class="muted">No other worlds are open to join right now.</p>
+  {% else %}
+  <table class="table">
+    <thead><tr><th>World</th><th class="num">Speed</th><th class="num">Size</th><th>Tribe</th><th></th></tr></thead>
+    <tbody>
+      {% for w in joinable %}
+      <tr>
+        <td><span class="mono">{{ w.id }}</span></td>
+        <td class="num">{{ w.speed }}×</td>
+        <td class="num">{{ w.radius }}</td>
+        <td colspan="2">
+          <form method="post" action="/worlds/join" class="inline-form">
+            <input type="hidden" name="world" value="{{ w.id }}">
+            <label class="choice__option"><input type="radio" name="tribe" value="romans" required> Romans</label>
+            <label class="choice__option"><input type="radio" name="tribe" value="teutons" required> Teutons</label>
+            <label class="choice__option"><input type="radio" name="tribe" value="gauls" required> Gauls</label>
+            <button class="btn btn--primary" type="submit">Join</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endblock %}

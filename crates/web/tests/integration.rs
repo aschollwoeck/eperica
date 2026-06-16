@@ -4231,6 +4231,170 @@ async fn academy_affordability_uses_the_selected_worlds_speed(pool: sqlx::PgPool
     );
 }
 
+/// 045 AC2–AC5 (end-to-end): from the lobby a player joins a second world → lands in its village → its
+/// name resolves on the map (re-pointed reads) → switches back to the home world.
+#[sqlx::test(migrations = "../../migrations")]
+async fn lobby_join_play_and_switch_back(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (c, user) = register_client(&base, &pool, &unique("lobby")).await;
+    let username: String = sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
+        .bind(user)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let home_vid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE owner_id = $1")
+        .bind(user)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let home_world: uuid::Uuid = sqlx::query_scalar("SELECT world_id FROM villages WHERE id = $1")
+        .bind(home_vid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // A second world exists (run by the registry via the worlds row → context_for self-populates).
+    let world_b = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 3.0, 30, 808)")
+        .bind(world_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The lobby lists the home world (joined) and world B (joinable).
+    let lobby = c
+        .get(format!("{base}/worlds"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        lobby.contains("Home world"),
+        "the home world is listed as joined"
+    );
+    assert!(
+        lobby.contains(&world_b.as_u128().to_string()),
+        "world B is offered to join"
+    );
+
+    // Join world B as Teutons → lands in world B's village (a new village, ≠ the home one).
+    let r = c
+        .post(format!("{base}/worlds/join"))
+        .form(&[
+            ("world", world_b.as_u128().to_string().as_str()),
+            ("tribe", "teutons"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let b_vid: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM villages WHERE world_id = $1 AND owner_id <> $2")
+            .bind(world_b)
+            .bind(user)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_ne!(home_vid, b_vid);
+    let village = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        village.contains(&b_vid.as_u128().to_string()),
+        "after joining, the village page operates in world B"
+    );
+
+    // The second-world player's name resolves on world B's map (re-pointed owner→players→users read).
+    let map = c
+        .get(format!("{base}/map"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        map.contains(&username),
+        "the second-world player's name resolves on the map"
+    );
+
+    // Switching back to the home world returns to the home village.
+    let r = c
+        .post(format!("{base}/world/select"))
+        .form(&[("world", home_world.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let village = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        village.contains(&home_vid.as_u128().to_string()),
+        "switching back returns to the home village"
+    );
+}
+
+/// 045 AC3 (server-authoritative denial, P4): `POST /worlds/join` rejects a **won** world and a garbage
+/// world id — no player is created and the player stays on the home world.
+#[sqlx::test(migrations = "../../migrations")]
+async fn joining_a_won_or_unknown_world_is_rejected(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (c, user) = register_client(&base, &pool, &unique("lobby")).await;
+
+    // A won (frozen, 021) world — offered nowhere, but a crafted POST must still be refused.
+    let won = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO worlds (id, speed, radius, seed, won_at) VALUES ($1, 1.0, 30, 5, now())",
+    )
+    .bind(won)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    for world in [
+        won.as_u128().to_string(),
+        uuid::Uuid::new_v4().as_u128().to_string(),
+    ] {
+        let r = c
+            .post(format!("{base}/worlds/join"))
+            .form(&[("world", world.as_str()), ("tribe", "teutons")])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 303);
+    }
+
+    // No player was created for this account in the won world (nor anywhere but home).
+    let player_count: i64 = sqlx::query_scalar("SELECT count(*) FROM players WHERE user_id = $1")
+        .bind(user)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        player_count, 1,
+        "only the home-world player exists — the join was refused"
+    );
+    let won_players: i64 = sqlx::query_scalar("SELECT count(*) FROM players WHERE world_id = $1")
+        .bind(won)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(won_players, 0, "no player was created in the won world");
+}
+
 /// 024 AC2–AC4: a DM appears for both parties; opening it clears the recipient's unread.
 #[sqlx::test(migrations = "../../migrations")]
 async fn dm_conversation_flow(pool: sqlx::PgPool) {
