@@ -1,6 +1,6 @@
 # Feature 048 — `WorldRules` bundle (keystone refactor)
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 047 (per-world config program start).
 **Roadmap:** Per-world configuration program — see [ADR 0035](../../../docs/architecture/0035-per-world-configuration.md) §B.
 **Program note:** The keystone for per-world rule presets (mirrors the 037 player split): consolidate the

@@ -5,11 +5,9 @@
 use axum_extra::extract::cookie::Key;
 use eperica_domain::WorldMap;
 use eperica_infrastructure::{
-    AppConfig, Argon2Hasher, ChatHub, NotificationHub, PgAccountRepository, achievement_catalogue,
-    all_worlds, alliance_rules, build_rules, combat_rules, create_pool, culture_rules,
-    economy_rules, ensure_world_with_release, fair_play_rules, lifecycle_rules, load_world_rules,
-    loyalty_rules, map_rules, merchant_rules, quest_chain, ranking_rules, run_chat_listener,
-    run_migrations, run_notification_listener, starting_village, unit_rules, wonder_rules,
+    AppConfig, Argon2Hasher, ChatHub, NotificationHub, PgAccountRepository, all_worlds,
+    create_pool, ensure_world_with_release, fair_play_rules, load_world_rules, run_chat_listener,
+    run_migrations, run_notification_listener,
 };
 use eperica_web::registry::WorldRegistry;
 use eperica_web::router;
@@ -31,32 +29,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.wonder_release_offset_secs,
     )
     .await?;
-    let rules = Arc::new(economy_rules()?);
-    let units = Arc::new(unit_rules()?);
-    let merchants = Arc::new(merchant_rules()?);
-    let combat = Arc::new(combat_rules()?);
-    let culture = Arc::new(culture_rules()?);
-    let loyalty = Arc::new(loyalty_rules()?);
-    let ranking = Arc::new(ranking_rules()?);
-    let achievements = Arc::new(achievement_catalogue()?);
-    let quests = Arc::new(quest_chain()?);
-    let lifecycle = Arc::new(lifecycle_rules()?);
-    let wonder = Arc::new(wonder_rules()?);
+    let world_rules = Arc::new(load_world_rules()?);
     let fair_play = Arc::new(fair_play_rules()?);
-    let template = Arc::new(starting_village()?);
-    let map_rules = map_rules()?;
     let map = Arc::new(WorldMap::new(
         world.seed as u64,
         config.world.radius,
-        map_rules.clone(),
+        world_rules.map_rules.clone(),
     ));
     let accounts = PgAccountRepository::new(
         pool.clone(),
         world.id,
         world.seed,
         config.world.radius,
-        rules.starting_amounts,
-        lifecycle.beginner_protection_secs,
+        world_rules.economy.starting_amounts,
+        world_rules.lifecycle.beginner_protection_secs,
         config.world.speed,
     );
 
@@ -82,11 +68,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // per world. It is the one spawn path: `main.rs` starts every existing world here, and the admin
     // create-world handler starts a freshly-created world live through the same `start_world`.
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let world_rules = Arc::new(load_world_rules()?);
     let registry = Arc::new(WorldRegistry::new(
         pool.clone(),
         shutdown_rx,
-        lifecycle.beginner_protection_secs,
+        world_rules.lifecycle.beginner_protection_secs,
         Arc::clone(&world_rules),
     ));
     match all_worlds(&pool).await {
@@ -103,20 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState {
         accounts: Arc::new(accounts),
         hasher: Arc::new(Argon2Hasher),
-        template,
-        rules,
-        build_rules: Arc::new(build_rules()?),
-        unit_rules: units,
-        combat_rules: Arc::clone(&combat),
-        culture_rules: culture,
-        loyalty_rules: loyalty,
-        alliance_rules: Arc::new(alliance_rules()?),
-        ranking_rules: ranking,
-        achievement_catalogue: achievements,
-        quest_chain: quests,
-        lifecycle_rules: lifecycle,
-        merchant_rules: merchants,
-        wonder_rules: Arc::clone(&wonder),
+        world_rules: Arc::clone(&world_rules),
         fair_play_rules: Arc::clone(&fair_play),
         trust_proxy: env_flag("TRUST_PROXY"),
         chat_hub,
