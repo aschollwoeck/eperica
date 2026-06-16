@@ -140,6 +140,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         chat_hub,
         notification_hub,
         map,
+        artifact_release_offset_secs: config.artifact_release_offset_secs,
+        wonder_release_offset_secs: config.wonder_release_offset_secs,
         world: config.world,
         world_id: world.id,
         world_registry: Arc::clone(&registry),

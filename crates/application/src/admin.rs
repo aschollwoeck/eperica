@@ -166,9 +166,9 @@ where
     Ok(admin.list_worlds().await?)
 }
 
-/// Create a new world (041 AC1) — a fresh round at `speed`/`radius`, with default end-game release
-/// offsets. Admin-gated; validates the parameters (P4). Returns the new world's id so the caller can
-/// start its runtime/scheduler live (AC2).
+/// Create a new world (041 AC1) — a fresh round at `speed`/`radius` with a caller-supplied end-game
+/// release schedule (047). Admin-gated; validates the parameters (P4). Returns the new world's id so the
+/// caller can start its runtime/scheduler live (AC2).
 ///
 /// `artifact_offset_secs`/`wonder_offset_secs` are the end-game release schedule (seconds after creation,
 /// 047) — the caller resolves them from the operator's input or the configured defaults.

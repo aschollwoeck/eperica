@@ -81,6 +81,8 @@ async fn spawn(pool: sqlx::PgPool) -> String {
             hub
         },
         map,
+        artifact_release_offset_secs: 90 * 86_400,
+        wonder_release_offset_secs: 120 * 86_400,
         world: config,
         world_id: world.id,
         world_registry: {
