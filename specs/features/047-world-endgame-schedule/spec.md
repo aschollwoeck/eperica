@@ -1,6 +1,6 @@
 # Feature 047 — Per-world end-game schedule (operator-set)
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 041 (world lifecycle admin: create-world form + `AdminRepository::create_world`).
 **Roadmap:** First slice of the **per-world configuration** program — see
 [ADR 0035](../../../docs/architecture/0035-per-world-configuration.md).
