@@ -74,6 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pool.clone(),
         shutdown_rx,
         world_rules.lifecycle.beginner_protection_secs,
+        world.rule_preset.clone(),
         Arc::clone(&world_rules),
     ));
     match all_worlds(&pool).await {

@@ -199,6 +199,8 @@ pub struct GameContext {
     /// The selected world's speed (P7) and radius (006).
     pub speed: eperica_domain::GameSpeed,
     pub radius: u32,
+    /// The selected world's resolved rule bundle (050) — every per-world sim read keys on this preset.
+    pub rules: std::sync::Arc<eperica_infrastructure::WorldRules>,
 }
 
 impl FromRequestParts<AppState> for GameContext {
@@ -235,14 +237,15 @@ impl FromRequestParts<AppState> for GameContext {
             let ctx = state.world_registry.context_for(world).await?;
             Some((world, player, ctx))
         };
-        let (world_id, player, (accounts, map, speed, radius)) = match resolve(selected).await {
-            Some(found) => found,
-            None => match resolve(state.world_id).await {
-                Some(home) => home,
-                // The account has no player even in the home world (should not happen for a real login).
-                None => return Err(Redirect::to("/login").into_response()),
-            },
-        };
+        let (world_id, player, (accounts, map, speed, radius, rules)) =
+            match resolve(selected).await {
+                Some(found) => found,
+                None => match resolve(state.world_id).await {
+                    Some(home) => home,
+                    // The account has no player even in the home world (should not happen for a real login).
+                    None => return Err(Redirect::to("/login").into_response()),
+                },
+            };
 
         Ok(GameContext {
             accounts,
@@ -252,6 +255,7 @@ impl FromRequestParts<AppState> for GameContext {
             world_id,
             speed,
             radius,
+            rules,
         })
     }
 }
@@ -266,6 +270,8 @@ pub struct WorldScope {
     pub world_id: eperica_domain::WorldId,
     pub speed: eperica_domain::GameSpeed,
     pub radius: u32,
+    /// The selected world's resolved rule bundle (050) — the public read pages key on this preset.
+    pub rules: std::sync::Arc<eperica_infrastructure::WorldRules>,
 }
 
 impl FromRequestParts<AppState> for WorldScope {
@@ -291,7 +297,7 @@ impl FromRequestParts<AppState> for WorldScope {
             .map(eperica_domain::WorldId)
             .unwrap_or(state.world_id);
         // Build the selected world's context; fall back to home if it is not running.
-        let (world_id, (accounts, map, speed, radius)) =
+        let (world_id, (accounts, map, speed, radius, rules)) =
             match state.world_registry.context_for(selected).await {
                 Some(ctx) => (selected, ctx),
                 None => match state.world_registry.context_for(state.world_id).await {
@@ -312,6 +318,7 @@ impl FromRequestParts<AppState> for WorldScope {
             world_id,
             speed,
             radius,
+            rules,
         })
     }
 }
