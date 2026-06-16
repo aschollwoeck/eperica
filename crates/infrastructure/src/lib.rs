@@ -40,4 +40,4 @@ pub use sqlx::PgPool;
 pub use world::{
     World, all_worlds, create_world, ensure_world, ensure_world_with_release, world_by_id,
 };
-pub use world_rules::{WorldRules, load_world_rules};
+pub use world_rules::{DEFAULT_PRESET, KNOWN_PRESETS, WorldRules, known_preset, load_world_rules};

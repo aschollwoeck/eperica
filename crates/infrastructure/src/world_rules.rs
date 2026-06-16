@@ -56,11 +56,30 @@ pub struct WorldRules {
     pub starting_village: StartingVillage,
 }
 
-/// Load the `classic` rule bundle (the current balance data — 048). Later slices (049+) load a named preset.
+/// The rule presets an operator may run a world under (049). `classic` is the shipped balance; a real
+/// second preset (with its balance overlay) lands in 052.
+pub const KNOWN_PRESETS: &[&str] = &["classic"];
+
+/// The default preset — every world without an explicit choice plays `classic` (matches the
+/// `worlds.rule_preset` DB default).
+pub const DEFAULT_PRESET: &str = "classic";
+
+/// Whether `name` is a preset an operator may select (049) — the server-authoritative allow-list (P4).
+#[must_use]
+pub fn known_preset(name: &str) -> bool {
+    KNOWN_PRESETS.contains(&name)
+}
+
+/// Load the named rule bundle (049). Only `classic` (the shipped balance) is known today; an unknown name
+/// is a clear error. 050 resolves a world's `rule_preset` through this; 052 adds the first non-`classic`
+/// preset + its balance overlay.
 ///
 /// # Errors
-/// [`BalanceError`] if any balance file fails to parse/validate.
-pub fn load_world_rules() -> Result<WorldRules, BalanceError> {
+/// [`BalanceError`] if the preset is unknown or any balance file fails to parse/validate.
+pub fn load_world_rules(preset: &str) -> Result<WorldRules, BalanceError> {
+    if preset != "classic" {
+        return Err(BalanceError::UnknownPreset(preset.to_owned()));
+    }
     Ok(WorldRules {
         economy: balance::economy_rules()?,
         build: balance::build_rules()?,
@@ -82,4 +101,23 @@ pub fn load_world_rules() -> Result<WorldRules, BalanceError> {
         map_rules: balance::map_rules()?,
         starting_village: balance::starting_village()?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classic_loads_and_unknown_preset_errors() {
+        assert!(known_preset("classic"));
+        assert!(!known_preset("speed"));
+        assert_eq!(DEFAULT_PRESET, "classic");
+        // The classic bundle assembles from the shipped balance.
+        load_world_rules("classic").expect("classic preset loads");
+        // An unknown preset is a clear, server-authoritative rejection (049).
+        assert!(matches!(
+            load_world_rules("speed"),
+            Err(BalanceError::UnknownPreset(p)) if p == "speed"
+        ));
+    }
 }

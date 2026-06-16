@@ -1,6 +1,6 @@
 # Feature 049 — `worlds.rule_preset` + name-aware rule loader
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 048 (`WorldRules` bundle + `load_world_rules`).
 **Roadmap:** Per-world configuration program — see [ADR 0035](../../../docs/architecture/0035-per-world-configuration.md) §B.
 **Program note:** Give each world a **named rule preset** it plays under, and make the bundle loader load by
