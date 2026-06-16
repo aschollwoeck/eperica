@@ -4053,6 +4053,184 @@ async fn selecting_an_unjoined_world_is_ignored(pool: sqlx::PgPool) {
     );
 }
 
+/// 044 AC3: a **game action** (a build order) issued with a second world selected lands in **that**
+/// world's village, not the home one — proving the migrated handlers operate through `GameContext`.
+#[sqlx::test(migrations = "../../migrations")]
+async fn build_order_lands_in_the_selected_world(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (c, user) = register_client(&base, &pool, &unique("mw")).await;
+    let home_vid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE owner_id = $1")
+        .bind(user)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // A second world + the account's player + starting village in it (the 042 join primitive).
+    let world_b = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 30, 4242)")
+        .bind(world_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repo_b = PgAccountRepository::new(
+        pool.clone(),
+        WorldId(world_b.as_u128()),
+        4242,
+        30,
+        economy_rules().unwrap().starting_amounts,
+        lifecycle_rules().unwrap().beginner_protection_secs,
+        GameSpeed::new(1.0).unwrap(),
+    );
+    let player_b = repo_b
+        .create_player_in_world(
+            PlayerId(user.as_u128()),
+            Tribe::Teutons,
+            &starting_village().unwrap(),
+        )
+        .await
+        .unwrap();
+    let b_vid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE owner_id = $1")
+        .bind(uuid::Uuid::from_u128(player_b.0))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_ne!(home_vid, b_vid);
+
+    // Select world B, then order a field upgrade — the migrated build handler acts in world B.
+    let r = c
+        .post(format!("{base}/world/select"))
+        .form(&[("world", world_b.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let r = c
+        .post(format!("{base}/village/build"))
+        .form(&[("table", "field"), ("slot", "0")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+
+    // The build order landed on world B's village — never the home village.
+    let order_vid: uuid::Uuid =
+        sqlx::query_scalar("SELECT village_id FROM build_orders WHERE status = 'pending'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        order_vid, b_vid,
+        "the build order lands in the selected world's village"
+    );
+    let home_orders: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM build_orders WHERE village_id = $1")
+            .bind(home_vid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(home_orders, 0, "the home village received no build order");
+}
+
+/// 044 AC1/AC3 (the `village_view_data` speed seam): a migrated economy view settles resources with the
+/// **selected world's** speed (`ctx.speed`), not the home world's. The academy's affordability gate is the
+/// observable that depends on the settled `amounts`. Two worlds differ **only** in speed (5× vs 1×) over an
+/// identical elapsed interval from zeroed resources: at 5× the Teuton academy-gated units (Spearman/Scout)
+/// become affordable; at 1× they do not. A regression that fed the home speed into `village_view_data`
+/// would make the 5× world behave like the 1× one and fail the first assertion.
+#[sqlx::test(migrations = "../../migrations")]
+async fn academy_affordability_uses_the_selected_worlds_speed(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (c, user) = register_client(&base, &pool, &unique("mw")).await;
+
+    // Two joined second worlds for the same account, identical but for speed: B = 5×, S = 1× (slow).
+    // For each, give the village an Academy (to engage research gating) + Warehouse/Granary (so the
+    // research costs fit under the storage cap), zero wood/clay/iron, stock crop, and backdate the
+    // resource clock 24h. The only variable that moves the settled amounts is the world speed.
+    let mut vids = std::collections::HashMap::new();
+    for (seed, speed) in [(4242_i64, 5.0_f64), (4343, 1.0)] {
+        let world = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, $2, 30, $3)")
+            .bind(world)
+            .bind(speed)
+            .bind(seed)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            WorldId(world.as_u128()),
+            seed,
+            30,
+            economy_rules().unwrap().starting_amounts,
+            lifecycle_rules().unwrap().beginner_protection_secs,
+            GameSpeed::new(speed).unwrap(),
+        );
+        let player = repo
+            .create_player_in_world(
+                PlayerId(user.as_u128()),
+                Tribe::Teutons,
+                &starting_village().unwrap(),
+            )
+            .await
+            .unwrap();
+        let vid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE owner_id = $1")
+            .bind(uuid::Uuid::from_u128(player.0))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        // Academy L20 (research unlocked), Warehouse/Granary L10 (raise the storage cap well above the
+        // research costs) in unused slots.
+        for (slot, kind, level) in [(2, "academy", 20), (3, "warehouse", 10), (4, "granary", 10)] {
+            sqlx::query(
+                "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+                 VALUES ($1, $2, $3, $4)",
+            )
+            .bind(vid)
+            .bind(slot as i16)
+            .bind(kind)
+            .bind(level as i16)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        // Zero the mined resources, stock crop, and backdate the clock 24h so production accrues.
+        sqlx::query(
+            "UPDATE village_resources SET wood = 0, clay = 0, iron = 0, crop = 12000, \
+             updated_at = now() - interval '24 hours' WHERE village_id = $1",
+        )
+        .bind(vid)
+        .execute(&pool)
+        .await
+        .unwrap();
+        vids.insert(speed.to_bits(), (world, vid));
+    }
+
+    let select = |world: uuid::Uuid| {
+        c.post(format!("{base}/world/select"))
+            .form(&[("world", world.as_u128().to_string())])
+    };
+    let academy = || c.get(format!("{base}/village/academy"));
+
+    // World B (5×): 24h of accrual affords the academy-gated units → no "insufficient resources" gate.
+    let (world_b, _) = vids[&5.0_f64.to_bits()];
+    assert_eq!(select(world_b).send().await.unwrap().status().as_u16(), 303);
+    let fast = academy().send().await.unwrap().text().await.unwrap();
+    assert!(
+        !fast.contains("insufficient resources"),
+        "at 5× the academy units are affordable — no insufficient-resources gate"
+    );
+
+    // World S (1×): the same 24h accrues 5× less → the same units are unaffordable. This is what the
+    // 5× world would also show if `village_view_data` settled with the home speed (the regression).
+    let (world_s, _) = vids[&1.0_f64.to_bits()];
+    assert_eq!(select(world_s).send().await.unwrap().status().as_u16(), 303);
+    let slow = academy().send().await.unwrap().text().await.unwrap();
+    assert!(
+        slow.contains("insufficient resources"),
+        "at 1× the same units are unaffordable — proving the speed is what flips the gate"
+    );
+}
+
 /// 024 AC2–AC4: a DM appears for both parties; opening it clears the recipient's unread.
 #[sqlx::test(migrations = "../../migrations")]
 async fn dm_conversation_flow(pool: sqlx::PgPool) {
