@@ -7631,6 +7631,7 @@ impl AdminRepository for PgAccountRepository {
         radius: u32,
         artifact_offset_secs: i64,
         wonder_offset_secs: i64,
+        rule_preset: &str,
     ) -> Result<WorldId, RepoError> {
         let config = WorldConfig::new(
             GameSpeed::new(speed).map_err(|e| RepoError::Backend(e.to_string()))?,
@@ -7641,6 +7642,7 @@ impl AdminRepository for PgAccountRepository {
             &config,
             artifact_offset_secs,
             wonder_offset_secs,
+            rule_preset,
         )
         .await
         .map_err(backend)?;
