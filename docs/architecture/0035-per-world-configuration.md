@@ -1,7 +1,8 @@
 # Per-world configuration — operator-tunable worlds & per-world rule presets
 
-**Status:** Proposed (program design) · **Date:** 2026-06-16 · **Slices:** 047 (end-game schedule) +
-048–05x (per-world rule presets)
+**Status:** Accepted (in progress) · **Date:** 2026-06-16 · **Slices:** 047 (end-game schedule) +
+048–05x (per-world rule presets). **Built & merged:** 047, 048, 049, 050 (050 absorbed the planned 051).
+**Remaining:** 052 (admin selector + a real 2nd preset + the balance-authoring mechanism), 053 (acceptance).
 **Depends on:** ADR 0034 (multi-world & administration; the `worlds` row, the registry, `GameContext`/
 `WorldScope`, the per-world scheduler).
 
@@ -76,14 +77,14 @@ behaviour-preserving, gated per slice by the reviewer/PR.
 |-----|-------|------|----------|
 | 047 | **Per-world end-game schedule** | Low | Artifact/Wonder offsets on the create form (validated `0 < a < w`); env values as defaults; one code path for boot + admin worlds (fixes the env-vs-hardcoded split). Independently useful; no rule program needed. |
 | 048 | **`WorldRules` bundle** | High | Consolidate the ~19 sim rule `Arc`s into one `WorldRules` struct loaded once (= the `classic` preset); thread it through `AppState`/registry/handlers in place of the individual fields. Pure refactor, no behaviour change. The keystone (mirrors 037). |
-| 049 | **Preset loader + `worlds.rule_preset`** | Med | Load `WorldRules` by preset name from `specs/balance/presets/<name>/` (move current balance → `presets/classic/`); add the column (default `classic`); boot world uses `classic`. Single preset in practice ⇒ behaviour-preserving. |
-| 050 | **Registry serves per-world rules** | High | `WorldRegistry` caches `preset → Arc<WorldRules>`; `context_for` returns it; the per-world scheduler uses its world's bundle. Still all-`classic` ⇒ preserving. |
-| 051 | **Handlers read rules from context** | Med | `GameContext`/`WorldScope` carry `Arc<WorldRules>`; migrate game handlers `state.rules.* → ctx.rules.*` (the handler sweep, mirrors 044). |
-| 052 | **Admin preset selection + a real 2nd preset** | Med | Preset dropdown on the create form (server-authoritative: only a known preset); ship a genuine **`speed`** preset (shorter protection, faster troops/merchants, steeper curves) so per-world rules are actually exercised end-to-end. |
+| 049 | **Preset loader + `worlds.rule_preset`** | Med | Add the column (default `classic`); make `load_world_rules(preset)` name-aware with a `KNOWN_PRESETS` allow-list (`classic`-only today); boot world uses `classic`. Kept lean — balance was **not** relocated into `presets/classic/`; that directory-vs-overlay mechanism is deferred to 052 when the first non-`classic` preset is authored. Single preset in practice ⇒ behaviour-preserving. |
+| 050 | **Registry serves per-world rules + handlers read from context** | High | `WorldRegistry` caches `preset → Arc<WorldRules>`; `context_for` returns it; the per-world scheduler uses its world's bundle; `GameContext`/`WorldScope` carry `Arc<WorldRules>` and game handlers read `ctx.rules.*`/`world.rules.*` (the handler sweep, mirrors 044). **Absorbed the planned 051** — the context carrying rules is inert unless handlers read it, so the two landed together. Still all-`classic` ⇒ preserving. |
+| ~~051~~ | **(folded into 050)** | — | The handler sweep landed with 050; no separate slice. |
+| 052 | **Admin preset selection + a real 2nd preset** | Med | Preset dropdown on the create form (server-authoritative: only a known preset); ship a genuine **2nd** preset so per-world rules are actually exercised end-to-end. Decides the balance-authoring mechanism (overlay deltas vs full `presets/<name>/` directory). |
 | 053 | **Acceptance + docs** | Low | Two worlds on different presets prove divergent rules (e.g. protection duration); home parity; ADR → Accepted. |
 
-047 stands alone. 048–051 are the heavy lift that must all land to reach per-world rules. 052–053 turn it
-on for operators and prove it.
+047 stands alone. 048–050 are the heavy lift that must all land to reach per-world rules (050 absorbed the
+planned 051 handler sweep). 052–053 turn it on for operators and prove it.
 
 ## Reuse / decisions
 
