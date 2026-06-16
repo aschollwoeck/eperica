@@ -150,12 +150,86 @@ const CLASSIC: PresetData = PresetData {
     wonder: WONDER_TOML,
 };
 
+/// The `speed` preset (052) — a blitz server: shorter beginner protection + inactivity windows
+/// (lifecycle), 2× troop map speed (units), and 1.5× merchant speed (trade); all other files match
+/// classic. Assembled from the embedded `presets/speed/` directory.
+const SPEED: PresetData = PresetData {
+    starting_village: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/starting-village.toml"
+    )),
+    economy: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/economy.toml"
+    )),
+    construction: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/construction.toml"
+    )),
+    units: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/units.toml"
+    )),
+    map: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/map.toml"
+    )),
+    trade: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/trade.toml"
+    )),
+    combat: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/combat.toml"
+    )),
+    culture: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/culture.toml"
+    )),
+    conquest: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/conquest.toml"
+    )),
+    alliance: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/alliance.toml"
+    )),
+    ranking: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/ranking.toml"
+    )),
+    medals: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/medals.toml"
+    )),
+    achievements: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/achievements.toml"
+    )),
+    quests: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/quests.toml"
+    )),
+    lifecycle: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/lifecycle.toml"
+    )),
+    artifacts: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/artifacts.toml"
+    )),
+    wonder: include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../specs/balance/presets/speed/wonder.toml"
+    )),
+};
+
 /// Resolve a preset name (049) to its embedded balance files (052). `None` for an unknown name — the
-/// server-authoritative allow-list lives in [`crate::world_rules::KNOWN_PRESETS`]; the second preset
-/// (`speed`) is added in T2.
+/// server-authoritative allow-list lives in [`crate::world_rules::KNOWN_PRESETS`].
 pub(crate) fn preset_data(preset: &str) -> Option<&'static PresetData> {
     match preset {
         "classic" => Some(&CLASSIC),
+        "speed" => Some(&SPEED),
         _ => None,
     }
 }

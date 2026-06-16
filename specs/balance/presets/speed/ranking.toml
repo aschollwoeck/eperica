@@ -1,0 +1,9 @@
+# Ranking & statistics balance (016, GDD §11.2) — interim, tunable.
+#
+# `windows_days` are the rolling leaderboard windows offered for the conflict boards (top attackers /
+# defenders / raiders), besides the implicit "all-time" window. `leaderboard_page_size` bounds every
+# board's result set (P11). Per-unit kill point values are NOT here — they live per unit in
+# `units.toml` (`point_value`, defaulting to a unit's crop upkeep, the faithful population value).
+
+windows_days = [7, 30]
+leaderboard_page_size = 100

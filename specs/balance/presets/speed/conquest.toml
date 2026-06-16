@@ -1,0 +1,22 @@
+# Loyalty & conquest balance (014, interim/tunable). Loyalty is a per-village value in [0, 100] that
+# regenerates over time; an administrator (Senator/Chief/Chieftain) that survives a won battle lowers
+# it, and at zero — with a free expansion slot and a non-capital target — the village is conquered.
+# Rates are per-hour at world speed 1x. The capital exception and the expansion-slot gate reuse 013.
+
+# Loyalty a fresh (founded/registered) village starts at — the maximum.
+starting_loyalty = 100
+
+# Loyalty a just-conquered village resets to, so it cannot be re-taken immediately.
+post_conquest_loyalty = 25
+
+# Loyalty points a village regenerates per hour (scaled by world speed).
+loyalty_regen_per_hour = 2
+
+# Loyalty a single surviving administrator removes — a seeded draw in [min, max] (the luck RNG, P6).
+loyalty_drop_min = 20
+loyalty_drop_max = 30
+
+# The tribes' administrator (conqueror) unit ids — Roman Senator, Teuton Chief, Gaul Chieftain. A
+# surviving unit with one of these ids reduces the target's loyalty (they are ordinary Expansion-role
+# combatants that fight in the battle; this list, not the role, marks them as conquerors).
+administrator_ids = ["senator", "chief", "chieftain"]

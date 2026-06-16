@@ -1,0 +1,24 @@
+# Account-lifecycle balance (019, GDD §12.2–12.3) — SPEED preset (052).
+#
+# Time-based `_secs` are BASE durations; the lifecycle scales them by world speed (P7). This `speed` preset
+# additionally shortens the BASE windows (independent of the world-speed multiplier): a blitz server throws
+# players into conflict sooner and reclaims idle accounts faster. Compare specs/balance/presets/classic/.
+
+[protection]
+# Beginner's attack-immunity window granted at spawn — 1 day base (classic: 3 days).
+beginner_protection_secs = 86400
+# Population at which a protected player is "established" — protection ends early past this (classic: 200).
+population_threshold = 100
+
+[inactivity]
+# Idle this long ⇒ the player is inactive (farmable / greyed). 3 days base (classic: 7).
+inactive_after_secs = 259200
+# Idle this long ⇒ the account is abandoned (villages removed, valleys freed). 10 days base (classic: 30).
+abandon_after_secs = 864000
+# The abandonment-sweep cadence / period length (real time). 12 hours (classic: 1 day).
+sweep_interval_secs = 43200
+
+[presence]
+# Active within this many seconds (real time) ⇒ shown "online" (025). 10 minutes — comfortably above the
+# 5-minute activity-touch throttle so an actively-browsing player reliably reads as online.
+online_secs = 600

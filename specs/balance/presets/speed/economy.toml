@@ -1,0 +1,50 @@
+# Economy balance data (interim, tunable). Index = level (0-based); values beyond the table clamp to
+# the last entry. Per-hour production at speed 1x.
+
+[production]
+wood = [5, 9, 15, 22, 33, 50, 70, 100, 145, 210, 280]
+clay = [5, 9, 15, 22, 33, 50, 70, 100, 145, 210, 280]
+iron = [5, 9, 15, 22, 33, 50, 70, 100, 145, 210, 280]
+crop = [5, 9, 15, 22, 33, 50, 70, 100, 145, 210, 280]
+
+# Population (each point consumes 1 crop/hour).
+[population]
+field = [0, 1, 1, 2, 2, 3, 4, 5, 7, 9, 11]
+main_building = [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12]
+rally_point = [0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4]
+warehouse = [0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4]
+granary = [0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4]
+marketplace = [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14]
+embassy = [0, 1, 2, 2, 3, 4, 5, 6, 7, 8, 10]
+wall = [0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4]
+cranny = [0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4]
+barracks = [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14]
+academy = [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14]
+smithy = [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14]
+stable = [0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15]
+workshop = [0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13]
+outpost = [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12]
+town_hall = [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14]
+residence = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11]
+palace = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11]
+treasury = [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14]
+# The Wonder of the World (021) is built to level 100; population clamps at the last listed value for
+# higher levels (it is the largest building in the world).
+wonder = [0, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32]
+
+# Storage capacity by building level (index 0 = base, i.e. no Warehouse/Granary built).
+[capacity]
+warehouse = [800, 1200, 1700, 2300, 3100, 4000, 5000, 6300, 8000, 10000, 12000]
+granary = [800, 1200, 1700, 2300, 3100, 4000, 5000, 6300, 8000, 10000, 12000]
+
+# How many oases an Outpost may hold, by level (index = level; 012). Level 0 (no Outpost) can clear
+# animals but cannot occupy.
+[outpost]
+capacity_per_level = [0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 6]
+
+# Resources a new village starts with.
+[starting_amounts]
+wood = 750
+clay = 750
+iron = 750
+crop = 750

@@ -56,9 +56,10 @@ pub struct WorldRules {
     pub starting_village: StartingVillage,
 }
 
-/// The rule presets an operator may run a world under (049). `classic` is the shipped balance; a real
-/// second preset (with its balance overlay) lands in 052.
-pub const KNOWN_PRESETS: &[&str] = &["classic"];
+/// The rule presets an operator may run a world under. `classic` is the shipped balance (049); `speed` is a
+/// blitz server with shorter protection and faster troops/merchants (052). Each is a full balance directory
+/// under `specs/balance/presets/<name>/`; the order here is the order the admin form lists them.
+pub const KNOWN_PRESETS: &[&str] = &["classic", "speed"];
 
 /// The default preset — every world without an explicit choice plays `classic` (matches the
 /// `worlds.rule_preset` DB default).
@@ -110,14 +111,34 @@ mod tests {
     #[test]
     fn classic_loads_and_unknown_preset_errors() {
         assert!(known_preset("classic"));
-        assert!(!known_preset("speed"));
+        assert!(known_preset("speed"));
+        assert!(!known_preset("nonesuch"));
         assert_eq!(DEFAULT_PRESET, "classic");
         // The classic bundle assembles from the shipped balance.
         load_world_rules("classic").expect("classic preset loads");
         // An unknown preset is a clear, server-authoritative rejection (049).
         assert!(matches!(
-            load_world_rules("speed"),
-            Err(BalanceError::UnknownPreset(p)) if p == "speed"
+            load_world_rules("nonesuch"),
+            Err(BalanceError::UnknownPreset(p)) if p == "nonesuch"
         ));
+    }
+
+    /// 052 AC2: the `speed` preset loads and genuinely diverges from `classic` — shorter beginner
+    /// protection (the ADR-0035 acceptance example), faster troops, faster merchants.
+    #[test]
+    fn speed_preset_loads_and_diverges_from_classic() {
+        let classic = load_world_rules("classic").expect("classic loads");
+        let speed = load_world_rules("speed").expect("speed loads");
+        // Shorter base beginner protection (independent of the world-speed multiplier).
+        assert!(
+            speed.lifecycle.beginner_protection_secs < classic.lifecycle.beginner_protection_secs,
+            "speed shortens beginner protection"
+        );
+        // Faster troops: every shared unit moves at least as fast, and the rosters are not identical.
+        assert!(
+            speed.merchant.profile(eperica_domain::Tribe::Gauls).speed
+                > classic.merchant.profile(eperica_domain::Tribe::Gauls).speed,
+            "speed has faster merchants"
+        );
     }
 }

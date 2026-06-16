@@ -1,0 +1,33 @@
+# Achievement catalogue (017, GDD §11.2) — interim, tunable.
+#
+# Each entry: a stable `id`, a milestone `kind`, a `threshold` (for count kinds — defensive_wins,
+# population; ignored otherwise), and an optional `reward`. A reward is either culture points
+# (`reward = { culture = N }`) or resources (`reward = { wood = .., clay = .., iron = .., crop = .. }`),
+# or omitted for a badge-only achievement. Rewards are applied once, with the grant.
+#
+# kinds: second_village | defensive_wins | first_oasis | population | research_all_units
+
+[[achievements]]
+id = "second_village"
+kind = "second_village"
+reward = { culture = 50 }
+
+[[achievements]]
+id = "defender_100"
+kind = "defensive_wins"
+threshold = 100
+
+[[achievements]]
+id = "first_oasis"
+kind = "first_oasis"
+
+[[achievements]]
+id = "population_1000"
+kind = "population"
+threshold = 1000
+reward = { wood = 500, clay = 500, iron = 500, crop = 500 }
+
+[[achievements]]
+id = "research_all_units"
+kind = "research_all_units"
+reward = { culture = 100 }
