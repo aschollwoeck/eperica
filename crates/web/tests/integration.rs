@@ -4009,6 +4009,15 @@ async fn selecting_an_unjoined_world_is_ignored(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert_eq!(r.status().as_u16(), 303);
+    // The handler's own guard must not set the `world` cookie (independent of the GameContext
+    // home-fallback backstop) — a regression that set it would be caught here directly.
+    assert!(
+        !r.headers()
+            .get_all("set-cookie")
+            .iter()
+            .any(|v| v.to_str().map(|s| s.starts_with("world=")).unwrap_or(false)),
+        "an unjoined world must not set the world cookie"
+    );
     let body = c
         .get(format!("{base}/village"))
         .send()
