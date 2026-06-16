@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 /// A world's identity, its persisted map seed (006), and its creation instant (the real-time anchor
 /// for the weekly medal settlement, 017).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct World {
     /// Stable identity.
     pub id: WorldId,
@@ -22,9 +22,12 @@ pub struct World {
     pub artifact_release_at: Option<Timestamp>,
     /// The Wonder-release instant (Unix-ms UTC), or `None` if not scheduled (021, after the artifact date).
     pub wonder_release_at: Option<Timestamp>,
+    /// The named rule preset this world plays under (049) — `'classic'` by default; the registry resolves
+    /// it to a [`crate::WorldRules`] bundle (050).
+    pub rule_preset: String,
 }
 
-const SELECT_COLS: &str = "id, speed, radius, seed, \
+const SELECT_COLS: &str = "id, speed, radius, seed, rule_preset, \
     (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ms, \
     (EXTRACT(EPOCH FROM artifact_release_at) * 1000)::bigint AS artifact_ms, \
     (EXTRACT(EPOCH FROM wonder_release_at) * 1000)::bigint AS wonder_ms";
@@ -39,6 +42,7 @@ fn world_from_row(row: &sqlx::postgres::PgRow) -> Result<World, sqlx::Error> {
         created_at: Timestamp(row.try_get("created_ms")?),
         artifact_release_at: row.try_get::<Option<i64>, _>("artifact_ms")?.map(Timestamp),
         wonder_release_at: row.try_get::<Option<i64>, _>("wonder_ms")?.map(Timestamp),
+        rule_preset: row.try_get("rule_preset")?,
     })
 }
 

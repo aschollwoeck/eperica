@@ -12952,6 +12952,9 @@ mod tests {
         let b = worlds.iter().find(|w| w.id.0 == world_b.as_u128()).unwrap();
         assert!((b.speed - 5.0).abs() < f64::EPSILON);
         assert_eq!(b.radius, 33);
+        // 049: every world defaults to the `classic` rule preset.
+        assert_eq!(home.rule_preset, "classic");
+        assert_eq!(b.rule_preset, "classic");
     }
 
     /// 040 AC5: a repo built per world processes only its own world's due work — the registry premise.
