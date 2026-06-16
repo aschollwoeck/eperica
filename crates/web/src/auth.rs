@@ -255,3 +255,63 @@ impl FromRequestParts<AppState> for GameContext {
         })
     }
 }
+
+/// A **player-less, login-less** world scope for the public read pages (046): the selected world's
+/// repo/map/speed/radius, resolved from the `world` cookie (default = home), with no auth requirement — an
+/// anonymous visitor sees the home world. Used by `leaderboard`/`wonder`/`search`/stat pages so a logged-in
+/// player who selected a second world sees **that** world's boards, while public access is preserved.
+pub struct WorldScope {
+    pub accounts: eperica_infrastructure::PgAccountRepository,
+    pub map: std::sync::Arc<eperica_domain::WorldMap>,
+    pub world_id: eperica_domain::WorldId,
+    pub speed: eperica_domain::GameSpeed,
+    pub radius: u32,
+}
+
+impl FromRequestParts<AppState> for WorldScope {
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        // The selected world from the `world` cookie, defaulting to home; no auth, never redirects.
+        let jar: PrivateCookieJar = PrivateCookieJar::from_request_parts(parts, state)
+            .await
+            .map_err(|_| {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal error",
+                )
+                    .into_response()
+            })?;
+        let selected = jar
+            .get(WORLD_COOKIE)
+            .and_then(|c| c.value().parse::<u128>().ok())
+            .map(eperica_domain::WorldId)
+            .unwrap_or(state.world_id);
+        // Build the selected world's context; fall back to home if it is not running.
+        let (world_id, (accounts, map, speed, radius)) =
+            match state.world_registry.context_for(selected).await {
+                Some(ctx) => (selected, ctx),
+                None => match state.world_registry.context_for(state.world_id).await {
+                    Some(home) => (state.world_id, home),
+                    None => {
+                        tracing::error!("world scope: home world has no context");
+                        return Err((
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                            "internal error",
+                        )
+                            .into_response());
+                    }
+                },
+            };
+        Ok(WorldScope {
+            accounts,
+            map,
+            world_id,
+            speed,
+            radius,
+        })
+    }
+}

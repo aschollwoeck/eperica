@@ -964,17 +964,21 @@ impl AccountRepository for PgAccountRepository {
     async fn search_players(&self, query: &str, limit: i64) -> Result<Vec<PlayerHit>, RepoError> {
         // Case-insensitive username **prefix**, abandoned/NPC excluded (like the leaderboard). The LIKE
         // pattern escapes the user's `%`/`_`/`\` so they are literal, and the anchored prefix uses the
-        // 0039 functional index (P11).
+        // 0039 functional index (P11). 046: scoped to this repo's world — drive from `users` (the prefix
+        // index), join `players` for the world player id, and return that id (so `/stats/player/{id}`
+        // resolves under the same selected-world repo).
         let rows = sqlx::query(
-            "SELECT id, username FROM users \
-             WHERE abandoned_at IS NULL AND is_npc = false \
-               AND lower(username) LIKE \
+            "SELECT p.id, u.username FROM users u \
+             JOIN players p ON p.user_id = u.id AND p.world_id = $3 \
+             WHERE u.abandoned_at IS NULL AND u.is_npc = false \
+               AND lower(u.username) LIKE \
                    replace(replace(replace(lower($1), '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%' \
                    ESCAPE '\\' \
-             ORDER BY username ASC LIMIT $2",
+             ORDER BY u.username ASC LIMIT $2",
         )
         .bind(query)
         .bind(limit)
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_all(&self.pool)
         .await
         .map_err(backend)?;
@@ -5703,14 +5707,16 @@ fn village_pop_expr(
 
 /// Flatten the economy population balance into array binds: `(field_pops, b_kinds, b_levels, b_pops)`
 /// (the per-level field table, and the building (kind, level, pop) triples).
-/// Set-based per-user population board SQL (023 tuning) — two grouped aggregations over the world's
-/// `village_fields`/`village_buildings` joined to users, instead of [`village_pop_expr`]'s two correlated
-/// subqueries per village (O(villages)). `qf` is the quadrant filter on `u.id`. Placeholders: `$1` world,
-/// `$2` field-pops, `$3`/`$4`/`$5` building kinds/levels/pops, `$6` quadrant, `$7` limit.
+/// Set-based per-player population board SQL (023 tuning) — two grouped aggregations over the world's
+/// `village_fields`/`village_buildings`, instead of [`village_pop_expr`]'s two correlated subqueries per
+/// village (O(villages)). `qf` is the quadrant filter on `p.id`. Placeholders: `$1` world, `$2` field-pops,
+/// `$3`/`$4`/`$5` building kinds/levels/pops, `$6` quadrant, `$7` limit.
 ///
-/// Driven `FROM users` (the CTEs are world-scoped via `v.world_id = $1`, and the `> 0` filter prunes users
-/// with no village in this world) — single-world today. A multi-world deployment would scope this to users
-/// owning a village in the world to avoid a global `users` scan.
+/// Driven `FROM (field_pop ∪ bldg_pop) owners` — the population CTEs are world-scoped (`v.world_id = $1`),
+/// so each owner is a world-`$1` village owner = a world-`$1` player; the board then **PK-joins** `players`
+/// (`p.id = owners.oid`) → `users` for the name (046). This both world-scopes and name-resolves without a
+/// global `players`/`users` scan (keeping the 023/P11 scale budget) — second-world players (`p.id !=
+/// user.id`) resolve correctly; home parity holds via the reuse-UUID invariant.
 fn population_board_sql(qf: &str) -> String {
     format!(
         "WITH field_pop AS ( \
@@ -5725,14 +5731,16 @@ fn population_board_sql(qf: &str) -> String {
               ON bp.kind = vb.building_type AND bp.lvl = vb.level \
             WHERE v.world_id = $1 GROUP BY v.owner_id \
          ) \
-         SELECT u.id, u.username, (COALESCE(f.pop, 0) + COALESCE(b.pop, 0))::bigint AS total, \
+         SELECT p.id, u.username, (COALESCE(f.pop, 0) + COALESCE(b.pop, 0))::bigint AS total, \
                 (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity \
-         FROM users u \
-         LEFT JOIN field_pop f ON f.oid = u.id \
-         LEFT JOIN bldg_pop b ON b.oid = u.id \
+         FROM (SELECT oid FROM field_pop UNION SELECT oid FROM bldg_pop) owners \
+         JOIN players p ON p.id = owners.oid \
+         JOIN users u ON u.id = p.user_id \
+         LEFT JOIN field_pop f ON f.oid = owners.oid \
+         LEFT JOIN bldg_pop b ON b.oid = owners.oid \
          WHERE u.abandoned_at IS NULL AND u.is_npc = false AND {qf} \
            AND (COALESCE(f.pop, 0) + COALESCE(b.pop, 0)) > 0 \
-         ORDER BY total DESC, u.id ASC LIMIT $7"
+         ORDER BY total DESC, p.id ASC LIMIT $7"
     )
 }
 
@@ -5784,7 +5792,7 @@ impl RankingRepository for PgAccountRepository {
         limit: i64,
     ) -> Result<Vec<LeaderboardRow>, RepoError> {
         let (fields, kinds, levels, pops) = population_arrays(econ);
-        let sql = population_board_sql(&quadrant_filter("u.id", "$6"));
+        let sql = population_board_sql(&quadrant_filter("p.id", "$6"));
         let rows: Vec<(Uuid, String, i64, i64)> = sqlx::query_as(&sql)
             .bind(Uuid::from_u128(self.world_id.0))
             .bind(&fields)
@@ -5809,21 +5817,25 @@ impl RankingRepository for PgAccountRepository {
     ) -> Result<Vec<LeaderboardRow>, RepoError> {
         let (table, val, pid, occ) = conflict_source(metric);
         let qf = quadrant_filter(pid, "$3");
+        // 046: the player id is world-specific, so `JOIN players … AND world_id = $5` both world-scopes
+        // (battle tables carry no world_id) and resolves the name (`p.user_id → users`).
         let sql = format!(
-            "SELECT u.id, u.username, COALESCE(SUM({val}), 0)::bigint AS total, \
+            "SELECT p.id, u.username, COALESCE(SUM({val}), 0)::bigint AS total, \
                     (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity \
-             FROM {table} JOIN users u ON u.id = {pid} \
+             FROM {table} JOIN players p ON p.id = {pid} AND p.world_id = $5 \
+             JOIN users u ON u.id = p.user_id \
              WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
                AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) AND {qf} \
                AND u.abandoned_at IS NULL AND u.is_npc = false \
-             GROUP BY u.id, u.username, u.last_activity HAVING COALESCE(SUM({val}), 0) > 0 \
-             ORDER BY total DESC, u.id ASC LIMIT $4"
+             GROUP BY p.id, u.username, u.last_activity HAVING COALESCE(SUM({val}), 0) > 0 \
+             ORDER BY total DESC, p.id ASC LIMIT $4"
         );
         let rows: Vec<(Uuid, String, i64, i64)> = sqlx::query_as(&sql)
             .bind(since.map(|t| t.0 as f64))
             .bind(until.map(|t| t.0 as f64))
             .bind(scope_code(scope))
             .bind(limit)
+            .bind(Uuid::from_u128(self.world_id.0))
             .fetch_all(&self.pool)
             .await
             .map_err(backend)?;
@@ -5843,7 +5855,8 @@ impl RankingRepository for PgAccountRepository {
             "SELECT a.id, a.name, a.tag, COALESCE(SUM({pop}), 0)::bigint AS total \
              FROM alliances a \
              JOIN alliance_members am ON am.alliance_id = a.id \
-             JOIN users u ON u.id = am.player_id \
+             JOIN players p ON p.id = am.player_id AND p.world_id = $1 \
+             JOIN users u ON u.id = p.user_id \
              JOIN villages v ON v.owner_id = am.player_id AND v.world_id = $1 \
              WHERE {qf} AND u.abandoned_at IS NULL AND u.is_npc = false \
              GROUP BY a.id, a.name, a.tag HAVING COALESCE(SUM({pop}), 0) > 0 \
@@ -5873,11 +5886,13 @@ impl RankingRepository for PgAccountRepository {
     ) -> Result<Vec<AllianceLeaderboardRow>, RepoError> {
         let (table, val, pid, occ) = conflict_source(metric);
         let qf = quadrant_filter("am.player_id", "$3");
+        // 046: world-scope the members to this world's players (`p.world_id = $5`) + resolve the name.
         let sql = format!(
             "SELECT a.id, a.name, a.tag, COALESCE(SUM(pv.val), 0)::bigint AS total \
              FROM alliances a \
              JOIN alliance_members am ON am.alliance_id = a.id \
-             JOIN users u ON u.id = am.player_id \
+             JOIN players p ON p.id = am.player_id AND p.world_id = $5 \
+             JOIN users u ON u.id = p.user_id \
              JOIN (SELECT {pid} AS pid, SUM({val}) AS val FROM {table} \
                    WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
                      AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) \
@@ -5891,6 +5906,7 @@ impl RankingRepository for PgAccountRepository {
             .bind(until.map(|t| t.0 as f64))
             .bind(scope_code(scope))
             .bind(limit)
+            .bind(Uuid::from_u128(self.world_id.0))
             .fetch_all(&self.pool)
             .await
             .map_err(backend)?;
@@ -5903,11 +5919,14 @@ impl RankingRepository for PgAccountRepository {
         player: PlayerId,
     ) -> Result<Option<PlayerStats>, RepoError> {
         let pid = Uuid::from_u128(player.0);
-        // 019 AC8: an abandoned account is hidden from its stat page (treated as not found).
+        // 019 AC8: an abandoned account is hidden from its stat page (treated as not found). 046: the name
+        // resolves through `players`, and a player not in this repo's world is treated as not found.
         let Some(name): Option<String> = sqlx::query_scalar(
-            "SELECT username FROM users WHERE id = $1 AND abandoned_at IS NULL AND is_npc = false",
+            "SELECT u.username FROM players p JOIN users u ON u.id = p.user_id \
+             WHERE p.id = $1 AND p.world_id = $2 AND u.abandoned_at IS NULL AND u.is_npc = false",
         )
         .bind(pid)
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_optional(&self.pool)
         .await
         .map_err(backend)?
@@ -5976,24 +5995,31 @@ impl RankingRepository for PgAccountRepository {
         alliance: AllianceId,
     ) -> Result<Option<AllianceStats>, RepoError> {
         let aid = Uuid::from_u128(alliance.0);
-        let Some((name, tag)): Option<(String, String)> =
-            sqlx::query_as("SELECT name, tag FROM alliances WHERE id = $1")
-                .bind(aid)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(backend)?
+        // 046: an alliance with no member in this repo's world is not in this world — treat as not found
+        // (symmetry with `player_stats`' world guard), so a foreign-world alliance id yields no page.
+        let Some((name, tag)): Option<(String, String)> = sqlx::query_as(
+            "SELECT a.name, a.tag FROM alliances a \
+             WHERE a.id = $1 AND EXISTS (SELECT 1 FROM alliance_members am \
+               JOIN players p ON p.id = am.player_id \
+               WHERE am.alliance_id = a.id AND p.world_id = $2)",
+        )
+        .bind(aid)
+        .bind(Uuid::from_u128(self.world_id.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?
         else {
             return Ok(None);
         };
         let pop = village_pop_expr("v.id", "$3", "$4", "$5", "$6");
         let (fields, kinds, levels, pops) = population_arrays(econ);
         let sql = format!(
-            "SELECT u.id, u.username, \
-               COALESCE((SELECT SUM({pop}) FROM villages v WHERE v.owner_id = u.id AND v.world_id = $2), 0)::bigint AS pop, \
-               COALESCE((SELECT SUM(attack_points) FROM battle_reports WHERE attacker_player = u.id), 0)::bigint AS atk, \
-               COALESCE((SELECT SUM(defense_points) FROM battle_defenders WHERE player_id = u.id), 0)::bigint AS def \
-             FROM alliance_members am JOIN users u ON u.id = am.player_id \
-             WHERE am.alliance_id = $1 ORDER BY pop DESC, u.id ASC"
+            "SELECT am.player_id, u.username, \
+               COALESCE((SELECT SUM({pop}) FROM villages v WHERE v.owner_id = am.player_id AND v.world_id = $2), 0)::bigint AS pop, \
+               COALESCE((SELECT SUM(attack_points) FROM battle_reports WHERE attacker_player = am.player_id), 0)::bigint AS atk, \
+               COALESCE((SELECT SUM(defense_points) FROM battle_defenders WHERE player_id = am.player_id), 0)::bigint AS def \
+             FROM alliance_members am JOIN players p ON p.id = am.player_id JOIN users u ON u.id = p.user_id \
+             WHERE am.alliance_id = $1 ORDER BY pop DESC, am.player_id ASC"
         );
         let rows: Vec<(Uuid, String, i64, i64, i64)> = sqlx::query_as(&sql)
             .bind(aid)
@@ -6378,10 +6404,11 @@ impl MedalRepository for PgAccountRepository {
         let qf = quadrant_filter("cur.player_id", "$4");
         let delta = CLIMBER_DELTA;
         let sql = format!(
-            "SELECT u.id, u.username, {delta}::bigint AS delta, \
+            "SELECT cur.player_id, u.username, {delta}::bigint AS delta, \
                     (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity \
              FROM population_snapshots cur \
-             JOIN users u ON u.id = cur.player_id \
+             JOIN players p ON p.id = cur.player_id \
+             JOIN users u ON u.id = p.user_id \
              LEFT JOIN population_snapshots prev \
                ON prev.world_id = cur.world_id AND prev.player_id = cur.player_id AND prev.period = $2 \
              WHERE cur.world_id = $1 AND cur.period = $3 AND {delta} > 0 AND {qf} \
