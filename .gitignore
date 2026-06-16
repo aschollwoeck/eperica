@@ -11,6 +11,7 @@
 
 # Tooling / local
 .claude/settings.local.json
+.playwright-mcp/
 *.log
 debug.log
 
