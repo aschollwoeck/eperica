@@ -24,25 +24,23 @@ After 044 a logged-in player can *operate* in a selected world, but:
 
 ## Goal
 
-- **AC1 — Read re-pointing.** Every repo read that resolves a **game player id → username** joins through
-  `players` (`JOIN players p ON p.id = <game id> JOIN users u ON u.id = p.user_id`) instead of directly on
-  `users`. Home-world behaviour is unchanged (`player.id == user.id`); a second-world player's name now
-  resolves. Covers: map village owners, reinforcements (`reinforcements_at`/`_of`), battle-report
-  attacker/defender, oasis occupants, alliance members + member villages, alliance invitations, forum
-  thread authors, and the ranking/search/stat name reads.
-- **AC2 — World-scoped public read pages.** A `WorldScope` extractor resolves the selected world's repo/map
-  from the `world` cookie (default = home; **no login required**, so the pages stay public). `leaderboard`,
-  `wonder`, `search_page`, `player_stats_page`, `alliance_stats_page` use it, so a player who selected a
-  second world sees **that** world's boards/stats; an anonymous visitor sees the home world.
-- **AC3 — World lobby.** `GET /worlds` (login required) lists the account's **joined** worlds (with the
+- **AC1 — Per-row read re-pointing.** Every **per-row** repo read that resolves a **game player id →
+  username** joins through `players` (`JOIN players p ON p.id = <game id> JOIN users u ON u.id =
+  p.user_id`) instead of directly on `users`. Home-world behaviour is unchanged (`player.id == user.id`); a
+  second-world player's name now resolves. Covers the 13 per-row name reads: map village owners,
+  reinforcements (`reinforcements_at`/`_of`), battle-report attacker/defender, oasis occupants, alliance
+  members + member villages, alliance invitations, forum thread/post authors, and scout-report
+  scouter/target. *(The aggregate **ranking boards** + **search** — which `GROUP BY` the account and are not
+  world-filtered — need world-scoping + GROUP-BY rework, a coherent change deferred to **046**.)*
+- **AC2 — World lobby.** `GET /worlds` (login required) lists the account's **joined** worlds (with the
   current one marked) and the **joinable** worlds (running, not yet joined), each with speed/size. Linked
   from the nav.
-- **AC4 — Join a world.** `POST /worlds/join` with a world + tribe creates the account's player in that
+- **AC3 — Join a world.** `POST /worlds/join` with a world + tribe creates the account's player in that
   world via `create_player_in_world` (042; server-authoritative — only a running, not-already-joined world),
   selects it (sets the `world` cookie), and redirects to `/village`. Re-joining is a no-op (idempotent).
-- **AC5 — Switch worlds.** From the lobby, selecting a joined world posts to `POST /world/select` (043) and
+- **AC4 — Switch worlds.** From the lobby, selecting a joined world posts to `POST /world/select` (043) and
   switches the active world. The nav shows the current world and links to the lobby.
-- **AC6 — Behaviour preserved.** No domain change (P3). The full existing suite passes; home-world play,
+- **AC5 — Behaviour preserved.** No domain change (P3). The full existing suite passes; home-world play,
   names, and the public pages are unchanged.
 
 ## Design
@@ -51,9 +49,6 @@ After 044 a logged-in player can *operate* in a selected world, but:
   clauses to `JOIN players p ON p.id = <game id> JOIN users u ON u.id = p.user_id`. The NPC player has a
   `players` row (042), so NPC-owned villages/oases still resolve. Account-level joins (sitters, sitter
   actions, `find_user_by_id`, protection) key on **user** ids and are left untouched.
-- **`WorldScope` extractor (`auth.rs`).** Like `GameContext` but player-less and login-less: read the
-  `world` cookie (default `state.world_id`), `context_for` it (home fallback if not running), yield
-  `{ accounts, map, speed, radius, world_id }`. Used by the public read pages.
 - **Lobby (`/worlds`).** `worlds_of_user(account)` (037) → joined; `list_worlds()` minus joined and minus
   not-running → joinable. A `WorldsTemplate` renders both lists; join posts `{ world, tribe }`.
 - **Join (`POST /worlds/join`).** Validate the world is running + not already joined; `create_player_in_world`
@@ -62,6 +57,13 @@ After 044 a logged-in player can *operate* in a selected world, but:
 
 ## Out of scope
 
+- **Multi-world ranking boards, public read pages + search (046).** World-scoping the aggregate boards
+  (`conflict_board`, population boards, alliance population aggregate, top-climbers, `player_stats`) and
+  `search_players` — they `GROUP BY` the account and join battle tables that carry no `world_id`, so making
+  them per-world is a GROUP-BY + village-join rework, not a per-row name swap. The player-less `WorldScope`
+  extractor and the public read pages (`leaderboard`, `wonder`, `search_page`, `player_stats_page`,
+  `alliance_stats_page`) move with it, since their world-correctness *is* the board world-scoping. Until 046
+  the boards/public pages render the home world's data.
 - Per-world unread/notification fan-out changes, per-world chat scoping beyond what exists, and any
   gameplay-rule change. World **creation** stays admin-only (036). Deleting/leaving a world.
 - A per-page dropdown switcher in every header beyond the nav link to the lobby (the lobby is the switch

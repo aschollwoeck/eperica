@@ -154,7 +154,8 @@ is sequenced so the low-risk pieces land first and the heavy refactors are isola
 | 042 | **Player-FK switch-over** — re-point the per-world game FKs `users(id)`→`players(id)` (so a non-account player — the Natar NPC, or a second-world player — can own game state); the NPC gains a per-world player (reuse-UUID). Behaviour-preserving. | 037, 020/021 | The foundation that lets a non-account player exist. | §13.3 |
 | 043 | **Request world-context** — a `world` cookie + `GameContext` extractor resolving the selected world's repo/map/speed + the `(user, world)` player; behaviour-preserving for the home world. | 042 | The per-request multi-world seam. | §13.3 |
 | 044 | **Game-handler migration** — move the ~40 game handlers onto `GameContext`; account handlers stay on `AuthUser`/`RealUser`. | 043 | Handlers operate in the selected world. | §13.3 |
-| 045 | **Player multi-world UX** — post-login world lobby, join-world flow, nav switcher; re-point `owner→user` reads through `players` for second-world players. | 044 | Players self-select and play across worlds. | §13.3 |
+| 045 | **Player multi-world UX** — post-login world lobby, join-world flow, nav switcher; re-point the per-row `owner/player→user` **name reads** through `players` for second-world players. | 044 | Players self-select and play across worlds; names resolve in any world. | §13.3 |
+| 046 | **Multi-world ranking & public pages** — world-scope the aggregate boards (`conflict_board`, population/alliance/top-climber boards, `player_stats`) + `search`, and route the public read pages (`leaderboard`/`wonder`/`search`/stats) through a player-less `WorldScope` extractor (GROUP-BY + `world_id` rework, not a per-row name swap). | 045 | Boards & public pages reflect the selected world. | §13.3 |
 
 ---
 

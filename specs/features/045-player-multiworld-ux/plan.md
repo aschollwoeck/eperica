@@ -4,32 +4,28 @@
 
 ## Approach
 
-Land the read correctness first (re-pointing), then the public-page world-scoping, then the player-facing
-lobby/join/switch UI on top. Each stage is behaviour-preserving in the home world (the existing suite is the
-oracle) and adds a focused multi-world test. No domain change (P3).
+Land the read correctness first (per-row name re-pointing), then the player-facing lobby/join/switch UI on
+top. Each stage is behaviour-preserving in the home world (the existing suite is the oracle) and adds a
+focused multi-world test. No domain change (P3). The aggregate boards + public read pages are a separate,
+coherent world-scoping change (046).
 
 ## Stages (each a commit; suite green before advancing)
 
-1. **Read re-pointing (`repo.rs`).** Rewrite the cross-player `JOIN users u ON u.id = <game id>` reads to go
-   through `players` (map owners, reinforcements_at/_of, battle-report attacker/defender, oases, alliance
-   members + member villages, invitations, forum authors, ranking/search/stat names). Home parity holds via
-   `player.id == user.id`. Add a DB test: a second-world player's name resolves (e.g. alliance roster /
-   reinforcement / report). (AC1/AC6)
-2. **`WorldScope` extractor + public read pages.** Add the player-less, login-less extractor; migrate
-   `leaderboard`, `wonder`, `search_page`, `player_stats_page`, `alliance_stats_page` to it. Tests: the
-   pages stay public (anonymous → home) and reflect the selected world for a player who joined one. (AC2)
-3. **Lobby + join + switch + nav.** `GET /worlds` (joined + joinable), `POST /worlds/join` (create player +
+1. **Per-row read re-pointing (`repo.rs`).** Rewrite the 13 per-row cross-player `JOIN users u ON u.id =
+   <game id>` reads to go through `players` (map owners, reinforcements_at/_of, battle-report attacker/
+   defender, oases, alliance members + member villages, invitations, forum thread/post authors, scout
+   scouter/target). Home parity holds via `player.id == user.id`. Add a DB test: a second-world player's
+   name resolves (e.g. alliance roster / reinforcement / report). (AC1/AC5)
+2. **Lobby + join + switch + nav.** `GET /worlds` (joined + joinable), `POST /worlds/join` (create player +
    select), nav link + current-world label; switching reuses `POST /world/select`. Integration: join a 2nd
-   world through the lobby, land in its village, see its name resolve, switch back home. (AC3/AC4/AC5)
-4. **Acceptance.** Full suite green; spec/plan/tasks; the end-to-end multi-world loop test. (AC6)
+   world through the lobby, land in its village, see its name resolve, switch back home. (AC2/AC3/AC4)
+3. **Acceptance.** Full suite green; spec/plan/tasks; the end-to-end multi-world loop test. (AC5)
 
 ## Key decisions
 
 - **Re-point through `players`, not a schema change.** The 042 FKs already point at `players`; only the read
   joins lagged. Rewriting the joins (not adding columns) keeps it a pure query change, home-parity by the
   reuse-UUID invariant, and NPC-safe (the NPC has a `players` row).
-- **`WorldScope` stays public.** The read pages must not start requiring login (behaviour change); the
-  extractor defaults to the home world and never redirects, so anonymous access is preserved.
 - **The lobby is the switch hub.** Rather than plumb a joined-worlds dropdown into every page header, the
   nav links to `/worlds` which lists joined worlds with switch buttons — full switching, minimal surface.
 - **Join is server-authoritative & idempotent.** Only a running, not-already-joined world is honoured;
