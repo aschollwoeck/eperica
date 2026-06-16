@@ -1500,18 +1500,20 @@ fn building_level(village: &Village, kind: BuildingKind) -> u8 {
 }
 
 /// The selected village + settled amounts, or an error response (013 AC11; `selected` ⇒ that village).
+/// World-scoped: the repo/speed/player come from `GameContext` so the economy settles with the **selected**
+/// world's speed (044); the shared rule sets stay on `AppState`.
 async fn village_view_data(
+    ctx: &GameContext,
     state: &AppState,
-    player: eperica_domain::PlayerId,
     selected: Option<VillageId>,
 ) -> Result<(Village, ResourceAmounts), Response> {
     match load_economy(
-        state.accounts.as_ref(),
+        &ctx.accounts,
         state.rules.as_ref(),
         state.unit_rules.as_ref(),
-        state.world.speed,
+        ctx.speed,
         now(),
-        player,
+        ctx.player,
         selected,
     )
     .await
@@ -1521,7 +1523,7 @@ async fn village_view_data(
             Ok((e.village, amounts))
         }
         Ok(None) => {
-            tracing::error!(?player, "authenticated user has no village/economy");
+            tracing::error!(player = ?ctx.player, "authenticated user has no village/economy");
             Err(server_error())
         }
         Err(e) => {
@@ -1539,7 +1541,7 @@ pub async fn academy(
 ) -> Response {
     let player = ctx.player;
     let (village, amounts) =
-        match village_view_data(&state, player, selected_village(q.village.as_deref())).await {
+        match village_view_data(&ctx, &state, selected_village(q.village.as_deref())).await {
             Ok(v) => v,
             Err(r) => return r,
         };
@@ -1651,7 +1653,7 @@ pub async fn smithy(
 ) -> Response {
     let player = ctx.player;
     let (village, amounts) =
-        match village_view_data(&state, player, selected_village(q.village.as_deref())).await {
+        match village_view_data(&ctx, &state, selected_village(q.village.as_deref())).await {
             Ok(v) => v,
             Err(r) => return r,
         };
@@ -1827,7 +1829,7 @@ pub async fn troops(
         return Redirect::to("/village").into_response();
     };
     let (village, _amounts) =
-        match village_view_data(&state, player, selected_village(q.village.as_deref())).await {
+        match village_view_data(&ctx, &state, selected_village(q.village.as_deref())).await {
             Ok(v) => v,
             Err(r) => return r,
         };
@@ -2005,7 +2007,7 @@ pub async fn rally(
 ) -> Response {
     let player = ctx.player;
     let (village, _amounts) =
-        match village_view_data(&state, player, selected_village(q.village.as_deref())).await {
+        match village_view_data(&ctx, &state, selected_village(q.village.as_deref())).await {
             Ok(v) => v,
             Err(r) => return r,
         };
@@ -2365,7 +2367,7 @@ pub async fn market(
 ) -> Response {
     let player = ctx.player;
     let (village, _amounts) =
-        match village_view_data(&state, player, selected_village(q.village.as_deref())).await {
+        match village_view_data(&ctx, &state, selected_village(q.village.as_deref())).await {
             Ok(v) => v,
             Err(r) => return r,
         };

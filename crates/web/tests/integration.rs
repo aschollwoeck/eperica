@@ -4065,9 +4065,11 @@ async fn build_order_lands_in_the_selected_world(pool: sqlx::PgPool) {
         .await
         .unwrap();
 
-    // A second world + the account's player + starting village in it (the 042 join primitive).
+    // A second world at a **distinct speed** (5×, vs the home world's 1×) + the account's player +
+    // starting village in it (the 042 join primitive). The distinct speed lets the test prove the
+    // migrated handlers read *that* world's speed, not the home world's.
     let world_b = uuid::Uuid::new_v4();
-    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 30, 4242)")
+    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 5.0, 30, 4242)")
         .bind(world_b)
         .execute(&pool)
         .await
@@ -4079,7 +4081,7 @@ async fn build_order_lands_in_the_selected_world(pool: sqlx::PgPool) {
         30,
         economy_rules().unwrap().starting_amounts,
         lifecycle_rules().unwrap().beginner_protection_secs,
-        GameSpeed::new(1.0).unwrap(),
+        GameSpeed::new(5.0).unwrap(),
     );
     let player_b = repo_b
         .create_player_in_world(
@@ -4095,6 +4097,20 @@ async fn build_order_lands_in_the_selected_world(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert_ne!(home_vid, b_vid);
+
+    // Home world (speed 1×): the migrated rally page renders the home world's speed multiplier.
+    let home_rally = c
+        .get(format!("{base}/village/rally"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        home_rally.contains("MULT = 1"),
+        "the home rally page reflects the home world's 1× speed"
+    );
 
     // Select world B, then order a field upgrade — the migrated build handler acts in world B.
     let r = c
@@ -4129,6 +4145,21 @@ async fn build_order_lands_in_the_selected_world(pool: sqlx::PgPool) {
             .await
             .unwrap();
     assert_eq!(home_orders, 0, "the home village received no build order");
+
+    // A migrated view (the rally page) now renders world B's 5× speed multiplier — proving the
+    // economy/movement reads use the selected world's speed (`ctx.speed`), not the home world's.
+    let b_rally = c
+        .get(format!("{base}/village/rally"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        b_rally.contains("MULT = 5"),
+        "the rally page in world B reflects that world's 5× speed, not the home world's 1×"
+    );
 }
 
 /// 024 AC2–AC4: a DM appears for both parties; opening it clears the recipient's unread.
