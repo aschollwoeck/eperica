@@ -30,10 +30,12 @@ and serve **the world's own** bundle everywhere a sim rule is read.
   create) is built from the world's resolved bundle, not the global one — so due-event processing (training,
   combat, culture, lifecycle, …) uses the world's preset.
 - **AC4 — Game handlers read rules from the context.** Every handler that reads a sim rule for the selected
-  world reads it from `ctx.rules` (GameContext) or `world.rules` (WorldScope), not `AppState.world_rules`. The
-  process-global `AppState.world_rules` remains only for the **non-world-scoped** paths: account creation
-  (`register_submit`), world joining (`join_world`), and the cross-world account messaging pages
-  (`messages`, `conversation`) — all of which act on the home/account level, not a selected world's sim.
+  world reads it from `ctx.rules` (GameContext) or `world.rules` (WorldScope), not `AppState.world_rules`.
+  `join_world` — though it takes no `GameContext`/`WorldScope` — resolves the **selected** world's bundle via
+  `registry.context_for` and seeds the new village from **that** world's `starting_village` (its preset), not
+  the home's. The process-global `AppState.world_rules` remains only for the genuinely **non-world-scoped**
+  paths: account creation (`register_submit`) and the cross-world account messaging pages (`messages`,
+  `conversation`) — all of which act on the home/account level, not a selected world's sim.
 - **AC5 — Behaviour preserved.** With only `classic` defined, every world resolves to the same balance, so the
   full suite passes unchanged. A focused test proves the context's rules track the **selected** world.
 
@@ -48,7 +50,9 @@ and serve **the world's own** bundle everywhere a sim rule is read.
 - **`auth.rs`** — `GameContext`/`WorldScope` gain `pub rules: Arc<WorldRules>`, populated from the registry's
   `context_for` tuple. Home-world fallback already in place is unchanged.
 - **`handlers.rs`** — the 23 `GameContext` handlers + the `village_view_data` helper read `ctx.rules.*`; the 3
-  `WorldScope` handlers read `world.rules.*`; the 4 non-world-scoped handlers keep `AppState.world_rules.*`.
+  `WorldScope` handlers read `world.rules.*`; `join_world` reads the selected world's `rules.starting_village`
+  from `context_for`; only `register_submit`/`messages`/`conversation` keep `AppState.world_rules.*`. The 26
+  handlers that used `state` solely for rules shed their now-dead `State` extractor.
 - **`main.rs`** — pass the home world's `(rule_preset, world_rules)` to `WorldRegistry::new`; `AppState` keeps
   `world_rules` (the home bundle) for the non-world-scoped paths.
 

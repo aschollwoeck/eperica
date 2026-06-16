@@ -1597,8 +1597,8 @@ fn building_level(village: &Village, kind: BuildingKind) -> u8 {
 }
 
 /// The selected village + settled amounts, or an error response (013 AC11; `selected` ⇒ that village).
-/// World-scoped: the repo/speed/player come from `GameContext` so the economy settles with the **selected**
-/// world's speed (044); the shared rule sets stay on `AppState`.
+/// World-scoped: the repo/speed/player **and the economy/unit rules** all come from `GameContext` (050), so
+/// the economy settles under the selected world's speed (044) and its rule preset.
 async fn village_view_data(
     ctx: &GameContext,
     selected: Option<VillageId>,
