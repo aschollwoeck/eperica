@@ -78,6 +78,7 @@ async fn spawn(pool: sqlx::PgPool) -> String {
                 pool.clone(),
                 rx,
                 world_rules.lifecycle.beginner_protection_secs,
+                world.rule_preset.clone(),
                 Arc::clone(&world_rules),
             ))
         },
@@ -4379,6 +4380,67 @@ async fn academy_affordability_uses_the_selected_worlds_speed(pool: sqlx::PgPool
     assert!(
         slow.contains("insufficient resources"),
         "at 1× the same units are unaffordable — proving the speed is what flips the gate"
+    );
+}
+
+/// 050 AC1/AC2: the registry resolves each world's `rule_preset` (049) to a bundle and serves it through
+/// `context_for`. Two `classic` worlds share **one** cached bundle (per-preset, not per-world reload), each
+/// keeps its own speed (043), and a world on an unknown preset is not serviceable (`None`, never a panic).
+#[sqlx::test(migrations = "../../migrations")]
+async fn registry_serves_each_worlds_preset_bundle(pool: sqlx::PgPool) {
+    let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 30);
+    let home = ensure_world(&pool, &config).await.expect("home world");
+    // A second `classic` world at 5× (rule_preset defaults to 'classic').
+    let other = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 5.0, 30, 777)")
+        .bind(other)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let boot = Arc::new(load_world_rules(&home.rule_preset).expect("classic bundle"));
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    std::mem::forget(tx);
+    let registry = WorldRegistry::new(
+        pool.clone(),
+        rx,
+        0,
+        home.rule_preset.clone(),
+        Arc::clone(&boot),
+    );
+
+    let (_r1, _m1, s_home, _rad1, rules_home) =
+        registry.context_for(home.id).await.expect("home context");
+    let (_r2, _m2, s_other, _rad2, rules_other) = registry
+        .context_for(WorldId(other.as_u128()))
+        .await
+        .expect("other context");
+
+    // Each world keeps its own speed (043) …
+    assert!((s_home.multiplier() - 1.0).abs() < f64::EPSILON);
+    assert!((s_other.multiplier() - 5.0).abs() < f64::EPSILON);
+    // … but both `classic` worlds are served the *same* cached bundle (AC1), seeded from the boot bundle.
+    assert!(
+        Arc::ptr_eq(&rules_home, &rules_other),
+        "same preset → one shared bundle"
+    );
+    assert!(
+        Arc::ptr_eq(&rules_home, &boot),
+        "served from the seeded boot bundle, not reloaded"
+    );
+
+    // A world on an unknown preset is not serviceable (AC1) — resolved to None, never a panic (P4).
+    let bad = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO worlds (id, speed, radius, seed, rule_preset) VALUES ($1, 1.0, 30, 9, 'speed')",
+    )
+    .bind(bad)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(
+        registry.context_for(WorldId(bad.as_u128())).await.is_none(),
+        "an unknown preset makes the world unserviceable, not a panic"
     );
 }
 

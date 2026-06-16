@@ -612,12 +612,14 @@ pub async fn join_world(
             return server_error();
         }
     }
-    // The world must be one the registry runs — `context_for` yields its (world-scoped) repo for the join.
-    let Some((repo, _map, _speed, _radius)) = state.world_registry.context_for(world).await else {
+    // The world must be one the registry runs — `context_for` yields its (world-scoped) repo + rules for the
+    // join, so the new village uses the **selected** world's starting template (its preset), not the home's.
+    let Some((repo, _map, _speed, _radius, rules)) = state.world_registry.context_for(world).await
+    else {
         return Redirect::to("/worlds").into_response();
     };
     match repo
-        .create_player_in_world(account, tribe, &state.world_rules.starting_village)
+        .create_player_in_world(account, tribe, &rules.starting_village)
         .await
     {
         // Joined now, or already joined (idempotent) — select the world and drop into its village.
@@ -633,11 +635,7 @@ pub async fn join_world(
 
 /// A player's village with its live economy, switchable across all their villages (Player only —
 /// AC3/AC4/AC7, 013 AC11). `?village=<id>` selects which to show; absent ⇒ the capital / first.
-pub async fn village(
-    State(state): State<AppState>,
-    ctx: GameContext,
-    Query(q): Query<VillageQuery>,
-) -> Response {
+pub async fn village(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response {
     let player = ctx.player;
     let account = ctx.account;
     let selected = selected_village(q.village.as_deref());
@@ -654,9 +652,9 @@ pub async fn village(
     // idempotent). Best-effort — a failure here must not break the village view.
     if let Err(e) = evaluate_achievements(
         &ctx.accounts,
-        &state.world_rules.economy,
-        &state.world_rules.units,
-        &state.world_rules.achievements,
+        &ctx.rules.economy,
+        &ctx.rules.units,
+        &ctx.rules.achievements,
         player,
     )
     .await
@@ -666,13 +664,8 @@ pub async fn village(
 
     // 018: lazily complete any onboarding quests now satisfied (server-authoritative, idempotent,
     // stage-gated). Best-effort — a failure here must not break the village view.
-    if let Err(e) = evaluate_quests(
-        &ctx.accounts,
-        &state.world_rules.economy,
-        &state.world_rules.quests,
-        player,
-    )
-    .await
+    if let Err(e) =
+        evaluate_quests(&ctx.accounts, &ctx.rules.economy, &ctx.rules.quests, player).await
     {
         tracing::error!(error = %e, "quest evaluation failed");
     }
@@ -684,8 +677,8 @@ pub async fn village(
     }
     if let Err(e) = end_protection_if_established(
         &ctx.accounts,
-        &state.world_rules.economy,
-        &state.world_rules.lifecycle,
+        &ctx.rules.economy,
+        &ctx.rules.lifecycle,
         account,
         now(),
     )
@@ -723,8 +716,8 @@ pub async fn village(
 
     let economy = match load_economy(
         &ctx.accounts,
-        &state.world_rules.economy,
-        &state.world_rules.units,
+        &ctx.rules.economy,
+        &ctx.rules.units,
         ctx.speed,
         now(),
         player,
@@ -749,9 +742,7 @@ pub async fn village(
     let caps = economy.economy.capacities;
 
     // The garrison panel + total upkeep (005 AC6/AC9); names resolved via the tribe's roster.
-    let roster = village
-        .tribe
-        .map_or(&[][..], |t| state.world_rules.units.roster(t));
+    let roster = village.tribe.map_or(&[][..], |t| ctx.rules.units.roster(t));
     let garrison_rows: Vec<GarrisonRow> = economy
         .garrison
         .iter()
@@ -795,7 +786,7 @@ pub async fn village(
             return server_error();
         }
     };
-    let build_rules = &state.world_rules.build;
+    let build_rules = &ctx.rules.build;
 
     // A target is orderable only if its queue lane is free — Romans get a field and a building
     // lane, other tribes one shared lane (004 AC13). Server-side re-validation happens on POST.
@@ -808,7 +799,7 @@ pub async fn village(
 
     // 031: the effect of the *next* level, so a player sees what an upgrade does — not just its cost. Pure
     // reads off the economy rules (scaled by world speed for production, to match the displayed rates).
-    let econ = &state.world_rules.economy;
+    let econ = &ctx.rules.economy;
     let speed = ctx.speed;
     let field_effect = |kind: ResourceKind, level: u8| -> String {
         let cur = econ.field_production_per_hour(kind, level, speed);
@@ -822,10 +813,10 @@ pub async fn village(
     };
     // Effects for buildings whose rules live outside the economy (combat / trade / culture / build /
     // training). Read-only lookups; the village's tribe selects the (tribe-flavoured) Wall profile.
-    let combat = &state.world_rules.combat;
-    let merchants = &state.world_rules.merchant;
-    let culture = &state.world_rules.culture;
-    let training = &state.world_rules.units.training;
+    let combat = &ctx.rules.combat;
+    let merchants = &ctx.rules.merchant;
+    let culture = &ctx.rules.culture;
+    let training = &ctx.rules.units.training;
     let building_effect = |kind: BuildingKind, level: u8| -> String {
         let next = level + 1;
         let special = match kind {
@@ -1030,7 +1021,7 @@ pub async fn village(
             return server_error();
         }
     };
-    let unit_rules: &UnitRules = &state.world_rules.units;
+    let unit_rules: &UnitRules = &ctx.rules.units;
     let movements: Vec<MovementRow> = movements_view
         .iter()
         .map(|m| MovementRow {
@@ -1149,7 +1140,7 @@ pub async fn village(
     let culture = match load_culture(
         &ctx.accounts,
         &ctx.accounts,
-        &state.world_rules.culture,
+        &ctx.rules.culture,
         now(),
         player,
     )
@@ -1168,10 +1159,10 @@ pub async fn village(
         Ok(Some((value, updated))) => regenerate_loyalty(
             value,
             (now().0 - updated.0) / 1000,
-            &state.world_rules.loyalty,
+            &ctx.rules.loyalty,
             ctx.speed,
         ),
-        Ok(None) => state.world_rules.loyalty.starting_loyalty,
+        Ok(None) => ctx.rules.loyalty.starting_loyalty,
         Err(e) => {
             tracing::error!(error = %e, "loyalty lookup failed");
             return server_error();
@@ -1320,11 +1311,7 @@ fn tile_view(tile: TileKind) -> (&'static str, &'static str, String) {
 }
 
 /// The seeded world map around a center (006 AC7; Player only — Visitor redirected to login, P4).
-pub async fn map(
-    State(state): State<AppState>,
-    ctx: GameContext,
-    Query(q): Query<MapQuery>,
-) -> Response {
+pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
     let player = ctx.player;
     // The header username is the human (account-level), not the world player.
     let user = match ctx.accounts.find_user_by_id(ctx.account).await {
@@ -1401,7 +1388,7 @@ pub async fn map(
                         let inactive = is_inactive(
                             marker.owner_last_activity,
                             now(),
-                            state.world_rules.lifecycle.inactive_after_secs,
+                            ctx.rules.lifecycle.inactive_after_secs,
                             ctx.speed,
                         );
                         if inactive {
@@ -1417,7 +1404,7 @@ pub async fn map(
                         let (online, presence_label) = presence_view(
                             marker.owner_last_activity,
                             now(),
-                            state.world_rules.lifecycle.presence_online_secs,
+                            ctx.rules.lifecycle.presence_online_secs,
                         );
                         let presence = if online {
                             " · online".to_owned()
@@ -1507,11 +1494,7 @@ pub struct BuildForm {
 }
 
 /// Order an upgrade/construction for the selected village, then return to it (Player only, P4).
-pub async fn build_submit(
-    State(state): State<AppState>,
-    ctx: GameContext,
-    Form(form): Form<BuildForm>,
-) -> Response {
+pub async fn build_submit(ctx: GameContext, Form(form): Form<BuildForm>) -> Response {
     let player = ctx.player;
     let target = match form.table.as_str() {
         "field" => BuildTarget::Field { slot: form.slot },
@@ -1531,9 +1514,9 @@ pub async fn build_submit(
         &ctx.accounts,
         &ctx.accounts,
         &ctx.accounts,
-        &state.world_rules.economy,
-        &state.world_rules.build,
-        &state.world_rules.units,
+        &ctx.rules.economy,
+        &ctx.rules.build,
+        &ctx.rules.units,
         ctx.speed,
         now(),
         player,
@@ -1618,13 +1601,12 @@ fn building_level(village: &Village, kind: BuildingKind) -> u8 {
 /// world's speed (044); the shared rule sets stay on `AppState`.
 async fn village_view_data(
     ctx: &GameContext,
-    state: &AppState,
     selected: Option<VillageId>,
 ) -> Result<(Village, ResourceAmounts), Response> {
     match load_economy(
         &ctx.accounts,
-        &state.world_rules.economy,
-        &state.world_rules.units,
+        &ctx.rules.economy,
+        &ctx.rules.units,
         ctx.speed,
         now(),
         ctx.player,
@@ -1648,14 +1630,10 @@ async fn village_view_data(
 }
 
 /// The Academy: the tribe's roster with research state and actions (004 AC15; Player only, P4).
-pub async fn academy(
-    State(state): State<AppState>,
-    ctx: GameContext,
-    Query(q): Query<VillageQuery>,
-) -> Response {
+pub async fn academy(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response {
     let player = ctx.player;
     let (village, amounts) =
-        match village_view_data(&ctx, &state, selected_village(q.village.as_deref())).await {
+        match village_view_data(&ctx, selected_village(q.village.as_deref())).await {
             Ok(v) => v,
             Err(r) => return r,
         };
@@ -1673,7 +1651,7 @@ pub async fn academy(
             return server_error();
         }
     };
-    let unit_rules: &UnitRules = &state.world_rules.units;
+    let unit_rules: &UnitRules = &ctx.rules.units;
     let research_active = orders.iter().find(|o| o.kind == UnitOrderKind::Research);
     let active = research_active.map(|o| QueueView {
         label: format!(
@@ -1760,14 +1738,10 @@ pub async fn academy(
 }
 
 /// The Smithy: researched units with upgrade levels and actions (004 AC15; Player only, P4).
-pub async fn smithy(
-    State(state): State<AppState>,
-    ctx: GameContext,
-    Query(q): Query<VillageQuery>,
-) -> Response {
+pub async fn smithy(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response {
     let player = ctx.player;
     let (village, amounts) =
-        match village_view_data(&ctx, &state, selected_village(q.village.as_deref())).await {
+        match village_view_data(&ctx, selected_village(q.village.as_deref())).await {
             Ok(v) => v,
             Err(r) => return r,
         };
@@ -1786,7 +1760,7 @@ pub async fn smithy(
             return server_error();
         }
     };
-    let unit_rules: &UnitRules = &state.world_rules.units;
+    let unit_rules: &UnitRules = &ctx.rules.units;
     let upgrade_active = orders
         .iter()
         .find(|o| o.kind == UnitOrderKind::SmithyUpgrade);
@@ -1844,7 +1818,7 @@ pub async fn smithy(
                 String::new()
             } else {
                 let stat = |base: u32, lvl: u8| {
-                    (f64::from(base) * state.world_rules.combat.smithy_factor(lvl)).round() as u32
+                    (f64::from(base) * ctx.rules.combat.smithy_factor(lvl)).round() as u32
                 };
                 format!(
                     "Att {}→{} · Def {}/{}→{}/{}",
@@ -1891,18 +1865,14 @@ pub struct UnitForm {
 }
 
 /// Order a unit research for the player's village, then return to the Academy (Player only, P4).
-pub async fn research_submit(
-    State(state): State<AppState>,
-    ctx: GameContext,
-    Form(form): Form<UnitForm>,
-) -> Response {
+pub async fn research_submit(ctx: GameContext, Form(form): Form<UnitForm>) -> Response {
     let player = ctx.player;
     let flash = order_research(
         &ctx.accounts,
         &ctx.accounts,
         &ctx.accounts,
-        &state.world_rules.economy,
-        &state.world_rules.units,
+        &ctx.rules.economy,
+        &ctx.rules.units,
         ctx.speed,
         now(),
         player,
@@ -1933,7 +1903,6 @@ fn parse_troop_building(slug: &str) -> Option<BuildingKind> {
 /// A troop building's training view: researched units it trains, the running batch (005 AC9;
 /// Player only, P4).
 pub async fn troops(
-    State(state): State<AppState>,
     ctx: GameContext,
     axum::extract::Path(building_slug): axum::extract::Path<String>,
     Query(q): Query<VillageQuery>,
@@ -1943,7 +1912,7 @@ pub async fn troops(
         return Redirect::to("/village").into_response();
     };
     let (village, _amounts) =
-        match village_view_data(&ctx, &state, selected_village(q.village.as_deref())).await {
+        match village_view_data(&ctx, selected_village(q.village.as_deref())).await {
             Ok(v) => v,
             Err(r) => return r,
         };
@@ -1961,7 +1930,7 @@ pub async fn troops(
             return server_error();
         }
     };
-    let unit_rules: &UnitRules = &state.world_rules.units;
+    let unit_rules: &UnitRules = &ctx.rules.units;
     let building_level = building_level(&village, building);
     let batch = active.iter().find(|t| t.building == building);
     let active_view = batch.map(|t| QueueView {
@@ -2038,11 +2007,7 @@ pub struct TrainForm {
 
 /// Order a training batch for the player's village, then return to the building page (Player
 /// only, P4).
-pub async fn train_submit(
-    State(state): State<AppState>,
-    ctx: GameContext,
-    Form(form): Form<TrainForm>,
-) -> Response {
+pub async fn train_submit(ctx: GameContext, Form(form): Form<TrainForm>) -> Response {
     let player = ctx.player;
     let unit = UnitId(form.unit);
     let flash = order_train(
@@ -2050,8 +2015,8 @@ pub async fn train_submit(
         &ctx.accounts,
         &ctx.accounts,
         &ctx.accounts,
-        &state.world_rules.economy,
-        &state.world_rules.units,
+        &ctx.rules.economy,
+        &ctx.rules.units,
         ctx.speed,
         now(),
         player,
@@ -2068,7 +2033,7 @@ pub async fn train_submit(
     // Land back on the unit's building page (the same kind across tribes), keeping the village.
     let building = [Tribe::Romans, Tribe::Teutons, Tribe::Gauls]
         .into_iter()
-        .find_map(|t| state.world_rules.units.unit(t, &unit))
+        .find_map(|t| ctx.rules.units.unit(t, &unit))
         .map(|s| s.trained_in);
     let target = match building {
         Some(BuildingKind::Barracks) => "/village/troops/barracks",
@@ -2083,18 +2048,14 @@ pub async fn train_submit(
 }
 
 /// Order a Smithy upgrade for the player's village, then return to the Smithy (Player only, P4).
-pub async fn smithy_upgrade_submit(
-    State(state): State<AppState>,
-    ctx: GameContext,
-    Form(form): Form<UnitForm>,
-) -> Response {
+pub async fn smithy_upgrade_submit(ctx: GameContext, Form(form): Form<UnitForm>) -> Response {
     let player = ctx.player;
     let flash = order_smithy_upgrade(
         &ctx.accounts,
         &ctx.accounts,
         &ctx.accounts,
-        &state.world_rules.economy,
-        &state.world_rules.units,
+        &ctx.rules.economy,
+        &ctx.rules.units,
         ctx.speed,
         now(),
         player,
@@ -2114,14 +2075,10 @@ pub async fn smithy_upgrade_submit(
 }
 
 /// The Rally Point: the garrison troops that can be sent to reinforce (007 AC7; Player only, P4).
-pub async fn rally(
-    State(state): State<AppState>,
-    ctx: GameContext,
-    Query(q): Query<MapQuery>,
-) -> Response {
+pub async fn rally(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
     let player = ctx.player;
     let (village, _amounts) =
-        match village_view_data(&ctx, &state, selected_village(q.village.as_deref())).await {
+        match village_view_data(&ctx, selected_village(q.village.as_deref())).await {
             Ok(v) => v,
             Err(r) => return r,
         };
@@ -2136,7 +2093,7 @@ pub async fn rally(
             return server_error();
         }
     };
-    let roster = state.world_rules.units.roster(tribe);
+    let roster = ctx.rules.units.roster(tribe);
     let units = garrison
         .iter()
         .filter(|(_, n)| *n > 0)
@@ -2183,7 +2140,7 @@ pub async fn rally(
     let can_settle = match load_culture(
         &ctx.accounts,
         &ctx.accounts,
-        &state.world_rules.culture,
+        &ctx.rules.culture,
         now(),
         player,
     )
@@ -2202,7 +2159,7 @@ pub async fn rally(
         target_y: q.y,
         target_is_oasis,
         can_settle,
-        settlers_per_village: state.world_rules.culture.settlers_per_village,
+        settlers_per_village: ctx.rules.culture.settlers_per_village,
         origin_x: village.coordinate.x,
         origin_y: village.coordinate.y,
         radius: i32::try_from(ctx.radius).unwrap_or(i32::MAX),
@@ -2215,7 +2172,6 @@ pub async fn rally(
 /// The composition arrives as `count_<unit-slug>` fields alongside the target `x`/`y`; counts are
 /// parsed and re-validated server-side (P4) — the use-case rejects anything over the garrison.
 pub async fn rally_send(
-    State(state): State<AppState>,
     ctx: GameContext,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
@@ -2251,9 +2207,9 @@ pub async fn rally_send(
                 &ctx.accounts,
                 &ctx.accounts,
                 &ctx.accounts,
-                &state.world_rules.economy,
-                &state.world_rules.units,
-                &state.world_rules.culture,
+                &ctx.rules.economy,
+                &ctx.rules.units,
+                &ctx.rules.culture,
                 ctx.map.as_ref(),
                 ctx.speed,
                 now(),
@@ -2272,8 +2228,8 @@ pub async fn rally_send(
             &ctx.accounts,
             &ctx.accounts,
             &ctx.accounts,
-            &state.world_rules.economy,
-            &state.world_rules.units,
+            &ctx.rules.economy,
+            &ctx.rules.units,
             ctx.map.as_ref(),
             ctx.speed,
             now(),
@@ -2297,8 +2253,8 @@ pub async fn rally_send(
                     &ctx.accounts,
                     &ctx.accounts,
                     &ctx.accounts,
-                    &state.world_rules.economy,
-                    &state.world_rules.units,
+                    &ctx.rules.economy,
+                    &ctx.rules.units,
                     ctx.map.as_ref(),
                     ctx.speed,
                     now(),
@@ -2324,8 +2280,8 @@ pub async fn rally_send(
                     &ctx.accounts,
                     &ctx.accounts,
                     &ctx.accounts,
-                    &state.world_rules.economy,
-                    &state.world_rules.units,
+                    &ctx.rules.economy,
+                    &ctx.rules.units,
                     ctx.map.as_ref(),
                     ctx.speed,
                     now(),
@@ -2352,8 +2308,8 @@ pub async fn rally_send(
                     &ctx.accounts,
                     &ctx.accounts,
                     &ctx.accounts,
-                    &state.world_rules.economy,
-                    &state.world_rules.units,
+                    &ctx.rules.economy,
+                    &ctx.rules.units,
                     ctx.map.as_ref(),
                     ctx.speed,
                     now(),
@@ -2373,8 +2329,8 @@ pub async fn rally_send(
                     &ctx.accounts,
                     &ctx.accounts,
                     &ctx.accounts,
-                    &state.world_rules.economy,
-                    &state.world_rules.units,
+                    &ctx.rules.economy,
+                    &ctx.rules.units,
                     ctx.map.as_ref(),
                     ctx.speed,
                     now(),
@@ -2405,11 +2361,7 @@ pub struct RallyReturnForm {
 }
 
 /// Recall the player's troops stationed at a host, then return to the village (Player only, P4).
-pub async fn rally_return(
-    State(state): State<AppState>,
-    ctx: GameContext,
-    Form(form): Form<RallyReturnForm>,
-) -> Response {
+pub async fn rally_return(ctx: GameContext, Form(form): Form<RallyReturnForm>) -> Response {
     let player = ctx.player;
     let Ok(host) = form.host.trim().parse::<u128>() else {
         return Redirect::to("/village").into_response();
@@ -2417,7 +2369,7 @@ pub async fn rally_return(
     let flash = order_return(
         &ctx.accounts,
         &ctx.accounts,
-        &state.world_rules.units,
+        &ctx.rules.units,
         ctx.map.as_ref(),
         ctx.speed,
         now(),
@@ -2445,17 +2397,13 @@ pub struct OasisRecallForm {
 
 /// Recall the player's troops stationed at one of their oases, then return to the village (012 AC7;
 /// Player only, P4).
-pub async fn oasis_recall(
-    State(state): State<AppState>,
-    ctx: GameContext,
-    Form(form): Form<OasisRecallForm>,
-) -> Response {
+pub async fn oasis_recall(ctx: GameContext, Form(form): Form<OasisRecallForm>) -> Response {
     let player = ctx.player;
     let target = Coordinate::new(form.x, form.y);
     let flash = order_oasis_recall(
         &ctx.accounts,
         &ctx.accounts,
-        &state.world_rules.units,
+        &ctx.rules.units,
         ctx.map.as_ref(),
         ctx.speed,
         now(),
@@ -2474,14 +2422,10 @@ pub async fn oasis_recall(
 
 /// The Marketplace: the merchant pool (free/total + capacity) and a send-resources form (008 AC6;
 /// Player only, P4).
-pub async fn market(
-    State(state): State<AppState>,
-    ctx: GameContext,
-    Query(q): Query<VillageQuery>,
-) -> Response {
+pub async fn market(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response {
     let player = ctx.player;
     let (village, _amounts) =
-        match village_view_data(&ctx, &state, selected_village(q.village.as_deref())).await {
+        match village_view_data(&ctx, selected_village(q.village.as_deref())).await {
             Ok(v) => v,
             Err(r) => return r,
         };
@@ -2512,8 +2456,8 @@ pub async fn market(
             return server_error();
         }
     };
-    let total = state.world_rules.merchant.merchants_total(level);
-    let profile = state.world_rules.merchant.profile(tribe);
+    let total = ctx.rules.merchant.merchants_total(level);
+    let profile = ctx.rules.merchant.profile(tribe);
     page(&MarketTemplate {
         village_id,
         has_marketplace: true,
@@ -2533,7 +2477,6 @@ pub async fn market(
 /// The amounts arrive as `amount_<resource>` fields alongside the target `x`/`y`; they are parsed
 /// and re-validated server-side (P4) — the use-case rejects an over-stored or over-merchant load.
 pub async fn market_send(
-    State(state): State<AppState>,
     ctx: GameContext,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
@@ -2559,9 +2502,9 @@ pub async fn market_send(
     let flash = order_trade(
         &ctx.accounts,
         &ctx.accounts,
-        &state.world_rules.economy,
-        &state.world_rules.units,
-        &state.world_rules.merchant,
+        &ctx.rules.economy,
+        &ctx.rules.units,
+        &ctx.rules.merchant,
         ctx.map.as_ref(),
         ctx.speed,
         now(),
@@ -2656,7 +2599,7 @@ fn scout_report_row(r: &ScoutReportView) -> ReportRow {
 }
 
 /// The player's reports inbox — battle reports (009) and scout reports (010), newest first (P4).
-pub async fn reports(State(state): State<AppState>, ctx: GameContext) -> Response {
+pub async fn reports(ctx: GameContext) -> Response {
     let player = ctx.player;
     let battle = match ctx.accounts.reports_for(player, 50).await {
         Ok(r) => r,
@@ -2687,14 +2630,13 @@ pub async fn reports(State(state): State<AppState>, ctx: GameContext) -> Respons
     rows.extend(scouts.iter().map(scout_report_row));
     // 016 AC3/AC12: battles where the player **reinforced** an ally — their own report (the owner's
     // own defenses are already above as `defender_player`). Informational rows (no separate detail).
-    let defended =
-        match reinforcement_reports(&ctx.accounts, &state.world_rules.ranking, player).await {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::error!(error = %e, "defender reports lookup failed");
-                return server_error();
-            }
-        };
+    let defended = match reinforcement_reports(&ctx.accounts, &ctx.rules.ranking, player).await {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!(error = %e, "defender reports lookup failed");
+            return server_error();
+        }
+    };
     rows.extend(defended.iter().filter(|d| !d.is_owner).map(|d| {
         let lost: u32 = d.losses.iter().map(|(_, n)| n).sum();
         ReportRow {
@@ -2802,20 +2744,16 @@ fn alliance_rows(rows: Vec<AllianceLeaderboardRow>) -> Vec<LeaderboardRowView> {
 
 /// Public leaderboards (016 AC2/AC5/AC6/AC8): population / attackers / defenders / raiders + the
 /// alliance aggregates, filterable by quadrant and (for conflict boards) time window.
-pub async fn leaderboard(
-    State(state): State<AppState>,
-    world: WorldScope,
-    Query(q): Query<LeaderboardQuery>,
-) -> Response {
+pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -> Response {
     let scope_key = q.scope.unwrap_or_else(|| "world".to_owned());
     let window_key = q.window.unwrap_or_else(|| "all".to_owned());
     let scope = parse_scope(&scope_key);
     let repo = &world.accounts;
-    let econ = &state.world_rules.economy;
-    let rules = &state.world_rules.ranking;
+    let econ = &world.rules.economy;
+    let rules = &world.rules.ranking;
     let window = parse_window(&window_key, rules);
     let now_ts = now();
-    let online_secs = state.world_rules.lifecycle.presence_online_secs;
+    let online_secs = world.rules.lifecycle.presence_online_secs;
 
     let categories = vec![
         ("population", "Population"),
@@ -2985,11 +2923,7 @@ pub async fn wonder(world: WorldScope) -> Response {
 
 /// Order one level of Wonder construction on a controlled site (021 AC4) — the only path that builds a
 /// Wonder; gating (site control + alliance holds a plan + level < 100) is server-side.
-pub async fn wonder_build_submit(
-    State(state): State<AppState>,
-    ctx: GameContext,
-    Form(form): Form<WonderBuildForm>,
-) -> Response {
+pub async fn wonder_build_submit(ctx: GameContext, Form(form): Form<WonderBuildForm>) -> Response {
     let player = ctx.player;
     let flash = order_wonder_build(
         &ctx.accounts,
@@ -2997,9 +2931,9 @@ pub async fn wonder_build_submit(
         &ctx.accounts,
         &ctx.accounts,
         &ctx.accounts,
-        &state.world_rules.economy,
-        &state.world_rules.build,
-        &state.world_rules.units,
+        &ctx.rules.economy,
+        &ctx.rules.build,
+        &ctx.rules.units,
         ctx.speed,
         now(),
         player,
@@ -3534,7 +3468,6 @@ pub async fn search_page(world: WorldScope, Query(sq): Query<SearchQuery>) -> Re
 
 /// Public player statistics page (016 AC9).
 pub async fn player_stats_page(
-    State(state): State<AppState>,
     world: WorldScope,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
@@ -3542,7 +3475,7 @@ pub async fn player_stats_page(
         return not_found();
     };
     let repo = &world.accounts;
-    let s = match player_statistics(repo, &state.world_rules.economy, PlayerId(pid)).await {
+    let s = match player_statistics(repo, &world.rules.economy, PlayerId(pid)).await {
         Ok(Some(s)) => s,
         Ok(None) => return not_found(),
         Err(e) => {
@@ -3583,7 +3516,7 @@ pub async fn player_stats_page(
     let (online, presence_label) = presence_view(
         profile.last_activity,
         now(),
-        state.world_rules.lifecycle.presence_online_secs,
+        world.rules.lifecycle.presence_online_secs,
     );
     let mut achievements: Vec<AchievementRowView> = held
         .iter()
@@ -3920,16 +3853,11 @@ pub async fn sitting_stop(jar: PrivateCookieJar) -> Response {
 /// The player's onboarding quests (018 AC8, Player only): the current quest with its reward, the
 /// completed list, and the all-done state. Evaluates lazily on view (server-authoritative,
 /// idempotent) so newly-satisfied quests are completed before rendering.
-pub async fn quests_page(State(state): State<AppState>, ctx: GameContext) -> Response {
+pub async fn quests_page(ctx: GameContext) -> Response {
     let player = ctx.player;
     // Lazily complete anything now satisfied — best-effort, must not break the page.
-    if let Err(e) = evaluate_quests(
-        &ctx.accounts,
-        &state.world_rules.economy,
-        &state.world_rules.quests,
-        player,
-    )
-    .await
+    if let Err(e) =
+        evaluate_quests(&ctx.accounts, &ctx.rules.economy, &ctx.rules.quests, player).await
     {
         tracing::error!(error = %e, "quest evaluation failed");
     }
@@ -3955,7 +3883,7 @@ pub async fn quests_page(State(state): State<AppState>, ctx: GameContext) -> Res
         .or_else(|| villages.first())
         .map(|v| v.id.0.to_string())
         .unwrap_or_default();
-    let chain = &state.world_rules.quests;
+    let chain = &ctx.rules.quests;
     let current = current_quest(chain, &completed).map(|q| CurrentQuestView {
         description: q.description.clone(),
         reward: quest_reward_label(&q.reward),
@@ -3977,7 +3905,6 @@ pub async fn quests_page(State(state): State<AppState>, ctx: GameContext) -> Res
 
 /// Public alliance statistics page (016 AC10).
 pub async fn alliance_stats_page(
-    State(state): State<AppState>,
     world: WorldScope,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
@@ -3985,7 +3912,7 @@ pub async fn alliance_stats_page(
         return not_found();
     };
     let repo = &world.accounts;
-    let s = match alliance_statistics(repo, &state.world_rules.economy, AllianceId(aid)).await {
+    let s = match alliance_statistics(repo, &world.rules.economy, AllianceId(aid)).await {
         Ok(Some(s)) => s,
         Ok(None) => return not_found(),
         Err(e) => {
@@ -4033,7 +3960,6 @@ pub async fn alliance_stats_page(
 /// One scout report's detail — scouter sees the intel, a detected target sees only the notification;
 /// redaction is enforced by the repository (010 AC11, P4).
 pub async fn scout_report_detail(
-    State(state): State<AppState>,
     ctx: GameContext,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
@@ -4049,7 +3975,7 @@ pub async fn scout_report_detail(
             return server_error();
         }
     };
-    let unit_rules = &state.world_rules.units;
+    let unit_rules = &ctx.rules.units;
     let target_type = match r.target_type {
         ScoutTarget::Resources => "Resources",
         ScoutTarget::Defenses => "Defenses",
@@ -4118,7 +4044,6 @@ pub async fn scout_report_detail(
 
 /// One battle report's detail — only a party to it may view it (009 AC8, P4).
 pub async fn report_detail(
-    State(state): State<AppState>,
     ctx: GameContext,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
@@ -4134,7 +4059,7 @@ pub async fn report_detail(
             return server_error();
         }
     };
-    let unit_rules = &state.world_rules.units;
+    let unit_rules = &ctx.rules.units;
     let i_attacked = report.attacker_player == player;
     // The defender of a combined attack learns scouting also occurred only when detected (010 AC8).
     let scouted_note = (report.scouted && !i_attacked).then(|| {
@@ -4222,10 +4147,10 @@ fn rights_summary(role: AllianceRole, rights: RightSet) -> String {
 
 /// The alliance / Embassy page (015 AC8/AC9/AC11): the founder/join controls when alliance-less, or the
 /// roster + diplomacy + incoming-defence overview + management controls when in one.
-pub async fn alliance(State(state): State<AppState>, ctx: GameContext) -> Response {
+pub async fn alliance(ctx: GameContext) -> Response {
     let player = ctx.player;
     let repo = &ctx.accounts;
-    let rules = &state.world_rules.alliance;
+    let rules = &ctx.rules.alliance;
     match alliance_view(repo, player).await {
         Ok(Some(ov)) => {
             let me = ov.membership.alliance;
@@ -4373,15 +4298,11 @@ pub struct FoundForm {
     tag: String,
 }
 
-pub async fn alliance_found(
-    State(state): State<AppState>,
-    ctx: GameContext,
-    Form(form): Form<FoundForm>,
-) -> Response {
+pub async fn alliance_found(ctx: GameContext, Form(form): Form<FoundForm>) -> Response {
     let player = ctx.player;
     let flash = found_alliance(
         &ctx.accounts,
-        &state.world_rules.alliance,
+        &ctx.rules.alliance,
         player,
         form.name.trim(),
         form.tag.trim(),
@@ -4456,16 +4377,12 @@ pub struct RespondForm {
     accept: bool,
 }
 
-pub async fn alliance_respond(
-    State(state): State<AppState>,
-    ctx: GameContext,
-    Form(form): Form<RespondForm>,
-) -> Response {
+pub async fn alliance_respond(ctx: GameContext, Form(form): Form<RespondForm>) -> Response {
     let player = ctx.player;
     let flash = match form.alliance.parse::<u128>() {
         Ok(id) => respond_invite(
             &ctx.accounts,
-            &state.world_rules.alliance,
+            &ctx.rules.alliance,
             player,
             eperica_domain::AllianceId(id),
             form.accept,
