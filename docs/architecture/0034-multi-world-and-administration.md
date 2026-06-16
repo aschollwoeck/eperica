@@ -1,6 +1,13 @@
 # Multi-world & administration — many concurrent worlds, one account, an admin console
 
-**Status:** Accepted (program design) · **Date:** 2026-06-15 · **Slices:** 036–041
+**Status:** Accepted (program design); **built & Verified** · **Date:** 2026-06-15 (planned), 2026-06-16
+(as-built reconciliation) · **Slices:** 036–046
+
+> **As-built note.** The original plan (below) sized the player-facing layer as a single slice ("042 —
+> Player multi-world UX"). During implementation it was elaborated into a **five-slice sub-program (042–046)**
+> to keep each piece behind the per-slice reviewer/PR gate. The Decision/Context sections record the *design*;
+> the **[As-built refinements](#as-built-refinements-042046)** section at the end records what actually
+> shipped and the decisions taken on the way. The whole program (036–046) is built and Verified.
 
 ## Context
 Eperica is a round-based game (GDD §13.3): a world is created, runs through its artifact/Wonder phases,
@@ -75,11 +82,16 @@ Sequenced so low-risk, independently-valuable pieces land first and the heavy re
 | 039 | **World-scoped due processing** | Med | The repo's per-tick due-claims + requeues filter to the repo's world. Behaviour-preserving; the prerequisite for per-world schedulers. |
 | 040 | **World registry runtime** | High | Load all worlds at startup; a `WorldRuntime` (map/speed/repo/event-store) per world; a **scheduler per world** concurrently. The web stays on the home world. |
 | 041 | **World lifecycle admin** | Med | Create/start/archive worlds live from the dashboard (registry add/remove, no restart, others undisturbed). |
-| 042 | **Player multi-world UX** | Med | Post-login world lobby, join-world flow, nav world switcher, and resolving the player per `(user, world)` in the request path. |
+| 042 | **Player-FK switch-over** | High | Re-point the per-world game FKs `users(id)→players(id)` so a non-account player (the Natar NPC, or a second-world player) can own game state; the NPC gains a single global reuse-UUID player. Behaviour-preserving. |
+| 043 | **Request world-context** | Med | A `world` cookie + `GameContext` extractor resolving the selected world's repo/map/speed + the `(user, world)` player; home-world behaviour unchanged. The per-request multi-world seam. |
+| 044 | **Game-handler migration** | Med | Move the ~40 game handlers onto `GameContext`; account handlers stay on `AuthUser`/`RealUser`. Handlers operate in the selected world. |
+| 045 | **Player multi-world UX** | Med | Post-login world lobby, join-world flow, nav switcher; re-point the per-row `owner/player→user` **name reads** through `players` for second-world players. |
+| 046 | **Multi-world ranking & public pages** | Med | World-scope the aggregate boards + `search` and route the public read pages through a player-less `WorldScope` extractor. Boards/stats reflect the selected world. |
 
 036 stands alone (useful even if paused after). 037–040 are the heavy lift that must all land to reach
-real multi-world. 041–042 turn it on for admins and players. (038/039 split the original "world context
-plumbing"; the request-path player resolution moved to 042 with world selection.)
+real multi-world. 041 turns it on for admins; **042–046 turn it on for players** (the original single
+"player UX" slice, elaborated into a sub-program — see [As-built refinements](#as-built-refinements-042046)).
+(038/039 split the original "world context plumbing"; the request-path player resolution moved to 043.)
 
 ## Reuse / decisions
 - **Reuse the freeze-guard for archival** (021) and **the sanctions/role pattern for admin** (022) rather
@@ -88,6 +100,10 @@ plumbing"; the request-path player resolution moved to 042 with world selection.
   runtimes. This sidesteps the hardest concurrency problem while meeting the stated requirement.
 - **Per-world player, global account.** Chosen over a single global player so a round can be archived
   without touching the account, and one human can hold independent progress in many worlds (the GDD model).
+  **Exception (as-built, 042):** the synthetic **Natar NPC** is a *single global player* (one reuse-UUID
+  row owning NPC villages in every world, inserted `ON CONFLICT (id) DO NOTHING`) — it has no account and no
+  per-world progress to keep separate, so a per-world NPC player would only invite PK collisions across
+  worlds' end-games. See [As-built refinements](#as-built-refinements-042046).
 
 ## Consequences
 - 037 touches a large surface (`PlayerId` is pervasive) but is invisible to users — it is the risk
@@ -98,3 +114,50 @@ plumbing"; the request-path player resolution moved to 042 with world selection.
   per world. P5 (stateless app tier, state-per-world in the DB) is preserved — the registry is a cache of
   DB-derived runtimes, rebuilt on boot.
 - Until 041, joining/selecting a world is admin-seeded; players gain self-serve world choice last.
+
+## As-built refinements (042–046)
+
+The single planned "player multi-world UX" slice became a five-slice sub-program. The decisions taken
+while building it (recorded here so this ADR matches the code; each is detailed in its slice spec):
+
+1. **The FK switch-over is its own slice (042), not part of 037.** 037 added the `players` table and
+   backfilled it, but the *game* FKs still pointed at `users(id)` (the keystone refactor was deliberately
+   staged). 042 re-points ~18 game columns (`villages.owner_id`, troop/trade movements, battle reports +
+   defenders, scout reports, culture, alliances + members + invitations + threads/posts, population
+   snapshots, achievements, quests, notifications) to `players(id)`, preserving `ON DELETE`. **Account-level**
+   tables (sitting, messaging, fair-play, notification prefs) stay on `users(id)` — the human, not the
+   per-world player. The split "which FK is account-level vs game-level" is the load-bearing distinction.
+
+2. **The reuse-UUID invariant.** In the home world `player.id == user.id` (037 backfilled players with the
+   user's own UUID). This is what makes 042–046 *behaviour-preserving*: every re-pointed FK, every
+   `JOIN players … JOIN users`, and every board collapses to today's values in the home world, so the full
+   existing suite is the regression oracle. New (second-world) players get fresh UUIDs (`player.id !=
+   user.id`), which is precisely the case the re-pointing exists to handle.
+
+3. **Single global NPC player (exception to "per-world player").** The Natar NPC owns NPC villages in every
+   world via **one** `players` row whose id == the NPC user id (`ON CONFLICT (id) DO NOTHING`). A per-world
+   NPC player would PK-collide across worlds at end-game (the artifact/Wonder release runs per world). The
+   NPC has no account progress to keep separate, so the global-player downside does not apply to it.
+
+4. **Two per-request seams: `GameContext` (043) and `WorldScope` (046).**
+   - **`GameContext`** — the *player-bound* seam for game handlers (044): selected world's repo/map/speed +
+     the account's player in it. Exposes both `player` (game state) and `account` (the human, for username/
+     protection/activity). Login-required; falls back to the home world if the account hasn't joined the
+     selected one. The world rides an **encrypted `world` cookie** (like the 030 sit cookie); selection is
+     server-authoritative (`POST /world/select` only honours a world the account joined).
+   - **`WorldScope`** — the *player-less, login-less* seam for the public read pages (`leaderboard`,
+     `wonder`, `search`, stat pages): the selected world's repo only, defaulting to home, never redirecting,
+     so anonymous visitors keep public access while a logged-in player sees their selected world.
+
+5. **Read re-pointing: per-row names (045) vs aggregate boards (046).**
+   - **Per-row reads (045)** resolve a *single* game player id → username via `JOIN players p ON p.id =
+     <game id> JOIN users u ON u.id = p.user_id` (map owners, reinforcements, battle/scout reports, oasis
+     occupants, alliance rosters/invitations, forum authors). World-implicit (the rows already belong to a
+     world's entities); home-parity by the reuse-UUID invariant; NPC-safe (the NPC has a `players` row).
+   - **Aggregate boards (046)** additionally needed *world-scoping*. The key insight: **a game player id is
+     world-specific**, so `JOIN players p ON p.id = <game id> AND p.world_id = $world JOIN users` both
+     world-scopes (keeps only this world's players) and resolves the name — no `world_id` column on the
+     battle tables (no migration), no per-query village join. Boards return/group the **player id** (home
+     parity: `player.id == user.id`). One performance caveat surfaced under the 023 scale guard: the
+     population board must drive from the pre-aggregated, already-world-scoped population owners and
+     **PK-join** `players` (not `FROM players WHERE world_id`, which regressed to ~2.7s over 10k players).
