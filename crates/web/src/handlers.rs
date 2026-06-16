@@ -1,8 +1,8 @@
 //! HTTP handlers for the register / login / village flow.
 
 use crate::auth::{
-    AuthUser, GameContext, MaybeAuthUser, MaybeRealUser, RealUser, WORLD_COOKIE, auth_cookie,
-    clear_cookie, world_cookie,
+    AuthUser, GameContext, MaybeAuthUser, MaybeRealUser, RealUser, WORLD_COOKIE, WorldScope,
+    auth_cookie, clear_cookie, world_cookie,
 };
 use crate::state::AppState;
 use crate::templates::{
@@ -2803,12 +2803,13 @@ fn alliance_rows(rows: Vec<AllianceLeaderboardRow>) -> Vec<LeaderboardRowView> {
 /// alliance aggregates, filterable by quadrant and (for conflict boards) time window.
 pub async fn leaderboard(
     State(state): State<AppState>,
+    world: WorldScope,
     Query(q): Query<LeaderboardQuery>,
 ) -> Response {
     let scope_key = q.scope.unwrap_or_else(|| "world".to_owned());
     let window_key = q.window.unwrap_or_else(|| "all".to_owned());
     let scope = parse_scope(&scope_key);
-    let repo = state.accounts.as_ref();
+    let repo = &world.accounts;
     let econ = state.rules.as_ref();
     let rules = state.ranking_rules.as_ref();
     let window = parse_window(&window_key, rules);
@@ -2942,8 +2943,8 @@ pub async fn leaderboard(
 
 /// The Wonder-of-the-World race page (021 AC9): the alliances by Wonder level, plus the winner banner
 /// once the round is won.
-pub async fn wonder(State(state): State<AppState>) -> Response {
-    let repo = state.accounts.as_ref();
+pub async fn wonder(world: WorldScope) -> Response {
+    let repo = &world.accounts;
     let winner = match repo.world_ended().await {
         Ok(Some(outcome)) => match repo.alliance_summary(outcome.winner).await {
             Ok(summary) => summary,
@@ -3454,7 +3455,7 @@ pub struct SearchQuery {
 
 /// Public who-is search (028): players (username prefix), alliances (name/tag prefix), and a coordinate
 /// jump. A public read — no login required.
-pub async fn search_page(State(state): State<AppState>, Query(sq): Query<SearchQuery>) -> Response {
+pub async fn search_page(world: WorldScope, Query(sq): Query<SearchQuery>) -> Response {
     let query = sq.q.unwrap_or_default();
     let trimmed = query.trim().to_owned();
     if trimmed.is_empty() {
@@ -3467,7 +3468,7 @@ pub async fn search_page(State(state): State<AppState>, Query(sq): Query<SearchQ
             coordinate_label: String::new(),
         });
     }
-    let results = match search(state.accounts.as_ref(), state.accounts.as_ref(), &trimmed).await {
+    let results = match search(&world.accounts, &world.accounts, &trimmed).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "search failed");
@@ -3510,12 +3511,13 @@ pub async fn search_page(State(state): State<AppState>, Query(sq): Query<SearchQ
 /// Public player statistics page (016 AC9).
 pub async fn player_stats_page(
     State(state): State<AppState>,
+    world: WorldScope,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
     let Ok(pid) = id.parse::<u128>() else {
         return not_found();
     };
-    let repo = state.accounts.as_ref();
+    let repo = &world.accounts;
     let s = match player_statistics(repo, state.rules.as_ref(), PlayerId(pid)).await {
         Ok(Some(s)) => s,
         Ok(None) => return not_found(),
@@ -3952,12 +3954,13 @@ pub async fn quests_page(State(state): State<AppState>, ctx: GameContext) -> Res
 /// Public alliance statistics page (016 AC10).
 pub async fn alliance_stats_page(
     State(state): State<AppState>,
+    world: WorldScope,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
     let Ok(aid) = id.parse::<u128>() else {
         return not_found();
     };
-    let repo = state.accounts.as_ref();
+    let repo = &world.accounts;
     let s = match alliance_statistics(repo, state.rules.as_ref(), AllianceId(aid)).await {
         Ok(Some(s)) => s,
         Ok(None) => return not_found(),
