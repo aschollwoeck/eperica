@@ -1208,10 +1208,12 @@ fn tile_view(tile: TileKind) -> (&'static str, &'static str, String) {
 /// The seeded world map around a center (006 AC7; Player only — Visitor redirected to login, P4).
 pub async fn map(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Query(q): Query<MapQuery>,
 ) -> Response {
-    let user = match state.accounts.find_user_by_id(player).await {
+    let player = ctx.player;
+    // The header username is the human (account-level), not the world player.
+    let user = match ctx.accounts.find_user_by_id(ctx.account).await {
         Ok(Some(u)) => u,
         Ok(None) => return Redirect::to("/login").into_response(),
         Err(e) => {
@@ -1219,7 +1221,7 @@ pub async fn map(
             return server_error();
         }
     };
-    let villages = match state.accounts.villages_of(player).await {
+    let villages = match ctx.accounts.villages_of(player).await {
         Ok(v) => v,
         Err(e) => {
             tracing::error!(error = %e, "villages lookup failed");
@@ -1228,7 +1230,7 @@ pub async fn map(
     };
     // The player's capital tile, distinguished on the map (013 AC9/AC11).
     let capital_coord = villages.iter().find(|v| v.is_capital).map(|v| v.coordinate);
-    let radius = state.map.radius();
+    let radius = ctx.map.radius();
     // Center on the query (if given) or the player's first village, wrapped into bounds.
     let center = match (q.x, q.y) {
         (Some(x), Some(y)) => Coordinate::new(x, y).wrapped(radius),
@@ -1238,18 +1240,18 @@ pub async fn map(
     };
 
     let coords = viewport_coords(center, MAP_HALF, radius);
-    let markers = match state.accounts.villages_at(&coords).await {
+    let markers = match ctx.accounts.villages_at(&coords).await {
         Ok(m) => m,
         Err(e) => {
             tracing::error!(error = %e, "map markers lookup failed");
             return server_error();
         }
     };
-    let viewport = map_viewport(state.map.as_ref(), center, MAP_HALF, &markers);
+    let viewport = map_viewport(ctx.map.as_ref(), center, MAP_HALF, &markers);
 
     // Which oases in view are occupied, and by whom (012 AC12).
     let oasis_owners: std::collections::HashMap<Coordinate, String> =
-        match state.accounts.oasis_owners_at(&coords).await {
+        match ctx.accounts.oasis_owners_at(&coords).await {
             Ok(o) => o.into_iter().collect(),
             Err(e) => {
                 tracing::error!(error = %e, "oasis owners lookup failed");
@@ -1286,7 +1288,7 @@ pub async fn map(
                             marker.owner_last_activity,
                             now(),
                             state.lifecycle_rules.inactive_after_secs,
-                            state.world.speed,
+                            ctx.speed,
                         );
                         if inactive {
                             class.push_str(" map-grid__cell--inactive");
@@ -1341,7 +1343,7 @@ pub async fn map(
                     }
                     // Distance from home (toroidal, rounded) — helps judge travel time at a glance.
                     if let Some(o) = origin {
-                        let d = state.map.distance(o, coord);
+                        let d = ctx.map.distance(o, coord);
                         if d >= 0.5 {
                             label.push_str(&format!(" · {} fields away", d.round() as i64));
                         }
@@ -2361,9 +2363,10 @@ pub async fn oasis_recall(
 /// Player only, P4).
 pub async fn market(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Query(q): Query<VillageQuery>,
 ) -> Response {
+    let player = ctx.player;
     let (village, _amounts) =
         match village_view_data(&state, player, selected_village(q.village.as_deref())).await {
             Ok(v) => v,
@@ -2389,7 +2392,7 @@ pub async fn market(
             speed_mult: 1.0,
         });
     }
-    let committed = match state.accounts.committed_merchants(village.id).await {
+    let committed = match ctx.accounts.committed_merchants(village.id).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "committed merchants lookup failed");
@@ -2407,8 +2410,8 @@ pub async fn market(
         merchant_speed: profile.speed,
         origin_x: village.coordinate.x,
         origin_y: village.coordinate.y,
-        radius: i32::try_from(state.world.radius).unwrap_or(i32::MAX),
-        speed_mult: state.world.speed.multiplier(),
+        radius: i32::try_from(ctx.radius).unwrap_or(i32::MAX),
+        speed_mult: ctx.speed.multiplier(),
     })
 }
 
@@ -2418,9 +2421,10 @@ pub async fn market(
 /// and re-validated server-side (P4) — the use-case rejects an over-stored or over-merchant load.
 pub async fn market_send(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
+    let player = ctx.player;
     let village = form.get("village").map(String::as_str);
     let x = form.get("x").and_then(|s| s.trim().parse::<i32>().ok());
     let y = form.get("y").and_then(|s| s.trim().parse::<i32>().ok());
@@ -2440,13 +2444,13 @@ pub async fn market_send(
         crop: amount("amount_crop"),
     };
     let flash = order_trade(
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
+        &ctx.accounts,
+        &ctx.accounts,
         state.rules.as_ref(),
         state.unit_rules.as_ref(),
         state.merchant_rules.as_ref(),
-        state.map.as_ref(),
-        state.world.speed,
+        ctx.map.as_ref(),
+        ctx.speed,
         now(),
         player,
         selected_village(village),
@@ -2539,15 +2543,16 @@ fn scout_report_row(r: &ScoutReportView) -> ReportRow {
 }
 
 /// The player's reports inbox — battle reports (009) and scout reports (010), newest first (P4).
-pub async fn reports(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
-    let battle = match state.accounts.reports_for(player, 50).await {
+pub async fn reports(State(state): State<AppState>, ctx: GameContext) -> Response {
+    let player = ctx.player;
+    let battle = match ctx.accounts.reports_for(player, 50).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "reports lookup failed");
             return server_error();
         }
     };
-    let scouts = match state.accounts.scout_reports_for(player, 50).await {
+    let scouts = match ctx.accounts.scout_reports_for(player, 50).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "scout reports lookup failed");
@@ -2570,7 +2575,7 @@ pub async fn reports(State(state): State<AppState>, AuthUser(player): AuthUser) 
     // 016 AC3/AC12: battles where the player **reinforced** an ally — their own report (the owner's
     // own defenses are already above as `defender_player`). Informational rows (no separate detail).
     let defended =
-        match reinforcement_reports(state.accounts.as_ref(), &state.ranking_rules, player).await {
+        match reinforcement_reports(&ctx.accounts, &state.ranking_rules, player).await {
             Ok(d) => d,
             Err(e) => {
                 tracing::error!(error = %e, "defender reports lookup failed");
@@ -3888,13 +3893,14 @@ pub async fn alliance_stats_page(
 /// redaction is enforced by the repository (010 AC11, P4).
 pub async fn scout_report_detail(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
+    let player = ctx.player;
     let Ok(id) = id.parse::<u128>() else {
         return Redirect::to("/reports").into_response();
     };
-    let r = match state.accounts.scout_report(id, player).await {
+    let r = match ctx.accounts.scout_report(id, player).await {
         Ok(Some(r)) => r,
         Ok(None) => return Redirect::to("/reports").into_response(),
         Err(e) => {
@@ -3972,13 +3978,14 @@ pub async fn scout_report_detail(
 /// One battle report's detail — only a party to it may view it (009 AC8, P4).
 pub async fn report_detail(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
+    let player = ctx.player;
     let Ok(id) = id.parse::<u128>() else {
         return Redirect::to("/reports").into_response();
     };
-    let report = match state.accounts.report(id, player).await {
+    let report = match ctx.accounts.report(id, player).await {
         Ok(Some(r)) => r,
         Ok(None) => return Redirect::to("/reports").into_response(),
         Err(e) => {
