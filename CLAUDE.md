@@ -35,10 +35,13 @@ shared registration-IP association + inhuman action-rate — surfaced to moderat
 scale** slice (023, the M8 launch-hardening capstone: a reusable large-world seeder feeding both CI scale
 guards and a re-runnable `eperica-perf` seed/measure/load tool, criterion hot-path benches, a query/index
 audit, and a scale + P5 horizontal-scale report — measurement & tuning only, no gameplay change), closing
-the dependency-ordered roadmap. App-layer social/meta features are then pulled in as needed; the first is
-the **communication** slice (024: WhatsApp-style conversations — direct-message threads + global/alliance
-chat channels, persisted and delivered live via SSE + Postgres `LISTEN/NOTIFY`, with per-conversation
-unread + a nav badge; sends reuse the 021/022 freeze/sanction/rate-limit guards) is in progress.
+the core dependency-ordered roadmap. The interleaved app-layer social/meta slices (024–035 —
+communication, profiles/presence, notifications, alliance forum, search, settings, account sitting, and
+the UX-information passes) and the **M9 multi-world & administration** program (036–046 — admin console,
+the account↔player split, world-scoped scheduling, the world registry/lifecycle, and the full
+player-facing multi-world layer: per-request world context, handler migration, join/switch lobby, and
+world-scoped boards/stat pages/search) are all built and Verified. The dependency-ordered roadmap
+(001–046) is **complete**; further work (e.g. visual theming/imagery) starts as a fresh slice.
 
 ## Read the specs first — they are the source of truth
 
@@ -51,8 +54,10 @@ unread + a nav badge; sends reuse the 021/022 freeze/sanction/rate-limit guards)
 - **`specs/roles.md`** — user roles & permissions; every spec must address each applicable role.
 - **`specs/roadmap.md`** — dependency-ordered build order (slices 001 → end-game).
 - **`specs/social-and-meta-features.md`** — app-layer features (chat, profiles, UX) — not sim rules.
-- **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the active slice. Currently:
-  `033-map-info`.
+- **`specs/features/NNN-slug/{spec,plan,tasks}.md`** — the per-slice specs. The dependency-ordered
+  roadmap (slices **001–046**, through the M9 multi-world & administration program) is **complete and
+  Verified**; there is no active slice in flight. New work (e.g. visual theming/imagery, or app-layer
+  social/meta features) starts as a fresh `NNN-slug` slice.
 
 If behavior must change, **update the spec first**, then the code.
 
