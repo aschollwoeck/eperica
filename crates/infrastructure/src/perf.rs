@@ -51,10 +51,12 @@ pub async fn seed_world(
     .bind(i64::from(players))
     .execute(pool)
     .await?;
+    // The perf player reuses the account id (like the home backfill). `ON CONFLICT (id)` is collision-safe
+    // when the same perf accounts are seeded into more than one world (the player id is the user id).
     sqlx::query(
         "INSERT INTO players (id, user_id, world_id, tribe) \
          SELECT id, id, $1, 'romans' FROM users WHERE username LIKE 'perf\\_%' \
-         ON CONFLICT (user_id, world_id) DO NOTHING",
+         ON CONFLICT (id) DO NOTHING",
     )
     .bind(world)
     .execute(pool)

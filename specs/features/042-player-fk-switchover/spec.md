@@ -22,13 +22,14 @@ no non-account player can exist.
 
 - **AC1 — Game FKs reference `players`.** Re-point the per-world game columns (`villages.owner_id`,
   movement/trade `owner_id`, battle-report attacker/defender + `battle_defenders`, scout-report
-  scouter/target, `player_culture`, alliance founder/member/invitee, `population_snapshots`,
-  `player_achievements`, `player_quests`, `notifications`) from `users(id)` to `players(id)`, preserving
-  each column's `ON DELETE`. **Account-level** tables (sitting, messaging, fair-play, notification
-  settings/mutes) stay on `users(id)`.
-- **AC2 — The NPC is a player.** The Natar/Wonder release creates a per-world **NPC player whose id equals
-  the NPC user id** (reuse-UUID, like the home backfill), so NPC-owned villages satisfy the new FK and every
-  `owner→user` read for the NPC still resolves.
+  scouter/target, `player_culture`, alliance founder/member/invitee, alliance-forum thread/post `author_id`,
+  `population_snapshots`, `player_achievements`, `player_quests`, `notifications`) from `users(id)` to
+  `players(id)`, preserving each column's `ON DELETE`. **Account-level** tables (sitting, messaging,
+  fair-play, notification settings/mutes) stay on `users(id)`.
+- **AC2 — The NPC is a player.** The Natar/Wonder release ensures an **NPC player whose id equals the NPC
+  user id** (reuse-UUID). The `Natars` user is global (one row), so there is a single NPC player that owns
+  NPC villages in **every** world — created idempotently (`ON CONFLICT (id)`), so it is collision-safe once
+  more than one world reaches its end-game. NPC `owner→user` reads still resolve.
 - **AC3 — Join-a-world primitive.** A repo can create a player for an existing account in its world
   (`create_player_in_world`): a fresh player id + a starting village placed on **that world's** map (shared
   with registration via an extracted `place_starting_village`). Re-joining is rejected. (Not yet wired into

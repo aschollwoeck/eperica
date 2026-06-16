@@ -6844,11 +6844,13 @@ impl ArtifactRepository for PgAccountRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(backend)?;
-        // The NPC's per-world player (042) — id = NPC user id (reuse-UUID, like the home backfill), so
-        // NPC villages satisfy the players FK and every owner→user read for the NPC still resolves.
+        // The NPC's player (042) — id = NPC user id (reuse-UUID), so NPC villages satisfy the players FK
+        // and every owner→user read for the NPC still resolves. The `Natars` user is global (one row), so
+        // there is a single NPC player owning NPC villages in every world; `ON CONFLICT (id)` makes this
+        // idempotent and collision-safe once more than one world reaches its end-game.
         sqlx::query(
             "INSERT INTO players (id, user_id, world_id, tribe) VALUES ($1, $1, $2, 'romans') \
-             ON CONFLICT (user_id, world_id) DO NOTHING",
+             ON CONFLICT (id) DO NOTHING",
         )
         .bind(npc)
         .bind(world)
@@ -7008,11 +7010,13 @@ impl WonderRepository for PgAccountRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(backend)?;
-        // The NPC's per-world player (042) — id = NPC user id (reuse-UUID, like the home backfill), so
-        // NPC villages satisfy the players FK and every owner→user read for the NPC still resolves.
+        // The NPC's player (042) — id = NPC user id (reuse-UUID), so NPC villages satisfy the players FK
+        // and every owner→user read for the NPC still resolves. The `Natars` user is global (one row), so
+        // there is a single NPC player owning NPC villages in every world; `ON CONFLICT (id)` makes this
+        // idempotent and collision-safe once more than one world reaches its end-game.
         sqlx::query(
             "INSERT INTO players (id, user_id, world_id, tribe) VALUES ($1, $1, $2, 'romans') \
-             ON CONFLICT (user_id, world_id) DO NOTHING",
+             ON CONFLICT (id) DO NOTHING",
         )
         .bind(npc)
         .bind(world)
@@ -13065,6 +13069,48 @@ mod tests {
                 .await,
             Err(RepoError::Duplicate)
         ));
+    }
+
+    /// 042 AC2: the single global Natar NPC player (id = NPC user id) is created idempotently and is
+    /// collision-safe when more than one world reaches its end-game — the exact statement the artifact /
+    /// Wonder release runs, applied for two worlds, inserts exactly one NPC player without erroring.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn npc_player_is_collision_safe_across_worlds(pool: PgPool) {
+        let Setup { world, .. } = setup(pool.clone()).await;
+        let world_b = Uuid::new_v4();
+        sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 20, 1)")
+            .bind(world_b)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let npc = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO users (id, username, email, password_hash, email_confirmed, tribe, is_npc) \
+             VALUES ($1, 'Natars', 'natars@system.local', '!', true, 'romans', true)",
+        )
+        .bind(npc)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The release's NPC-player statement, run for both worlds.
+        for w in [Uuid::from_u128(world.id.0), world_b] {
+            sqlx::query(
+                "INSERT INTO players (id, user_id, world_id, tribe) VALUES ($1, $1, $2, 'romans') \
+                 ON CONFLICT (id) DO NOTHING",
+            )
+            .bind(npc)
+            .bind(w)
+            .execute(&pool)
+            .await
+            .expect("npc player insert is collision-safe");
+        }
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM players WHERE user_id = $1")
+            .bind(npc)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "exactly one NPC player across worlds");
     }
 
     /// 004 AC13: a Roman village holds one field and one building order concurrently (separate

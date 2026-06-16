@@ -75,3 +75,12 @@ ALTER TABLE player_quests ADD CONSTRAINT player_quests_player_id_fkey
 ALTER TABLE notifications DROP CONSTRAINT notifications_player_id_fkey;
 ALTER TABLE notifications ADD CONSTRAINT notifications_player_id_fkey
     FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE;
+
+-- alliance forum (CASCADE) — a thread/post author is a per-world player (the forum is world+alliance
+-- scoped, gated on per-world alliance membership).
+ALTER TABLE alliance_threads DROP CONSTRAINT alliance_threads_author_id_fkey;
+ALTER TABLE alliance_threads ADD CONSTRAINT alliance_threads_author_id_fkey
+    FOREIGN KEY (author_id) REFERENCES players(id) ON DELETE CASCADE;
+ALTER TABLE alliance_posts DROP CONSTRAINT alliance_posts_author_id_fkey;
+ALTER TABLE alliance_posts ADD CONSTRAINT alliance_posts_author_id_fkey
+    FOREIGN KEY (author_id) REFERENCES players(id) ON DELETE CASCADE;
