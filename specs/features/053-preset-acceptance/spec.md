@@ -1,7 +1,8 @@
 # Feature 053 — per-world preset acceptance + ADR finalization
 
 **Status:** Verified
-**Depends on:** 048–050, 052 (the per-world rule-preset machinery + the `speed` preset + admin selection).
+**Depends on:** 047–050, 052 (the per-world end-game schedule + rule-preset machinery + the `speed` preset +
+admin selection; 050 absorbed the planned 051 handler sweep).
 **Roadmap:** Per-world configuration program — see [ADR 0035](../../../docs/architecture/0035-per-world-configuration.md) §B. The capstone.
 
 **Program note:** Prove the per-world rule machinery end-to-end through the live serving path — the registry —
