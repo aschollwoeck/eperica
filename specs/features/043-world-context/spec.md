@@ -1,6 +1,6 @@
 # Feature 043 — Request world-context (`GameContext`)
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 040 (registry), 042 (player FKs + `create_player_in_world`)
 **Roadmap:** M9 — sub-program slice 2 of 4 (042 FK → **043 context** → 044 handler migration → 045 lobby).
 See [ADR 0034](../../../docs/architecture/0034-multi-world-and-administration.md).

@@ -589,7 +589,7 @@ pub async fn village(
     };
 
     // 020 AC8: the artifacts this player holds, with the holding village's coordinate.
-    let held = state
+    let held = ctx
         .accounts
         .held_by_player(player)
         .await

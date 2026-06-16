@@ -3981,6 +3981,69 @@ async fn selecting_a_world_switches_the_village_page(pool: sqlx::PgPool) {
     assert!(me.contains("\"authed\":true"));
 }
 
+/// 043 AC4 (server-authoritative denial): `POST /world/select` with a world the account has **not**
+/// joined (and with a garbage id) is ignored — the village page keeps rendering the home village.
+#[sqlx::test(migrations = "../../migrations")]
+async fn selecting_an_unjoined_world_is_ignored(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (c, user) = register_client(&base, &pool, &unique("mw")).await;
+    let home_vid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE owner_id = $1")
+        .bind(user)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // A second world exists, but the account never joined it (no player row in it).
+    let world_b = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 30, 4242)")
+        .bind(world_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Selecting the unjoined world is ignored (server-authoritative) → village stays home.
+    let r = c
+        .post(format!("{base}/world/select"))
+        .form(&[("world", world_b.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let body = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains(&home_vid.as_u128().to_string()),
+        "an unjoined world is ignored — the home village still renders"
+    );
+
+    // A garbage (non-existent) world id is likewise ignored.
+    let r = c
+        .post(format!("{base}/world/select"))
+        .form(&[("world", uuid::Uuid::new_v4().as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let body = c
+        .get(format!("{base}/village"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains(&home_vid.as_u128().to_string()),
+        "a garbage world id is ignored — the home village still renders"
+    );
+}
+
 /// 024 AC2–AC4: a DM appears for both parties; opening it clears the recipient's unread.
 #[sqlx::test(migrations = "../../migrations")]
 async fn dm_conversation_flow(pool: sqlx::PgPool) {
