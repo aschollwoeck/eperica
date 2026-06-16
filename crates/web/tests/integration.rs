@@ -3121,6 +3121,80 @@ async fn leaderboard_and_stats_are_public(pool: sqlx::PgPool) {
     );
 }
 
+/// 046 AC1/AC4: a leaderboard reflects the **selected** world. An account that joined a second world
+/// appears on that world's board with its name resolved (via `players`); an account that only plays the
+/// home world is absent from the second world's board — proving the board is world-scoped.
+#[sqlx::test(migrations = "../../migrations")]
+async fn leaderboard_is_world_scoped(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let name_a = unique("alpha");
+    let name_c = unique("gamma");
+    let (ca, user_a) = register_client(&base, &pool, &name_a).await;
+    let (_cc, _user_c) = register_client(&base, &pool, &name_c).await;
+
+    // Account A also joins a second world B (account C stays home-only).
+    let world_b = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 30, 909)")
+        .bind(world_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repo_b = PgAccountRepository::new(
+        pool.clone(),
+        WorldId(world_b.as_u128()),
+        909,
+        30,
+        economy_rules().unwrap().starting_amounts,
+        lifecycle_rules().unwrap().beginner_protection_secs,
+        GameSpeed::new(1.0).unwrap(),
+    );
+    repo_b
+        .create_player_in_world(
+            PlayerId(user_a.as_u128()),
+            Tribe::Teutons,
+            &starting_village().unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Home board (no world cookie): both A and C appear.
+    let home = ca
+        .get(format!("{base}/leaderboard?cat=population"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(home.contains(&name_a), "A is on the home population board");
+    assert!(home.contains(&name_c), "C is on the home population board");
+
+    // Select world B → its board shows A (joined, name resolved via players) but not C (home-only).
+    let r = ca
+        .post(format!("{base}/world/select"))
+        .form(&[("world", world_b.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let board_b = ca
+        .get(format!("{base}/leaderboard?cat=population"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        board_b.contains(&name_a),
+        "A's name resolves on world B's board via players"
+    );
+    assert!(
+        !board_b.contains(&name_c),
+        "C never joined world B — absent from its board (world-scoped)"
+    );
+}
+
 /// 017 AC8/AC10: loading the (authenticated) village page lazily grants newly-earned achievements —
 /// here a 2nd village earns `second_village` server-side.
 #[sqlx::test(migrations = "../../migrations")]

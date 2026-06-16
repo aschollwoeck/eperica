@@ -1,6 +1,6 @@
 # Feature 046 — Multi-world ranking boards & public read pages
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 045 (per-row read re-pointing, lobby/join/switch), 043 (`world` cookie + `context_for`).
 **Roadmap:** M9 — follow-up to the player-multi-world sub-program (042–045).
 See [ADR 0034](../../../docs/architecture/0034-multi-world-and-administration.md).
