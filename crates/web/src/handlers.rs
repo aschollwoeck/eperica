@@ -2873,19 +2873,20 @@ pub async fn wonder(State(state): State<AppState>) -> Response {
 /// Wonder; gating (site control + alliance holds a plan + level < 100) is server-side.
 pub async fn wonder_build_submit(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    ctx: GameContext,
     Form(form): Form<WonderBuildForm>,
 ) -> Response {
+    let player = ctx.player;
     let flash = order_wonder_build(
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
-        state.accounts.as_ref(),
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
         state.rules.as_ref(),
         state.build_rules.as_ref(),
         state.unit_rules.as_ref(),
-        state.world.speed,
+        ctx.speed,
         now(),
         player,
         selected_village(form.village.as_deref()),
@@ -3781,10 +3782,11 @@ pub async fn sitting_stop(jar: PrivateCookieJar) -> Response {
 /// The player's onboarding quests (018 AC8, Player only): the current quest with its reward, the
 /// completed list, and the all-done state. Evaluates lazily on view (server-authoritative,
 /// idempotent) so newly-satisfied quests are completed before rendering.
-pub async fn quests_page(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+pub async fn quests_page(State(state): State<AppState>, ctx: GameContext) -> Response {
+    let player = ctx.player;
     // Lazily complete anything now satisfied — best-effort, must not break the page.
     if let Err(e) = evaluate_quests(
-        state.accounts.as_ref(),
+        &ctx.accounts,
         state.rules.as_ref(),
         state.quest_chain.as_ref(),
         player,
@@ -3793,7 +3795,7 @@ pub async fn quests_page(State(state): State<AppState>, AuthUser(player): AuthUs
     {
         tracing::error!(error = %e, "quest evaluation failed");
     }
-    let repo = state.accounts.as_ref();
+    let repo = &ctx.accounts;
     let completed = match repo.completed_quests(player).await {
         Ok(c) => c,
         Err(e) => {
