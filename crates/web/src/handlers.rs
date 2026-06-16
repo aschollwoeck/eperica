@@ -2388,7 +2388,7 @@ pub async fn market(
             origin_x: 0,
             origin_y: 0,
             radius: 0,
-            speed_mult: 1.0,
+            speed_mult: ctx.speed.multiplier(),
         });
     }
     let committed = match ctx.accounts.committed_merchants(village.id).await {
