@@ -1575,10 +1575,7 @@ pub async fn academy(
         .map(|spec| {
             let is_researched = spec.researched_by_default() || researched.contains(&spec.id);
             let (cost, time_secs) = spec.research.as_ref().map_or((None, 0), |r| {
-                (
-                    Some(r.cost),
-                    scaled_time_secs(r.time_secs, ctx.speed),
-                )
+                (Some(r.cost), scaled_time_secs(r.time_secs, ctx.speed))
             });
             let mut gate = String::new();
             let mut can_order = false;
@@ -2574,14 +2571,13 @@ pub async fn reports(State(state): State<AppState>, ctx: GameContext) -> Respons
     rows.extend(scouts.iter().map(scout_report_row));
     // 016 AC3/AC12: battles where the player **reinforced** an ally — their own report (the owner's
     // own defenses are already above as `defender_player`). Informational rows (no separate detail).
-    let defended =
-        match reinforcement_reports(&ctx.accounts, &state.ranking_rules, player).await {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::error!(error = %e, "defender reports lookup failed");
-                return server_error();
-            }
-        };
+    let defended = match reinforcement_reports(&ctx.accounts, &state.ranking_rules, player).await {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!(error = %e, "defender reports lookup failed");
+            return server_error();
+        }
+    };
     rows.extend(defended.iter().filter(|d| !d.is_owner).map(|d| {
         let lost: u32 = d.losses.iter().map(|(_, n)| n).sum();
         ReportRow {
@@ -4344,19 +4340,14 @@ pub async fn alliance_respond(
 
 pub async fn alliance_leave(ctx: GameContext) -> Response {
     let player = ctx.player;
-    let flash = leave_alliance(&ctx.accounts, player)
-        .await
-        .err()
-        .map(|e| {
-            tracing::warn!(error = %e, "leave rejected");
-            user_msg(e.to_string())
-        });
+    let flash = leave_alliance(&ctx.accounts, player).await.err().map(|e| {
+        tracing::warn!(error = %e, "leave rejected");
+        user_msg(e.to_string())
+    });
     with_flash(Redirect::to("/alliance").into_response(), flash)
 }
 
-pub async fn alliance_disband(
-    ctx: GameContext,
-) -> Response {
+pub async fn alliance_disband(ctx: GameContext) -> Response {
     let player = ctx.player;
     let flash = disband_alliance(&ctx.accounts, player)
         .await
@@ -4373,10 +4364,7 @@ pub struct TargetForm {
     target: String,
 }
 
-pub async fn alliance_expel(
-    ctx: GameContext,
-    Form(form): Form<TargetForm>,
-) -> Response {
+pub async fn alliance_expel(ctx: GameContext, Form(form): Form<TargetForm>) -> Response {
     let player = ctx.player;
     let flash = match form.target.parse::<u128>() {
         Ok(id) => expel_member(&ctx.accounts, player, PlayerId(id))
@@ -4391,10 +4379,7 @@ pub async fn alliance_expel(
     with_flash(Redirect::to("/alliance").into_response(), flash)
 }
 
-pub async fn alliance_transfer(
-    ctx: GameContext,
-    Form(form): Form<TargetForm>,
-) -> Response {
+pub async fn alliance_transfer(ctx: GameContext, Form(form): Form<TargetForm>) -> Response {
     let player = ctx.player;
     let flash = match form.target.parse::<u128>() {
         Ok(id) => transfer_founder(&ctx.accounts, player, PlayerId(id))
@@ -4425,10 +4410,7 @@ pub struct RoleForm {
     manage_roles: bool,
 }
 
-pub async fn alliance_role(
-    ctx: GameContext,
-    Form(form): Form<RoleForm>,
-) -> Response {
+pub async fn alliance_role(ctx: GameContext, Form(form): Form<RoleForm>) -> Response {
     let player = ctx.player;
     let Ok(id) = form.target.parse::<u128>() else {
         return Redirect::to("/alliance").into_response();
@@ -4469,10 +4451,7 @@ pub struct DiplomacyForm {
     command: String,
 }
 
-pub async fn alliance_diplomacy(
-    ctx: GameContext,
-    Form(form): Form<DiplomacyForm>,
-) -> Response {
+pub async fn alliance_diplomacy(ctx: GameContext, Form(form): Form<DiplomacyForm>) -> Response {
     let player = ctx.player;
     let Ok(id) = form.other.parse::<u128>() else {
         return Redirect::to("/alliance").into_response();
@@ -4545,10 +4524,7 @@ pub struct NewThreadForm {
 }
 
 /// Start a forum thread (027 AC2/AC4, member; announcement needs `Announce`).
-pub async fn forum_new(
-    ctx: GameContext,
-    Form(form): Form<NewThreadForm>,
-) -> Response {
+pub async fn forum_new(ctx: GameContext, Form(form): Form<NewThreadForm>) -> Response {
     let player = ctx.player;
     let announcement = form.announcement.as_deref() == Some("1");
     match start_thread(
@@ -4568,10 +4544,7 @@ pub async fn forum_new(
 }
 
 /// A single forum thread + its posts (027 AC1, members of the owning alliance only).
-pub async fn forum_thread_page(
-    ctx: GameContext,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn forum_thread_page(ctx: GameContext, Path(id): Path<String>) -> Response {
     let player = ctx.player;
     let Ok(tid) = id.parse::<u128>() else {
         return not_found();

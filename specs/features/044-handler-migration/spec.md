@@ -1,6 +1,6 @@
 # Feature 044 — Game-handler migration to `GameContext`
 
-**Status:** Draft
+**Status:** Verified
 **Depends on:** 043 (`GameContext` extractor + `world` cookie + registry `context_for`).
 **Roadmap:** M9 — sub-program slice 3 of 4 (042 FK → 043 context → **044 handler migration** → 045 lobby).
 See [ADR 0034](../../../docs/architecture/0034-multi-world-and-administration.md).

@@ -4053,6 +4053,84 @@ async fn selecting_an_unjoined_world_is_ignored(pool: sqlx::PgPool) {
     );
 }
 
+/// 044 AC3: a **game action** (a build order) issued with a second world selected lands in **that**
+/// world's village, not the home one — proving the migrated handlers operate through `GameContext`.
+#[sqlx::test(migrations = "../../migrations")]
+async fn build_order_lands_in_the_selected_world(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (c, user) = register_client(&base, &pool, &unique("mw")).await;
+    let home_vid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE owner_id = $1")
+        .bind(user)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // A second world + the account's player + starting village in it (the 042 join primitive).
+    let world_b = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 30, 4242)")
+        .bind(world_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repo_b = PgAccountRepository::new(
+        pool.clone(),
+        WorldId(world_b.as_u128()),
+        4242,
+        30,
+        economy_rules().unwrap().starting_amounts,
+        lifecycle_rules().unwrap().beginner_protection_secs,
+        GameSpeed::new(1.0).unwrap(),
+    );
+    let player_b = repo_b
+        .create_player_in_world(
+            PlayerId(user.as_u128()),
+            Tribe::Teutons,
+            &starting_village().unwrap(),
+        )
+        .await
+        .unwrap();
+    let b_vid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE owner_id = $1")
+        .bind(uuid::Uuid::from_u128(player_b.0))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_ne!(home_vid, b_vid);
+
+    // Select world B, then order a field upgrade — the migrated build handler acts in world B.
+    let r = c
+        .post(format!("{base}/world/select"))
+        .form(&[("world", world_b.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let r = c
+        .post(format!("{base}/village/build"))
+        .form(&[("table", "field"), ("slot", "0")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+
+    // The build order landed on world B's village — never the home village.
+    let order_vid: uuid::Uuid =
+        sqlx::query_scalar("SELECT village_id FROM build_orders WHERE status = 'pending'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        order_vid, b_vid,
+        "the build order lands in the selected world's village"
+    );
+    let home_orders: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM build_orders WHERE village_id = $1")
+            .bind(home_vid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(home_orders, 0, "the home village received no build order");
+}
+
 /// 024 AC2–AC4: a DM appears for both parties; opening it clears the recipient's unread.
 #[sqlx::test(migrations = "../../migrations")]
 async fn dm_conversation_flow(pool: sqlx::PgPool) {
