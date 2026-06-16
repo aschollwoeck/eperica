@@ -3777,13 +3777,15 @@ pub async fn me(
 pub async fn sitting_status(
     State(state): State<AppState>,
     jar: PrivateCookieJar,
-    RealUser(me): RealUser,
+    MaybeRealUser(me): MaybeRealUser,
 ) -> Response {
-    (
-        StatusCode::OK,
-        sit_owner_name(&state, &jar, me).await.unwrap_or_default(),
-    )
-        .into_response()
+    // Visitor-safe (055): a non-redirecting extractor, so a logged-out poller gets an empty `200` — never a
+    // redirect to the login HTML, which the banner JS would otherwise render as raw markup.
+    let name = match me {
+        Some(me) => sit_owner_name(&state, &jar, me).await.unwrap_or_default(),
+        None => String::new(),
+    };
+    (StatusCode::OK, name).into_response()
 }
 
 /// The grant-sitter form (030).
@@ -4864,11 +4866,15 @@ pub async fn messages_with(AuthUser(_player): AuthUser, Path(id): Path<String>) 
 /// The viewer's total unread (the nav badge polls this — 024 AC4).
 pub async fn messages_unread(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    MaybeAuthUser(player): MaybeAuthUser,
 ) -> Response {
-    let n = unread_badge(state.accounts.as_ref(), state.accounts.as_ref(), player)
-        .await
-        .unwrap_or(0);
+    // Visitor-safe (055): a logged-out poller gets `"0"`, not a redirect to the login HTML.
+    let n = match player {
+        Some(player) => unread_badge(state.accounts.as_ref(), state.accounts.as_ref(), player)
+            .await
+            .unwrap_or(0),
+        None => 0,
+    };
     (StatusCode::OK, n.to_string()).into_response()
 }
 
@@ -4972,11 +4978,15 @@ pub async fn notifications_page(
 /// The player's unread notification count — the nav bell polls this (026 AC4).
 pub async fn notifications_unread(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    MaybeAuthUser(player): MaybeAuthUser,
 ) -> Response {
-    let n = notification_unread(state.accounts.as_ref(), player)
-        .await
-        .unwrap_or(0);
+    // Visitor-safe (055): a logged-out poller gets `"0"`, not a redirect to the login HTML.
+    let n = match player {
+        Some(player) => notification_unread(state.accounts.as_ref(), player)
+            .await
+            .unwrap_or(0),
+        None => 0,
+    };
     (StatusCode::OK, n.to_string()).into_response()
 }
 
@@ -4996,8 +5006,14 @@ pub async fn notifications_read(
 /// **private** key `notif:<uuid>` — a player can only ever receive their own (no cross-player leak, P4).
 pub async fn notifications_stream(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
+    MaybeAuthUser(player): MaybeAuthUser,
 ) -> Response {
+    // Visitor-safe (055): the base template opens this EventSource on every page. A logged-out caller gets
+    // `204 No Content` — the SSE "do not reconnect" signal — never a `text/html` login redirect (which the
+    // browser logs as a MIME-type EventSource error).
+    let Some(player) = player else {
+        return StatusCode::NO_CONTENT.into_response();
+    };
     let want = notif_key(player);
     let mut rx = state.notification_hub.subscribe();
     let stream = async_stream::stream! {

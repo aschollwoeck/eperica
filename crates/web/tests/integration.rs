@@ -718,6 +718,71 @@ async fn me_probe_reports_auth_and_moderator(pool: sqlx::PgPool) {
     assert!(body.contains("\"moderator\":true"), "got: {body}");
 }
 
+/// 055: the base-template background pollers must be visitor-safe — a logged-out caller gets the small
+/// expected body, never a redirect to the login HTML (which the sitting-banner JS would render as raw markup
+/// on the landing page). Guards the "huge HTML markup" regression.
+#[sqlx::test(migrations = "../../migrations")]
+async fn visitor_background_pollers_do_not_leak_login_html(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let visitor = client(); // no auth cookie
+
+    // /sitting/status — the visible bug: empty 200, never the login page.
+    let r = visitor
+        .get(format!("{base}/sitting/status"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let body = r.text().await.unwrap();
+    assert!(body.trim().is_empty(), "visitor sitting status is empty");
+    assert!(
+        !body.contains("<!DOCTYPE"),
+        "no login HTML leaked to the banner"
+    );
+
+    // Unread badges — "0", not the login HTML (which would parseInt to NaN).
+    for path in ["/messages/unread", "/notifications/unread"] {
+        let r = visitor.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 200, "{path}");
+        assert_eq!(
+            r.text().await.unwrap().trim(),
+            "0",
+            "{path} returns 0 for a visitor"
+        );
+    }
+
+    // Notification SSE — 204 (the EventSource "do not reconnect" signal), not a text/html login redirect.
+    let r = visitor
+        .get(format!("{base}/notifications/stream"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        204,
+        "visitor notification stream is 204 No Content"
+    );
+
+    // AC2: a logged-in user still gets the real (non-HTML) values — banner empty (not sitting), badges 0.
+    let (c, _u) = register_client(&base, &pool, &unique("poll")).await;
+    let r = c
+        .get(format!("{base}/sitting/status"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    assert!(
+        r.text().await.unwrap().trim().is_empty(),
+        "not sitting ⇒ empty"
+    );
+    let r = c
+        .get(format!("{base}/messages/unread"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.text().await.unwrap().trim(), "0");
+}
+
 /// 035: `/me` reflects the *effective* player while sitting (030) — the same identity the 022 moderator
 /// gate keys on. A non-mod sitting a moderator owner reports `moderator:true`; the reverse reports false.
 #[sqlx::test(migrations = "../../migrations")]
@@ -5270,18 +5335,16 @@ async fn notifications_feed_bell_and_privacy(pool: sqlx::PgPool) {
         "viewing the feed cleared the bell"
     );
 
-    // An anonymous request is redirected to login (no notifications for a Visitor).
+    // An anonymous request gets "0" — visitor-safe (055): the base-template poller must never receive a
+    // redirect to the login HTML. Returning 0 leaks nothing (a visitor has no notifications).
     let anon = client();
     let res = anon
         .get(format!("{base}/notifications/unread"))
         .send()
         .await
         .unwrap();
-    assert_eq!(res.status().as_u16(), 303);
-    assert_eq!(
-        res.headers().get(LOCATION).unwrap().to_str().unwrap(),
-        "/login"
-    );
+    assert_eq!(res.status().as_u16(), 200);
+    assert_eq!(res.text().await.unwrap().trim(), "0");
 }
 
 /// 026 AC6: a new notification reaches the recipient's bell stream live, and only theirs.
