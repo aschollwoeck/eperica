@@ -431,7 +431,7 @@ pub async fn register_submit(
                 })
             } else {
                 let jar = jar.add(auth_cookie(user.id.0));
-                (jar, Redirect::to("/village")).into_response()
+                (jar, Redirect::to("/worlds")).into_response()
             }
         }
         Err(RegisterError::Invalid(message)) => page(&RegisterTemplate {
@@ -474,7 +474,7 @@ pub async fn login_submit(
     {
         Ok(user) => {
             let jar = jar.add(auth_cookie(user.id.0));
-            (jar, Redirect::to("/village")).into_response()
+            (jar, Redirect::to("/worlds")).into_response()
         }
         Err(LoginError::InvalidCredentials) => page(&LoginTemplate {
             error: Some("Invalid username or password.".to_owned()),
@@ -1911,7 +1911,7 @@ pub async fn troops(
 ) -> Response {
     let player = ctx.player;
     let Some(building) = parse_troop_building(&building_slug) else {
-        return Redirect::to("/village").into_response();
+        return Redirect::to(&world_path(ctx.world_id, "/village")).into_response();
     };
     let (village, _amounts) =
         match village_view_data(&ctx, selected_village(q.village.as_deref())).await {
@@ -2366,7 +2366,7 @@ pub struct RallyReturnForm {
 pub async fn rally_return(ctx: GameContext, Form(form): Form<RallyReturnForm>) -> Response {
     let player = ctx.player;
     let Ok(host) = form.host.trim().parse::<u128>() else {
-        return Redirect::to("/village").into_response();
+        return Redirect::to(&world_path(ctx.world_id, "/village")).into_response();
     };
     let flash = order_return(
         &ctx.accounts,
@@ -3361,7 +3361,7 @@ pub async fn report_submit(
     Form(form): Form<ReportForm>,
 ) -> Response {
     let Some(subject) = form.subject.trim().parse::<u128>().ok().map(PlayerId) else {
-        return Redirect::to("/leaderboard").into_response();
+        return Redirect::to("/worlds").into_response();
     };
     let reason = ReportReason::parse(&form.reason).unwrap_or(ReportReason::Other);
     let note = form.note.unwrap_or_default();
@@ -3868,7 +3868,7 @@ pub async fn sitting_start(
     match authorize_sit(state.accounts.as_ref(), owner, me, now()).await {
         Ok(true) => {
             let jar = jar.add(crate::auth::sit_cookie(owner.0));
-            (jar, Redirect::to("/village")).into_response()
+            (jar, Redirect::to("/worlds")).into_response()
         }
         // Not authorised (not a sitter / blocked owner) — refuse.
         Ok(false) => forbidden(),
@@ -4004,11 +4004,11 @@ pub async fn scout_report_detail(
 ) -> Response {
     let player = ctx.player;
     let Ok(id) = id.parse::<u128>() else {
-        return Redirect::to("/reports").into_response();
+        return Redirect::to(&world_path(ctx.world_id, "/reports")).into_response();
     };
     let r = match ctx.accounts.scout_report(id, player).await {
         Ok(Some(r)) => r,
-        Ok(None) => return Redirect::to("/reports").into_response(),
+        Ok(None) => return Redirect::to(&world_path(ctx.world_id, "/reports")).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "scout report lookup failed");
             return server_error();
@@ -4090,11 +4090,11 @@ pub async fn report_detail(
 ) -> Response {
     let player = ctx.player;
     let Ok(id) = id.parse::<u128>() else {
-        return Redirect::to("/reports").into_response();
+        return Redirect::to(&world_path(ctx.world_id, "/reports")).into_response();
     };
     let report = match ctx.accounts.report(id, player).await {
         Ok(Some(r)) => r,
-        Ok(None) => return Redirect::to("/reports").into_response(),
+        Ok(None) => return Redirect::to(&world_path(ctx.world_id, "/reports")).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "report lookup failed");
             return server_error();
@@ -4354,7 +4354,10 @@ pub async fn alliance_found(ctx: GameContext, Form(form): Form<FoundForm>) -> Re
         tracing::warn!(error = %e, "found alliance rejected");
         user_msg(e.to_string())
     });
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 #[derive(Deserialize)]
@@ -4390,7 +4393,10 @@ pub async fn alliance_invite(
             }),
         None => Some("No player with that name.".to_owned()),
     };
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 pub async fn alliance_revoke(
@@ -4409,7 +4415,10 @@ pub async fn alliance_revoke(
             }),
         None => Some("No player with that name.".to_owned()),
     };
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 #[derive(Deserialize)]
@@ -4436,7 +4445,10 @@ pub async fn alliance_respond(ctx: GameContext, Form(form): Form<RespondForm>) -
         }),
         Err(_) => None,
     };
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 pub async fn alliance_leave(ctx: GameContext) -> Response {
@@ -4445,7 +4457,10 @@ pub async fn alliance_leave(ctx: GameContext) -> Response {
         tracing::warn!(error = %e, "leave rejected");
         user_msg(e.to_string())
     });
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 pub async fn alliance_disband(ctx: GameContext) -> Response {
@@ -4457,7 +4472,10 @@ pub async fn alliance_disband(ctx: GameContext) -> Response {
             tracing::warn!(error = %e, "disband rejected");
             user_msg(e.to_string())
         });
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 #[derive(Deserialize)]
@@ -4477,7 +4495,10 @@ pub async fn alliance_expel(ctx: GameContext, Form(form): Form<TargetForm>) -> R
             }),
         Err(_) => None,
     };
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 pub async fn alliance_transfer(ctx: GameContext, Form(form): Form<TargetForm>) -> Response {
@@ -4492,7 +4513,10 @@ pub async fn alliance_transfer(ctx: GameContext, Form(form): Form<TargetForm>) -
             }),
         Err(_) => None,
     };
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 #[derive(Deserialize)]
@@ -4514,7 +4538,7 @@ pub struct RoleForm {
 pub async fn alliance_role(ctx: GameContext, Form(form): Form<RoleForm>) -> Response {
     let player = ctx.player;
     let Ok(id) = form.target.parse::<u128>() else {
-        return Redirect::to("/alliance").into_response();
+        return Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response();
     };
     let role = match form.role.as_str() {
         "leader" => AllianceRole::Leader,
@@ -4543,7 +4567,10 @@ pub async fn alliance_role(ctx: GameContext, Form(form): Form<RoleForm>) -> Resp
             tracing::warn!(error = %e, "role change rejected");
             user_msg(e.to_string())
         });
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 #[derive(Deserialize)]
@@ -4555,14 +4582,14 @@ pub struct DiplomacyForm {
 pub async fn alliance_diplomacy(ctx: GameContext, Form(form): Form<DiplomacyForm>) -> Response {
     let player = ctx.player;
     let Ok(id) = form.other.parse::<u128>() else {
-        return Redirect::to("/alliance").into_response();
+        return Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response();
     };
     let command = match form.command.as_str() {
         "declare_war" => DiplomacyCommand::DeclareWar,
         "propose_confederation" => DiplomacyCommand::ProposeConfederation,
         "accept_confederation" => DiplomacyCommand::AcceptConfederation,
         "cancel" => DiplomacyCommand::Cancel,
-        _ => return Redirect::to("/alliance").into_response(),
+        _ => return Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
     };
     let flash = set_diplomacy(
         &ctx.accounts,
@@ -4576,7 +4603,10 @@ pub async fn alliance_diplomacy(ctx: GameContext, Form(form): Form<DiplomacyForm
         tracing::warn!(error = %e, "diplomacy change rejected");
         user_msg(e.to_string())
     });
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 // ---- Alliance forum (027) ----
@@ -4640,7 +4670,7 @@ pub async fn forum_new(ctx: GameContext, Form(form): Form<NewThreadForm>) -> Res
     {
         Ok(id) => Redirect::to(&format!("/alliance/forum/{id}")).into_response(),
         Err(ForumError::NotAMember | ForumError::MissingRight) => forbidden(),
-        Err(_) => Redirect::to("/alliance/forum").into_response(),
+        Err(_) => Redirect::to(&world_path(ctx.world_id, "/alliance/forum")).into_response(),
     }
 }
 
