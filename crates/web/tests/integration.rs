@@ -5568,6 +5568,11 @@ async fn alliance_forum_flow_and_access(pool: sqlx::PgPool) {
         .to_str()
         .unwrap()
         .to_owned();
+    // 056: the new-thread redirect must be world-prefixed (a bare /alliance/forum/{id} would 404).
+    assert!(
+        loc.starts_with(&format!("/w/{home}/alliance/forum/")),
+        "new-thread redirect is world-prefixed, got {loc}"
+    );
     let thread_id = loc.rsplit('/').next().unwrap().to_owned();
 
     // Bob (same alliance) sees it in the list and can reply.
@@ -5584,6 +5589,12 @@ async fn alliance_forum_flow_and_access(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert_eq!(reply.status().as_u16(), 303);
+    // 056: the reply redirect is world-prefixed back to the thread, not a bare 404 path.
+    assert_eq!(
+        reply.headers().get(LOCATION).unwrap().to_str().unwrap(),
+        format!("/w/{home}/alliance/forum/{thread_id}"),
+        "reply redirect returns to the world-prefixed thread"
+    );
     let thread = cb
         .get(format!("{base}/w/{home}/alliance/forum/{thread_id}"))
         .send()

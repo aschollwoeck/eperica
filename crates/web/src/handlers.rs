@@ -4704,7 +4704,8 @@ pub async fn forum_new(ctx: GameContext, Form(form): Form<NewThreadForm>) -> Res
     )
     .await
     {
-        Ok(id) => Redirect::to(&format!("/alliance/forum/{id}")).into_response(),
+        Ok(id) => Redirect::to(&world_path(ctx.world_id, &format!("/alliance/forum/{id}")))
+            .into_response(),
         Err(ForumError::NotAMember | ForumError::MissingRight) => forbidden(),
         Err(_) => Redirect::to(&world_path(ctx.world_id, "/alliance/forum")).into_response(),
     }
@@ -4759,10 +4760,12 @@ pub async fn forum_reply(
         return not_found();
     };
     match reply(&ctx.accounts, player, tid, &form.body, now()).await {
-        Ok(_) => Redirect::to(&format!("/alliance/forum/{id}")).into_response(),
+        Ok(_) => Redirect::to(&world_path(ctx.world_id, &format!("/alliance/forum/{id}")))
+            .into_response(),
         Err(ForumError::NotAMember) => forbidden(),
         Err(ForumError::NotFound) => not_found(),
-        Err(_) => Redirect::to(&format!("/alliance/forum/{id}")).into_response(),
+        Err(_) => Redirect::to(&world_path(ctx.world_id, &format!("/alliance/forum/{id}")))
+            .into_response(),
     }
 }
 

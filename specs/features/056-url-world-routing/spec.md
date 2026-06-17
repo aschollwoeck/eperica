@@ -28,8 +28,8 @@ leaderboard," and the mechanism is opaque. The user wants standard URL-based sel
 - **AC4 — World display name.** A `worlds.name` column (set by admin on creation, backfilled for the home
   world) is shown in the lobby/nav/admin. The URL still uses the UUID (no slug uniqueness needed).
 - **AC5 — Cookie is non-essential.** The `world` cookie is written as a "last-visited" hint and read **only**
-  by `/me` (to point the nav) and the lobby's Resume affordance — never to resolve game state. Clearing it
-  must not break any URL.
+  by the lobby (to mark the current world) — never to resolve game state. The nav derives the world from the
+  URL path (`window.location.pathname`), not the cookie. Clearing the cookie must not break any URL.
 - **AC6 — Account routes unchanged.** `/messages*`, `/notifications*`, `/profile*`, `/settings*`, `/me`,
   `/sitting*`, `/report`, `/admin*`, `/mod*`, `/logout`, `/`, `/worlds`, `/worlds/join` stay un-prefixed.
 

@@ -23,14 +23,10 @@ pub const SIT_COOKIE: &str = "sit";
 /// Name of the encrypted cookie holding the world the player has currently selected (043).
 pub const WORLD_COOKIE: &str = "world";
 
-/// Build the world-selection cookie for `world_id` (043) — set by the world switcher (045).
+/// Build the world cookie for `world_id` — now only a non-essential "last-visited" hint the lobby reads to
+/// mark the current world (056); never read to resolve game state (the URL path is authoritative).
 pub fn world_cookie(world_id: u128) -> Cookie<'static> {
     base_cookie(WORLD_COOKIE, world_id.to_string())
-}
-
-/// A removal cookie that clears the world selection (back to the home world).
-pub fn clear_world_cookie() -> Cookie<'static> {
-    base_cookie(WORLD_COOKIE, String::new())
 }
 
 /// Build the auth cookie for `player_id` (encrypted by the `PrivateCookieJar`).
