@@ -5583,6 +5583,152 @@ async fn notifications_feed_bell_and_privacy(pool: sqlx::PgPool) {
     assert_eq!(res.text().await.unwrap().trim(), "0");
 }
 
+/// 059 AC1–AC3: the account's notification feed/bell aggregate across **all** the account's worlds, each
+/// row deep-linking into its own world, and viewing the feed marks them read in every world.
+#[sqlx::test(migrations = "../../migrations")]
+async fn notifications_aggregate_across_worlds(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let name = unique("aggnotif");
+    let (c, user) = register_client(&base, &pool, &name).await;
+
+    // The account joins a second world B; its world-B player is a fresh id owned by the same account.
+    let world_b = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 30, 707)")
+        .bind(world_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repo_b = PgAccountRepository::new(
+        pool.clone(),
+        WorldId(world_b.as_u128()),
+        707,
+        30,
+        economy_rules().unwrap().starting_amounts,
+        lifecycle_rules().unwrap().beginner_protection_secs,
+        GameSpeed::new(1.0).unwrap(),
+    );
+    let player_b = repo_b
+        .create_player_in_world(
+            PlayerId(user.as_u128()),
+            Tribe::Teutons,
+            &starting_village().unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // One battle-report notification in the HOME world (player_id = home player = user.id) and one in
+    // world B (player_id = the world-B player), both unread.
+    let home_uuid: uuid::Uuid = home.parse().unwrap();
+    let report_home = uuid::Uuid::new_v4();
+    let report_b = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO notifications (id, world_id, player_id, kind, ref_kind, ref_id, body, created_at) \
+         VALUES ($1, $2, $3, 'battle_report', 'report', $4, 'HOME-battle', now())",
+    )
+    .bind(uuid::Uuid::new_v4())
+    .bind(home_uuid)
+    .bind(user)
+    .bind(report_home.to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO notifications (id, world_id, player_id, kind, ref_kind, ref_id, body, created_at) \
+         VALUES ($1, $2, $3, 'battle_report', 'report', $4, 'WORLDB-battle', now())",
+    )
+    .bind(uuid::Uuid::new_v4())
+    .bind(world_b)
+    .bind(uuid::Uuid::from_u128(player_b.0))
+    .bind(report_b.to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // AC4 (P4, negative): a DIFFERENT account also plays world B and has a notification there. It must
+    // never appear in our account's aggregated feed/bell — aggregation keys on `players.user_id`, not world.
+    let (_other_c, other_user) = register_client(&base, &pool, &unique("aggother")).await;
+    let other_player_b = repo_b
+        .create_player_in_world(
+            PlayerId(other_user.as_u128()),
+            Tribe::Teutons,
+            &starting_village().unwrap(),
+        )
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO notifications (id, world_id, player_id, kind, ref_kind, ref_id, body, created_at) \
+         VALUES ($1, $2, $3, 'battle_report', 'report', $4, 'OTHER-battle', now())",
+    )
+    .bind(uuid::Uuid::new_v4())
+    .bind(world_b)
+    .bind(uuid::Uuid::from_u128(other_player_b.0))
+    .bind(uuid::Uuid::new_v4().to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // AC2: the bell sums unread across BOTH our worlds — and only ours (the foreign world-B row is excluded).
+    let unread = c
+        .get(format!("{base}/notifications/unread"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(
+        unread.trim(),
+        "2",
+        "the bell aggregates unread across the account's worlds, excluding other accounts"
+    );
+
+    // AC1: the feed shows both worlds' notifications, each deep-linking into its OWN world.
+    let feed = c
+        .get(format!("{base}/notifications"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        feed.contains("HOME-battle"),
+        "home-world notification shown"
+    );
+    assert!(
+        feed.contains("WORLDB-battle"),
+        "second-world notification shown (aggregated)"
+    );
+    assert!(
+        feed.contains(&format!("/w/{home}/reports/{report_home}")),
+        "the home notification deep-links into the home world"
+    );
+    assert!(
+        feed.contains(&format!("/w/{world_b}/reports/{report_b}")),
+        "the world-B notification deep-links into world B"
+    );
+    assert!(
+        !feed.contains("OTHER-battle"),
+        "another account's world-B notification never appears in our feed (P4)"
+    );
+
+    // AC3: viewing the feed marked them read in EVERY world — the bell is now 0.
+    let unread_after = c
+        .get(format!("{base}/notifications/unread"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(
+        unread_after.trim(),
+        "0",
+        "viewing the feed cleared unread across all worlds"
+    );
+}
+
 /// 026 AC6: a new notification reaches the recipient's bell stream live, and only theirs.
 #[sqlx::test(migrations = "../../migrations")]
 async fn notification_live_delivery_is_private(pool: sqlx::PgPool) {

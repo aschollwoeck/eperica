@@ -72,6 +72,52 @@ where
     Ok(())
 }
 
+/// The account's notification feed across **all** its worlds (059 AC1), most-recent first, bounded by
+/// [`FEED_LIMIT`]. `account` is the account's `user_id` (= its home player id, the `PlayerId` the
+/// account-level handlers hold); each row carries its own world for the deep-link.
+///
+/// # Errors
+/// [`NotificationError::Backend`] on storage failure.
+pub async fn list_notifications_for_account<N>(
+    notifs: &N,
+    account: PlayerId,
+) -> Result<Vec<NotificationView>, NotificationError>
+where
+    N: NotificationRepository,
+{
+    Ok(notifs.list_for_account(account, FEED_LIMIT).await?)
+}
+
+/// The account's unread notification count across **all** its worlds (059 AC2 — the aggregated nav bell).
+///
+/// # Errors
+/// [`NotificationError::Backend`] on storage failure.
+pub async fn notification_unread_for_account<N>(
+    notifs: &N,
+    account: PlayerId,
+) -> Result<i64, NotificationError>
+where
+    N: NotificationRepository,
+{
+    Ok(notifs.unread_count_for_account(account).await?)
+}
+
+/// Mark the account's unread notifications read across **all** its worlds (059 AC3).
+///
+/// # Errors
+/// [`NotificationError::Backend`] on storage failure.
+pub async fn mark_notifications_read_for_account<N>(
+    notifs: &N,
+    account: PlayerId,
+    now: Timestamp,
+) -> Result<(), NotificationError>
+where
+    N: NotificationRepository,
+{
+    notifs.mark_read_for_account(account, now).await?;
+    Ok(())
+}
+
 /// Record an **incoming-attack** notification for the defending owner (026 AC1) — unless they are the
 /// attacker (a player moving troops between their own villages raises no alarm). Best-effort: a failure is
 /// surfaced to the caller, which logs and continues (the attack itself must not fail).

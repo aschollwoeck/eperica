@@ -42,17 +42,18 @@ use eperica_application::{
     create_world as admin_create_world_uc, disband_alliance, dm_key, dm_pair_key, edit_bio,
     end_protection_if_established, evaluate_achievements, evaluate_quests, expel_member,
     file_report, found_alliance, grant_sitter, invite_player, leave_alliance,
-    list_accounts as admin_list_accounts, list_forum, list_notifications, list_sitters,
+    list_accounts as admin_list_accounts, list_forum, list_notifications_for_account, list_sitters,
     list_sitting_for, list_worlds as admin_list_worlds, load_culture, load_economy, map_viewport,
-    mark_notifications_read, notif_key, notification_settings, notification_unread, open_chat,
-    open_dm, open_thread, order_attack, order_build, order_oasis_attack, order_oasis_recall,
-    order_oasis_reinforce, order_reinforcement, order_research, order_return, order_scout,
-    order_settle, order_smithy_upgrade, order_trade, order_train, order_wonder_build, parse_dm_key,
-    player_statistics, population_history, population_leaderboard, register, reinforcement_reports,
-    reply, require_admin, resolve_report, respond_invite, review_queue, revoke_invite,
-    revoke_sitter, sanction_account, search, search_accounts as admin_search_accounts, send_chat,
-    send_dm, set_diplomacy, set_member_role, set_notification_pref, set_role as admin_set_role_uc,
-    sitter_log, start_thread, transfer_founder, unread_badge, view_profile, viewport_coords,
+    mark_notifications_read_for_account, notif_key, notification_settings,
+    notification_unread_for_account, open_chat, open_dm, open_thread, order_attack, order_build,
+    order_oasis_attack, order_oasis_recall, order_oasis_reinforce, order_reinforcement,
+    order_research, order_return, order_scout, order_settle, order_smithy_upgrade, order_trade,
+    order_train, order_wonder_build, parse_dm_key, player_statistics, population_history,
+    population_leaderboard, register, reinforcement_reports, reply, require_admin, resolve_report,
+    respond_invite, review_queue, revoke_invite, revoke_sitter, sanction_account, search,
+    search_accounts as admin_search_accounts, send_chat, send_dm, set_diplomacy, set_member_role,
+    set_notification_pref, set_role as admin_set_role_uc, sitter_log, start_thread,
+    transfer_founder, unread_badge, view_profile, viewport_coords,
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, ChatChannel,
@@ -5041,43 +5042,46 @@ pub struct SendForm {
 }
 
 /// Deep-link for a notification's referenced entity (026), or empty when there's nothing to link to. The
-/// world-coupled targets (report, village) are prefixed with the notification's world (056) — today the
-/// account-level feed reads the home world, so `world` is the home world.
-fn notification_href(world: WorldId, ref_kind: Option<&str>, ref_id: Option<&str>) -> String {
+/// world-coupled targets (report, village) are prefixed with **the notification's own world** (059) — the
+/// account feed aggregates across all the account's worlds, so each row links into where it belongs. `world`
+/// is the row's hyphenated world UUID. Messages (`dm`) are account-level (one inbox) so they stay unprefixed.
+fn notification_href(world: &str, ref_kind: Option<&str>, ref_id: Option<&str>) -> String {
     match (ref_kind, ref_id) {
-        (Some("report"), Some(id)) => world_path(world, &format!("/reports/{id}")),
+        (Some("report"), Some(id)) => format!("/w/{world}/reports/{id}"),
         (Some("dm"), Some(other)) => format!("/messages/c/dm:{other}"),
         (Some("village"), Some(coord)) => match coord.split_once('|') {
-            Some((x, y)) => world_path(world, &format!("/map?x={x}&y={y}")),
+            Some((x, y)) => format!("/w/{world}/map?x={x}&y={y}"),
             None => String::new(),
         },
         _ => String::new(),
     }
 }
 
-/// The notifications feed (026 AC4/AC5, Player only). Renders most-recent first and marks the player's
-/// notifications read on view (owner-scoped) so the bell clears.
+/// The notifications feed (026 AC4/AC5; 059 AC1/AC3, Player only). Aggregates the account's notifications
+/// across **all** its worlds, most-recent first, and marks them all read on view (account-scoped) so the bell
+/// clears. `player` is the account id (= `user_id`); each row deep-links into its own world.
 pub async fn notifications_page(
     State(state): State<AppState>,
     AuthUser(player): AuthUser,
 ) -> Response {
     let repo = state.accounts.as_ref();
-    let list = match list_notifications(repo, player).await {
+    let list = match list_notifications_for_account(repo, player).await {
         Ok(l) => l,
         Err(e) => {
             tracing::error!(error = %e, "notifications list failed");
             return server_error();
         }
     };
-    // Viewing marks them read (026 AC5). Best-effort — a failure must not break the page.
-    if let Err(e) = mark_notifications_read(repo, player, now()).await {
+    // Viewing marks them read across all worlds (026 AC5 / 059 AC3). Best-effort — a failure must not break
+    // the page.
+    if let Err(e) = mark_notifications_read_for_account(repo, player, now()).await {
         tracing::error!(error = %e, "marking notifications read failed");
     }
     let notifications = list
         .into_iter()
         .map(|n| NotificationRowView {
             label: n.kind.label().to_owned(),
-            href: notification_href(state.world_id, n.ref_kind.as_deref(), n.ref_id.as_deref()),
+            href: notification_href(&n.world, n.ref_kind.as_deref(), n.ref_id.as_deref()),
             body: n.body,
             read: n.read,
         })
@@ -5085,14 +5089,14 @@ pub async fn notifications_page(
     page(&NotificationsTemplate { notifications })
 }
 
-/// The player's unread notification count — the nav bell polls this (026 AC4).
+/// The account's unread notification count across all its worlds — the nav bell polls this (026 AC4 / 059 AC2).
 pub async fn notifications_unread(
     State(state): State<AppState>,
     MaybeAuthUser(player): MaybeAuthUser,
 ) -> Response {
     // Visitor-safe (055): a logged-out poller gets `"0"`, not a redirect to the login HTML.
     let n = match player {
-        Some(player) => notification_unread(state.accounts.as_ref(), player)
+        Some(player) => notification_unread_for_account(state.accounts.as_ref(), player)
             .await
             .unwrap_or(0),
         None => 0,
@@ -5100,12 +5104,14 @@ pub async fn notifications_unread(
     (StatusCode::OK, n.to_string()).into_response()
 }
 
-/// Explicit mark-all-read (026 AC5, owner-scoped).
+/// Explicit mark-all-read across all the account's worlds (026 AC5 / 059 AC3, account-scoped).
 pub async fn notifications_read(
     State(state): State<AppState>,
     AuthUser(player): AuthUser,
 ) -> Response {
-    if let Err(e) = mark_notifications_read(state.accounts.as_ref(), player, now()).await {
+    if let Err(e) =
+        mark_notifications_read_for_account(state.accounts.as_ref(), player, now()).await
+    {
         tracing::error!(error = %e, "mark-all-read failed");
         return server_error();
     }
