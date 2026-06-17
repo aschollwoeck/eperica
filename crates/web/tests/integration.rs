@@ -5021,6 +5021,7 @@ async fn joining_a_won_or_unknown_world_is_rejected(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn dm_conversation_flow(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let alice = unique("alice");
     let bob = unique("bob");
     let (ca, _aid) = register_client(&base, &pool, &alice).await;
@@ -5034,7 +5035,7 @@ async fn dm_conversation_flow(pool: sqlx::PgPool) {
     });
 
     // Alice DMs Bob (key uses Bob's uuid).
-    ca.post(format!("{base}/messages/send"))
+    ca.post(format!("{base}/w/{home}/messages/send"))
         .form(&[
             ("conversation", format!("dm:{bid}").as_str()),
             ("body", "hello bob"),
@@ -5065,7 +5066,7 @@ async fn dm_conversation_flow(pool: sqlx::PgPool) {
 
     // Bob opens the thread (key uses Alice's uuid) → sees the message; unread clears.
     let convo = cb
-        .get(format!("{base}/messages/c/dm:{aid}"))
+        .get(format!("{base}/w/{home}/messages/c/dm:{aid}"))
         .send()
         .await
         .unwrap()
@@ -5088,16 +5089,17 @@ async fn dm_conversation_flow(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn chat_channel_access(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let (c, _id) = register_client(&base, &pool, &unique("chatter")).await;
 
     // Global: post + read works.
-    c.post(format!("{base}/messages/send"))
+    c.post(format!("{base}/w/{home}/messages/send"))
         .form(&[("conversation", "global"), ("body", "gg all")])
         .send()
         .await
         .unwrap();
     let g = c
-        .get(format!("{base}/messages/c/global"))
+        .get(format!("{base}/w/{home}/messages/c/global"))
         .send()
         .await
         .unwrap();
@@ -5106,7 +5108,7 @@ async fn chat_channel_access(pool: sqlx::PgPool) {
 
     // A non-member alliance channel is forbidden (read + stream).
     assert_eq!(
-        c.get(format!("{base}/messages/c/alliance:999"))
+        c.get(format!("{base}/w/{home}/messages/c/alliance:999"))
             .send()
             .await
             .unwrap()
@@ -5115,7 +5117,7 @@ async fn chat_channel_access(pool: sqlx::PgPool) {
         403
     );
     assert_eq!(
-        c.get(format!("{base}/messages/stream/alliance:999"))
+        c.get(format!("{base}/w/{home}/messages/stream/alliance:999"))
             .send()
             .await
             .unwrap()
@@ -5129,12 +5131,13 @@ async fn chat_channel_access(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn chat_live_delivery(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let (listener, _l) = register_client(&base, &pool, &unique("listener")).await;
     let (poster, _p) = register_client(&base, &pool, &unique("poster")).await;
 
     // Open the global SSE stream and start reading it.
     let mut resp = listener
-        .get(format!("{base}/messages/stream/global"))
+        .get(format!("{base}/w/{home}/messages/stream/global"))
         .send()
         .await
         .unwrap();
@@ -5143,7 +5146,7 @@ async fn chat_live_delivery(pool: sqlx::PgPool) {
     // Give the handler a moment to subscribe, then post a message.
     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
     poster
-        .post(format!("{base}/messages/send"))
+        .post(format!("{base}/w/{home}/messages/send"))
         .form(&[("conversation", "global"), ("body", "live ping")])
         .send()
         .await
@@ -5172,11 +5175,88 @@ async fn chat_live_delivery(pool: sqlx::PgPool) {
     assert_eq!(n, 1, "the chat message persisted");
 }
 
+/// 060 AC3: the live stream is per-world — a `global` post in another world must NOT reach a home-world
+/// `global` subscriber (the broadcast key is world-scoped). Regression for the world-agnostic key.
+#[sqlx::test(migrations = "../../migrations")]
+async fn chat_live_delivery_does_not_cross_worlds(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let (listener, _l) = register_client(&base, &pool, &unique("xlistener")).await;
+    let (poster, poster_id) = register_client(&base, &pool, &unique("xposter")).await;
+
+    // The poster also joins a second world C (the listener stays home-only).
+    let world_c = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 30, 606)")
+        .bind(world_c)
+        .execute(&pool)
+        .await
+        .unwrap();
+    PgAccountRepository::new(
+        pool.clone(),
+        WorldId(world_c.as_u128()),
+        606,
+        30,
+        economy_rules().unwrap().starting_amounts,
+        lifecycle_rules().unwrap().beginner_protection_secs,
+        GameSpeed::new(1.0).unwrap(),
+    )
+    .create_player_in_world(
+        PlayerId(poster_id.as_u128()),
+        Tribe::Teutons,
+        &starting_village().unwrap(),
+    )
+    .await
+    .unwrap();
+
+    // The listener subscribes to HOME global.
+    let mut resp = listener
+        .get(format!("{base}/w/{home}/messages/stream/global"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+    // Post to global in world C (must NOT leak to the home stream), then to global in HOME (must arrive).
+    poster
+        .post(format!("{base}/w/{world_c}/messages/send"))
+        .form(&[("conversation", "global"), ("body", "CWORLD-leak")])
+        .send()
+        .await
+        .unwrap();
+    poster
+        .post(format!("{base}/w/{home}/messages/send"))
+        .form(&[("conversation", "global"), ("body", "HOME-ok")])
+        .send()
+        .await
+        .unwrap();
+
+    // Read until the HOME line arrives; by then a leaked world-C line would already be in the buffer.
+    let acc = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut acc = String::new();
+        while let Some(chunk) = resp.chunk().await.unwrap() {
+            acc.push_str(&String::from_utf8_lossy(&chunk));
+            if acc.contains("HOME-ok") {
+                break;
+            }
+        }
+        acc
+    })
+    .await
+    .unwrap_or_default();
+    assert!(acc.contains("HOME-ok"), "the home-world line arrived live");
+    assert!(
+        !acc.contains("CWORLD-leak"),
+        "a global post in another world must not reach the home-world stream"
+    );
+}
+
 /// 024 AC5 (privacy): a third party cannot wiretap a DM live stream — the canonical pair key means only
 /// the two parties' streams match. The actual recipient does receive it live.
 #[sqlx::test(migrations = "../../migrations")]
 async fn dm_stream_is_private_to_the_pair(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let (eve, _e) = register_client(&base, &pool, &unique("eve")).await; // the wiretapper
     let (xavier, _x) = register_client(&base, &pool, &unique("xavier")).await; // the recipient
     let (zoe, _z) = register_client(&base, &pool, &unique("zoe")).await; // the sender
@@ -5191,12 +5271,12 @@ async fn dm_stream_is_private_to_the_pair(pool: sqlx::PgPool) {
 
     // Eve tries to wiretap Xavier by streaming her "conversation with Xavier"; Xavier streams his with Zoe.
     let mut eve_stream = eve
-        .get(format!("{base}/messages/stream/dm:{xid}"))
+        .get(format!("{base}/w/{home}/messages/stream/dm:{xid}"))
         .send()
         .await
         .unwrap();
     let mut xav_stream = xavier
-        .get(format!("{base}/messages/stream/dm:{zid}"))
+        .get(format!("{base}/w/{home}/messages/stream/dm:{zid}"))
         .send()
         .await
         .unwrap();
@@ -5205,7 +5285,7 @@ async fn dm_stream_is_private_to_the_pair(pool: sqlx::PgPool) {
 
     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
     // Zoe DMs Xavier.
-    zoe.post(format!("{base}/messages/send"))
+    zoe.post(format!("{base}/w/{home}/messages/send"))
         .form(&[
             ("conversation", format!("dm:{xid}").as_str()),
             ("body", "private secret"),
@@ -5464,13 +5544,14 @@ async fn leaderboard_rows_show_presence(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn dm_surfaces_other_party_presence(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let alice = unique("apres");
     let bob = unique("bpres");
     let (ca, _aid) = register_client(&base, &pool, &alice).await;
     let (_cb, bid) = register_client(&base, &pool, &bob).await;
 
     // Alice DMs Bob, then views her conversation list + the thread header.
-    ca.post(format!("{base}/messages/send"))
+    ca.post(format!("{base}/w/{home}/messages/send"))
         .form(&[
             ("conversation", format!("dm:{bid}").as_str()),
             ("body", "hi bob"),
@@ -5491,7 +5572,7 @@ async fn dm_surfaces_other_party_presence(pool: sqlx::PgPool) {
         "the DM thread shows Bob's presence in the list"
     );
     let header = ca
-        .get(format!("{base}/messages/c/dm:{bid}"))
+        .get(format!("{base}/w/{home}/messages/c/dm:{bid}"))
         .send()
         .await
         .unwrap()
@@ -5515,6 +5596,7 @@ async fn dm_surfaces_other_party_presence(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn notifications_feed_bell_and_privacy(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let alice = unique("anotif");
     let bob = unique("bnotif");
     let carol = unique("cnotif");
@@ -5523,7 +5605,7 @@ async fn notifications_feed_bell_and_privacy(pool: sqlx::PgPool) {
     let (cc, _cid) = register_client(&base, &pool, &carol).await;
 
     // Alice DMs Bob → Bob has one unread notification; Carol (uninvolved) has none.
-    ca.post(format!("{base}/messages/send"))
+    ca.post(format!("{base}/w/{home}/messages/send"))
         .form(&[
             ("conversation", format!("dm:{bid}").as_str()),
             ("body", "knock knock"),
@@ -5581,6 +5663,142 @@ async fn notifications_feed_bell_and_privacy(pool: sqlx::PgPool) {
         .unwrap();
     assert_eq!(res.status().as_u16(), 200);
     assert_eq!(res.text().await.unwrap().trim(), "0");
+}
+
+/// 060 AC1–AC4: the Messages inbox/badge aggregate across **all** the account's worlds; each conversation
+/// links into its own world; reading a conversation in one world leaves the other world's unread intact.
+#[sqlx::test(migrations = "../../migrations")]
+async fn messages_aggregate_across_worlds(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let (ca, user_a) = register_client(&base, &pool, &unique("amsg")).await;
+    let (_cb, user_b) = register_client(&base, &pool, &unique("bmsg")).await;
+
+    // Account A joins a second world C; B has a player there too (so the DM peer resolves).
+    let world_c = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 30, 808)")
+        .bind(world_c)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repo_c = PgAccountRepository::new(
+        pool.clone(),
+        WorldId(world_c.as_u128()),
+        808,
+        30,
+        economy_rules().unwrap().starting_amounts,
+        lifecycle_rules().unwrap().beginner_protection_secs,
+        GameSpeed::new(1.0).unwrap(),
+    );
+    for u in [user_a, user_b] {
+        repo_c
+            .create_player_in_world(
+                PlayerId(u.as_u128()),
+                Tribe::Teutons,
+                &starting_village().unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+
+    // B DMs A in BOTH worlds (DM rows are keyed by the users ids, tagged with their world). The home DM is
+    // older, the world-C DM newer — so world C must sort first in the merged inbox (newest-activity first).
+    let home_uuid: uuid::Uuid = home.parse().unwrap();
+    for (world, body, age) in [
+        (home_uuid, "HELLO-HOME", "60 seconds"),
+        (world_c, "HELLO-CWORLD", "1 second"),
+    ] {
+        sqlx::query(
+            "INSERT INTO direct_messages (id, world_id, sender_id, recipient_id, body, created_at) \
+             VALUES ($1, $2, $3, $4, $5, now() - $6::interval)",
+        )
+        .bind(uuid::Uuid::new_v4())
+        .bind(world)
+        .bind(user_b)
+        .bind(user_a)
+        .bind(body)
+        .bind(age)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // AC2: the badge sums unread across both worlds.
+    let unread = |c: &reqwest::Client| {
+        let url = format!("{base}/messages/unread");
+        let c = c.clone();
+        async move { c.get(url).send().await.unwrap().text().await.unwrap() }
+    };
+    assert_eq!(
+        unread(&ca).await.trim(),
+        "2",
+        "badge sums unread across worlds"
+    );
+
+    // AC1: the inbox lists the conversation in BOTH worlds, each linking into its own world.
+    let inbox = ca
+        .get(format!("{base}/messages"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let dm = format!("dm:{user_b}");
+    assert!(
+        inbox.contains(&format!("/w/{home}/messages/c/{dm}")),
+        "home-world conversation links into the home world"
+    );
+    assert!(
+        inbox.contains(&format!("/w/{world_c}/messages/c/{dm}")),
+        "second-world conversation links into world C"
+    );
+    // Newest-activity first across worlds: world C's (newer) row precedes the home (older) row.
+    assert!(
+        inbox.find(&format!("/w/{world_c}/messages/c/{dm}"))
+            < inbox.find(&format!("/w/{home}/messages/c/{dm}")),
+        "the more-recent world-C conversation sorts ahead of the older home one"
+    );
+
+    // AC5: a conversation route to a world the account has not joined bounces to the lobby.
+    let stray = uuid::Uuid::new_v4();
+    let resp = ca
+        .get(format!("{base}/w/{stray}/messages/c/{dm}"))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        resp.url().path() == "/worlds" || resp.status().is_redirection(),
+        "an unjoined/unknown world bounces to the lobby"
+    );
+
+    // AC3 + AC4: opening the HOME conversation marks only the home watermark — world C stays unread.
+    assert_eq!(
+        ca.get(format!("{base}/w/{home}/messages/c/{dm}"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        200,
+        "opening the conversation in its world renders"
+    );
+    assert_eq!(
+        unread(&ca).await.trim(),
+        "1",
+        "reading the home conversation left world C's unread intact (per-world watermark)"
+    );
+
+    // Opening the world-C conversation clears the rest.
+    ca.get(format!("{base}/w/{world_c}/messages/c/{dm}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        unread(&ca).await.trim(),
+        "0",
+        "reading both worlds clears the badge"
+    );
 }
 
 /// 059 AC1–AC3: the account's notification feed/bell aggregate across **all** the account's worlds, each
@@ -5733,6 +5951,7 @@ async fn notifications_aggregate_across_worlds(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn notification_live_delivery_is_private(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let alice = unique("alive");
     let bob = unique("blive");
     let eve = unique("elive");
@@ -5753,7 +5972,7 @@ async fn notification_live_delivery_is_private(pool: sqlx::PgPool) {
         .unwrap();
 
     // Alice DMs Bob.
-    ca.post(format!("{base}/messages/send"))
+    ca.post(format!("{base}/w/{home}/messages/send"))
         .form(&[
             ("conversation", format!("dm:{bid}").as_str()),
             ("body", "live ping"),
@@ -6050,6 +6269,7 @@ async fn search_finds_players_alliances_and_coordinates(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn settings_notification_preferences(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let (ca, _aid) = register_client(&base, &pool, &unique("st_a")).await;
     let (cb, bid) = register_client(&base, &pool, &unique("st_b")).await;
 
@@ -6086,7 +6306,7 @@ async fn settings_notification_preferences(pool: sqlx::PgPool) {
         .unwrap();
 
     // Alice DMs Bob → Bob gets NO notification (muted).
-    ca.post(format!("{base}/messages/send"))
+    ca.post(format!("{base}/w/{home}/messages/send"))
         .form(&[
             ("conversation", format!("dm:{bid}").as_str()),
             ("body", "are you there"),
@@ -6101,7 +6321,7 @@ async fn settings_notification_preferences(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let thread = cb
-        .get(format!("{base}/messages/c/dm:{aid}"))
+        .get(format!("{base}/w/{home}/messages/c/dm:{aid}"))
         .send()
         .await
         .unwrap()
@@ -6139,7 +6359,7 @@ async fn settings_notification_preferences(pool: sqlx::PgPool) {
         .send()
         .await
         .unwrap();
-    ca.post(format!("{base}/messages/send"))
+    ca.post(format!("{base}/w/{home}/messages/send"))
         .form(&[
             ("conversation", format!("dm:{bid}").as_str()),
             ("body", "hello again"),
@@ -6173,7 +6393,7 @@ async fn account_sitting_takeover_restrictions_and_audit(pool: sqlx::PgPool) {
     let (jd, _dave) = register_client(&base, &pool, &unique("si_d")).await;
 
     // Carol DMs the owner → the owner has one notification; the sitter has none.
-    jc.post(format!("{base}/messages/send"))
+    jc.post(format!("{base}/w/{home}/messages/send"))
         .form(&[
             ("conversation", format!("dm:{owner}").as_str()),
             ("body", "hi owner"),

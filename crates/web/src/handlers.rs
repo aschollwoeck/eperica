@@ -4785,65 +4785,77 @@ pub async fn forum_reply(
 // Communication: conversations (DMs + chat channels) — 024.
 // ---------------------------------------------------------------------------------------------------
 
-/// The viewer's alliance, if any (for channel-access checks).
-async fn viewer_alliance(state: &AppState, player: PlayerId) -> Option<AllianceId> {
-    state
-        .accounts
-        .alliance_of(player)
-        .await
-        .ok()
-        .flatten()
-        .map(|m| m.alliance)
-}
-
-/// The conversations list (024 AC3).
-pub async fn messages(State(state): State<AppState>, AuthUser(player): AuthUser) -> Response {
+/// The account's conversations list, aggregated across **all** its worlds (024 AC3 / 060 AC1). One inbox on
+/// every page; each row carries its world so it deep-links into `/w/{world}/messages/c/{key}`. `account` is
+/// the `users` id; each world contributes its DM threads + global + alliance channels via the per-world repo.
+pub async fn messages(State(state): State<AppState>, AuthUser(account): AuthUser) -> Response {
     let now_ts = now();
-    let online_secs = state.world_rules.lifecycle.presence_online_secs;
-    match conversation_list(state.accounts.as_ref(), state.accounts.as_ref(), player).await {
-        Ok(list) => page(&MessagesTemplate {
-            conversations: list
-                .into_iter()
-                .map(|c| {
-                    // DM rows carry the other party's activity; channels do not.
-                    let (has_presence, online, presence_label) = match c.other_last_activity {
-                        Some(ms) => {
-                            let (online, label) = presence_view(Timestamp(ms), now_ts, online_secs);
-                            (true, online, label)
-                        }
-                        None => (false, false, String::new()),
-                    };
-                    ConversationRow {
-                        key: c.key,
-                        title: c.title,
-                        last_body: c.last_body,
-                        unread: c.unread,
-                        has_presence,
-                        online,
-                        presence_label,
-                    }
-                })
-                .collect(),
-        }),
+    let worlds = match state.accounts.worlds_of_user(account).await {
+        Ok(w) => w,
         Err(e) => {
-            tracing::error!(error = %e, "conversation list failed");
-            server_error()
+            tracing::error!(error = %e, "worlds_of_user failed");
+            return server_error();
+        }
+    };
+    // (world-uuid string, that world's online-window, the conversation) — merged then newest-first sorted.
+    let mut rows: Vec<(String, i64, eperica_application::ConversationSummary)> = Vec::new();
+    for pw in worlds {
+        let Some((repo, rules)) = state.world_registry.comms_context_for(pw.world).await else {
+            continue;
+        };
+        match conversation_list(&repo, &repo, account, pw.player).await {
+            Ok(list) => {
+                let world_str = uuid::Uuid::from_u128(pw.world.0).to_string();
+                let online_secs = rules.lifecycle.presence_online_secs;
+                rows.extend(
+                    list.into_iter()
+                        .map(|c| (world_str.clone(), online_secs, c)),
+                );
+            }
+            Err(e) => tracing::error!(error = %e, "conversation list failed"),
         }
     }
+    rows.sort_by_key(|(_, _, c)| std::cmp::Reverse(c.last_ms));
+    let conversations = rows
+        .into_iter()
+        .map(|(world, online_secs, c)| {
+            // DM rows carry the other party's activity; channels do not.
+            let (has_presence, online, presence_label) = match c.other_last_activity {
+                Some(ms) => {
+                    let (online, label) = presence_view(Timestamp(ms), now_ts, online_secs);
+                    (true, online, label)
+                }
+                None => (false, false, String::new()),
+            };
+            ConversationRow {
+                world,
+                key: c.key,
+                title: c.title,
+                last_body: c.last_body,
+                unread: c.unread,
+                has_presence,
+                online,
+                presence_label,
+            }
+        })
+        .collect();
+    page(&MessagesTemplate { conversations })
 }
 
-/// A single conversation: history + send box + live region (024 AC2).
+/// A single conversation **in its world** (024 AC2 / 060 AC3): history + send box + live region. Nested under
+/// `/w/{world}` so `GameContext` resolves the per-world repo (`ctx.accounts`), the account (`ctx.account`, the
+/// `users` id for DMs/channels), and the per-world player (`ctx.player`, for alliance access). `key` is the
+/// conversation key. Operating, sending, streaming, and the read watermark all stay in this world (AC4).
 pub async fn conversation(
-    State(state): State<AppState>,
-    AuthUser(player): AuthUser,
-    Path(key): Path<String>,
+    ctx: GameContext,
+    Path((_world, key)): Path<(String, String)>,
 ) -> Response {
     let now = now();
-    let online_secs = state.world_rules.lifecycle.presence_online_secs;
+    let online_secs = ctx.rules.lifecycle.presence_online_secs;
     // Resolve the title + load history, access-checked, depending on the key kind. DM headers also
     // carry the other party's presence (025); channels do not.
     let (title, presence, history) = if let Some(other) = parse_dm_key(&key) {
-        let (title, other_activity) = match view_profile(state.accounts.as_ref(), other).await {
+        let (title, other_activity) = match view_profile(&ctx.accounts, other).await {
             Ok(p) => (p.name, p.last_activity),
             Err(eperica_application::ProfileError::NotFound) => return not_found(),
             Err(e) => {
@@ -4851,16 +4863,17 @@ pub async fn conversation(
                 return server_error();
             }
         };
-        match open_dm(state.accounts.as_ref(), player, other, 100, now).await {
+        match open_dm(&ctx.accounts, ctx.account, other, 100, now).await {
             Ok(h) => (title, Some(other_activity), h),
             Err(e) => return comms_error_response(e),
         }
     } else if let Some(channel) = ChatChannel::parse(&key) {
-        let title = channel_title(&state, channel).await;
+        let title = channel_title(&ctx.accounts, channel).await;
         match open_chat(
-            state.accounts.as_ref(),
-            state.accounts.as_ref(),
-            player,
+            &ctx.accounts,
+            &ctx.accounts,
+            ctx.account,
+            ctx.player,
             &key,
             100,
             now,
@@ -4885,10 +4898,12 @@ pub async fn conversation(
         .map(|m| ChatLineView {
             sender: m.sender_name,
             body: m.body,
-            mine: m.sender == player,
+            // `mine` compares against the account (chat/DM authorship is by `users` id).
+            mine: m.sender == ctx.account,
         })
         .collect();
     page(&ConversationTemplate {
+        world: world_id_str(ctx.world_id),
         key,
         title,
         has_presence,
@@ -4898,12 +4913,15 @@ pub async fn conversation(
     })
 }
 
-/// Display title for a channel (the alliance name, or "Global").
-async fn channel_title(state: &AppState, channel: ChatChannel) -> String {
+/// Display title for a channel (the alliance name, or "Global"), resolved in `repo`'s world.
+async fn channel_title(
+    repo: &eperica_infrastructure::PgAccountRepository,
+    channel: ChatChannel,
+) -> String {
+    use eperica_infrastructure::application::AllianceRepository;
     match channel {
         ChatChannel::Global => "Global".to_owned(),
-        ChatChannel::Alliance(a) => state
-            .accounts
+        ChatChannel::Alliance(a) => repo
             .alliance_summary(a)
             .await
             .ok()
@@ -4923,17 +4941,14 @@ fn comms_error_response(e: CommsError) -> Response {
     }
 }
 
-/// Send into a conversation (024 AC1) — a DM or a channel, depending on the key.
-pub async fn messages_send(
-    State(state): State<AppState>,
-    AuthUser(player): AuthUser,
-    Form(form): Form<SendForm>,
-) -> Response {
+/// Send into a conversation **in its world** (024 AC1 / 060 AC3) — a DM or a channel, depending on the key.
+/// Nested under `/w/{world}`: `GameContext` gives the per-world repo + account/player identities.
+pub async fn messages_send(ctx: GameContext, Form(form): Form<SendForm>) -> Response {
     let result = if let Some(other) = parse_dm_key(&form.conversation) {
         send_dm(
-            state.accounts.as_ref(),
-            state.accounts.as_ref(),
-            player,
+            &ctx.accounts,
+            &ctx.accounts,
+            ctx.account,
             other,
             &form.body,
             now(),
@@ -4942,9 +4957,10 @@ pub async fn messages_send(
         .map(|_| ())
     } else {
         send_chat(
-            state.accounts.as_ref(),
-            state.accounts.as_ref(),
-            player,
+            &ctx.accounts,
+            &ctx.accounts,
+            ctx.account,
+            ctx.player,
             &form.conversation,
             &form.body,
             now(),
@@ -4957,53 +4973,88 @@ pub async fn messages_send(
         user_msg(e.to_string())
     });
     with_flash(
-        Redirect::to(&format!("/messages/c/{}", form.conversation)).into_response(),
+        Redirect::to(&world_path(
+            ctx.world_id,
+            &format!("/messages/c/{}", form.conversation),
+        ))
+        .into_response(),
         flash,
     )
 }
 
-/// Open (or start) the DM with a player from their profile (024 AC9).
-pub async fn messages_with(AuthUser(_player): AuthUser, Path(id): Path<String>) -> Response {
+/// Open (or start) the DM with a player from their profile, in this world (024 AC9 / 060). Nested under
+/// `/w/{world}`.
+pub async fn messages_with(
+    ctx: GameContext,
+    Path((_world, id)): Path<(String, String)>,
+) -> Response {
     match id.trim().parse::<u128>() {
-        Ok(other) => {
-            Redirect::to(&format!("/messages/c/{}", dm_key(PlayerId(other)))).into_response()
-        }
+        Ok(other) => Redirect::to(&world_path(
+            ctx.world_id,
+            &format!("/messages/c/{}", dm_key(PlayerId(other))),
+        ))
+        .into_response(),
+        // A malformed id → back to the account-level inbox (there is no `/w/{world}/messages`).
         Err(_) => Redirect::to("/messages").into_response(),
     }
 }
 
-/// The viewer's total unread (the nav badge polls this — 024 AC4).
+/// The account's total unread across **all** its worlds (the nav badge polls this — 024 AC4 / 060 AC2).
 pub async fn messages_unread(
     State(state): State<AppState>,
     MaybeAuthUser(player): MaybeAuthUser,
 ) -> Response {
     // Visitor-safe (055): a logged-out poller gets `"0"`, not a redirect to the login HTML.
     let n = match player {
-        Some(player) => unread_badge(state.accounts.as_ref(), state.accounts.as_ref(), player)
-            .await
-            .unwrap_or(0),
+        Some(account) => {
+            let mut total = 0i64;
+            if let Ok(worlds) = state.accounts.worlds_of_user(account).await {
+                for pw in worlds {
+                    if let Some((repo, _rules)) =
+                        state.world_registry.comms_context_for(pw.world).await
+                    {
+                        total += unread_badge(&repo, &repo, account, pw.player)
+                            .await
+                            .unwrap_or(0);
+                    }
+                }
+            }
+            total
+        }
         None => 0,
     };
     (StatusCode::OK, n.to_string()).into_response()
 }
 
-/// Live SSE stream for one conversation (024 AC6). Access-checked; emits new lines as they arrive.
+/// Live SSE stream for one conversation in its world (024 AC6 / 060 AC3). Nested under `/w/{world}`;
+/// access-checked; emits new lines as they arrive.
 pub async fn messages_stream(
     State(state): State<AppState>,
-    AuthUser(player): AuthUser,
-    Path(key): Path<String>,
+    ctx: GameContext,
+    Path((_world, key)): Path<(String, String)>,
 ) -> Response {
-    // The broadcast filter key. For a DM, subscribe on the **pair-canonical** key derived from
-    // (viewer, other): only the two parties can compute it, so a viewer can never wiretap a third party's
-    // thread (the URL key `dm:<other>` is viewer-relative and NOT pair-unique). For a channel, the key is
-    // the channel itself, gated by membership.
+    use eperica_infrastructure::application::AllianceRepository;
+    // The broadcast filter key, **world-scoped** (060): `w:<world>:<conv-key>`, matching the world-prefixed
+    // key the notify side emits — so a live line never crosses worlds (e.g. world B's `global` post does not
+    // reach a world-A `global` stream). For a DM, the conv-key is the **pair-canonical** key derived from
+    // (account, other): only the two parties can compute it, so a viewer can never wiretap a third party's
+    // thread (the URL key `dm:<other>` is viewer-relative and NOT pair-unique). For a channel, the conv-key
+    // is the channel itself, gated by this world's membership (the per-world player).
+    let world = world_id_str(ctx.world_id);
     let want = if let Some(other) = parse_dm_key(&key) {
-        dm_pair_key(player, other)
+        format!("w:{world}:{}", dm_pair_key(ctx.account, other))
     } else if let Some(channel) = ChatChannel::parse(&key) {
-        if !can_access_channel(channel, viewer_alliance(&state, player).await) {
+        let alliance = ctx
+            .accounts
+            .alliance_of(ctx.player)
+            .await
+            .ok()
+            .flatten()
+            .map(|m| m.alliance);
+        if !can_access_channel(channel, alliance) {
             return forbidden();
         }
-        key
+        format!("w:{world}:{key}")
     } else {
         return forbidden();
     };
@@ -5041,14 +5092,14 @@ pub struct SendForm {
     body: String,
 }
 
-/// Deep-link for a notification's referenced entity (026), or empty when there's nothing to link to. The
-/// world-coupled targets (report, village) are prefixed with **the notification's own world** (059) — the
-/// account feed aggregates across all the account's worlds, so each row links into where it belongs. `world`
-/// is the row's hyphenated world UUID. Messages (`dm`) are account-level (one inbox) so they stay unprefixed.
+/// Deep-link for a notification's referenced entity (026), or empty when there's nothing to link to. Every
+/// target is prefixed with **the notification's own world** (059/060) — the account feed aggregates across
+/// all the account's worlds, so each row links into where it belongs. `world` is the row's hyphenated world
+/// UUID. The `dm` target is the world-scoped conversation (060: conversations live under `/w/{world}`).
 fn notification_href(world: &str, ref_kind: Option<&str>, ref_id: Option<&str>) -> String {
     match (ref_kind, ref_id) {
         (Some("report"), Some(id)) => format!("/w/{world}/reports/{id}"),
-        (Some("dm"), Some(other)) => format!("/messages/c/dm:{other}"),
+        (Some("dm"), Some(other)) => format!("/w/{world}/messages/c/dm:{other}"),
         (Some("village"), Some(coord)) => match coord.split_once('|') {
             Some((x, y)) => format!("/w/{world}/map?x={x}&y={y}"),
             None => String::new(),

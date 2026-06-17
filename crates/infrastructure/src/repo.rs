@@ -7702,7 +7702,8 @@ impl CommsRepository for PgAccountRepository {
              ) \
              SELECT pg_notify('comms', json_build_object( \
                 'keys', json_build_array( \
-                    'dmp:' || LEAST($3::text, $4::text) || ':' || GREATEST($3::text, $4::text)), \
+                    'w:' || $2::text || ':dmp:' \
+                        || LEAST($3::text, $4::text) || ':' || GREATEST($3::text, $4::text)), \
                 'sender_name', (SELECT username FROM users WHERE id = $3), \
                 'body', $5::text, \
                 'created_ms', (EXTRACT(EPOCH FROM (SELECT created_at FROM ins)) * 1000)::bigint \
@@ -7768,7 +7769,8 @@ impl CommsRepository for PgAccountRepository {
                     (SELECT count(*) FROM mine m WHERE m.other = l.other AND m.sender_id <> $1 \
                        AND m.created_at > COALESCE( \
                             (SELECT last_read_at FROM conversation_reads \
-                              WHERE player_id = $1 AND conversation = 'dm:' || l.other::text), \
+                              WHERE player_id = $1 AND world_id = $2 \
+                                AND conversation = 'dm:' || l.other::text), \
                             to_timestamp(0))) AS unread \
              FROM latest l JOIN users u ON u.id = l.other \
              ORDER BY last_ms DESC",
@@ -7810,7 +7812,7 @@ impl CommsRepository for PgAccountRepository {
                 RETURNING created_at \
              ) \
              SELECT pg_notify('comms', json_build_object( \
-                'keys', json_build_array($3::text), \
+                'keys', json_build_array('w:' || $2::text || ':' || $3::text), \
                 'sender_name', (SELECT username FROM users WHERE id = $4), \
                 'body', $5::text, \
                 'created_ms', (EXTRACT(EPOCH FROM (SELECT created_at FROM ins)) * 1000)::bigint \
@@ -7878,12 +7880,13 @@ impl CommsRepository for PgAccountRepository {
         now: Timestamp,
     ) -> Result<(), RepoError> {
         sqlx::query(
-            "INSERT INTO conversation_reads (player_id, conversation, last_read_at) \
-             VALUES ($1, $2, to_timestamp($3::double precision / 1000.0)) \
-             ON CONFLICT (player_id, conversation) \
+            "INSERT INTO conversation_reads (player_id, world_id, conversation, last_read_at) \
+             VALUES ($1, $2, $3, to_timestamp($4::double precision / 1000.0)) \
+             ON CONFLICT (player_id, world_id, conversation) \
              DO UPDATE SET last_read_at = GREATEST(conversation_reads.last_read_at, EXCLUDED.last_read_at)",
         )
         .bind(Uuid::from_u128(player.0))
+        .bind(Uuid::from_u128(self.world_id.0))
         .bind(conversation)
         .bind(now.0)
         .execute(&self.pool)
@@ -7899,7 +7902,7 @@ impl CommsRepository for PgAccountRepository {
              WHERE c.world_id = $1 AND c.channel = $2 AND c.sender_id <> $3 \
                AND c.created_at > COALESCE( \
                     (SELECT last_read_at FROM conversation_reads \
-                      WHERE player_id = $3 AND conversation = $2), to_timestamp(0))",
+                      WHERE player_id = $3 AND world_id = $1 AND conversation = $2), to_timestamp(0))",
         )
         .bind(Uuid::from_u128(self.world_id.0))
         .bind(channel_key)
@@ -7918,7 +7921,8 @@ impl CommsRepository for PgAccountRepository {
              WHERE dm.world_id = $1 AND dm.recipient_id = $2 \
                AND dm.created_at > COALESCE( \
                     (SELECT last_read_at FROM conversation_reads \
-                      WHERE player_id = $2 AND conversation = 'dm:' || dm.sender_id::text), \
+                      WHERE player_id = $2 AND world_id = $1 \
+                        AND conversation = 'dm:' || dm.sender_id::text), \
                     to_timestamp(0))",
         )
         .bind(Uuid::from_u128(self.world_id.0))
@@ -8610,19 +8614,19 @@ mod tests {
         );
 
         // AC3/AC4: B has 1 unread from A (B's own reply doesn't count); opening clears it.
-        let badge_before = unread_badge(&repo, &repo, b).await.unwrap();
+        let badge_before = unread_badge(&repo, &repo, b, b).await.unwrap();
         assert_eq!(badge_before, 1, "one unread DM from alice");
         open_dm(&repo, b, a, 50, Timestamp(now.0 + 2000))
             .await
             .unwrap();
         assert_eq!(
-            unread_badge(&repo, &repo, b).await.unwrap(),
+            unread_badge(&repo, &repo, b, b).await.unwrap(),
             0,
             "read clears it"
         );
 
         // AC3: the conversations list shows the DM thread + the global channel.
-        let list = conversation_list(&repo, &repo, b).await.unwrap();
+        let list = conversation_list(&repo, &repo, b, b).await.unwrap();
         assert!(
             list.iter()
                 .any(|c| c.key == dm_key(a) && c.title.starts_with("alice")),
@@ -8631,16 +8635,16 @@ mod tests {
         assert!(list.iter().any(|c| c.key == "global"));
 
         // AC5: global is open to all; a non-member alliance channel is forbidden.
-        send_chat(&repo, &repo, a, "global", "gg all", now)
+        send_chat(&repo, &repo, a, a, "global", "gg all", now)
             .await
             .unwrap();
         assert_eq!(repo.chat_history("global", 50).await.unwrap().len(), 1);
         assert!(matches!(
-            send_chat(&repo, &repo, a, "alliance:999", "secret", now).await,
+            send_chat(&repo, &repo, a, a, "alliance:999", "secret", now).await,
             Err(CommsError::Forbidden)
         ));
         assert!(matches!(
-            open_chat(&repo, &repo, a, "alliance:999", 50, now).await,
+            open_chat(&repo, &repo, a, a, "alliance:999", 50, now).await,
             Err(CommsError::Forbidden)
         ));
 
@@ -8661,13 +8665,13 @@ mod tests {
         .await
         .unwrap();
         let akey = format!("alliance:{}", alliance.as_u128());
-        send_chat(&repo, &repo, a, &akey, "team only", now)
+        send_chat(&repo, &repo, a, a, &akey, "team only", now)
             .await
             .unwrap();
         assert_eq!(repo.chat_history(&akey, 50).await.unwrap().len(), 1);
         assert!(
             matches!(
-                open_chat(&repo, &repo, b, &akey, 50, now).await,
+                open_chat(&repo, &repo, b, b, &akey, 50, now).await,
                 Err(CommsError::Forbidden)
             ),
             "non-member cannot open the alliance channel"
