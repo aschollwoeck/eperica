@@ -13,7 +13,7 @@
     <nav class="topbar__nav">
       <!-- Public links — shown to everyone. `data-wl` carries the leaf path; JS (below) rewrites these to
            /w/{world}/… when the current URL is inside a world, else to /worlds (056). -->
-      <a href="/leaderboard" data-wl="/leaderboard">Leaderboards</a> <a href="/wonder" data-wl="/wonder">Wonder</a>
+      <a href="/leaderboard" data-wl-public="/leaderboard">Leaderboards</a> <a href="/wonder" data-wl-public="/wonder">Wonder</a>
       <!-- Member links — revealed by JS (/me) only when logged in (035). Hidden by default to avoid
            showing account-only links to visitors. -->
       <span class="topbar__group" data-auth="in" hidden>
@@ -37,9 +37,15 @@
     (function () {
       var m = window.location.pathname.match(/^\/w\/([^/]+)/);
       var world = m ? m[1] : null;
+      // Member links fall back to the lobby when not in a world; public links (058) fall back to the bare
+      // route, which the server redirects to the home world so a logged-out visitor still reaches the boards.
       function target(leaf) { return world ? "/w/" + world + leaf : "/worlds"; }
+      function publicTarget(leaf) { return world ? "/w/" + world + leaf : leaf; }
       document.querySelectorAll("[data-wl]").forEach(function (el) {
         el.setAttribute("href", target(el.getAttribute("data-wl")));
+      });
+      document.querySelectorAll("[data-wl-public]").forEach(function (el) {
+        el.setAttribute("href", publicTarget(el.getAttribute("data-wl-public")));
       });
       document.querySelectorAll("[data-wl-action]").forEach(function (el) {
         el.setAttribute("action", target(el.getAttribute("data-wl-action")));

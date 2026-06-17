@@ -515,6 +515,17 @@ pub async fn redirect_to_lobby() -> Response {
     Redirect::to("/worlds").into_response()
 }
 
+/// Bare **public** routes default to the **home** world (058) so a logged-out visitor can read the boards
+/// without picking a world. (Game routes still go to the lobby via [`redirect_to_lobby`].)
+pub async fn redirect_home_leaderboard(State(state): State<AppState>) -> Response {
+    Redirect::to(&world_path(state.world_id, "/leaderboard")).into_response()
+}
+
+/// Bare `/wonder` → the home world's Wonder page (058).
+pub async fn redirect_home_wonder(State(state): State<AppState>) -> Response {
+    Redirect::to(&world_path(state.world_id, "/wonder")).into_response()
+}
+
 /// The world lobby (045 AC2): the worlds the account plays (with the current one marked) + the running
 /// worlds it can join. Login required.
 pub async fn worlds_page(

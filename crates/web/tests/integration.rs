@@ -3392,6 +3392,45 @@ async fn leaderboard_and_stats_are_public(pool: sqlx::PgPool) {
     );
 }
 
+/// 058: a logged-out visitor reaches the public boards without picking a world — bare `/leaderboard` and
+/// `/wonder` default to the home world (and render anonymously), while bare game routes still go to the lobby.
+#[sqlx::test(migrations = "../../migrations")]
+async fn bare_public_boards_default_to_home_world(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let visitor = client(); // no auth, no redirect-follow
+
+    for leaf in ["/leaderboard", "/wonder"] {
+        let r = visitor.get(format!("{base}{leaf}")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 303, "bare {leaf} redirects");
+        assert_eq!(
+            r.headers().get(LOCATION).unwrap().to_str().unwrap(),
+            format!("/w/{home}{leaf}"),
+            "bare {leaf} → the home world's board"
+        );
+        // …and the home-world board renders for an anonymous visitor (public, no login).
+        let board = visitor
+            .get(format!("{base}/w/{home}{leaf}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            board.status().as_u16(),
+            200,
+            "{leaf} is public on the home world"
+        );
+    }
+
+    // Bare game routes still require a world/login → lobby.
+    let v = visitor.get(format!("{base}/village")).send().await.unwrap();
+    assert_eq!(v.status().as_u16(), 303);
+    assert_eq!(
+        v.headers().get(LOCATION).unwrap().to_str().unwrap(),
+        "/worlds",
+        "bare /village → lobby (game route)"
+    );
+}
+
 /// 046 AC1/AC4: a leaderboard reflects the **selected** world. An account that joined a second world
 /// appears on that world's board with its name resolved (via `players`); an account that only plays the
 /// home world is absent from the second world's board — proving the board is world-scoped.
@@ -4494,14 +4533,24 @@ async fn bare_routes_redirect_to_lobby_and_url_is_authoritative(pool: sqlx::PgPo
     let home = home_world(&pool).await;
     let (c, _user) = register_client(&base, &pool, &unique("route")).await;
 
-    // Old/no-world landing routes → the lobby.
-    for path in ["/village", "/map", "/leaderboard", "/wonder"] {
+    // Old/no-world **game** landing routes → the lobby (login-gated).
+    for path in ["/village", "/map"] {
         let r = c.get(format!("{base}{path}")).send().await.unwrap();
         assert_eq!(r.status().as_u16(), 303, "bare {path} redirects");
         assert_eq!(
             r.headers().get(LOCATION).unwrap().to_str().unwrap(),
             "/worlds",
             "bare {path} → lobby"
+        );
+    }
+    // Bare **public** boards default to the home world (058) so visitors can read them without the lobby.
+    for path in ["/leaderboard", "/wonder"] {
+        let r = c.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 303, "bare {path} redirects");
+        assert_eq!(
+            r.headers().get(LOCATION).unwrap().to_str().unwrap(),
+            format!("/w/{home}{path}"),
+            "bare {path} → home world"
         );
     }
 

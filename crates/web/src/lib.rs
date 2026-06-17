@@ -319,10 +319,12 @@ pub fn router(state: AppState) -> Router {
         .nest("/w/{world}", world_router())
         // Bare landing routes (old links / nav fallbacks) bounce to the lobby — the URL is the sole world
         // authority, so without one we send the player to pick a world (056).
+        // Bare game routes (no world) → the lobby (login-gated). Bare public boards → the home world, so a
+        // logged-out visitor can read them without picking a world (058).
         .route("/village", get(handlers::redirect_to_lobby))
         .route("/map", get(handlers::redirect_to_lobby))
-        .route("/leaderboard", get(handlers::redirect_to_lobby))
-        .route("/wonder", get(handlers::redirect_to_lobby))
+        .route("/leaderboard", get(handlers::redirect_home_leaderboard))
+        .route("/wonder", get(handlers::redirect_home_wonder))
         .route("/messages", get(handlers::messages))
         .route("/messages/unread", get(handlers::messages_unread))
         .route("/messages/send", post(handlers::messages_send))
