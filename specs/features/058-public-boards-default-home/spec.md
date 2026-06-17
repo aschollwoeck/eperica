@@ -18,7 +18,7 @@ requires logging in.
 ## Goal
 
 - **AC1 — Bare public routes default to the home world.** `GET /leaderboard` and `GET /wonder` (no world) →
-  `302 /w/{home}/leaderboard` / `…/wonder` (the home/default world), viewable by an anonymous visitor.
+  `303 /w/{home}/leaderboard` / `…/wonder` (the home/default world), viewable by an anonymous visitor.
 - **AC2 — Bare game routes still go to the lobby.** `GET /village`, `/map` (no world) → `/worlds` (unchanged;
   game pages require login + a joined world).
 - **AC3 — Public nav links work for visitors.** The nav's **Leaderboards**/**Wonder** links, when not inside a
