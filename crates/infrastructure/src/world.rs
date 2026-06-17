@@ -25,9 +25,11 @@ pub struct World {
     /// The named rule preset this world plays under (049) — `'classic'` by default; the registry resolves
     /// it to a [`crate::WorldRules`] bundle (050).
     pub rule_preset: String,
+    /// The world's human display name (056) — shown in the lobby/nav/admin; the URL routes by the UUID.
+    pub name: String,
 }
 
-const SELECT_COLS: &str = "id, speed, radius, seed, rule_preset, \
+const SELECT_COLS: &str = "id, speed, radius, seed, rule_preset, name, \
     (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ms, \
     (EXTRACT(EPOCH FROM artifact_release_at) * 1000)::bigint AS artifact_ms, \
     (EXTRACT(EPOCH FROM wonder_release_at) * 1000)::bigint AS wonder_ms";
@@ -43,6 +45,7 @@ fn world_from_row(row: &sqlx::postgres::PgRow) -> Result<World, sqlx::Error> {
         artifact_release_at: row.try_get::<Option<i64>, _>("artifact_ms")?.map(Timestamp),
         wonder_release_at: row.try_get::<Option<i64>, _>("wonder_ms")?.map(Timestamp),
         rule_preset: row.try_get("rule_preset")?,
+        name: row.try_get("name")?,
     })
 }
 
@@ -84,14 +87,15 @@ pub async fn create_world(
     artifact_release_offset_secs: i64,
     wonder_release_offset_secs: i64,
     rule_preset: &str,
+    name: &str,
 ) -> Result<World, sqlx::Error> {
     let id = Uuid::new_v4();
     let row = sqlx::query(&format!(
         "INSERT INTO worlds \
-           (id, speed, radius, seed, artifact_release_at, wonder_release_at, rule_preset) \
+           (id, speed, radius, seed, artifact_release_at, wonder_release_at, rule_preset, name) \
          VALUES ($1, $2, $3, hashtextextended($1::text, 0), \
                  now() + make_interval(secs => $4::double precision), \
-                 now() + make_interval(secs => $5::double precision), $6) \
+                 now() + make_interval(secs => $5::double precision), $6, $7) \
          RETURNING {SELECT_COLS}"
     ))
     .bind(id)
@@ -100,6 +104,7 @@ pub async fn create_world(
     .bind(artifact_release_offset_secs as f64)
     .bind(wonder_release_offset_secs as f64)
     .bind(rule_preset)
+    .bind(name)
     .fetch_one(pool)
     .await?;
     world_from_row(&row)
@@ -143,10 +148,10 @@ pub async fn ensure_world_with_release(
     // distinct per world without an RNG dependency. The end-game release dates are config offsets from
     // creation (020/021, GDD §13.2).
     let row = sqlx::query(&format!(
-        "INSERT INTO worlds (id, speed, radius, seed, artifact_release_at, wonder_release_at) \
+        "INSERT INTO worlds (id, speed, radius, seed, artifact_release_at, wonder_release_at, name) \
          VALUES ($1, $2, $3, hashtextextended($1::text, 0), \
                  now() + make_interval(secs => $4::double precision), \
-                 now() + make_interval(secs => $5::double precision)) \
+                 now() + make_interval(secs => $5::double precision), 'Home World') \
          RETURNING {SELECT_COLS}"
     ))
     .bind(id)

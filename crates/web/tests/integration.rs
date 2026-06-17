@@ -1035,7 +1035,7 @@ async fn admin_creates_world_live(pool: sqlx::PgPool) {
     // A non-admin cannot create a world (server-authoritative).
     let r = plain
         .post(format!("{base}/admin/world"))
-        .form(&[("speed", "3"), ("radius", "50")])
+        .form(&[("name", "Arena"), ("speed", "3"), ("radius", "50")])
         .send()
         .await
         .unwrap();
@@ -1056,7 +1056,7 @@ async fn admin_creates_world_live(pool: sqlx::PgPool) {
     // Invalid radius (over the max) is rejected with a flash — no world created.
     let r = ac
         .post(format!("{base}/admin/world"))
-        .form(&[("speed", "3"), ("radius", "99999")])
+        .form(&[("name", "Arena"), ("speed", "3"), ("radius", "99999")])
         .send()
         .await
         .unwrap();
@@ -1081,7 +1081,7 @@ async fn admin_creates_world_live(pool: sqlx::PgPool) {
     // A valid create: a new world row appears with the given speed/radius, started live.
     let r = ac
         .post(format!("{base}/admin/world"))
-        .form(&[("speed", "3"), ("radius", "40")])
+        .form(&[("name", "Arena"), ("speed", "3"), ("radius", "40")])
         .send()
         .await
         .unwrap();
@@ -1141,7 +1141,12 @@ async fn admin_creates_world_with_chosen_preset(pool: sqlx::PgPool) {
     // An unknown preset is rejected — no world created (P4).
     let r = ac
         .post(format!("{base}/admin/world"))
-        .form(&[("speed", "2"), ("radius", "40"), ("preset", "bogus")])
+        .form(&[
+            ("name", "Arena"),
+            ("speed", "2"),
+            ("radius", "40"),
+            ("preset", "bogus"),
+        ])
         .send()
         .await
         .unwrap();
@@ -1155,7 +1160,12 @@ async fn admin_creates_world_with_chosen_preset(pool: sqlx::PgPool) {
     // A valid `speed` world is persisted with its preset.
     let r = ac
         .post(format!("{base}/admin/world"))
-        .form(&[("speed", "2"), ("radius", "40"), ("preset", "speed")])
+        .form(&[
+            ("name", "Arena"),
+            ("speed", "2"),
+            ("radius", "40"),
+            ("preset", "speed"),
+        ])
         .send()
         .await
         .unwrap();
@@ -1189,6 +1199,7 @@ async fn admin_world_creation_sets_endgame_schedule(pool: sqlx::PgPool) {
     let r = ac
         .post(format!("{base}/admin/world"))
         .form(&[
+            ("name", "Arena"),
             ("speed", "2"),
             ("radius", "40"),
             ("artifact_days", "30"),
@@ -1220,6 +1231,7 @@ async fn admin_world_creation_sets_endgame_schedule(pool: sqlx::PgPool) {
     let r = ac
         .post(format!("{base}/admin/world"))
         .form(&[
+            ("name", "Arena"),
             ("speed", "2"),
             ("radius", "40"),
             ("artifact_days", "60"),
@@ -1250,7 +1262,7 @@ async fn admin_world_creation_sets_endgame_schedule(pool: sqlx::PgPool) {
     // Omitting the schedule uses the env default (90/120 days in the test harness).
     let r = ac
         .post(format!("{base}/admin/world"))
-        .form(&[("speed", "2"), ("radius", "40")])
+        .form(&[("name", "Arena"), ("speed", "2"), ("radius", "40")])
         .send()
         .await
         .unwrap();
@@ -4648,13 +4660,15 @@ async fn lobby_join_play_and_switch_back(pool: sqlx::PgPool) {
 
     // A second world exists (run by the registry via the worlds row → context_for self-populates).
     let world_b = uuid::Uuid::new_v4();
-    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 3.0, 30, 808)")
-        .bind(world_b)
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO worlds (id, speed, radius, seed, name) VALUES ($1, 3.0, 30, 808, 'World B')",
+    )
+    .bind(world_b)
+    .execute(&pool)
+    .await
+    .unwrap();
 
-    // The lobby lists the home world (joined) and world B (joinable).
+    // The lobby lists the home world (joined) and world B (joinable), each by its display name (056).
     let lobby = c
         .get(format!("{base}/worlds"))
         .send()
@@ -4664,13 +4678,10 @@ async fn lobby_join_play_and_switch_back(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(
-        lobby.contains("Home world"),
+        lobby.contains("Home World"),
         "the home world is listed as joined"
     );
-    assert!(
-        lobby.contains(&world_b.as_u128().to_string()),
-        "world B is offered to join"
-    );
+    assert!(lobby.contains("World B"), "world B is offered to join");
 
     // Join world B as Teutons → lands in world B's village (a new village, ≠ the home one).
     let r = c

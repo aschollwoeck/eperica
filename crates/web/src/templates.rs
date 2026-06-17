@@ -870,6 +870,7 @@ pub struct ModAccountTemplate {
 /// One world row in the admin console's worlds table (041 AC3).
 pub struct AdminWorldRow {
     pub id: String,
+    pub name: String,
     pub speed: f64,
     pub radius: u32,
     pub created_ms: i64,
@@ -1099,6 +1100,7 @@ pub struct WorldsTemplate {
 /// A world the account plays in (045 AC2).
 pub struct JoinedWorldRow {
     pub id: String,
+    pub name: String,
     pub speed: f64,
     pub radius: u32,
     /// The account's tribe in this world.
@@ -1112,6 +1114,7 @@ pub struct JoinedWorldRow {
 /// A world the account can join (045 AC3).
 pub struct JoinableWorldRow {
     pub id: String,
+    pub name: String,
     pub speed: f64,
     pub radius: u32,
 }

@@ -546,17 +546,21 @@ pub async fn worlds_page(
     };
     let joined_ids: std::collections::HashSet<WorldId> =
         joined_worlds.iter().map(|w| w.world).collect();
-    // World metadata (speed/radius) by id, from the global worlds listing.
-    let meta: std::collections::HashMap<WorldId, (f64, u32)> = all_worlds
+    // World metadata (name/speed/radius) by id, from the global worlds listing.
+    let meta: std::collections::HashMap<WorldId, (String, f64, u32)> = all_worlds
         .iter()
-        .map(|w| (w.id, (w.speed, w.radius)))
+        .map(|w| (w.id, (w.name.clone(), w.speed, w.radius)))
         .collect();
     let joined = joined_worlds
         .iter()
         .map(|w| {
-            let (speed, radius) = meta.get(&w.world).copied().unwrap_or((1.0, 0));
+            let (name, speed, radius) = meta
+                .get(&w.world)
+                .cloned()
+                .unwrap_or_else(|| (String::new(), 1.0, 0));
             JoinedWorldRow {
                 id: w.world.0.to_string(),
+                name,
                 speed,
                 radius,
                 tribe: w.tribe.slug().to_owned(),
@@ -571,6 +575,7 @@ pub async fn worlds_page(
         .filter(|w| !joined_ids.contains(&w.id) && w.won_ms.is_none())
         .map(|w| JoinableWorldRow {
             id: w.id.0.to_string(),
+            name: w.name.clone(),
             speed: w.speed,
             radius: w.radius,
         })
@@ -3167,6 +3172,7 @@ pub async fn admin(
                 .into_iter()
                 .map(|w| AdminWorldRow {
                     id: w.id.0.to_string(),
+                    name: w.name,
                     speed: w.speed,
                     radius: w.radius,
                     created_ms: w.created_ms,
@@ -3215,6 +3221,9 @@ pub struct CreateWorldForm {
     /// The rule preset the world plays under (052) — omitted ⇒ `classic` (the default).
     #[serde(default)]
     preset: Option<String>,
+    /// The world's display name (056) — shown to players in the lobby/nav.
+    #[serde(default)]
+    name: String,
 }
 
 /// Create a new world from the admin console and start it running live (041 AC1/AC2). Admin-gated on the
@@ -3256,6 +3265,7 @@ pub async fn admin_world_submit(
         artifact_offset,
         wonder_offset,
         preset,
+        form.name.trim(),
     )
     .await
     {
