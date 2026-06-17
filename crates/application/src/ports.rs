@@ -3329,6 +3329,8 @@ pub struct NotificationView {
     pub created_ms: i64,
     /// Whether the recipient has read it.
     pub read: bool,
+    /// The notification's world UUID (hyphenated) — its deep-link is `/w/{world}/…` (056/059).
+    pub world: String,
 }
 
 /// Persistence for notifications (026): a per-player feed delivered live via `LISTEN/NOTIFY`. Default
@@ -3371,6 +3373,40 @@ pub trait NotificationRepository: Send + Sync {
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
     async fn mark_read(&self, _player: PlayerId, _now: Timestamp) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// The account's notification feed across **all** its worlds (059), most-recent first, bounded by
+    /// `limit`. `account` is the account's `user_id` (= its home player id). Each row carries its world for
+    /// the deep-link.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn list_for_account(
+        &self,
+        _account: PlayerId,
+        _limit: i64,
+    ) -> Result<Vec<NotificationView>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// The account's unread notification count across **all** its worlds (059, the aggregated nav bell).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn unread_count_for_account(&self, _account: PlayerId) -> Result<i64, RepoError> {
+        Ok(0)
+    }
+
+    /// Mark the account's unread notifications read across **all** its worlds at `now` (059).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn mark_read_for_account(
+        &self,
+        _account: PlayerId,
+        _now: Timestamp,
+    ) -> Result<(), RepoError> {
         Ok(())
     }
 

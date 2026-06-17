@@ -7936,6 +7936,7 @@ fn notification_from_row(r: &PgRow) -> Result<Option<NotificationView>, RepoErro
     let Some(kind) = NotificationKind::parse(&kind_str) else {
         return Ok(None);
     };
+    let world: Uuid = r.try_get("world_id").map_err(backend)?;
     Ok(Some(NotificationView {
         id: id.as_u128(),
         kind,
@@ -7947,6 +7948,7 @@ fn notification_from_row(r: &PgRow) -> Result<Option<NotificationView>, RepoErro
             .try_get::<Option<bool>, _>("read")
             .map_err(backend)?
             .unwrap_or(false),
+        world: world.to_string(),
     }))
 }
 
@@ -7999,7 +8001,7 @@ impl NotificationRepository for PgAccountRepository {
 
     async fn list(&self, player: PlayerId, limit: i64) -> Result<Vec<NotificationView>, RepoError> {
         let rows = sqlx::query(
-            "SELECT id, kind, ref_kind, ref_id, body, \
+            "SELECT id, kind, ref_kind, ref_id, body, world_id, \
                     (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ms, \
                     (read_at IS NOT NULL) AS read \
              FROM notifications WHERE world_id = $1 AND player_id = $2 \
@@ -8018,6 +8020,66 @@ impl NotificationRepository for PgAccountRepository {
             .into_iter()
             .flatten()
             .collect())
+    }
+
+    // --- 059: account-spanning variants (all worlds the account plays) -------------------------------
+    // `account` is the account's `user_id` (= its home player id). Join `players` so a notification is
+    // attributed to the account that owns its `players` row, regardless of world.
+
+    async fn list_for_account(
+        &self,
+        account: PlayerId,
+        limit: i64,
+    ) -> Result<Vec<NotificationView>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT n.id, n.kind, n.ref_kind, n.ref_id, n.body, n.world_id, \
+                    (EXTRACT(EPOCH FROM n.created_at) * 1000)::bigint AS created_ms, \
+                    (n.read_at IS NOT NULL) AS read \
+             FROM notifications n JOIN players p ON p.id = n.player_id \
+             WHERE p.user_id = $1 \
+             ORDER BY n.created_at DESC, n.id DESC LIMIT $2",
+        )
+        .bind(Uuid::from_u128(account.0))
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(rows
+            .iter()
+            .map(notification_from_row)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect())
+    }
+
+    async fn unread_count_for_account(&self, account: PlayerId) -> Result<i64, RepoError> {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM notifications n JOIN players p ON p.id = n.player_id \
+             WHERE p.user_id = $1 AND n.read_at IS NULL",
+        )
+        .bind(Uuid::from_u128(account.0))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend)
+    }
+
+    async fn mark_read_for_account(
+        &self,
+        account: PlayerId,
+        now: Timestamp,
+    ) -> Result<(), RepoError> {
+        sqlx::query(
+            "UPDATE notifications SET read_at = to_timestamp($2::double precision / 1000.0) \
+             FROM players p \
+             WHERE notifications.player_id = p.id AND p.user_id = $1 AND notifications.read_at IS NULL",
+        )
+        .bind(Uuid::from_u128(account.0))
+        .bind(now.0)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
     }
 
     async fn unread_count(&self, player: PlayerId) -> Result<i64, RepoError> {

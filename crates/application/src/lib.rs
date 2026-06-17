@@ -76,8 +76,9 @@ pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
 pub use medals::process_due_medal_settlement;
 pub use movement::{MovementError, order_reinforcement, order_return, process_due_movements};
 pub use notification::{
-    FEED_LIMIT, NotificationError, list_notifications, mark_notifications_read, notif_key,
-    notification_unread, notify_incoming_attack, notify_new_message,
+    FEED_LIMIT, NotificationError, list_notifications, list_notifications_for_account,
+    mark_notifications_read, mark_notifications_read_for_account, notif_key, notification_unread,
+    notification_unread_for_account, notify_incoming_attack, notify_new_message,
 };
 pub use oasis::{
     OasisError, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
