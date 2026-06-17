@@ -294,16 +294,25 @@ fn selected_village(village: Option<&str>) -> Option<VillageId> {
 }
 
 /// Redirect to `path`, preserving the selected village (013 AC11) so the user stays on that village.
-fn redirect_with_village(path: &str, village: Option<&str>) -> Response {
+/// A world-scoped path (056): `/w/{uuid}{rest}` for the given world, e.g.
+/// `world_path(w, "/village")` → `/w/<uuid>/village`. `rest` must start with `/`.
+fn world_path(world: WorldId, rest: &str) -> String {
+    format!("/w/{}{rest}", uuid::Uuid::from_u128(world.0))
+}
+
+/// Redirect to a world-coupled `path` (056) — prefixed with `/w/{world}` — preserving the selected village
+/// (the orthogonal `?village=` query) so the user stays on it.
+fn redirect_with_village(world: WorldId, path: &str, village: Option<&str>) -> Response {
+    let base = world_path(world, path);
     match village.and_then(|s| s.trim().parse::<u128>().ok()) {
-        Some(id) => Redirect::to(&format!("{path}?village={id}")).into_response(),
-        None => Redirect::to(path).into_response(),
+        Some(id) => Redirect::to(&format!("{base}?village={id}")).into_response(),
+        None => Redirect::to(&base).into_response(),
     }
 }
 
-/// Redirect back to the village page, preserving the selected village so the user stays on it.
-fn redirect_to_village(village: Option<&str>) -> Response {
-    redirect_with_village("/village", village)
+/// Redirect back to the world's village page, preserving the selected village so the user stays on it.
+fn redirect_to_village(world: WorldId, village: Option<&str>) -> Response {
+    redirect_with_village(world, "/village", village)
 }
 
 /// A short-lived, JS-readable cookie carrying a one-shot user-facing message (034). The `base.html`
@@ -610,10 +619,13 @@ pub async fn join_world(
         .create_player_in_world(account, tribe, &rules.starting_village)
         .await
     {
-        // Joined now, or already joined (idempotent) — select the world and drop into its village.
-        Ok(_) | Err(RepoError::Duplicate) => {
-            (jar.add(world_cookie(world.0)), Redirect::to("/village")).into_response()
-        }
+        // Joined now, or already joined (idempotent) — drop into the world's village (056). The cookie is
+        // just the non-essential "last-visited" hint; the URL is what selects the world.
+        Ok(_) | Err(RepoError::Duplicate) => (
+            jar.add(world_cookie(world.0)),
+            Redirect::to(&world_path(world, "/village")),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "join world failed");
             server_error()
@@ -1492,9 +1504,9 @@ pub async fn build_submit(ctx: GameContext, Form(form): Form<BuildForm>) -> Resp
                 slot: building_slot(kind),
                 kind,
             },
-            None => return redirect_to_village(form.village.as_deref()),
+            None => return redirect_to_village(ctx.world_id, form.village.as_deref()),
         },
-        _ => return redirect_to_village(form.village.as_deref()),
+        _ => return redirect_to_village(ctx.world_id, form.village.as_deref()),
     };
 
     let flash = order_build(
@@ -1516,7 +1528,10 @@ pub async fn build_submit(ctx: GameContext, Form(form): Form<BuildForm>) -> Resp
         tracing::warn!(error = %e, "build order rejected");
         user_msg(e.to_string())
     });
-    with_flash(redirect_to_village(form.village.as_deref()), flash)
+    with_flash(
+        redirect_to_village(ctx.world_id, form.village.as_deref()),
+        flash,
+    )
 }
 
 fn role_label(role: UnitRole) -> &'static str {
@@ -1873,7 +1888,7 @@ pub async fn research_submit(ctx: GameContext, Form(form): Form<UnitForm>) -> Re
         user_msg(e.to_string())
     });
     with_flash(
-        redirect_with_village("/village/academy", form.village.as_deref()),
+        redirect_with_village(ctx.world_id, "/village/academy", form.village.as_deref()),
         flash,
     )
 }
@@ -2029,7 +2044,7 @@ pub async fn train_submit(ctx: GameContext, Form(form): Form<TrainForm>) -> Resp
         _ => "/village",
     };
     with_flash(
-        redirect_with_village(target, form.village.as_deref()),
+        redirect_with_village(ctx.world_id, target, form.village.as_deref()),
         flash,
     )
 }
@@ -2056,7 +2071,7 @@ pub async fn smithy_upgrade_submit(ctx: GameContext, Form(form): Form<UnitForm>)
         user_msg(e.to_string())
     });
     with_flash(
-        redirect_with_village("/village/smithy", form.village.as_deref()),
+        redirect_with_village(ctx.world_id, "/village/smithy", form.village.as_deref()),
         flash,
     )
 }
@@ -2168,7 +2183,7 @@ pub async fn rally_send(
     let x = form.get("x").and_then(|s| s.trim().parse::<i32>().ok());
     let y = form.get("y").and_then(|s| s.trim().parse::<i32>().ok());
     let (Some(x), Some(y)) = (x, y) else {
-        return redirect_with_village("/village/rally", village);
+        return redirect_with_village(ctx.world_id, "/village/rally", village);
     };
     let troops: Vec<(UnitId, u32)> = form
         .iter()
@@ -2335,7 +2350,7 @@ pub async fn rally_send(
             }
         }
     };
-    with_flash(redirect_to_village(village), flash)
+    with_flash(redirect_to_village(ctx.world_id, village), flash)
 }
 
 /// Send-back form fields (the host village whose stationed troops to recall).
@@ -2369,7 +2384,10 @@ pub async fn rally_return(ctx: GameContext, Form(form): Form<RallyReturnForm>) -
         tracing::warn!(error = %e, "return order rejected");
         user_msg(e.to_string())
     });
-    with_flash(redirect_to_village(form.village.as_deref()), flash)
+    with_flash(
+        redirect_to_village(ctx.world_id, form.village.as_deref()),
+        flash,
+    )
 }
 
 /// Recall form fields (the oasis tile to recall stationed troops from).
@@ -2404,7 +2422,10 @@ pub async fn oasis_recall(ctx: GameContext, Form(form): Form<OasisRecallForm>) -
         tracing::warn!(error = %e, "oasis recall rejected");
         user_msg(e.to_string())
     });
-    with_flash(redirect_to_village(form.village.as_deref()), flash)
+    with_flash(
+        redirect_to_village(ctx.world_id, form.village.as_deref()),
+        flash,
+    )
 }
 
 /// The Marketplace: the merchant pool (free/total + capacity) and a send-resources form (008 AC6;
@@ -2472,7 +2493,7 @@ pub async fn market_send(
     let x = form.get("x").and_then(|s| s.trim().parse::<i32>().ok());
     let y = form.get("y").and_then(|s| s.trim().parse::<i32>().ok());
     let (Some(x), Some(y)) = (x, y) else {
-        return redirect_with_village("/village/market", village);
+        return redirect_with_village(ctx.world_id, "/village/market", village);
     };
     let amount = |k: &str| {
         form.get(k)
@@ -2506,7 +2527,7 @@ pub async fn market_send(
         tracing::warn!(error = %e, "trade order rejected");
         user_msg(e.to_string())
     });
-    with_flash(redirect_to_village(village), flash)
+    with_flash(redirect_to_village(ctx.world_id, village), flash)
 }
 
 /// A one-line headline for a report from this player's perspective.
@@ -2932,7 +2953,10 @@ pub async fn wonder_build_submit(ctx: GameContext, Form(form): Form<WonderBuildF
         tracing::warn!(error = %e, "Wonder build order rejected");
         user_msg(e.to_string())
     });
-    with_flash(redirect_to_village(form.village.as_deref()), flash)
+    with_flash(
+        redirect_to_village(ctx.world_id, form.village.as_deref()),
+        flash,
+    )
 }
 
 /// The Wonder-build form: which controlled site village to build the Wonder in (013 AC11).
