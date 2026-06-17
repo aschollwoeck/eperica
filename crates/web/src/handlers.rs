@@ -556,7 +556,7 @@ pub async fn worlds_page(
                 .cloned()
                 .unwrap_or_else(|| (String::new(), 1.0, 0));
             JoinedWorldRow {
-                id: w.world.0.to_string(),
+                id: world_id_str(w.world),
                 name,
                 speed,
                 radius,

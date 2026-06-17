@@ -4335,8 +4335,8 @@ async fn selecting_a_world_switches_the_village_page(pool: sqlx::PgPool) {
     assert!(me.contains("\"authed\":true"));
 }
 
-/// 043 AC4 (server-authoritative denial): `POST /world/select` with a world the account has **not**
-/// joined (and with a garbage id) is ignored — the village page keeps rendering the home village.
+/// 056 (server-authoritative denial): requesting `/w/{world}/village` for a world the account has **not**
+/// joined (and a garbage id) is denied — bounced to the lobby `/worlds` (P4); the home world still works.
 #[sqlx::test(migrations = "../../migrations")]
 async fn selecting_an_unjoined_world_is_ignored(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
@@ -4759,6 +4759,16 @@ async fn lobby_join_play_and_switch_back(pool: sqlx::PgPool) {
     assert!(
         lobby.contains("Home World"),
         "the home world is listed as joined"
+    );
+    // 056: the joined world's "Enter" control is a world-prefixed link (not a POST to the removed
+    // /world/select), so the lobby actually lets you into the world.
+    assert!(
+        lobby.contains(&format!("/w/{home}/village")),
+        "the joined world links into /w/{{home}}/village"
+    );
+    assert!(
+        !lobby.contains("/world/select"),
+        "no dead switch form remains"
     );
     assert!(lobby.contains("World B"), "world B is offered to join");
 

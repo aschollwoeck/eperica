@@ -22,14 +22,7 @@
         <td class="num">{{ w.radius }}</td>
         <td>{{ w.tribe }}</td>
         <td>
-          {% if w.is_current %}
-          <span class="muted">selected</span>
-          {% else %}
-          <form method="post" action="/world/select">
-            <input type="hidden" name="world" value="{{ w.id }}">
-            <button class="btn" type="submit">Switch to this world</button>
-          </form>
-          {% endif %}
+          <a class="btn" href="/w/{{ w.id }}/village">Enter</a>
         </td>
       </tr>
       {% endfor %}
