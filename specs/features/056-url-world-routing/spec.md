@@ -52,3 +52,10 @@ See the approved plan (`docs`/the slice tasks). Key mechanics:
 
 - Per-world freeze enforcement in `action_guard` (it checks only the home world today) — flagged for a
   follow-up. World slugs/SEO names beyond the display `name`.
+- **Notifications/messages stay home-world-scoped** (a pre-existing limitation of the account-level feed —
+  it reads the home world's repo). Notification deep-links therefore target the home world. Per-world
+  notifications/messages are a separate follow-up.
+- **Public read pages now require a world in the URL.** A logged-out visitor reaches a board via
+  `/w/{world}/leaderboard`; a bare `/leaderboard` (no world) → `/worlds` (the lobby, which is login-gated).
+  This follows the decision that "public pages move too"; if visitor access to a default world's boards
+  without picking one is later wanted, bare public routes could instead redirect to the home world.
