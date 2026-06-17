@@ -3879,6 +3879,19 @@ async fn frozen_world_rejects_mutations(pool: sqlx::PgPool) {
         403,
         "reads stay available after the round ends"
     );
+    // ...an account action (no world in the path) is NOT freeze-blocked (057 AC2) — the freeze applies to
+    // world game actions, not account settings.
+    assert_ne!(
+        c.post(format!("{base}/profile/bio"))
+            .form(&[("bio", "still here")])
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        403,
+        "an account POST is not freeze-blocked"
+    );
     // ...and authentication is still allowed (not frozen).
     assert_ne!(
         c.post(format!("{base}/logout"))

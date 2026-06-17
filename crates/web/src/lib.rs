@@ -140,13 +140,6 @@ async fn rate_limit_guard(State(state): State<AppState>, req: Request, next: Nex
     }
 }
 
-/// Server-authoritative action guard (P4) on mutating `POST`s, except authentication (so a player can
-/// always log in / out):
-/// - **Round freeze** (021 AC7): once the world is won, every mutating action is rejected.
-/// - **Sanction enforcement** (022 AC5): a banned or currently-suspended logged-in player's mutating
-///   actions are rejected.
-///
-/// Reads (`GET`) always pass; enforcement lives here, never in the client.
 /// The world a request targets, parsed from a `/w/{world}/…` path (056). `None` for account routes (no
 /// world segment). Used by the freeze guard to check the **targeted** world's win/freeze state (057).
 fn world_in_path(path: &str) -> Option<WorldId> {
@@ -154,6 +147,13 @@ fn world_in_path(path: &str) -> Option<WorldId> {
     Some(WorldId(uuid::Uuid::parse_str(seg).ok()?.as_u128()))
 }
 
+/// Server-authoritative action guard (P4) on mutating `POST`s, except authentication (so a player can
+/// always log in / out):
+/// - **Round freeze** (021 AC7, per-world 057): a `POST` into a won/frozen world is rejected.
+/// - **Sanction enforcement** (022 AC5): a banned or currently-suspended logged-in player's mutating
+///   actions are rejected.
+///
+/// Reads (`GET`) always pass; enforcement lives here, never in the client.
 async fn action_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
     use eperica_application::{AccountRepository, WonderRepository};
     let is_auth = matches!(req.uri().path(), "/login" | "/logout" | "/register");
@@ -377,4 +377,31 @@ pub fn router(state: AppState) -> Router {
         ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 057: `world_in_path` parses the `/w/{uuid}/…` world segment (and only that) — the freeze guard relies
+    /// on it returning `None` for account routes so they are never freeze-blocked.
+    #[test]
+    fn world_in_path_parses_only_world_routes() {
+        let u = uuid::Uuid::new_v4();
+        assert_eq!(
+            world_in_path(&format!("/w/{u}/village/build")),
+            Some(WorldId(u.as_u128())),
+            "a /w/{{uuid}}/… path yields its world"
+        );
+        assert_eq!(
+            world_in_path(&format!("/w/{u}")),
+            Some(WorldId(u.as_u128()))
+        );
+        // Account routes (and look-alikes) have no world segment.
+        assert_eq!(world_in_path("/worlds/join"), None);
+        assert_eq!(world_in_path("/settings/notifications"), None);
+        assert_eq!(world_in_path("/profile/bio"), None);
+        assert_eq!(world_in_path("/w/not-a-uuid/village"), None);
+        assert_eq!(world_in_path("/w/"), None);
+    }
 }
