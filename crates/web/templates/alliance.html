@@ -2,7 +2,7 @@
 {% block content %}
 <section class="panel">
   <h1>Alliance</h1>
-  <p class="muted"><a href="/village">← Back to the village</a></p>
+  <p class="muted"><a href="/w/{{ world }}/village">← Back to the village</a></p>
 
   {% if !in_alliance %}
   <p class="muted">You are not in an alliance. Build an <strong>Embassy</strong> (level {{ join_level }} to
@@ -10,7 +10,7 @@
 
   {% if can_found %}
   <h2>Found an alliance</h2>
-  <form method="post" action="/alliance/found" class="form">
+  <form method="post" action="/w/{{ world }}/alliance/found" class="form">
     <label>Name <input type="text" name="name" required maxlength="32"></label>
     <label>Tag <input type="text" name="tag" required maxlength="8" style="width:6em"></label>
     <button class="btn btn--primary" type="submit">Found</button>
@@ -28,12 +28,12 @@
       <tr>
         <td>{{ inv.name }} [{{ inv.tag }}]</td>
         <td>
-          <form method="post" action="/alliance/respond" style="display:inline">
+          <form method="post" action="/w/{{ world }}/alliance/respond" style="display:inline">
             <input type="hidden" name="alliance" value="{{ inv.alliance_id }}">
             <input type="hidden" name="accept" value="true">
             <button class="btn btn--primary" type="submit">Accept</button>
           </form>
-          <form method="post" action="/alliance/respond" style="display:inline">
+          <form method="post" action="/w/{{ world }}/alliance/respond" style="display:inline">
             <input type="hidden" name="alliance" value="{{ inv.alliance_id }}">
             <input type="hidden" name="accept" value="false">
             <button class="btn" type="submit">Decline</button>
@@ -47,11 +47,11 @@
 
   {% else %}
   <h2>{{ name }} <span class="muted">[{{ tag }}]</span></h2>
-  <p class="muted">Your role: {{ my_role }} · <a href="/alliance/forum">Forum</a></p>
+  <p class="muted">Your role: {{ my_role }} · <a href="/w/{{ world }}/alliance/forum">Forum</a></p>
 
   {% if can_invite %}
   <h3>Invite a player</h3>
-  <form method="post" action="/alliance/invite" class="form">
+  <form method="post" action="/w/{{ world }}/alliance/invite" class="form">
     <label>Player <input type="text" name="username" required></label>
     <button class="btn btn--primary" type="submit">Invite</button>
   </form>
@@ -59,7 +59,7 @@
   <p class="muted">Pending invites:
     {% for o in outgoing_invites %}
     <span>{{ o.invitee_name }}
-      <form method="post" action="/alliance/revoke" style="display:inline">
+      <form method="post" action="/w/{{ world }}/alliance/revoke" style="display:inline">
         <input type="hidden" name="username" value="{{ o.invitee_name }}">
         <button class="btn btn--small" type="submit">revoke</button>
       </form></span>
@@ -79,20 +79,20 @@
         <td class="muted">{{ m.rights }}</td>
         <td>
           {% if can_expel && !m.is_self %}
-          <form method="post" action="/alliance/expel" style="display:inline">
+          <form method="post" action="/w/{{ world }}/alliance/expel" style="display:inline">
             <input type="hidden" name="target" value="{{ m.player_id }}">
             <button class="btn btn--small" type="submit">expel</button>
           </form>
           {% endif %}
           {% if is_founder && !m.is_self %}
-          <form method="post" action="/alliance/transfer" style="display:inline"
+          <form method="post" action="/w/{{ world }}/alliance/transfer" style="display:inline"
                 onsubmit="return confirm('Hand over the alliance to {{ m.name }}?')">
             <input type="hidden" name="target" value="{{ m.player_id }}">
             <button class="btn btn--small" type="submit">make founder</button>
           </form>
           {% endif %}
           {% if can_manage && !m.is_self %}
-          <form method="post" action="/alliance/role" style="display:inline">
+          <form method="post" action="/w/{{ world }}/alliance/role" style="display:inline">
             <input type="hidden" name="target" value="{{ m.player_id }}">
             <select name="role">
               <option value="leader">Leader</option>
@@ -114,7 +114,7 @@
 
   <h3>Diplomacy</h3>
   {% if can_diplomacy %}
-  <form method="post" action="/alliance/diplomacy" class="form">
+  <form method="post" action="/w/{{ world }}/alliance/diplomacy" class="form">
     <label>Alliance id <input type="text" name="other" required></label>
     <select name="command">
       <option value="declare_war">Declare war</option>
@@ -138,13 +138,13 @@
         {% if can_diplomacy %}
         <td>
           {% if d.can_accept %}
-          <form method="post" action="/alliance/diplomacy" style="display:inline">
+          <form method="post" action="/w/{{ world }}/alliance/diplomacy" style="display:inline">
             <input type="hidden" name="other" value="{{ d.other_id }}">
             <input type="hidden" name="command" value="accept_confederation">
             <button class="btn btn--small btn--primary" type="submit">accept</button>
           </form>
           {% endif %}
-          <form method="post" action="/alliance/diplomacy" style="display:inline">
+          <form method="post" action="/w/{{ world }}/alliance/diplomacy" style="display:inline">
             <input type="hidden" name="other" value="{{ d.other_id }}">
             <input type="hidden" name="command" value="cancel">
             <button class="btn btn--small" type="submit">cancel</button>
@@ -184,7 +184,7 @@
       {% for v in allied_villages %}
       <tr>
         <td>{{ v.owner }}</td>
-        <td><a href="/map?x={{ v.x }}&y={{ v.y }}">({{ v.x }}|{{ v.y }})</a></td>
+        <td><a href="/w/{{ world }}/map?x={{ v.x }}&y={{ v.y }}">({{ v.x }}|{{ v.y }})</a></td>
       </tr>
       {% endfor %}
     </tbody>
@@ -193,12 +193,12 @@
 
   <h3>Leave / disband</h3>
   {% if is_founder %}
-  <form method="post" action="/alliance/disband"
+  <form method="post" action="/w/{{ world }}/alliance/disband"
         onsubmit="return confirm('Disband {{ name }}? This cannot be undone.')">
     <button class="btn btn--danger" type="submit">Disband alliance</button>
   </form>
   {% else %}
-  <form method="post" action="/alliance/leave">
+  <form method="post" action="/w/{{ world }}/alliance/leave">
     <button class="btn" type="submit">Leave alliance</button>
   </form>
   {% endif %}

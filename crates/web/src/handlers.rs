@@ -300,6 +300,12 @@ fn world_path(world: WorldId, rest: &str) -> String {
     format!("/w/{}{rest}", uuid::Uuid::from_u128(world.0))
 }
 
+/// The world's hyphenated UUID as a string (056) — the `world` field every world-scoped template carries so
+/// its links can read `/w/{{ world }}/…`.
+fn world_id_str(world: WorldId) -> String {
+    uuid::Uuid::from_u128(world.0).to_string()
+}
+
 /// Redirect to a world-coupled `path` (056) — prefixed with `/w/{world}` — preserving the selected village
 /// (the orthogonal `?village=` query) so the user stays on it.
 fn redirect_with_village(world: WorldId, path: &str, village: Option<&str>) -> Response {
@@ -1173,6 +1179,7 @@ pub async fn village(ctx: GameContext, Query(q): Query<VillageQuery>) -> Respons
     let world_won = matches!(ctx.accounts.world_ended().await, Ok(Some(_)));
 
     page(&VillageTemplate {
+        world: world_id_str(ctx.world_id),
         username: user.username,
         world_won,
         is_wonder_site: village.is_wonder_site,
@@ -1423,7 +1430,10 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
                         );
                         // A send shortcut to another player's village (you can't target your own).
                         if marker.owner_name != user.username {
-                            href = Some(format!("/village/rally?x={}&y={}", coord.x, coord.y));
+                            href = Some(world_path(
+                                ctx.world_id,
+                                &format!("/village/rally?x={}&y={}", coord.x, coord.y),
+                            ));
                         }
                     } else if matches!(cell.tile, TileKind::Oasis(_)) {
                         // An oasis links to the Rally Point pre-filled with the tile (attack, or
@@ -1439,7 +1449,10 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
                             label =
                                 format!("{base_label} — wild animals ({}|{})", coord.x, coord.y);
                         }
-                        href = Some(format!("/village/rally?x={}&y={}", coord.x, coord.y));
+                        href = Some(world_path(
+                            ctx.world_id,
+                            &format!("/village/rally?x={}&y={}", coord.x, coord.y),
+                        ));
                     }
                     // Distance from home (toroidal, rounded) — helps judge travel time at a glance.
                     if let Some(o) = origin {
@@ -1461,6 +1474,7 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
 
     let span = 2 * MAP_HALF + 1;
     page(&MapTemplate {
+        world: world_id_str(ctx.world_id),
         center_x: center.x,
         center_y: center.y,
         radius: i32::try_from(radius).unwrap_or(i32::MAX),
@@ -1732,6 +1746,7 @@ pub async fn academy(ctx: GameContext, Query(q): Query<VillageQuery>) -> Respons
         .collect();
 
     page(&AcademyTemplate {
+        world: world_id_str(ctx.world_id),
         village_id: village.id.0.to_string(),
         has_academy: building_level(&village, BuildingKind::Academy) > 0,
         rows,
@@ -1849,6 +1864,7 @@ pub async fn smithy(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response
         .collect();
 
     page(&SmithyTemplate {
+        world: world_id_str(ctx.world_id),
         village_id: village.id.0.to_string(),
         has_smithy: building_level(&village, BuildingKind::Smithy) > 0,
         smithy_level: building_level(&village, BuildingKind::Smithy),
@@ -1989,6 +2005,7 @@ pub async fn troops(
     };
 
     page(&TroopsTemplate {
+        world: world_id_str(ctx.world_id),
         village_id: village.id.0.to_string(),
         building: building_label(building),
         has_building: building_level > 0,
@@ -2155,6 +2172,7 @@ pub async fn rally(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
         }
     };
     page(&RallyTemplate {
+        world: world_id_str(ctx.world_id),
         village_id: village.id.0.to_string(),
         units,
         target_x: q.x,
@@ -2445,6 +2463,7 @@ pub async fn market(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response
     let level = building_level(&village, BuildingKind::Marketplace);
     if level == 0 {
         return page(&MarketTemplate {
+            world: world_id_str(ctx.world_id),
             village_id,
             has_marketplace: false,
             capacity: 0,
@@ -2467,6 +2486,7 @@ pub async fn market(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response
     let total = ctx.rules.merchant.merchants_total(level);
     let profile = ctx.rules.merchant.profile(tribe);
     page(&MarketTemplate {
+        world: world_id_str(ctx.world_id),
         village_id,
         has_marketplace: true,
         capacity: profile.capacity,
@@ -2577,7 +2597,7 @@ fn force_rows(
 }
 
 /// One inbox row for a scout report from the viewer's perspective (010 AC12).
-fn scout_report_row(r: &ScoutReportView) -> ReportRow {
+fn scout_report_row(world: WorldId, r: &ScoutReportView) -> ReportRow {
     let (name, coord) = if r.viewer_is_scouter {
         (&r.target_name, r.target_coord)
     } else {
@@ -2602,7 +2622,7 @@ fn scout_report_row(r: &ScoutReportView) -> ReportRow {
         when_ms: r.occurred_at.0,
         headline,
         outcome,
-        href: format!("/reports/scout/{}", r.id),
+        href: world_path(world, &format!("/reports/scout/{}", r.id)),
     }
 }
 
@@ -2631,11 +2651,11 @@ pub async fn reports(ctx: GameContext) -> Response {
                 when_ms: r.occurred_at.0,
                 headline: report_headline(r, i_attacked),
                 outcome: report_outcome(r, i_attacked),
-                href: format!("/reports/{}", r.id),
+                href: world_path(ctx.world_id, &format!("/reports/{}", r.id)),
             }
         })
         .collect();
-    rows.extend(scouts.iter().map(scout_report_row));
+    rows.extend(scouts.iter().map(|r| scout_report_row(ctx.world_id, r)));
     // 016 AC3/AC12: battles where the player **reinforced** an ally — their own report (the owner's
     // own defenses are already above as `defender_player`). Informational rows (no separate detail).
     let defended = match reinforcement_reports(&ctx.accounts, &ctx.rules.ranking, player).await {
@@ -2662,7 +2682,10 @@ pub async fn reports(ctx: GameContext) -> Response {
         }
     }));
     rows.sort_by_key(|r| std::cmp::Reverse(r.when_ms));
-    page(&ReportsTemplate { reports: rows })
+    page(&ReportsTemplate {
+        world: world_id_str(ctx.world_id),
+        reports: rows,
+    })
 }
 
 /// Query for the public leaderboard page (016): category, region scope, time window.
@@ -2710,6 +2733,7 @@ fn window_options(rules: &eperica_domain::RankingRules) -> Vec<(String, String)>
 
 /// Map player leaderboard rows to view rows (rank + stat-page link + 025 presence indicator).
 fn player_rows(
+    world: WorldId,
     rows: Vec<LeaderboardRow>,
     now: Timestamp,
     online_secs: i64,
@@ -2722,7 +2746,7 @@ fn player_rows(
                 rank: i + 1,
                 name: r.name,
                 tag: String::new(),
-                href: format!("/stats/player/{}", r.player.0),
+                href: world_path(world, &format!("/stats/player/{}", r.player.0)),
                 value: r.value,
                 has_presence: true,
                 online,
@@ -2734,14 +2758,14 @@ fn player_rows(
 
 /// Map alliance leaderboard rows to view rows (rank + tag + stat-page link). Alliances have no
 /// presence — `has_presence` is false so the template renders no indicator.
-fn alliance_rows(rows: Vec<AllianceLeaderboardRow>) -> Vec<LeaderboardRowView> {
+fn alliance_rows(world: WorldId, rows: Vec<AllianceLeaderboardRow>) -> Vec<LeaderboardRowView> {
     rows.into_iter()
         .enumerate()
         .map(|(i, r)| LeaderboardRowView {
             rank: i + 1,
             name: r.name,
             tag: r.tag,
-            href: format!("/stats/alliance/{}", r.alliance.0),
+            href: world_path(world, &format!("/stats/alliance/{}", r.alliance.0)),
             value: r.value,
             has_presence: false,
             online: false,
@@ -2785,7 +2809,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "attackers" => (
                 conflict_leaderboard(repo, rules, ConflictMetric::Attack, scope, window, now_ts)
                     .await
-                    .map(|r| player_rows(r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
                 "Attack points",
                 false,
                 true,
@@ -2793,7 +2817,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "defenders" => (
                 conflict_leaderboard(repo, rules, ConflictMetric::Defense, scope, window, now_ts)
                     .await
-                    .map(|r| player_rows(r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
                 "Defense points",
                 false,
                 true,
@@ -2801,7 +2825,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "raiders" => (
                 conflict_leaderboard(repo, rules, ConflictMetric::Raided, scope, window, now_ts)
                     .await
-                    .map(|r| player_rows(r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
                 "Resources looted",
                 false,
                 true,
@@ -2809,7 +2833,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "climbers" => (
                 climbers_leaderboard(repo, rules, scope)
                     .await
-                    .map(|r| player_rows(r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
                 "Population gained",
                 false,
                 false,
@@ -2817,7 +2841,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "alliances" => (
                 alliance_population_leaderboard(repo, econ, rules, scope)
                     .await
-                    .map(alliance_rows),
+                    .map(|r| alliance_rows(world.world_id, r)),
                 "Population",
                 true,
                 false,
@@ -2832,7 +2856,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
                     now_ts,
                 )
                 .await
-                .map(alliance_rows),
+                .map(|r| alliance_rows(world.world_id, r)),
                 "Attack points",
                 true,
                 true,
@@ -2847,7 +2871,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
                     now_ts,
                 )
                 .await
-                .map(alliance_rows),
+                .map(|r| alliance_rows(world.world_id, r)),
                 "Defense points",
                 true,
                 true,
@@ -2855,7 +2879,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             _ => (
                 population_leaderboard(repo, econ, rules, scope)
                     .await
-                    .map(|r| player_rows(r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
                 "Population",
                 false,
                 false,
@@ -2869,6 +2893,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
         }
     };
     page(&LeaderboardTemplate {
+        world: world_id_str(world.world_id),
         category,
         categories,
         scope: scope_key,
@@ -2923,6 +2948,7 @@ pub async fn wonder(world: WorldScope) -> Response {
         }
     };
     page(&WonderTemplate {
+        world: world_id_str(world.world_id),
         winner,
         max_level: eperica_domain::MAX_WONDER_LEVEL,
         standings,
@@ -3373,10 +3399,7 @@ pub async fn report_submit(
             tracing::warn!(error = %e, "report rejected");
             user_msg(e.to_string())
         });
-    with_flash(
-        Redirect::to(&format!("/stats/player/{}", subject.0)).into_response(),
-        flash,
-    )
+    with_flash(Redirect::to("/worlds").into_response(), flash)
 }
 
 /// Label a report reason for display.
@@ -3449,6 +3472,7 @@ pub async fn search_page(world: WorldScope, Query(sq): Query<SearchQuery>) -> Re
     let trimmed = query.trim().to_owned();
     if trimmed.is_empty() {
         return page(&SearchTemplate {
+            world: world_id_str(world.world_id),
             query,
             searched: false,
             players: Vec::new(),
@@ -3468,7 +3492,7 @@ pub async fn search_page(world: WorldScope, Query(sq): Query<SearchQuery>) -> Re
         .players
         .into_iter()
         .map(|p| SearchHitRow {
-            href: format!("/stats/player/{}", p.player.0),
+            href: world_path(world.world_id, &format!("/stats/player/{}", p.player.0)),
             label: p.name,
         })
         .collect();
@@ -3476,18 +3500,22 @@ pub async fn search_page(world: WorldScope, Query(sq): Query<SearchQuery>) -> Re
         .alliances
         .into_iter()
         .map(|a| SearchHitRow {
-            href: format!("/stats/alliance/{}", a.alliance.0),
+            href: world_path(world.world_id, &format!("/stats/alliance/{}", a.alliance.0)),
             label: format!("{} [{}]", a.name, a.tag),
         })
         .collect();
     let (coordinate_href, coordinate_label) = match results.coordinate {
         Some(c) => (
-            Some(format!("/map?x={}&y={}", c.x, c.y)),
+            Some(world_path(
+                world.world_id,
+                &format!("/map?x={}&y={}", c.x, c.y),
+            )),
             format!("({}|{})", c.x, c.y),
         ),
         None => (None, String::new()),
     };
     page(&SearchTemplate {
+        world: world_id_str(world.world_id),
         query,
         searched: true,
         players,
@@ -3559,6 +3587,7 @@ pub async fn player_stats_page(
         .collect();
     achievements.sort_by(|a, b| a.label.cmp(&b.label));
     page(&PlayerStatsTemplate {
+        world: world_id_str(world.world_id),
         subject_id: pid.to_string(),
         name: s.name,
         bio: profile.bio,
@@ -3932,6 +3961,7 @@ pub async fn quests_page(ctx: GameContext) -> Response {
         })
         .collect();
     page(&QuestsTemplate {
+        world: world_id_str(ctx.world_id),
         village_id,
         current,
         completed: done,
@@ -3965,6 +3995,7 @@ pub async fn alliance_stats_page(
         }
     };
     page(&AllianceStatsTemplate {
+        world: world_id_str(world.world_id),
         name: s.name,
         tag: s.tag,
         population: s.population,
@@ -3976,7 +4007,7 @@ pub async fn alliance_stats_page(
             .map(
                 |(player, name, population, attack_points, defense_points)| MemberStatRow {
                     name,
-                    href: format!("/stats/player/{}", player.0),
+                    href: world_path(world.world_id, &format!("/stats/player/{}", player.0)),
                     population,
                     attack_points,
                     defense_points,
@@ -4070,6 +4101,7 @@ pub async fn scout_report_detail(
         None => ("none", Vec::new(), Vec::new(), 0),
     };
     page(&ScoutReportTemplate {
+        world: world_id_str(ctx.world_id),
         headline,
         summary,
         is_scouter: r.viewer_is_scouter,
@@ -4127,6 +4159,7 @@ pub async fn report_detail(
         _ => None,
     };
     page(&ReportTemplate {
+        world: world_id_str(ctx.world_id),
         kind: if report.kind == MovementKind::Raid {
             "Raid"
         } else {
@@ -4267,6 +4300,7 @@ pub async fn alliance(ctx: GameContext) -> Response {
                 }
             };
             page(&AllianceTemplate {
+                world: world_id_str(ctx.world_id),
                 in_alliance: true,
                 can_found: false,
                 embassy_level: 0,
@@ -4305,6 +4339,7 @@ pub async fn alliance(ctx: GameContext) -> Response {
                 }
             };
             page(&AllianceTemplate {
+                world: world_id_str(ctx.world_id),
                 in_alliance: false,
                 can_found: rules.can_found(embassy),
                 embassy_level: embassy,
@@ -4640,6 +4675,7 @@ pub async fn forum_page(ctx: GameContext) -> Response {
         })
         .collect();
     page(&ForumTemplate {
+        world: world_id_str(ctx.world_id),
         threads,
         can_announce,
     })
@@ -4685,6 +4721,7 @@ pub async fn forum_thread_page(
     };
     match open_thread(&ctx.accounts, player, tid).await {
         Ok((head, posts)) => page(&ForumThreadTemplate {
+            world: world_id_str(ctx.world_id),
             thread_id: id,
             title: head.title,
             locked: head.announcement,
@@ -4989,13 +5026,15 @@ pub struct SendForm {
     body: String,
 }
 
-/// Deep-link for a notification's referenced entity (026), or empty when there's nothing to link to.
-fn notification_href(ref_kind: Option<&str>, ref_id: Option<&str>) -> String {
+/// Deep-link for a notification's referenced entity (026), or empty when there's nothing to link to. The
+/// world-coupled targets (report, village) are prefixed with the notification's world (056) — today the
+/// account-level feed reads the home world, so `world` is the home world.
+fn notification_href(world: WorldId, ref_kind: Option<&str>, ref_id: Option<&str>) -> String {
     match (ref_kind, ref_id) {
-        (Some("report"), Some(id)) => format!("/reports/{id}"),
+        (Some("report"), Some(id)) => world_path(world, &format!("/reports/{id}")),
         (Some("dm"), Some(other)) => format!("/messages/c/dm:{other}"),
         (Some("village"), Some(coord)) => match coord.split_once('|') {
-            Some((x, y)) => format!("/map?x={x}&y={y}"),
+            Some((x, y)) => world_path(world, &format!("/map?x={x}&y={y}")),
             None => String::new(),
         },
         _ => String::new(),
@@ -5024,7 +5063,7 @@ pub async fn notifications_page(
         .into_iter()
         .map(|n| NotificationRowView {
             label: n.kind.label().to_owned(),
-            href: notification_href(n.ref_kind.as_deref(), n.ref_id.as_deref()),
+            href: notification_href(state.world_id, n.ref_kind.as_deref(), n.ref_id.as_deref()),
             body: n.body,
             read: n.read,
         })

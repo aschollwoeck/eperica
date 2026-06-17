@@ -4,7 +4,7 @@
   <h1>Search</h1>
   <p class="muted">Find a player, an alliance (name or tag), or a coordinate (e.g. <code>12|-7</code>).</p>
 
-  <form method="get" action="/search" class="filters">
+  <form method="get" action="/w/{{ world }}/search" class="filters">
     <input type="text" name="q" value="{{ query }}" placeholder="Search…" autocomplete="off" autofocus>
     <button type="submit">Search</button>
   </form>

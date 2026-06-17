@@ -5,7 +5,7 @@
     {% if online %}<span class="presence presence--online" title="Online">● online</span>
     {% else %}<span class="presence presence--away" title="{{ presence_label }}">○ {{ presence_label }}</span>{% endif %}
   </h1>
-  <p class="muted"><a href="/leaderboard">← Leaderboards</a>
+  <p class="muted"><a href="/w/{{ world }}/leaderboard">← Leaderboards</a>
     · <a href="/messages/with/{{ subject_id }}">Message</a></p>
 
   {% if !bio.is_empty() %}

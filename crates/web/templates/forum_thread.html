@@ -2,7 +2,7 @@
 {% block content %}
 <section class="panel">
   <h1>{{ title }}{% if locked %} <span class="badge">Announcement</span>{% endif %}</h1>
-  <p class="muted"><a href="/alliance/forum">← All threads</a></p>
+  <p class="muted"><a href="/w/{{ world }}/alliance/forum">← All threads</a></p>
 
   <ul class="messages">
     {% for p in posts %}
@@ -15,7 +15,7 @@
   {% if locked %}
   <p class="muted">This is an announcement — replies are closed.</p>
   {% else %}
-  <form method="post" action="/alliance/forum/{{ thread_id }}/reply" class="send">
+  <form method="post" action="/w/{{ world }}/alliance/forum/{{ thread_id }}/reply" class="send">
     <textarea name="body" rows="3" placeholder="Reply…" maxlength="2000" required></textarea>
     <button type="submit">Reply</button>
   </form>

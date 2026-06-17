@@ -2,7 +2,7 @@
 {% block content %}
 <section class="panel">
   <h1>Administration</h1>
-  <p class="muted"><a href="/village">← Back to the village</a> · <a href="/mod">Moderation queue</a></p>
+  <p class="muted"><a href="/worlds">← Worlds</a> · <a href="/mod">Moderation queue</a></p>
 
   <h2>World &amp; server</h2>
   <table class="table">
@@ -79,7 +79,7 @@
       {% for a in rows %}
       <tr>
         <td>
-          <a href="/stats/player/{{ a.id }}">{{ a.username }}</a>
+          {{ a.username }}
           {% if a.abandoned %}<span class="muted">(retired)</span>{% endif %}
         </td>
         <td>

@@ -30,6 +30,7 @@ mod tests {
 
     fn village(crop_rate: i64) -> VillageTemplate {
         VillageTemplate {
+            world: "00000000-0000-0000-0000-000000000000".to_owned(),
             username: "player".to_owned(),
             world_won: false,
             is_wonder_site: false,
@@ -157,6 +158,8 @@ pub struct AcademyRow {
 #[derive(Template)]
 #[template(path = "academy.html")]
 pub struct AcademyTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// The village this page acts on (carried into the research form + back link, 013 AC11).
     pub village_id: String,
     /// Whether the village has an Academy (otherwise the page only explains the requirement).
@@ -193,6 +196,8 @@ pub struct SmithyRow {
 #[derive(Template)]
 #[template(path = "smithy.html")]
 pub struct SmithyTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// The village this page acts on (carried into the upgrade form + back link, 013 AC11).
     pub village_id: String,
     /// Whether the village has a Smithy (otherwise the page only explains the requirement).
@@ -233,6 +238,8 @@ pub struct TrainRow {
 #[derive(Template)]
 #[template(path = "troops.html")]
 pub struct TroopsTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// The village this page acts on (carried into the train form + back link, 013 AC11).
     pub village_id: String,
     /// "Barracks" / "Stable" / "Workshop".
@@ -271,6 +278,8 @@ pub struct MapCellView {
 #[derive(Template)]
 #[template(path = "map.html")]
 pub struct MapTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// The center coordinate the view is built around.
     pub center_x: i32,
     pub center_y: i32,
@@ -304,6 +313,8 @@ pub struct RallyUnitRow {
 #[derive(Template)]
 #[template(path = "rally.html")]
 pub struct RallyTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// The id of the village these troops are sent from (carried into the form, AC11).
     pub village_id: String,
     /// The garrison units that can be sent (empty hides the form).
@@ -373,6 +384,8 @@ pub struct ReportRow {
 #[derive(Template)]
 #[template(path = "reports.html")]
 pub struct ReportsTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// The player's reports, newest first (empty shows a notice).
     pub reports: Vec<ReportRow>,
 }
@@ -387,6 +400,8 @@ pub struct ForceRow {
 #[derive(Template)]
 #[template(path = "report.html")]
 pub struct ReportTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// "Attack" or "Raid".
     pub kind: &'static str,
     /// The framed summary, e.g. "You raided bob (3|4)".
@@ -424,6 +439,8 @@ pub struct ScoutResourceRow {
 #[derive(Template)]
 #[template(path = "scout_report.html")]
 pub struct ScoutReportTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// The framed summary, e.g. "You scouted bob (3|4)" or "alice (1|2) scouted your village".
     pub headline: String,
     /// A one-line outcome (scouts sent/lost for the scouter; scouts destroyed for the target).
@@ -446,6 +463,8 @@ pub struct ScoutReportTemplate {
 #[derive(Template)]
 #[template(path = "market.html")]
 pub struct MarketTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// The village this page acts on (carried into the send form + back link, 013 AC11).
     pub village_id: String,
     /// Whether the village has a Marketplace (otherwise the page only explains the requirement).
@@ -493,6 +512,8 @@ pub struct VillageSwitchRow {
 #[derive(Template)]
 #[template(path = "village.html")]
 pub struct VillageTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// Owner's username.
     pub username: String,
     /// Whether the world has been won (021 AC7) — shows a victory notice + freeze warning.
@@ -642,6 +663,8 @@ pub struct OutgoingInviteView {
 #[derive(Template)]
 #[template(path = "alliance.html")]
 pub struct AllianceTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// Whether the viewer is in an alliance (selects which half of the page renders).
     pub in_alliance: bool,
     // --- when NOT in an alliance ---
@@ -693,6 +716,8 @@ pub struct LeaderboardRowView {
 #[derive(Template)]
 #[template(path = "leaderboard.html")]
 pub struct LeaderboardTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// The selected category key (e.g. "population", "attackers", "alliances").
     pub category: String,
     /// All category options as (key, label).
@@ -747,6 +772,8 @@ pub struct ProfileTemplate {
 #[derive(Template)]
 #[template(path = "player_stats.html")]
 pub struct PlayerStatsTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// The viewed player's id (for the report action — 022 AC2).
     pub subject_id: String,
     pub name: String,
@@ -777,6 +804,8 @@ pub struct MemberStatRow {
 #[derive(Template)]
 #[template(path = "alliance_stats.html")]
 pub struct AllianceStatsTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     pub name: String,
     pub tag: String,
     pub population: i64,
@@ -800,6 +829,8 @@ pub struct CompletedQuestView {
 #[derive(Template)]
 #[template(path = "quests.html")]
 pub struct QuestsTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// The player's village id (for the nav back-links). The first/capital village.
     pub village_id: String,
     /// The current quest, or `None` when the whole chain is done (the tapered-off state).
@@ -823,6 +854,8 @@ pub struct WonderStandingView {
 #[derive(Template)]
 #[template(path = "wonder.html")]
 pub struct WonderTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// The winning alliance `(name, tag)` once the round is won; `None` while it is ongoing (021 AC6).
     pub winner: Option<(String, String)>,
     /// The level a Wonder must reach to win (100).
@@ -1016,6 +1049,8 @@ pub struct SearchHitRow {
 #[derive(Template)]
 #[template(path = "search.html")]
 pub struct SearchTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// The submitted query (echoed into the box).
     pub query: String,
     /// Whether a (non-empty) search was actually run — distinguishes the prompt from "no results".
@@ -1039,6 +1074,8 @@ pub struct ForumThreadRow {
 #[derive(Template)]
 #[template(path = "forum.html")]
 pub struct ForumTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// Threads, most-recent activity first.
     pub threads: Vec<ForumThreadRow>,
     /// Whether the viewer may start an announcement (holds the `Announce` right).
@@ -1054,6 +1091,8 @@ pub struct ForumPostRow {
 #[derive(Template)]
 #[template(path = "forum_thread.html")]
 pub struct ForumThreadTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
     /// The thread id (for the reply form action).
     pub thread_id: String,
     pub title: String,
