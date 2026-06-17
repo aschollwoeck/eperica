@@ -5,12 +5,12 @@
 
 use axum_extra::extract::cookie::Key;
 use eperica_application::{
-    process_due_combat, process_due_movements, process_due_oasis_combat, process_due_scouts,
-    process_due_settles, process_due_trades,
+    NewNotification, NotificationRepository, process_due_combat, process_due_movements,
+    process_due_oasis_combat, process_due_scouts, process_due_settles, process_due_trades,
 };
 use eperica_domain::{
-    Coordinate, GameSpeed, PlayerId, TileKind, Timestamp, Tribe, WorldConfig, WorldId, WorldMap,
-    coordinates_within,
+    Coordinate, GameSpeed, NotificationKind, PlayerId, TileKind, Timestamp, Tribe, WorldConfig,
+    WorldId, WorldMap, coordinates_within,
 };
 use eperica_infrastructure::{
     Argon2Hasher, ChatHub, NotificationHub, PgAccountRepository, combat_rules, culture_rules,
@@ -6001,6 +6001,96 @@ async fn notification_live_delivery_is_private(pool: sqlx::PgPool) {
     assert!(
         !got_event(&mut eve_stream, 1).await,
         "Eve does not receive Bob's notification"
+    );
+}
+
+/// 061 AC1–AC3: a notification raised in a **non-home** world nudges the account's bell stream live (not
+/// only via the poll). The notify key is resolved to the account, so it matches the home-keyed subscription;
+/// another account never receives it.
+#[sqlx::test(migrations = "../../migrations")]
+async fn notification_live_nudge_spans_worlds(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let (ca, user_a) = register_client(&base, &pool, &unique("xworlda")).await;
+    let (ce, _user_e) = register_client(&base, &pool, &unique("xworlde")).await; // an unrelated account
+
+    // A joins a second world C; capture A's world-C player id (≠ its account id).
+    let world_c = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 30, 505)")
+        .bind(world_c)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repo_c = PgAccountRepository::new(
+        pool.clone(),
+        WorldId(world_c.as_u128()),
+        505,
+        30,
+        economy_rules().unwrap().starting_amounts,
+        lifecycle_rules().unwrap().beginner_protection_secs,
+        GameSpeed::new(1.0).unwrap(),
+    );
+    let player_c = repo_c
+        .create_player_in_world(
+            PlayerId(user_a.as_u128()),
+            Tribe::Teutons,
+            &starting_village().unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        player_c.0,
+        user_a.as_u128(),
+        "A's world-C player id differs from its account id (the case the fix is about)"
+    );
+
+    // A and the unrelated account both open their bell streams.
+    let mut a_stream = ca
+        .get(format!("{base}/notifications/stream"))
+        .send()
+        .await
+        .unwrap();
+    let mut e_stream = ce
+        .get(format!("{base}/notifications/stream"))
+        .send()
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    // Raise a notification for A's world-C player (the generic record path → world-C-keyed player_id).
+    repo_c
+        .record(
+            &[NewNotification {
+                player: player_c,
+                kind: NotificationKind::IncomingAttack,
+                ref_kind: Some("village".to_owned()),
+                ref_id: Some("1|2".to_owned()),
+                body: "inbound".to_owned(),
+            }],
+            Timestamp(now().0),
+        )
+        .await
+        .unwrap();
+
+    let got_event = async |resp: &mut reqwest::Response, secs: u64| -> bool {
+        tokio::time::timeout(std::time::Duration::from_secs(secs), async {
+            while let Some(chunk) = resp.chunk().await.unwrap() {
+                if String::from_utf8_lossy(&chunk).contains("incoming_attack") {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false)
+    };
+
+    assert!(
+        got_event(&mut a_stream, 5).await,
+        "A's bell receives the live nudge from world C (AC1)"
+    );
+    assert!(
+        !got_event(&mut e_stream, 1).await,
+        "an unrelated account never receives A's nudge (AC2)"
     );
 }
 

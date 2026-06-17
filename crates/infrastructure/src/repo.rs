@@ -3265,7 +3265,8 @@ impl CombatRepository for PgAccountRepository {
                 RETURNING player_id \
              ) \
              SELECT pg_notify('notifications', json_build_object( \
-                'key', 'notif:' || player_id::text, 'kind', 'battle_report')::text) FROM ins",
+                'key', 'notif:' || p.user_id::text, 'kind', 'battle_report')::text) \
+             FROM ins JOIN players p ON p.id = ins.player_id",
         )
         .bind(Uuid::from_u128(self.world_id.0))
         .bind(&note_ids)
@@ -7985,9 +7986,9 @@ impl NotificationRepository for PgAccountRepository {
                 RETURNING player_id, kind \
              ) \
              SELECT pg_notify('notifications', json_build_object( \
-                'key', 'notif:' || player_id::text, \
-                'kind', kind \
-             )::text) FROM ins",
+                'key', 'notif:' || p.user_id::text, \
+                'kind', ins.kind \
+             )::text) FROM ins JOIN players p ON p.id = ins.player_id",
         )
         .bind(Uuid::from_u128(self.world_id.0))
         .bind(&ids)
