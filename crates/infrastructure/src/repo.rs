@@ -3261,7 +3261,8 @@ impl CombatRepository for PgAccountRepository {
                 FROM unnest($2::uuid[], $3::uuid[]) AS u(id, player_id) \
                 WHERE NOT EXISTS ( \
                     SELECT 1 FROM notification_mutes m \
-                     WHERE m.player_id = u.player_id AND m.kind = 'battle_report') \
+                     JOIN players pl ON pl.id = u.player_id \
+                     WHERE m.player_id = pl.user_id AND m.kind = 'battle_report') \
                 RETURNING player_id \
              ) \
              SELECT pg_notify('notifications', json_build_object( \
@@ -7982,7 +7983,8 @@ impl NotificationRepository for PgAccountRepository {
                      AS u(id, player_id, kind, ref_kind, ref_id, body) \
                 WHERE NOT EXISTS ( \
                     SELECT 1 FROM notification_mutes m \
-                     WHERE m.player_id = u.player_id AND m.kind = u.kind) \
+                     JOIN players pl ON pl.id = u.player_id \
+                     WHERE m.player_id = pl.user_id AND m.kind = u.kind) \
                 RETURNING player_id, kind \
              ) \
              SELECT pg_notify('notifications', json_build_object( \
@@ -8864,6 +8866,89 @@ mod tests {
                 .await
                 .unwrap(),
             2
+        );
+    }
+
+    /// 062 AC1/AC2: a mute is account-level — it suppresses generation in a **non-home** world too (where
+    /// the notification's player_id is the per-world player id, not the account id), while a non-muted kind
+    /// still records.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn notification_mutes_apply_in_non_home_worlds(pool: PgPool) {
+        let Setup {
+            repo,
+            template,
+            econ,
+            ..
+        } = setup(pool.clone()).await;
+        let a = make_account(&repo, &template, "xmute").await;
+
+        // A second world + the account's player in it (its id differs from the account id).
+        let world_c = Uuid::new_v4();
+        sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 30, 404)")
+            .bind(world_c)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let lifecycle = crate::lifecycle_rules().unwrap();
+        let repo_c = PgAccountRepository::new(
+            pool.clone(),
+            WorldId(world_c.as_u128()),
+            404,
+            30,
+            econ.starting_amounts,
+            lifecycle.beginner_protection_secs,
+            GameSpeed::new(1.0).unwrap(),
+        );
+        let player_c = repo_c
+            .create_player_in_world(a, Tribe::Gauls, &template)
+            .await
+            .unwrap();
+        assert_ne!(
+            player_c.0, a.0,
+            "the world-C player id differs from the account"
+        );
+
+        // Mute NewMessage on the ACCOUNT (the account-level settings key).
+        NotificationRepository::set_mute(&repo, a, NotificationKind::NewMessage, true)
+            .await
+            .unwrap();
+
+        let note = |p: PlayerId, k: NotificationKind| NewNotification {
+            player: p,
+            kind: k,
+            ref_kind: None,
+            ref_id: None,
+            body: String::new(),
+        };
+        // AC1: a muted kind raised in world C (for the world-C player) is suppressed.
+        repo_c
+            .record(
+                &[note(player_c, NotificationKind::NewMessage)],
+                crate::now(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            NotificationRepository::unread_count(&repo_c, player_c)
+                .await
+                .unwrap(),
+            0,
+            "the account's mute suppresses the kind in a non-home world too"
+        );
+        // AC2: a non-muted kind still records there.
+        repo_c
+            .record(
+                &[note(player_c, NotificationKind::IncomingAttack)],
+                crate::now(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            NotificationRepository::unread_count(&repo_c, player_c)
+                .await
+                .unwrap(),
+            1,
+            "a non-muted kind is unaffected"
         );
     }
 
