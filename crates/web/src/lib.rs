@@ -16,7 +16,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum_extra::extract::PrivateCookieJar;
-use eperica_domain::{PlayerId, Timestamp, account_blocked};
+use eperica_domain::{PlayerId, Timestamp, WorldId, account_blocked};
 use eperica_infrastructure::now;
 use state::AppState;
 use tower_http::services::ServeDir;
@@ -147,6 +147,13 @@ async fn rate_limit_guard(State(state): State<AppState>, req: Request, next: Nex
 ///   actions are rejected.
 ///
 /// Reads (`GET`) always pass; enforcement lives here, never in the client.
+/// The world a request targets, parsed from a `/w/{world}/…` path (056). `None` for account routes (no
+/// world segment). Used by the freeze guard to check the **targeted** world's win/freeze state (057).
+fn world_in_path(path: &str) -> Option<WorldId> {
+    let seg = path.strip_prefix("/w/")?.split('/').next()?;
+    Some(WorldId(uuid::Uuid::parse_str(seg).ok()?.as_u128()))
+}
+
 async fn action_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
     use eperica_application::{AccountRepository, WonderRepository};
     let is_auth = matches!(req.uri().path(), "/login" | "/logout" | "/register");
@@ -154,17 +161,23 @@ async fn action_guard(State(state): State<AppState>, req: Request, next: Next) -
         return next.run(req).await;
     }
 
-    // Round freeze (021).
-    match state.accounts.world_ended().await {
-        Ok(Some(_)) => {
-            return (
-                StatusCode::FORBIDDEN,
-                "The round is over — the world has been won and is frozen.",
-            )
-                .into_response();
+    // Round freeze (021/057): a POST into a specific world (`/w/{world}/…`) is rejected if **that** world is
+    // won/frozen. A POST with no world in the path is an account action (settings, sitting, …), not a world
+    // game action, so it is not freeze-checked.
+    if let Some(world) = world_in_path(req.uri().path())
+        && let Some((repo, _, _, _, _)) = state.world_registry.context_for(world).await
+    {
+        match repo.world_ended().await {
+            Ok(Some(_)) => {
+                return (
+                    StatusCode::FORBIDDEN,
+                    "The round is over — the world has been won and is frozen.",
+                )
+                    .into_response();
+            }
+            Ok(None) => {}
+            Err(e) => tracing::error!(error = %e, "action guard failed to read world state"),
         }
-        Ok(None) => {}
-        Err(e) => tracing::error!(error = %e, "action guard failed to read world state"),
     }
 
     // Per-account sanction (022): reject when either the real actor **or** the effective player (030 — the

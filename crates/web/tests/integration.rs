@@ -3892,6 +3892,79 @@ async fn frozen_world_rejects_mutations(pool: sqlx::PgPool) {
     );
 }
 
+/// 057: the freeze is enforced **per world** — a won/frozen world rejects its game-action POSTs, while a
+/// different (open) world the player also belongs to keeps accepting them. (Before 057 the guard only ever
+/// checked the home world, so a non-home world's freeze was not enforced.)
+#[sqlx::test(migrations = "../../migrations")]
+async fn freeze_is_enforced_per_world(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let (c, _user) = register_client(&base, &pool, &unique("pwfreeze")).await;
+
+    // A second world the player joins, then we freeze ONLY it.
+    let world_b = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO worlds (id, speed, radius, seed, name) VALUES ($1, 1.0, 30, 71, 'Frozen B')",
+    )
+    .bind(world_b)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let join = c
+        .post(format!("{base}/worlds/join"))
+        .form(&[
+            ("world", world_b.as_u128().to_string().as_str()),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(join.status().as_u16(), 303);
+
+    // Freeze world B only (a winner alliance founded by a world-B player + won_at on that world's row).
+    sqlx::query(
+        "INSERT INTO alliances (id, name, tag, founder_id) \
+         SELECT gen_random_uuid(), 'Winners', 'WIN', p.id FROM players p WHERE p.world_id = $1 LIMIT 1",
+    )
+    .bind(world_b)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE worlds SET won_at = now(), \
+         winner_alliance_id = (SELECT id FROM alliances LIMIT 1) WHERE id = $1",
+    )
+    .bind(world_b)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // A game-action POST into the frozen world B is rejected …
+    let b_build = c
+        .post(format!("{base}/w/{world_b}/village/build"))
+        .form(&[("target", "field"), ("slot", "0")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        b_build.status().as_u16(),
+        403,
+        "the frozen world rejects mutations"
+    );
+    // … while the same action in the still-open home world is NOT freeze-blocked (proving per-world).
+    let home_build = c
+        .post(format!("{base}/w/{home}/village/build"))
+        .form(&[("target", "field"), ("slot", "0")])
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(
+        home_build.status().as_u16(),
+        403,
+        "the open world still accepts mutations"
+    );
+}
+
 /// 021 AC9: the Wonder race page lists alliances by their Wonder level.
 #[sqlx::test(migrations = "../../migrations")]
 async fn wonder_race_page_shows_progress(pool: sqlx::PgPool) {
