@@ -16,7 +16,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum_extra::extract::PrivateCookieJar;
-use eperica_domain::{PlayerId, Timestamp, account_blocked};
+use eperica_domain::{PlayerId, Timestamp, WorldId, account_blocked};
 use eperica_infrastructure::now;
 use state::AppState;
 use tower_http::services::ServeDir;
@@ -140,9 +140,16 @@ async fn rate_limit_guard(State(state): State<AppState>, req: Request, next: Nex
     }
 }
 
+/// The world a request targets, parsed from a `/w/{world}/…` path (056). `None` for account routes (no
+/// world segment). Used by the freeze guard to check the **targeted** world's win/freeze state (057).
+fn world_in_path(path: &str) -> Option<WorldId> {
+    let seg = path.strip_prefix("/w/")?.split('/').next()?;
+    Some(WorldId(uuid::Uuid::parse_str(seg).ok()?.as_u128()))
+}
+
 /// Server-authoritative action guard (P4) on mutating `POST`s, except authentication (so a player can
 /// always log in / out):
-/// - **Round freeze** (021 AC7): once the world is won, every mutating action is rejected.
+/// - **Round freeze** (021 AC7, per-world 057): a `POST` into a won/frozen world is rejected.
 /// - **Sanction enforcement** (022 AC5): a banned or currently-suspended logged-in player's mutating
 ///   actions are rejected.
 ///
@@ -154,17 +161,23 @@ async fn action_guard(State(state): State<AppState>, req: Request, next: Next) -
         return next.run(req).await;
     }
 
-    // Round freeze (021).
-    match state.accounts.world_ended().await {
-        Ok(Some(_)) => {
-            return (
-                StatusCode::FORBIDDEN,
-                "The round is over — the world has been won and is frozen.",
-            )
-                .into_response();
+    // Round freeze (021/057): a POST into a specific world (`/w/{world}/…`) is rejected if **that** world is
+    // won/frozen. A POST with no world in the path is an account action (settings, sitting, …), not a world
+    // game action, so it is not freeze-checked.
+    if let Some(world) = world_in_path(req.uri().path())
+        && let Some((repo, _, _, _, _)) = state.world_registry.context_for(world).await
+    {
+        match repo.world_ended().await {
+            Ok(Some(_)) => {
+                return (
+                    StatusCode::FORBIDDEN,
+                    "The round is over — the world has been won and is frozen.",
+                )
+                    .into_response();
+            }
+            Ok(None) => {}
+            Err(e) => tracing::error!(error = %e, "action guard failed to read world state"),
         }
-        Ok(None) => {}
-        Err(e) => tracing::error!(error = %e, "action guard failed to read world state"),
     }
 
     // Per-account sanction (022): reject when either the real actor **or** the effective player (030 — the
@@ -364,4 +377,31 @@ pub fn router(state: AppState) -> Router {
         ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 057: `world_in_path` parses the `/w/{uuid}/…` world segment (and only that) — the freeze guard relies
+    /// on it returning `None` for account routes so they are never freeze-blocked.
+    #[test]
+    fn world_in_path_parses_only_world_routes() {
+        let u = uuid::Uuid::new_v4();
+        assert_eq!(
+            world_in_path(&format!("/w/{u}/village/build")),
+            Some(WorldId(u.as_u128())),
+            "a /w/{{uuid}}/… path yields its world"
+        );
+        assert_eq!(
+            world_in_path(&format!("/w/{u}")),
+            Some(WorldId(u.as_u128()))
+        );
+        // Account routes (and look-alikes) have no world segment.
+        assert_eq!(world_in_path("/worlds/join"), None);
+        assert_eq!(world_in_path("/settings/notifications"), None);
+        assert_eq!(world_in_path("/profile/bio"), None);
+        assert_eq!(world_in_path("/w/not-a-uuid/village"), None);
+        assert_eq!(world_in_path("/w/"), None);
+    }
 }
