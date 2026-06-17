@@ -101,12 +101,17 @@ async fn membership_of<L: AllianceRepository>(
 
 /// Post to a channel `channel_key` (`global` / `alliance:<id>`) the sender may access (024 AC1/AC5).
 ///
+/// Two identities (060): `account` is the sender's `users` id (the chat-message author + read key, shared
+/// across worlds), `player` is their **per-world** player id (alliance membership is per-world). They
+/// coincide in the home world (the reuse-UUID invariant) and differ elsewhere.
+///
 /// # Errors
 /// See [`CommsError`].
 pub async fn send_chat<L, C>(
     alliances: &L,
     comms: &C,
-    sender: PlayerId,
+    account: PlayerId,
+    player: PlayerId,
     channel_key: &str,
     body: &str,
     now: Timestamp,
@@ -121,11 +126,11 @@ where
     let Some(channel) = ChatChannel::parse(channel_key) else {
         return Err(CommsError::Forbidden);
     };
-    if !can_access_channel(channel, membership_of(alliances, sender).await?) {
+    if !can_access_channel(channel, membership_of(alliances, player).await?) {
         return Err(CommsError::Forbidden);
     }
     Ok(comms
-        .post_chat(channel_key, sender, body.trim(), now)
+        .post_chat(channel_key, account, body.trim(), now)
         .await?)
 }
 
@@ -155,7 +160,8 @@ where
 pub async fn open_chat<L, C>(
     alliances: &L,
     comms: &C,
-    viewer: PlayerId,
+    account: PlayerId,
+    player: PlayerId,
     channel_key: &str,
     limit: i64,
     now: Timestamp,
@@ -167,37 +173,40 @@ where
     let Some(channel) = ChatChannel::parse(channel_key) else {
         return Err(CommsError::Forbidden);
     };
-    if !can_access_channel(channel, membership_of(alliances, viewer).await?) {
+    if !can_access_channel(channel, membership_of(alliances, player).await?) {
         return Err(CommsError::Forbidden);
     }
     let history = comms.chat_history(channel_key, limit).await?;
-    comms.mark_read(viewer, channel_key, now).await?;
+    comms.mark_read(account, channel_key, now).await?;
     Ok(history)
 }
 
-/// The viewer's conversations list (024 AC3): their DM threads + the global channel + their alliance
-/// channel, each with the latest line + unread, newest-activity first.
+/// The viewer's conversations list **in one world** (024 AC3): their DM threads + the global channel + their
+/// alliance channel, each with the latest line + unread, newest-activity first. `account` is the `users` id
+/// (DMs/channels/read key); `player` is the per-world player id (alliance membership). The 060 cross-world
+/// inbox calls this once per joined world and merges, tagging each row with its world.
 ///
 /// # Errors
 /// See [`CommsError`].
 pub async fn conversation_list<L, C>(
     alliances: &L,
     comms: &C,
-    viewer: PlayerId,
+    account: PlayerId,
+    player: PlayerId,
 ) -> Result<Vec<ConversationSummary>, CommsError>
 where
     L: AllianceRepository,
     C: CommsRepository,
 {
-    let mut out = comms.dm_threads(viewer).await?;
-    out.push(channel_summary(comms, viewer, "global", "Global".to_owned()).await?);
-    if let Some(alliance) = membership_of(alliances, viewer).await? {
+    let mut out = comms.dm_threads(account).await?;
+    out.push(channel_summary(comms, account, "global", "Global".to_owned()).await?);
+    if let Some(alliance) = membership_of(alliances, player).await? {
         let key = ChatChannel::Alliance(alliance).as_key();
         let title = alliances
             .alliance_summary(alliance)
             .await?
             .map_or_else(|| "Alliance".to_owned(), |(name, _)| name);
-        out.push(channel_summary(comms, viewer, &key, title).await?);
+        out.push(channel_summary(comms, account, &key, title).await?);
     }
     out.sort_by_key(|c| std::cmp::Reverse(c.last_ms));
     Ok(out)
@@ -223,14 +232,17 @@ async fn channel_summary<C: CommsRepository>(
     })
 }
 
-/// The viewer's total unread across all conversations (the nav badge, 024 AC4).
+/// The viewer's total unread across all conversations **in one world** (the nav badge, 024 AC4). `account`
+/// is the `users` id (DMs/channels/read key); `player` is the per-world player id (alliance membership). The
+/// 060 cross-world badge sums this over the account's joined worlds.
 ///
 /// # Errors
 /// See [`CommsError`].
 pub async fn unread_badge<L, C>(
     alliances: &L,
     comms: &C,
-    viewer: PlayerId,
+    account: PlayerId,
+    player: PlayerId,
 ) -> Result<i64, CommsError>
 where
     L: AllianceRepository,
@@ -238,10 +250,10 @@ where
 {
     // A few aggregate counts, not the whole conversation list (this is polled often, P11).
     let mut total =
-        comms.dm_total_unread(viewer).await? + comms.channel_unread(viewer, "global").await?;
-    if let Some(alliance) = membership_of(alliances, viewer).await? {
+        comms.dm_total_unread(account).await? + comms.channel_unread(account, "global").await?;
+    if let Some(alliance) = membership_of(alliances, player).await? {
         total += comms
-            .channel_unread(viewer, &ChatChannel::Alliance(alliance).as_key())
+            .channel_unread(account, &ChatChannel::Alliance(alliance).as_key())
             .await?;
     }
     Ok(total)

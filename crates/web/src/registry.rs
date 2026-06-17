@@ -130,6 +130,41 @@ impl WorldRegistry {
         Some((repo, map, meta.speed, meta.radius, Arc::clone(&meta.rules)))
     }
 
+    /// The world's repo + rule bundle **without** building its `WorldMap` (060) — for the account-level
+    /// messages aggregation (inbox + the polled nav badge), which iterates the account's joined worlds and
+    /// only needs each world's `CommsRepository`/`AllianceRepository` (+ presence window). Skipping the map
+    /// build keeps the polled badge cheap. `None` if the world does not exist or its speed is invalid.
+    pub async fn comms_context_for(
+        &self,
+        world_id: WorldId,
+    ) -> Option<(PgAccountRepository, Arc<WorldRules>)> {
+        let cached = self.meta.lock().unwrap().get(&world_id).cloned();
+        let meta = match cached {
+            Some(m) => m,
+            None => {
+                let world = world_by_id(&self.pool, world_id).await.ok()??;
+                let m = WorldMeta {
+                    seed: world.seed,
+                    radius: world.radius,
+                    speed: GameSpeed::new(world.speed).ok()?,
+                    rules: self.rules_for(&world.rule_preset)?,
+                };
+                self.meta.lock().unwrap().insert(world_id, m.clone());
+                m
+            }
+        };
+        let repo = PgAccountRepository::new(
+            self.pool.clone(),
+            world_id,
+            meta.seed,
+            meta.radius,
+            meta.rules.economy.starting_amounts,
+            self.beginner_secs,
+            meta.speed,
+        );
+        Some((repo, Arc::clone(&meta.rules)))
+    }
+
     /// Start the scheduler for `world_id`, building its world-scoped runtime (map/repo/event-store from
     /// the world row — 038/039) on the spot. **Idempotent**: a world already running is a no-op. Used at
     /// startup for every world (040) and live by the admin create-world handler (041 AC2).

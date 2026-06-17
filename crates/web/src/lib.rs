@@ -44,7 +44,8 @@ async fn presence_touch(State(state): State<AppState>, req: Request, next: Next)
     let path = req.uri().path();
     let background = path.starts_with("/static")
         || path == "/messages/unread"
-        || path.starts_with("/messages/stream")
+        // The conversation SSE stream is world-scoped (060): `/w/{world}/messages/stream/{key}`.
+        || path.contains("/messages/stream/")
         || path == "/notifications/unread"
         || path == "/notifications/stream"
         || path == "/sitting/status"
@@ -298,6 +299,12 @@ fn world_router() -> Router<AppState> {
         .route("/wonder/build", post(handlers::wonder_build_submit))
         .route("/stats/player/{id}", get(handlers::player_stats_page))
         .route("/stats/alliance/{id}", get(handlers::alliance_stats_page))
+        // Conversations are world-scoped (060): opening/sending/streaming + the read watermark all operate
+        // in this world. The account-level inbox/badge (top-level `/messages`) link into here.
+        .route("/messages/send", post(handlers::messages_send))
+        .route("/messages/with/{id}", get(handlers::messages_with))
+        .route("/messages/c/{key}", get(handlers::conversation))
+        .route("/messages/stream/{key}", get(handlers::messages_stream))
 }
 
 /// Build the application router for the given state.
@@ -325,12 +332,11 @@ pub fn router(state: AppState) -> Router {
         .route("/map", get(handlers::redirect_to_lobby))
         .route("/leaderboard", get(handlers::redirect_home_leaderboard))
         .route("/wonder", get(handlers::redirect_home_wonder))
+        // The inbox + nav badge are account-level (one inbox/badge on every page), aggregating across all
+        // the account's worlds (060); opening/sending/streaming a conversation is world-scoped (under
+        // `/w/{world}`, in world_router) so it operates in that conversation's own world.
         .route("/messages", get(handlers::messages))
         .route("/messages/unread", get(handlers::messages_unread))
-        .route("/messages/send", post(handlers::messages_send))
-        .route("/messages/with/{id}", get(handlers::messages_with))
-        .route("/messages/c/{key}", get(handlers::conversation))
-        .route("/messages/stream/{key}", get(handlers::messages_stream))
         .route("/notifications", get(handlers::notifications_page))
         .route("/notifications/unread", get(handlers::notifications_unread))
         .route("/notifications/read", post(handlers::notifications_read))

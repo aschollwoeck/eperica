@@ -955,8 +955,10 @@ pub struct AdminTemplate {
     pub rows: Vec<AdminAccountRow>,
 }
 
-/// A row in the conversations list (024 AC3).
+/// A row in the conversations list (024 AC3 / 060: aggregated across worlds).
 pub struct ConversationRow {
+    /// The conversation's world (hyphenated UUID, 060) — its link is `/w/{world}/messages/c/{key}`.
+    pub world: String,
     /// Conversation key (`dm:<uuid>` / `global` / `alliance:<id>`).
     pub key: String,
     /// Display title (other player's name, or channel name).
@@ -1114,6 +1116,8 @@ pub struct ChatLineView {
 #[derive(Template)]
 #[template(path = "conversation.html")]
 pub struct ConversationTemplate {
+    /// The conversation's world (hyphenated UUID, 060) — the send/stream/back links are `/w/{world}/…`.
+    pub world: String,
     /// The conversation key (used by the send form + SSE stream URL).
     pub key: String,
     /// Display title.
