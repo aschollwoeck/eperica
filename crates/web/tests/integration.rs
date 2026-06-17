@@ -126,9 +126,21 @@ fn unique(prefix: &str) -> String {
     format!("{prefix}_{t}_{n}")
 }
 
+/// The home world's UUID (hyphenated) — the world-coupled routes live under `/w/{home}/…` (056). The home
+/// world is the oldest row (created by `spawn`).
+async fn home_world(pool: &sqlx::PgPool) -> String {
+    let id: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM worlds ORDER BY created_at, id LIMIT 1")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    id.to_string()
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn register_creates_village_and_view_is_fast(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let c = client();
     let user = unique("reg");
     let email = format!("{user}@example.com");
@@ -148,16 +160,24 @@ async fn register_creates_village_and_view_is_fast(pool: sqlx::PgPool) {
     assert_eq!(res.status().as_u16(), 303);
     assert_eq!(
         res.headers().get(LOCATION).unwrap().to_str().unwrap(),
-        "/village"
+        "/worlds"
     );
 
     // Warm, then measure the read path (P11 / T19): GET /village under the 50 ms budget.
-    let _ = c.get(format!("{base}/village")).send().await.unwrap();
+    let _ = c
+        .get(format!("{base}/w/{home}/village"))
+        .send()
+        .await
+        .unwrap();
     let mut best = std::time::Duration::MAX;
     let mut body = String::new();
     for _ in 0..3 {
         let started = std::time::Instant::now();
-        let view = c.get(format!("{base}/village")).send().await.unwrap();
+        let view = c
+            .get(format!("{base}/w/{home}/village"))
+            .send()
+            .await
+            .unwrap();
         let elapsed = started.elapsed();
         assert_eq!(view.status().as_u16(), 200);
         body = view.text().await.unwrap();
@@ -218,9 +238,10 @@ async fn login_succeeds_and_rejects_bad_password(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn village_requires_login(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     // AC7: an unauthenticated visitor cannot view a village; they are redirected to login.
     let res = client()
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap();
@@ -234,6 +255,7 @@ async fn village_requires_login(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn register_offers_tribes_and_village_shows_choice(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     // 004 AC15: the registration form offers the three tribes with descriptions.
     let form = client()
         .get(format!("{base}/register"))
@@ -263,7 +285,7 @@ async fn register_offers_tribes_and_village_shows_choice(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let body = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -276,6 +298,7 @@ async fn register_offers_tribes_and_village_shows_choice(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
 
     let user = unique("acad");
     let email = format!("{user}@example.com");
@@ -293,7 +316,7 @@ async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
 
     // 004 AC15: without an Academy the page explains the requirement and offers no action.
     let body = c
-        .get(format!("{base}/village/academy"))
+        .get(format!("{base}/w/{home}/village/academy"))
         .send()
         .await
         .unwrap()
@@ -342,7 +365,7 @@ async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
 
     // The Academy lists the Gaul roster: tier-1 researched, Swordsman researchable.
     let body = c
-        .get(format!("{base}/village/academy"))
+        .get(format!("{base}/w/{home}/village/academy"))
         .send()
         .await
         .unwrap()
@@ -356,14 +379,14 @@ async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
 
     // Order the research: PRG back to the Academy, which now shows the countdown (AC6/AC15).
     let res = c
-        .post(format!("{base}/village/academy/research"))
+        .post(format!("{base}/w/{home}/village/academy/research"))
         .form(&[("unit", "swordsman")])
         .send()
         .await
         .unwrap();
     assert_eq!(res.status().as_u16(), 303);
     let body = c
-        .get(format!("{base}/village/academy"))
+        .get(format!("{base}/w/{home}/village/academy"))
         .send()
         .await
         .unwrap()
@@ -375,7 +398,7 @@ async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
 
     // The Smithy lists the researched tier-1 unit and accepts an upgrade order (AC10/AC15).
     let body = c
-        .get(format!("{base}/village/smithy"))
+        .get(format!("{base}/w/{home}/village/smithy"))
         .send()
         .await
         .unwrap()
@@ -390,14 +413,14 @@ async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
         "smithy shows the upgrade's stat gain"
     );
     let res = c
-        .post(format!("{base}/village/smithy/upgrade"))
+        .post(format!("{base}/w/{home}/village/smithy/upgrade"))
         .form(&[("unit", "phalanx")])
         .send()
         .await
         .unwrap();
     assert_eq!(res.status().as_u16(), 303);
     let body = c
-        .get(format!("{base}/village/smithy"))
+        .get(format!("{base}/w/{home}/village/smithy"))
         .send()
         .await
         .unwrap()
@@ -409,7 +432,7 @@ async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
 
     // Visitors are redirected to login (roles table).
     let anon = client()
-        .get(format!("{base}/village/academy"))
+        .get(format!("{base}/w/{home}/village/academy"))
         .send()
         .await
         .unwrap();
@@ -419,6 +442,7 @@ async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn training_flow_and_garrison(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
 
     let user = unique("troop");
     let email = format!("{user}@example.com");
@@ -436,7 +460,7 @@ async fn training_flow_and_garrison(pool: sqlx::PgPool) {
 
     // 005 AC9: without a Barracks the page explains the requirement and offers no action.
     let body = c
-        .get(format!("{base}/village/troops/barracks"))
+        .get(format!("{base}/w/{home}/village/troops/barracks"))
         .send()
         .await
         .unwrap()
@@ -482,7 +506,7 @@ async fn training_flow_and_garrison(pool: sqlx::PgPool) {
 
     // The Barracks lists the researched Gaul infantry (Phalanx) with a count form.
     let body = c
-        .get(format!("{base}/village/troops/barracks"))
+        .get(format!("{base}/w/{home}/village/troops/barracks"))
         .send()
         .await
         .unwrap()
@@ -495,14 +519,14 @@ async fn training_flow_and_garrison(pool: sqlx::PgPool) {
 
     // 005 AC2/AC9: order a batch; PRG back to the page, which shows the queue + countdown.
     let res = c
-        .post(format!("{base}/village/train"))
+        .post(format!("{base}/w/{home}/village/train"))
         .form(&[("unit", "phalanx"), ("count", "3")])
         .send()
         .await
         .unwrap();
     assert_eq!(res.status().as_u16(), 303);
     let body = c
-        .get(format!("{base}/village/troops/barracks"))
+        .get(format!("{base}/w/{home}/village/troops/barracks"))
         .send()
         .await
         .unwrap()
@@ -525,7 +549,7 @@ async fn training_flow_and_garrison(pool: sqlx::PgPool) {
             .expect("rate number")
     }
     let before = crop_rate(
-        &c.get(format!("{base}/village"))
+        &c.get(format!("{base}/w/{home}/village"))
             .send()
             .await
             .unwrap()
@@ -541,7 +565,7 @@ async fn training_flow_and_garrison(pool: sqlx::PgPool) {
     .await
     .unwrap();
     let body = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -556,7 +580,7 @@ async fn training_flow_and_garrison(pool: sqlx::PgPool) {
 
     // Visitors are redirected to login (roles table).
     let anon = client()
-        .get(format!("{base}/village/troops/barracks"))
+        .get(format!("{base}/w/{home}/village/troops/barracks"))
         .send()
         .await
         .unwrap();
@@ -568,6 +592,7 @@ async fn training_flow_and_garrison(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn rejected_action_sets_flash_message(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
 
     let user = unique("flash");
     let email = format!("{user}@example.com");
@@ -610,7 +635,7 @@ async fn rejected_action_sets_flash_message(pool: sqlx::PgPool) {
 
     // Order far more than the village can afford → rejected, PRG back, with a flash cookie set.
     let res = c
-        .post(format!("{base}/village/train"))
+        .post(format!("{base}/w/{home}/village/train"))
         .form(&[("unit", "phalanx"), ("count", "999")])
         .send()
         .await
@@ -640,7 +665,7 @@ async fn rejected_action_sets_flash_message(pool: sqlx::PgPool) {
     .await
     .unwrap();
     let ok = c
-        .post(format!("{base}/village/train"))
+        .post(format!("{base}/w/{home}/village/train"))
         .form(&[("unit", "phalanx"), ("count", "1")])
         .send()
         .await
@@ -1035,7 +1060,7 @@ async fn admin_creates_world_live(pool: sqlx::PgPool) {
     // A non-admin cannot create a world (server-authoritative).
     let r = plain
         .post(format!("{base}/admin/world"))
-        .form(&[("speed", "3"), ("radius", "50")])
+        .form(&[("name", "Arena"), ("speed", "3"), ("radius", "50")])
         .send()
         .await
         .unwrap();
@@ -1056,7 +1081,7 @@ async fn admin_creates_world_live(pool: sqlx::PgPool) {
     // Invalid radius (over the max) is rejected with a flash — no world created.
     let r = ac
         .post(format!("{base}/admin/world"))
-        .form(&[("speed", "3"), ("radius", "99999")])
+        .form(&[("name", "Arena"), ("speed", "3"), ("radius", "99999")])
         .send()
         .await
         .unwrap();
@@ -1081,7 +1106,7 @@ async fn admin_creates_world_live(pool: sqlx::PgPool) {
     // A valid create: a new world row appears with the given speed/radius, started live.
     let r = ac
         .post(format!("{base}/admin/world"))
-        .form(&[("speed", "3"), ("radius", "40")])
+        .form(&[("name", "Arena"), ("speed", "3"), ("radius", "40")])
         .send()
         .await
         .unwrap();
@@ -1141,7 +1166,12 @@ async fn admin_creates_world_with_chosen_preset(pool: sqlx::PgPool) {
     // An unknown preset is rejected — no world created (P4).
     let r = ac
         .post(format!("{base}/admin/world"))
-        .form(&[("speed", "2"), ("radius", "40"), ("preset", "bogus")])
+        .form(&[
+            ("name", "Arena"),
+            ("speed", "2"),
+            ("radius", "40"),
+            ("preset", "bogus"),
+        ])
         .send()
         .await
         .unwrap();
@@ -1155,7 +1185,12 @@ async fn admin_creates_world_with_chosen_preset(pool: sqlx::PgPool) {
     // A valid `speed` world is persisted with its preset.
     let r = ac
         .post(format!("{base}/admin/world"))
-        .form(&[("speed", "2"), ("radius", "40"), ("preset", "speed")])
+        .form(&[
+            ("name", "Arena"),
+            ("speed", "2"),
+            ("radius", "40"),
+            ("preset", "speed"),
+        ])
         .send()
         .await
         .unwrap();
@@ -1189,6 +1224,7 @@ async fn admin_world_creation_sets_endgame_schedule(pool: sqlx::PgPool) {
     let r = ac
         .post(format!("{base}/admin/world"))
         .form(&[
+            ("name", "Arena"),
             ("speed", "2"),
             ("radius", "40"),
             ("artifact_days", "30"),
@@ -1220,6 +1256,7 @@ async fn admin_world_creation_sets_endgame_schedule(pool: sqlx::PgPool) {
     let r = ac
         .post(format!("{base}/admin/world"))
         .form(&[
+            ("name", "Arena"),
             ("speed", "2"),
             ("radius", "40"),
             ("artifact_days", "60"),
@@ -1250,7 +1287,7 @@ async fn admin_world_creation_sets_endgame_schedule(pool: sqlx::PgPool) {
     // Omitting the schedule uses the env default (90/120 days in the test harness).
     let r = ac
         .post(format!("{base}/admin/world"))
-        .form(&[("speed", "2"), ("radius", "40")])
+        .form(&[("name", "Arena"), ("speed", "2"), ("radius", "40")])
         .send()
         .await
         .unwrap();
@@ -1276,6 +1313,7 @@ async fn admin_world_creation_sets_endgame_schedule(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let user = unique("mapper");
     let email = format!("{user}@example.com");
     let c = client();
@@ -1292,7 +1330,7 @@ async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
 
     // 006 AC7: the village page links to the map.
     let village = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -1304,7 +1342,7 @@ async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
     // The map (default-centered on the player's village) renders the grid, the player's own
     // village marker, and terrain labels.
     let body = c
-        .get(format!("{base}/map"))
+        .get(format!("{base}/w/{home}/map"))
         .send()
         .await
         .unwrap()
@@ -1320,7 +1358,7 @@ async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
 
     // Recenter to an explicit coordinate.
     let body = c
-        .get(format!("{base}/map?x=10&y=-7"))
+        .get(format!("{base}/w/{home}/map?x=10&y=-7"))
         .send()
         .await
         .unwrap()
@@ -1330,7 +1368,11 @@ async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
     assert!(body.contains("centered on (10|-7)"));
 
     // Visitors are redirected to login (roles table).
-    let anon = client().get(format!("{base}/map")).send().await.unwrap();
+    let anon = client()
+        .get(format!("{base}/w/{home}/map"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(anon.status().as_u16(), 303);
     assert_eq!(
         anon.headers().get(LOCATION).unwrap().to_str().unwrap(),
@@ -1410,6 +1452,7 @@ async fn register_rejects_invalid_input(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn logout_ends_session(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let user = unique("out");
     let email = format!("{user}@example.com");
     let c = client();
@@ -1426,7 +1469,7 @@ async fn logout_ends_session(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert_eq!(
-        c.get(format!("{base}/village"))
+        c.get(format!("{base}/w/{home}/village"))
             .send()
             .await
             .unwrap()
@@ -1441,7 +1484,11 @@ async fn logout_ends_session(pool: sqlx::PgPool) {
     assert_eq!(out.headers().get(LOCATION).unwrap().to_str().unwrap(), "/");
 
     // The village is no longer reachable without logging in again.
-    let after = c.get(format!("{base}/village")).send().await.unwrap();
+    let after = c
+        .get(format!("{base}/w/{home}/village"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(after.status().as_u16(), 303);
     assert_eq!(
         after.headers().get(LOCATION).unwrap().to_str().unwrap(),
@@ -1452,6 +1499,7 @@ async fn logout_ends_session(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn village_shows_economy(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let user = unique("econ");
     let email = format!("{user}@example.com");
     let c = client();
@@ -1468,7 +1516,7 @@ async fn village_shows_economy(pool: sqlx::PgPool) {
 
     // AC7: the village shows current amount, capacity, and production per resource.
     let body = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -1483,6 +1531,7 @@ async fn village_shows_economy(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn build_order_flow(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let user = unique("bld");
     let email = format!("{user}@example.com");
     let c = client();
@@ -1499,7 +1548,7 @@ async fn build_order_flow(pool: sqlx::PgPool) {
 
     // AC8: the village offers upgrade actions with costs.
     let body = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -1511,7 +1560,7 @@ async fn build_order_flow(pool: sqlx::PgPool) {
 
     // AC1: order a field upgrade (redirects back to the village).
     let res = c
-        .post(format!("{base}/village/build"))
+        .post(format!("{base}/w/{home}/village/build"))
         .form(&[("table", "field"), ("slot", "0")])
         .send()
         .await
@@ -1520,7 +1569,7 @@ async fn build_order_flow(pool: sqlx::PgPool) {
 
     // AC8: the active build is shown with a countdown deadline.
     let after = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -1534,9 +1583,10 @@ async fn build_order_flow(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn build_requires_login(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     // P4/roles: an unauthenticated visitor cannot order a build.
     let res = client()
-        .post(format!("{base}/village/build"))
+        .post(format!("{base}/w/{home}/village/build"))
         .form(&[("table", "field"), ("slot", "0")])
         .send()
         .await
@@ -1551,6 +1601,7 @@ async fn build_requires_login(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn account_persists_across_restart(pool: sqlx::PgPool) {
     let base1 = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let user = unique("persist");
     let email = format!("{user}@example.com");
 
@@ -1577,7 +1628,11 @@ async fn account_persists_across_restart(pool: sqlx::PgPool) {
         .unwrap();
     assert_eq!(login.status().as_u16(), 303);
 
-    let view = c.get(format!("{base2}/village")).send().await.unwrap();
+    let view = c
+        .get(format!("{base2}/w/{home}/village"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(view.status().as_u16(), 200);
     assert!(view.text().await.unwrap().contains(&user));
 }
@@ -1604,6 +1659,7 @@ async fn movement_repo(pool: &sqlx::PgPool) -> PgAccountRepository {
 #[sqlx::test(migrations = "../../migrations")]
 async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let repo = movement_repo(&pool).await;
 
     // A sender and a target on different tiles (the world places each registrant on a free tile).
@@ -1650,7 +1706,7 @@ async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
 
     // AC7: the Rally Point lists the garrison units available to send.
     let rally = cs
-        .get(format!("{base}/village/rally"))
+        .get(format!("{base}/w/{home}/village/rally"))
         .send()
         .await
         .unwrap()
@@ -1672,7 +1728,7 @@ async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
 
     // AC1/AC7: send 4 Phalanx to the target's tile; PRG back to the village.
     let res = cs
-        .post(format!("{base}/village/rally/send"))
+        .post(format!("{base}/w/{home}/village/rally/send"))
         .form(&[
             ("x", tx.to_string().as_str()),
             ("y", ty.to_string().as_str()),
@@ -1685,7 +1741,7 @@ async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
 
     // The sender sees the movement in progress (direction + countdown) and a reduced garrison.
     let body = cs
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -1714,7 +1770,7 @@ async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
 
     // AC7: the target now shows the reinforcement, attributed to the sender.
     let host_view = ct
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -1727,7 +1783,7 @@ async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
 
     // AC7: the sender now sees the troops abroad with a send-back action; grab the host id.
     let abroad = cs
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -1743,7 +1799,7 @@ async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
 
     // AC5: recall them; PRG back to the village, then the System delivers the return.
     let res = cs
-        .post(format!("{base}/village/rally/return"))
+        .post(format!("{base}/w/{home}/village/rally/return"))
         .form(&[("host", host_id)])
         .send()
         .await
@@ -1763,18 +1819,18 @@ async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
     .unwrap();
 
     // The garrison is whole again at home, and the target no longer hosts the reinforcement.
-    let home = cs
-        .get(format!("{base}/village"))
+    let home_page = cs
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
         .text()
         .await
         .unwrap();
-    assert!(home.contains("Total upkeep: 10 crop/h"));
-    assert!(!home.contains("Your troops abroad"));
+    assert!(home_page.contains("Total upkeep: 10 crop/h"));
+    assert!(!home_page.contains("Your troops abroad"));
     let host_after = ct
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -1785,7 +1841,7 @@ async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
 
     // Visitors cannot reach the Rally Point (roles table, P4).
     let anon = client()
-        .get(format!("{base}/village/rally"))
+        .get(format!("{base}/w/{home}/village/rally"))
         .send()
         .await
         .unwrap();
@@ -1797,6 +1853,7 @@ async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn marketplace_send_and_deliver_flow(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let repo = movement_repo(&pool).await;
 
     let sender = unique("msend");
@@ -1861,7 +1918,7 @@ async fn marketplace_send_and_deliver_flow(pool: sqlx::PgPool) {
 
     // AC6: the Marketplace lists the merchant pool and per-tribe capacity.
     let market = cs
-        .get(format!("{base}/village/market"))
+        .get(format!("{base}/w/{home}/village/market"))
         .send()
         .await
         .unwrap()
@@ -1880,7 +1937,7 @@ async fn marketplace_send_and_deliver_flow(pool: sqlx::PgPool) {
 
     // AC1/AC6: send 300 wood to the target's tile; PRG back to the village.
     let res = cs
-        .post(format!("{base}/village/market/send"))
+        .post(format!("{base}/w/{home}/village/market/send"))
         .form(&[
             ("x", tx.to_string().as_str()),
             ("y", ty.to_string().as_str()),
@@ -1893,7 +1950,7 @@ async fn marketplace_send_and_deliver_flow(pool: sqlx::PgPool) {
 
     // The sender sees the shipment in transit (direction + contents + countdown).
     let body = cs
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -1942,7 +1999,7 @@ async fn marketplace_send_and_deliver_flow(pool: sqlx::PgPool) {
 
     // A village with no Marketplace gets the explanation, not the form.
     let plain = ct
-        .get(format!("{base}/village/market"))
+        .get(format!("{base}/w/{home}/village/market"))
         .send()
         .await
         .unwrap()
@@ -1954,7 +2011,7 @@ async fn marketplace_send_and_deliver_flow(pool: sqlx::PgPool) {
 
     // Visitors cannot reach the Marketplace (roles table, P4).
     let anon = client()
-        .get(format!("{base}/village/market"))
+        .get(format!("{base}/w/{home}/village/market"))
         .send()
         .await
         .unwrap();
@@ -1966,6 +2023,7 @@ async fn marketplace_send_and_deliver_flow(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn combat_raid_and_reports_flow(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let repo = movement_repo(&pool).await;
 
     let attacker = unique("raidatk");
@@ -2018,7 +2076,7 @@ async fn combat_raid_and_reports_flow(pool: sqlx::PgPool) {
 
     // AC1/AC8: launch a raid; PRG back to the village, which shows the attack in flight.
     let res = ca
-        .post(format!("{base}/village/rally/send"))
+        .post(format!("{base}/w/{home}/village/rally/send"))
         .form(&[
             ("mode", "raid"),
             ("x", dx.to_string().as_str()),
@@ -2030,7 +2088,7 @@ async fn combat_raid_and_reports_flow(pool: sqlx::PgPool) {
         .unwrap();
     assert_eq!(res.status().as_u16(), 303);
     let body = ca
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -2072,7 +2130,7 @@ async fn combat_raid_and_reports_flow(pool: sqlx::PgPool) {
 
     // AC8: both parties see a report. The attacker won; the defender sees the incoming raid.
     let atk_reports = ca
-        .get(format!("{base}/reports"))
+        .get(format!("{base}/w/{home}/reports"))
         .send()
         .await
         .unwrap()
@@ -2083,7 +2141,7 @@ async fn combat_raid_and_reports_flow(pool: sqlx::PgPool) {
     assert!(atk_reports.contains("Victory"));
 
     let def_reports = cd
-        .get(format!("{base}/reports"))
+        .get(format!("{base}/w/{home}/reports"))
         .send()
         .await
         .unwrap()
@@ -2100,7 +2158,7 @@ async fn combat_raid_and_reports_flow(pool: sqlx::PgPool) {
             .await
             .unwrap();
     let detail = ca
-        .get(format!("{base}/reports/{}", report_id.as_u128()))
+        .get(format!("{base}/w/{home}/reports/{}", report_id.as_u128()))
         .send()
         .await
         .unwrap()
@@ -2113,7 +2171,7 @@ async fn combat_raid_and_reports_flow(pool: sqlx::PgPool) {
 
     // Visitors cannot read reports (roles table, P4).
     let anon = client()
-        .get(format!("{base}/reports"))
+        .get(format!("{base}/w/{home}/reports"))
         .send()
         .await
         .unwrap();
@@ -2125,6 +2183,7 @@ async fn combat_raid_and_reports_flow(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn scout_mission_and_intel_report_flow(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let repo = movement_repo(&pool).await;
 
     let scouter = unique("spywho");
@@ -2170,7 +2229,7 @@ async fn scout_mission_and_intel_report_flow(pool: sqlx::PgPool) {
 
     // AC1/AC12: send a scout mission to spy on resources; PRG back to the village in flight.
     let res = cs
-        .post(format!("{base}/village/rally/send"))
+        .post(format!("{base}/w/{home}/village/rally/send"))
         .form(&[
             ("mode", "scout"),
             ("scout_target", "resources"),
@@ -2183,7 +2242,7 @@ async fn scout_mission_and_intel_report_flow(pool: sqlx::PgPool) {
         .unwrap();
     assert_eq!(res.status().as_u16(), 303);
     let body = cs
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -2217,7 +2276,7 @@ async fn scout_mission_and_intel_report_flow(pool: sqlx::PgPool) {
 
     // AC12: the scouter's inbox lists the scout report with intel; the detail shows resources.
     let reports = cs
-        .get(format!("{base}/reports"))
+        .get(format!("{base}/w/{home}/reports"))
         .send()
         .await
         .unwrap()
@@ -2234,7 +2293,10 @@ async fn scout_mission_and_intel_report_flow(pool: sqlx::PgPool) {
             .await
             .unwrap();
     let detail = cs
-        .get(format!("{base}/reports/scout/{}", report_id.as_u128()))
+        .get(format!(
+            "{base}/w/{home}/reports/scout/{}",
+            report_id.as_u128()
+        ))
         .send()
         .await
         .unwrap()
@@ -2246,7 +2308,7 @@ async fn scout_mission_and_intel_report_flow(pool: sqlx::PgPool) {
     // AC8: an undetected target (no counter-espionage) sees no report at all.
     let _ = t_village;
     let t_reports = ct
-        .get(format!("{base}/reports"))
+        .get(format!("{base}/w/{home}/reports"))
         .send()
         .await
         .unwrap()
@@ -2261,6 +2323,7 @@ async fn scout_mission_and_intel_report_flow(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn siege_loot_and_cranny_flow(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let repo = movement_repo(&pool).await;
 
     let attacker = unique("slweb_a");
@@ -2329,7 +2392,7 @@ async fn siege_loot_and_cranny_flow(pool: sqlx::PgPool) {
 
     // AC11: raid with catapults aimed at the Warehouse.
     let res = ca
-        .post(format!("{base}/village/rally/send"))
+        .post(format!("{base}/w/{home}/village/rally/send"))
         .form(&[
             ("mode", "raid"),
             ("catapult_target", "warehouse"),
@@ -2382,7 +2445,7 @@ async fn siege_loot_and_cranny_flow(pool: sqlx::PgPool) {
             .await
             .unwrap();
     let detail = ca
-        .get(format!("{base}/reports/{}", report_id.as_u128()))
+        .get(format!("{base}/w/{home}/reports/{}", report_id.as_u128()))
         .send()
         .await
         .unwrap()
@@ -2397,7 +2460,7 @@ async fn siege_loot_and_cranny_flow(pool: sqlx::PgPool) {
 
     // AC10/AC11: the Cranny is offered in the build menu.
     let village = ca
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -2413,6 +2476,7 @@ async fn siege_loot_and_cranny_flow(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn oasis_attack_occupy_and_bonus_flow(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let repo = movement_repo(&pool).await;
     let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
     let world = ensure_world(&pool, &config).await.unwrap();
@@ -2468,7 +2532,7 @@ async fn oasis_attack_occupy_and_bonus_flow(pool: sqlx::PgPool) {
 
     // The Outpost is buildable (it appears in the village build menu) — AC12.
     let village = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -2497,7 +2561,7 @@ async fn oasis_attack_occupy_and_bonus_flow(pool: sqlx::PgPool) {
 
     // AC12: the map (centered on the oasis) shows it as an oasis with a Rally Point link.
     let map_html = c
-        .get(format!("{base}/map?x={}&y={}", oasis.x, oasis.y))
+        .get(format!("{base}/w/{home}/map?x={}&y={}", oasis.x, oasis.y))
         .send()
         .await
         .unwrap()
@@ -2511,7 +2575,7 @@ async fn oasis_attack_occupy_and_bonus_flow(pool: sqlx::PgPool) {
 
     // AC12: send an oasis attack from the Rally Point; PRG back to the village.
     let res = c
-        .post(format!("{base}/village/rally/send"))
+        .post(format!("{base}/w/{home}/village/rally/send"))
         .form(&[
             ("mode", "attack"),
             ("x", oasis.x.to_string().as_str()),
@@ -2553,7 +2617,7 @@ async fn oasis_attack_occupy_and_bonus_flow(pool: sqlx::PgPool) {
 
     // AC12: the village page shows the held oasis + its bonus.
     let village = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -2571,7 +2635,7 @@ async fn oasis_attack_occupy_and_bonus_flow(pool: sqlx::PgPool) {
 
     // AC12: the map now shows the oasis held by the player.
     let map_html = c
-        .get(format!("{base}/map?x={}&y={}", oasis.x, oasis.y))
+        .get(format!("{base}/w/{home}/map?x={}&y={}", oasis.x, oasis.y))
         .send()
         .await
         .unwrap()
@@ -2589,6 +2653,7 @@ async fn oasis_attack_occupy_and_bonus_flow(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn forged_village_selector_cannot_act_on_anothers_village(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
 
     let attacker = unique("forge_a");
     let victim = unique("forge_v");
@@ -2624,7 +2689,7 @@ async fn forged_village_selector_cannot_act_on_anothers_village(pool: sqlx::PgPo
 
     // The attacker orders a build, forging the victim's village id in the form.
     let res = ca
-        .post(format!("{base}/village/build"))
+        .post(format!("{base}/w/{home}/village/build"))
         .form(&[
             ("table", "field"),
             ("slot", "0"),
@@ -2662,6 +2727,7 @@ async fn forged_village_selector_cannot_act_on_anothers_village(pool: sqlx::PgPo
 #[sqlx::test(migrations = "../../migrations")]
 async fn settling_culture_panel_switcher_and_capital_flow(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let repo = movement_repo(&pool).await;
     let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
     let world = ensure_world(&pool, &config).await.unwrap();
@@ -2696,7 +2762,7 @@ async fn settling_culture_panel_switcher_and_capital_flow(pool: sqlx::PgPool) {
     // AC1/AC11: a fresh player's village page shows the culture panel — pooled CP at the base rate,
     // one village of one allowed, and the next village's CP threshold.
     let body = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -2734,7 +2800,7 @@ async fn settling_culture_panel_switcher_and_capital_flow(pool: sqlx::PgPool) {
     // AC4/AC11: with a free slot, the village page invites expansion and the Rally Point offers the
     // Settle order.
     let body = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -2743,7 +2809,7 @@ async fn settling_culture_panel_switcher_and_capital_flow(pool: sqlx::PgPool) {
         .unwrap();
     assert!(body.contains("1 / 2"), "the free slot is reflected");
     let rally = c
-        .get(format!("{base}/village/rally"))
+        .get(format!("{base}/w/{home}/village/rally"))
         .send()
         .await
         .unwrap()
@@ -2774,7 +2840,7 @@ async fn settling_culture_panel_switcher_and_capital_flow(pool: sqlx::PgPool) {
 
     // AC6/AC11: settle — send the settler group to the free valley; PRG back to the village.
     let res = c
-        .post(format!("{base}/village/rally/send"))
+        .post(format!("{base}/w/{home}/village/rally/send"))
         .form(&[
             ("mode", "settle"),
             ("x", target.x.to_string().as_str()),
@@ -2805,7 +2871,7 @@ async fn settling_culture_panel_switcher_and_capital_flow(pool: sqlx::PgPool) {
     // AC8/AC11: the player now has two villages and can switch between them — the switcher lists
     // both, defaulting to the first/capital.
     let body = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -2827,7 +2893,10 @@ async fn settling_culture_panel_switcher_and_capital_flow(pool: sqlx::PgPool) {
             .await
             .unwrap();
     let switched = c
-        .get(format!("{base}/village?village={}", founded_id.as_u128()))
+        .get(format!(
+            "{base}/w/{home}/village?village={}",
+            founded_id.as_u128()
+        ))
         .send()
         .await
         .unwrap()
@@ -2847,7 +2916,7 @@ async fn settling_culture_panel_switcher_and_capital_flow(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let capital_page = c
-        .get(format!("{base}/village?village={}", vid.as_u128()))
+        .get(format!("{base}/w/{home}/village?village={}", vid.as_u128()))
         .send()
         .await
         .unwrap()
@@ -2856,7 +2925,7 @@ async fn settling_culture_panel_switcher_and_capital_flow(pool: sqlx::PgPool) {
         .unwrap();
     assert!(capital_page.contains("Capital"), "the capital is badged");
     let map_html = c
-        .get(format!("{base}/map?x={vx}&y={vy}"))
+        .get(format!("{base}/w/{home}/map?x={vx}&y={vy}"))
         .send()
         .await
         .unwrap()
@@ -2877,6 +2946,7 @@ async fn settling_culture_panel_switcher_and_capital_flow(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn conquest_with_administrators_flow(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let repo = movement_repo(&pool).await;
     let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
     let world = ensure_world(&pool, &config).await.unwrap();
@@ -2952,7 +3022,7 @@ async fn conquest_with_administrators_flow(pool: sqlx::PgPool) {
 
     // AC11: the defender sees their village's loyalty on the village page.
     let def_view = cd
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -2968,7 +3038,7 @@ async fn conquest_with_administrators_flow(pool: sqlx::PgPool) {
 
     // AC4/AC11: send the attack carrying administrators; PRG back to the village.
     let res = ca
-        .post(format!("{base}/village/rally/send"))
+        .post(format!("{base}/w/{home}/village/rally/send"))
         .form(&[
             ("mode", "attack"),
             ("x", dx.to_string().as_str()),
@@ -3019,7 +3089,7 @@ async fn conquest_with_administrators_flow(pool: sqlx::PgPool) {
 
     // AC11: the conquered village appears in the conqueror's switcher.
     let a_view = ca
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -3044,7 +3114,7 @@ async fn conquest_with_administrators_flow(pool: sqlx::PgPool) {
     .await
     .unwrap();
     let detail = ca
-        .get(format!("{base}/reports/{}", report_id.as_u128()))
+        .get(format!("{base}/w/{home}/reports/{}", report_id.as_u128()))
         .send()
         .await
         .unwrap()
@@ -3068,6 +3138,7 @@ async fn conquest_with_administrators_flow(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn alliance_found_invite_accept_flow(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
 
     // Register a founder and a member (registration logs each in via its own cookie client).
     let cf = client();
@@ -3119,14 +3190,14 @@ async fn alliance_found_invite_accept_flow(pool: sqlx::PgPool) {
     let aname = unique("Templars");
     let tag = format!("T{}", &aname[aname.len() - 6..]);
     let res = cf
-        .post(format!("{base}/alliance/found"))
+        .post(format!("{base}/w/{home}/alliance/found"))
         .form(&[("name", aname.as_str()), ("tag", tag.as_str())])
         .send()
         .await
         .unwrap();
     assert_eq!(res.status().as_u16(), 303);
     let page = cf
-        .get(format!("{base}/alliance"))
+        .get(format!("{base}/w/{home}/alliance"))
         .send()
         .await
         .unwrap()
@@ -3137,7 +3208,7 @@ async fn alliance_found_invite_accept_flow(pool: sqlx::PgPool) {
     assert!(page.contains("Founder"), "founder role shown");
 
     // Invite the member by name; the member accepts (the alliance id from the pending invite).
-    cf.post(format!("{base}/alliance/invite"))
+    cf.post(format!("{base}/w/{home}/alliance/invite"))
         .form(&[("username", member.as_str())])
         .send()
         .await
@@ -3148,7 +3219,7 @@ async fn alliance_found_invite_accept_flow(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let res = cm
-        .post(format!("{base}/alliance/respond"))
+        .post(format!("{base}/w/{home}/alliance/respond"))
         .form(&[
             ("alliance", alliance_id.as_u128().to_string().as_str()),
             ("accept", "true"),
@@ -3160,7 +3231,7 @@ async fn alliance_found_invite_accept_flow(pool: sqlx::PgPool) {
 
     // The founder's roster now lists the member.
     let roster = cf
-        .get(format!("{base}/alliance"))
+        .get(format!("{base}/w/{home}/alliance"))
         .send()
         .await
         .unwrap()
@@ -3181,7 +3252,7 @@ async fn alliance_found_invite_accept_flow(pool: sqlx::PgPool) {
     .await
     .unwrap();
     let map = cf
-        .get(format!("{base}/map?x={vx}&y={vy}"))
+        .get(format!("{base}/w/{home}/map?x={vx}&y={vy}"))
         .send()
         .await
         .unwrap()
@@ -3207,7 +3278,7 @@ async fn alliance_found_invite_accept_flow(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let outsider_view = co
-        .get(format!("{base}/alliance"))
+        .get(format!("{base}/w/{home}/alliance"))
         .send()
         .await
         .unwrap()
@@ -3225,6 +3296,7 @@ async fn alliance_found_invite_accept_flow(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn leaderboard_and_stats_are_public(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let player = unique("lb");
     client()
         .post(format!("{base}/register"))
@@ -3242,7 +3314,7 @@ async fn leaderboard_and_stats_are_public(pool: sqlx::PgPool) {
     // population board (their starting village has population).
     let visitor = client();
     let res = visitor
-        .get(format!("{base}/leaderboard"))
+        .get(format!("{base}/w/{home}/leaderboard"))
         .send()
         .await
         .unwrap();
@@ -3257,7 +3329,7 @@ async fn leaderboard_and_stats_are_public(pool: sqlx::PgPool) {
     // The conflict board variants render too.
     for cat in ["attackers", "defenders", "raiders", "alliances"] {
         let r = visitor
-            .get(format!("{base}/leaderboard?cat={cat}"))
+            .get(format!("{base}/w/{home}/leaderboard?cat={cat}"))
             .send()
             .await
             .unwrap();
@@ -3271,7 +3343,7 @@ async fn leaderboard_and_stats_are_public(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let stats = visitor
-        .get(format!("{base}/stats/player/{}", pid.as_u128()))
+        .get(format!("{base}/w/{home}/stats/player/{}", pid.as_u128()))
         .send()
         .await
         .unwrap();
@@ -3281,7 +3353,7 @@ async fn leaderboard_and_stats_are_public(pool: sqlx::PgPool) {
     assert!(stats_body.contains("Population"));
     // A malformed id is a clean 404, not a 500.
     let bad = visitor
-        .get(format!("{base}/stats/player/not-a-number"))
+        .get(format!("{base}/w/{home}/stats/player/not-a-number"))
         .send()
         .await
         .unwrap();
@@ -3307,7 +3379,7 @@ async fn leaderboard_and_stats_are_public(pool: sqlx::PgPool) {
     for _ in 0..3 {
         let started = std::time::Instant::now();
         let r = visitor
-            .get(format!("{base}/leaderboard?cat=population"))
+            .get(format!("{base}/w/{home}/leaderboard?cat=population"))
             .send()
             .await
             .unwrap();
@@ -3326,6 +3398,7 @@ async fn leaderboard_and_stats_are_public(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn leaderboard_is_world_scoped(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let name_a = unique("alpha");
     let name_c = unique("gamma");
     let (ca, user_a) = register_client(&base, &pool, &name_a).await;
@@ -3356,28 +3429,28 @@ async fn leaderboard_is_world_scoped(pool: sqlx::PgPool) {
         .await
         .unwrap();
 
-    // Home board (no world cookie): both A and C appear.
-    let home = ca
-        .get(format!("{base}/leaderboard?cat=population"))
+    // Home board: both A and C appear.
+    let home_board = ca
+        .get(format!("{base}/w/{home}/leaderboard?cat=population"))
         .send()
         .await
         .unwrap()
         .text()
         .await
         .unwrap();
-    assert!(home.contains(&name_a), "A is on the home population board");
-    assert!(home.contains(&name_c), "C is on the home population board");
+    assert!(
+        home_board.contains(&name_a),
+        "A is on the home population board"
+    );
+    assert!(
+        home_board.contains(&name_c),
+        "C is on the home population board"
+    );
 
-    // Select world B → its board shows A (joined, name resolved via players) but not C (home-only).
-    let r = ca
-        .post(format!("{base}/world/select"))
-        .form(&[("world", world_b.as_u128().to_string().as_str())])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status().as_u16(), 303);
+    // World B's board (056: the world is the URL) shows A (joined, name resolved via players) but not C
+    // (home-only).
     let board_b = ca
-        .get(format!("{base}/leaderboard?cat=population"))
+        .get(format!("{base}/w/{world_b}/leaderboard?cat=population"))
         .send()
         .await
         .unwrap()
@@ -3399,6 +3472,7 @@ async fn leaderboard_is_world_scoped(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn village_view_grants_achievements(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let c = client();
     let user = unique("achv");
     c.post(format!("{base}/register"))
@@ -3430,7 +3504,7 @@ async fn village_view_grants_achievements(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert_eq!(
-        c.get(format!("{base}/village"))
+        c.get(format!("{base}/w/{home}/village"))
             .send()
             .await
             .unwrap()
@@ -3452,7 +3526,7 @@ async fn village_view_grants_achievements(pool: sqlx::PgPool) {
 
     // 017 AC11/AC12: the public stat page shows the achievement, and the climbers board renders.
     let stats = client()
-        .get(format!("{base}/stats/player/{}", pid.as_u128()))
+        .get(format!("{base}/w/{home}/stats/player/{}", pid.as_u128()))
         .send()
         .await
         .unwrap();
@@ -3462,7 +3536,7 @@ async fn village_view_grants_achievements(pool: sqlx::PgPool) {
     assert!(body.contains("Founded a second village"));
     assert!(body.contains("Population over time"));
     let climbers = client()
-        .get(format!("{base}/leaderboard?cat=climbers"))
+        .get(format!("{base}/w/{home}/leaderboard?cat=climbers"))
         .send()
         .await
         .unwrap();
@@ -3475,9 +3549,14 @@ async fn village_view_grants_achievements(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn quests_page_shows_progress_and_requires_login(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
 
     // AC8: an unauthenticated visitor is redirected to login.
-    let res = client().get(format!("{base}/quests")).send().await.unwrap();
+    let res = client()
+        .get(format!("{base}/w/{home}/quests"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.status().as_u16(), 303);
     assert_eq!(
         res.headers().get(LOCATION).unwrap().to_str().unwrap(),
@@ -3504,7 +3583,7 @@ async fn quests_page_shows_progress_and_requires_login(pool: sqlx::PgPool) {
 
     // A fresh player: the first quest is current (with its reward), nothing completed.
     let body = c
-        .get(format!("{base}/quests"))
+        .get(format!("{base}/w/{home}/quests"))
         .send()
         .await
         .unwrap()
@@ -3528,7 +3607,7 @@ async fn quests_page_shows_progress_and_requires_login(pool: sqlx::PgPool) {
     .await
     .unwrap();
     let body = c
-        .get(format!("{base}/quests"))
+        .get(format!("{base}/w/{home}/quests"))
         .send()
         .await
         .unwrap()
@@ -3557,6 +3636,7 @@ async fn quests_page_shows_progress_and_requires_login(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn village_view_shows_protection_status(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let c = client();
     let user = unique("prot");
     c.post(format!("{base}/register"))
@@ -3570,7 +3650,7 @@ async fn village_view_shows_protection_status(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let body = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -3587,6 +3667,7 @@ async fn village_view_shows_protection_status(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn map_flags_inactive_villages(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     // The viewer (logged in via the cookie).
     let viewer = client();
     let vname = unique("viewer");
@@ -3628,7 +3709,7 @@ async fn map_flags_inactive_villages(pool: sqlx::PgPool) {
         .unwrap();
     // Center the viewer's map on the idle player's village so it is in the viewport.
     let body = viewer
-        .get(format!("{base}/map?x={ix}&y={iy}"))
+        .get(format!("{base}/w/{home}/map?x={ix}&y={iy}"))
         .send()
         .await
         .unwrap()
@@ -3686,6 +3767,7 @@ async fn abandoned_account_cannot_log_in(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn village_shows_held_artifacts(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let c = client();
     let user = unique("arti");
     c.post(format!("{base}/register"))
@@ -3717,7 +3799,7 @@ async fn village_shows_held_artifacts(pool: sqlx::PgPool) {
     .unwrap();
 
     let body = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -3736,6 +3818,7 @@ async fn village_shows_held_artifacts(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn frozen_world_rejects_mutations(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let c = client();
     let user = unique("freeze");
     let email = format!("{user}@example.com");
@@ -3752,7 +3835,7 @@ async fn frozen_world_rejects_mutations(pool: sqlx::PgPool) {
 
     // A read works while the world is open.
     assert_ne!(
-        c.get(format!("{base}/village"))
+        c.get(format!("{base}/w/{home}/village"))
             .send()
             .await
             .unwrap()
@@ -3778,7 +3861,7 @@ async fn frozen_world_rejects_mutations(pool: sqlx::PgPool) {
 
     // A mutating game action is now rejected (the guard runs before the handler).
     let build = c
-        .post(format!("{base}/village/build"))
+        .post(format!("{base}/w/{home}/village/build"))
         .form(&[("target", "field"), ("slot", "0")])
         .send()
         .await
@@ -3787,7 +3870,7 @@ async fn frozen_world_rejects_mutations(pool: sqlx::PgPool) {
 
     // Reads still work...
     assert_ne!(
-        c.get(format!("{base}/village"))
+        c.get(format!("{base}/w/{home}/village"))
             .send()
             .await
             .unwrap()
@@ -3813,6 +3896,7 @@ async fn frozen_world_rejects_mutations(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn wonder_race_page_shows_progress(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let c = client();
     let user = unique("race");
     let email = format!("{user}@example.com");
@@ -3864,7 +3948,7 @@ async fn wonder_race_page_shows_progress(pool: sqlx::PgPool) {
     .unwrap();
 
     let body = c
-        .get(format!("{base}/wonder"))
+        .get(format!("{base}/w/{home}/wonder"))
         .send()
         .await
         .unwrap()
@@ -3879,6 +3963,7 @@ async fn wonder_race_page_shows_progress(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn wonder_winner_banner_shows_when_won(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let c = client();
     let user = unique("won");
     let email = format!("{user}@example.com");
@@ -3908,7 +3993,7 @@ async fn wonder_winner_banner_shows_when_won(pool: sqlx::PgPool) {
     .unwrap();
 
     let body = c
-        .get(format!("{base}/wonder"))
+        .get(format!("{base}/w/{home}/wonder"))
         .send()
         .await
         .unwrap()
@@ -3926,6 +4011,7 @@ async fn wonder_winner_banner_shows_when_won(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn sanctioned_player_actions_are_blocked(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let c = client();
     let user = unique("sanc");
     let email = format!("{user}@example.com");
@@ -3942,7 +4028,7 @@ async fn sanctioned_player_actions_are_blocked(pool: sqlx::PgPool) {
 
     // Before sanction: a mutating action is not 403-blocked by the guard.
     let before = c
-        .post(format!("{base}/village/build"))
+        .post(format!("{base}/w/{home}/village/build"))
         .form(&[("table", "field"), ("slot", "0")])
         .send()
         .await
@@ -3962,7 +4048,7 @@ async fn sanctioned_player_actions_are_blocked(pool: sqlx::PgPool) {
 
     // The mutating action is now rejected...
     let after = c
-        .post(format!("{base}/village/build"))
+        .post(format!("{base}/w/{home}/village/build"))
         .form(&[("table", "field"), ("slot", "0")])
         .send()
         .await
@@ -3970,7 +4056,7 @@ async fn sanctioned_player_actions_are_blocked(pool: sqlx::PgPool) {
     assert_eq!(after.status().as_u16(), 403, "sanctioned action is blocked");
     // ...but a read still works.
     assert_ne!(
-        c.get(format!("{base}/village"))
+        c.get(format!("{base}/w/{home}/village"))
             .send()
             .await
             .unwrap()
@@ -4028,6 +4114,7 @@ async fn login_attempts_are_rate_limited(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn moderation_report_to_sanction_flow(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
 
     // Three logged-in clients: reporter, subject, moderator.
     let register = async |name: &str| -> reqwest::Client {
@@ -4110,7 +4197,7 @@ async fn moderation_report_to_sanction_flow(pool: sqlx::PgPool) {
 
     // The subject is now blocked from acting (AC5) and the queue is empty (AC4).
     let blocked = cs
-        .post(format!("{base}/village/build"))
+        .post(format!("{base}/w/{home}/village/build"))
         .form(&[("table", "field"), ("slot", "0")])
         .send()
         .await
@@ -4164,6 +4251,7 @@ async fn register_client(
 #[sqlx::test(migrations = "../../migrations")]
 async fn selecting_a_world_switches_the_village_page(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let (c, user) = register_client(&base, &pool, &unique("mw")).await;
     let home_vid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE owner_id = $1")
         .bind(user)
@@ -4204,7 +4292,7 @@ async fn selecting_a_world_switches_the_village_page(pool: sqlx::PgPool) {
 
     // By default the village page shows the home world's village.
     let body = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -4217,16 +4305,9 @@ async fn selecting_a_world_switches_the_village_page(pool: sqlx::PgPool) {
     );
     assert!(!body.contains(&b_vid.as_u128().to_string()));
 
-    // Select world B → the village page now operates in world B.
-    let r = c
-        .post(format!("{base}/world/select"))
-        .form(&[("world", world_b.as_u128().to_string().as_str())])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status().as_u16(), 303);
+    // World B is the URL (056) → the village page operates in world B.
     let body = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{world_b}/village"))
         .send()
         .await
         .unwrap()
@@ -4235,7 +4316,7 @@ async fn selecting_a_world_switches_the_village_page(pool: sqlx::PgPool) {
         .unwrap();
     assert!(
         body.contains(&b_vid.as_u128().to_string()),
-        "after selecting world B the page shows world B's village"
+        "navigating to world B's URL shows world B's village"
     );
     assert!(
         !body.contains(&home_vid.as_u128().to_string()),
@@ -4254,11 +4335,12 @@ async fn selecting_a_world_switches_the_village_page(pool: sqlx::PgPool) {
     assert!(me.contains("\"authed\":true"));
 }
 
-/// 043 AC4 (server-authoritative denial): `POST /world/select` with a world the account has **not**
-/// joined (and with a garbage id) is ignored — the village page keeps rendering the home village.
+/// 056 (server-authoritative denial): requesting `/w/{world}/village` for a world the account has **not**
+/// joined (and a garbage id) is denied — bounced to the lobby `/worlds` (P4); the home world still works.
 #[sqlx::test(migrations = "../../migrations")]
 async fn selecting_an_unjoined_world_is_ignored(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let (c, user) = register_client(&base, &pool, &unique("mw")).await;
     let home_vid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE owner_id = $1")
         .bind(user)
@@ -4274,46 +4356,37 @@ async fn selecting_an_unjoined_world_is_ignored(pool: sqlx::PgPool) {
         .await
         .unwrap();
 
-    // Selecting the unjoined world is ignored (server-authoritative) → village stays home.
+    // Reaching a world the account never joined is denied (server-authoritative, P4) → bounced to the
+    // lobby. A player can't reach a world they haven't joined.
     let r = c
-        .post(format!("{base}/world/select"))
-        .form(&[("world", world_b.as_u128().to_string().as_str())])
+        .get(format!("{base}/w/{world_b}/village"))
         .send()
         .await
         .unwrap();
     assert_eq!(r.status().as_u16(), 303);
-    // The handler's own guard must not set the `world` cookie (independent of the GameContext
-    // home-fallback backstop) — a regression that set it would be caught here directly.
-    assert!(
-        !r.headers()
-            .get_all("set-cookie")
-            .iter()
-            .any(|v| v.to_str().map(|s| s.starts_with("world=")).unwrap_or(false)),
-        "an unjoined world must not set the world cookie"
-    );
-    let body = c
-        .get(format!("{base}/village"))
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    assert!(
-        body.contains(&home_vid.as_u128().to_string()),
-        "an unjoined world is ignored — the home village still renders"
+    assert_eq!(
+        r.headers().get(LOCATION).unwrap().to_str().unwrap(),
+        "/worlds",
+        "an unjoined world bounces to the lobby"
     );
 
-    // A garbage (non-existent) world id is likewise ignored.
+    // A garbage (non-existent) world id is likewise bounced to the lobby.
+    let garbage = uuid::Uuid::new_v4();
     let r = c
-        .post(format!("{base}/world/select"))
-        .form(&[("world", uuid::Uuid::new_v4().as_u128().to_string().as_str())])
+        .get(format!("{base}/w/{garbage}/village"))
         .send()
         .await
         .unwrap();
     assert_eq!(r.status().as_u16(), 303);
+    assert_eq!(
+        r.headers().get(LOCATION).unwrap().to_str().unwrap(),
+        "/worlds",
+        "a garbage world id bounces to the lobby"
+    );
+
+    // The account's own home world still renders normally.
     let body = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -4322,7 +4395,41 @@ async fn selecting_an_unjoined_world_is_ignored(pool: sqlx::PgPool) {
         .unwrap();
     assert!(
         body.contains(&home_vid.as_u128().to_string()),
-        "a garbage world id is ignored — the home village still renders"
+        "the joined home world still renders the home village"
+    );
+}
+
+/// 056: bare world-coupled routes (no `/w/{world}`) bounce to the lobby — the URL is the sole world
+/// authority, so there is no hidden "current world". And a logged-in player reaches their world purely by
+/// the URL path, with no world cookie involved.
+#[sqlx::test(migrations = "../../migrations")]
+async fn bare_routes_redirect_to_lobby_and_url_is_authoritative(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let (c, _user) = register_client(&base, &pool, &unique("route")).await;
+
+    // Old/no-world landing routes → the lobby.
+    for path in ["/village", "/map", "/leaderboard", "/wonder"] {
+        let r = c.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 303, "bare {path} redirects");
+        assert_eq!(
+            r.headers().get(LOCATION).unwrap().to_str().unwrap(),
+            "/worlds",
+            "bare {path} → lobby"
+        );
+    }
+
+    // The player reaches their world purely by URL (no world cookie was ever set — register doesn't set one):
+    // the path is authoritative.
+    let r = c
+        .get(format!("{base}/w/{home}/village"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        200,
+        "the world is resolved from the URL path"
     );
 }
 
@@ -4369,16 +4476,9 @@ async fn build_order_lands_in_the_selected_world(pool: sqlx::PgPool) {
         .unwrap();
     assert_ne!(home_vid, b_vid);
 
-    // Select world B, then order a field upgrade — the migrated build handler acts in world B.
+    // Order a field upgrade through world B's URL — the migrated build handler acts in world B.
     let r = c
-        .post(format!("{base}/world/select"))
-        .form(&[("world", world_b.as_u128().to_string().as_str())])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status().as_u16(), 303);
-    let r = c
-        .post(format!("{base}/village/build"))
+        .post(format!("{base}/w/{world_b}/village/build"))
         .form(&[("table", "field"), ("slot", "0")])
         .send()
         .await
@@ -4478,16 +4578,12 @@ async fn academy_affordability_uses_the_selected_worlds_speed(pool: sqlx::PgPool
         vids.insert(speed.to_bits(), (world, vid));
     }
 
-    let select = |world: uuid::Uuid| {
-        c.post(format!("{base}/world/select"))
-            .form(&[("world", world.as_u128().to_string())])
-    };
-    let academy = || c.get(format!("{base}/village/academy"));
+    // The academy page is read through each world's URL (056), so the request itself selects the world.
+    let academy = |world: uuid::Uuid| c.get(format!("{base}/w/{world}/village/academy"));
 
     // World B (5×): 24h of accrual affords the academy-gated units → no "insufficient resources" gate.
     let (world_b, _) = vids[&5.0_f64.to_bits()];
-    assert_eq!(select(world_b).send().await.unwrap().status().as_u16(), 303);
-    let fast = academy().send().await.unwrap().text().await.unwrap();
+    let fast = academy(world_b).send().await.unwrap().text().await.unwrap();
     assert!(
         !fast.contains("insufficient resources"),
         "at 5× the academy units are affordable — no insufficient-resources gate"
@@ -4496,8 +4592,7 @@ async fn academy_affordability_uses_the_selected_worlds_speed(pool: sqlx::PgPool
     // World S (1×): the same 24h accrues 5× less → the same units are unaffordable. This is what the
     // 5× world would also show if `village_view_data` settled with the home speed (the regression).
     let (world_s, _) = vids[&1.0_f64.to_bits()];
-    assert_eq!(select(world_s).send().await.unwrap().status().as_u16(), 303);
-    let slow = academy().send().await.unwrap().text().await.unwrap();
+    let slow = academy(world_s).send().await.unwrap().text().await.unwrap();
     assert!(
         slow.contains("insufficient resources"),
         "at 1× the same units are unaffordable — proving the speed is what flips the gate"
@@ -4629,6 +4724,7 @@ async fn classic_and_speed_worlds_are_served_divergent_rules(pool: sqlx::PgPool)
 #[sqlx::test(migrations = "../../migrations")]
 async fn lobby_join_play_and_switch_back(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let (c, user) = register_client(&base, &pool, &unique("lobby")).await;
     let username: String = sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
         .bind(user)
@@ -4640,21 +4736,18 @@ async fn lobby_join_play_and_switch_back(pool: sqlx::PgPool) {
         .fetch_one(&pool)
         .await
         .unwrap();
-    let home_world: uuid::Uuid = sqlx::query_scalar("SELECT world_id FROM villages WHERE id = $1")
-        .bind(home_vid)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
 
     // A second world exists (run by the registry via the worlds row → context_for self-populates).
     let world_b = uuid::Uuid::new_v4();
-    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 3.0, 30, 808)")
-        .bind(world_b)
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO worlds (id, speed, radius, seed, name) VALUES ($1, 3.0, 30, 808, 'World B')",
+    )
+    .bind(world_b)
+    .execute(&pool)
+    .await
+    .unwrap();
 
-    // The lobby lists the home world (joined) and world B (joinable).
+    // The lobby lists the home world (joined) and world B (joinable), each by its display name (056).
     let lobby = c
         .get(format!("{base}/worlds"))
         .send()
@@ -4664,13 +4757,20 @@ async fn lobby_join_play_and_switch_back(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(
-        lobby.contains("Home world"),
+        lobby.contains("Home World"),
         "the home world is listed as joined"
     );
+    // 056: the joined world's "Enter" control is a world-prefixed link (not a POST to the removed
+    // /world/select), so the lobby actually lets you into the world.
     assert!(
-        lobby.contains(&world_b.as_u128().to_string()),
-        "world B is offered to join"
+        lobby.contains(&format!("/w/{home}/village")),
+        "the joined world links into /w/{{home}}/village"
     );
+    assert!(
+        !lobby.contains("/world/select"),
+        "no dead switch form remains"
+    );
+    assert!(lobby.contains("World B"), "world B is offered to join");
 
     // Join world B as Teutons → lands in world B's village (a new village, ≠ the home one).
     let r = c
@@ -4691,8 +4791,9 @@ async fn lobby_join_play_and_switch_back(pool: sqlx::PgPool) {
             .await
             .unwrap();
     assert_ne!(home_vid, b_vid);
+    // Joining redirects to world B's village; following its URL operates in world B.
     let village = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{world_b}/village"))
         .send()
         .await
         .unwrap()
@@ -4701,12 +4802,12 @@ async fn lobby_join_play_and_switch_back(pool: sqlx::PgPool) {
         .unwrap();
     assert!(
         village.contains(&b_vid.as_u128().to_string()),
-        "after joining, the village page operates in world B"
+        "after joining, world B's URL operates in world B"
     );
 
     // The second-world player's name resolves on world B's map (re-pointed owner→players→users read).
     let map = c
-        .get(format!("{base}/map"))
+        .get(format!("{base}/w/{world_b}/map"))
         .send()
         .await
         .unwrap()
@@ -4718,16 +4819,9 @@ async fn lobby_join_play_and_switch_back(pool: sqlx::PgPool) {
         "the second-world player's name resolves on the map"
     );
 
-    // Switching back to the home world returns to the home village.
-    let r = c
-        .post(format!("{base}/world/select"))
-        .form(&[("world", home_world.as_u128().to_string().as_str())])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status().as_u16(), 303);
+    // Switching back to the home world is just navigating to its URL — the home village renders.
     let village = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -5017,6 +5111,7 @@ async fn dm_stream_is_private_to_the_pair(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn profile_bio_edit_shows_on_public_page(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let owner = client();
     let name = unique("bio");
     owner
@@ -5052,7 +5147,7 @@ async fn profile_bio_edit_shows_on_public_page(pool: sqlx::PgPool) {
         .unwrap();
     let visitor = client();
     let stats = visitor
-        .get(format!("{base}/stats/player/{}", pid.as_u128()))
+        .get(format!("{base}/w/{home}/stats/player/{}", pid.as_u128()))
         .send()
         .await
         .unwrap();
@@ -5128,6 +5223,7 @@ async fn profile_bio_edit_requires_login(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn presence_last_seen_and_touch_excludes_pollers(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let player = client();
     let name = unique("seen");
     player
@@ -5154,7 +5250,7 @@ async fn presence_last_seen_and_touch_excludes_pollers(pool: sqlx::PgPool) {
         .unwrap();
     let visitor = client();
     let stats = visitor
-        .get(format!("{base}/stats/player/{}", pid.as_u128()))
+        .get(format!("{base}/w/{home}/stats/player/{}", pid.as_u128()))
         .send()
         .await
         .unwrap();
@@ -5190,7 +5286,11 @@ async fn presence_last_seen_and_touch_excludes_pollers(pool: sqlx::PgPool) {
     );
 
     // Real navigation DOES refresh it.
-    player.get(format!("{base}/village")).send().await.unwrap();
+    player
+        .get(format!("{base}/w/{home}/village"))
+        .send()
+        .await
+        .unwrap();
     let after_nav: i64 = sqlx::query_scalar(
         "SELECT (EXTRACT(EPOCH FROM last_activity)*1000)::bigint FROM users WHERE username = $1",
     )
@@ -5206,11 +5306,12 @@ async fn presence_last_seen_and_touch_excludes_pollers(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn leaderboard_rows_show_presence(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let name = unique("lbpres");
     register_client(&base, &pool, &name).await;
     let visitor = client();
     let body = visitor
-        .get(format!("{base}/leaderboard"))
+        .get(format!("{base}/w/{home}/leaderboard"))
         .send()
         .await
         .unwrap()
@@ -5451,6 +5552,7 @@ async fn add_alliance_member(
 #[sqlx::test(migrations = "../../migrations")]
 async fn alliance_forum_flow_and_access(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let (ca, alice) = register_client(&base, &pool, &unique("af_alice")).await;
     let (cb, bob) = register_client(&base, &pool, &unique("af_bob")).await;
     let (cc, _carol) = register_client(&base, &pool, &unique("af_carol")).await;
@@ -5463,7 +5565,7 @@ async fn alliance_forum_flow_and_access(pool: sqlx::PgPool) {
 
     // Alice starts a thread → redirected to it.
     let res = ca
-        .post(format!("{base}/alliance/forum/new"))
+        .post(format!("{base}/w/{home}/alliance/forum/new"))
         .form(&[("title", "Muster"), ("body", "Be online at 20:00")])
         .send()
         .await
@@ -5476,24 +5578,35 @@ async fn alliance_forum_flow_and_access(pool: sqlx::PgPool) {
         .to_str()
         .unwrap()
         .to_owned();
+    // 056: the new-thread redirect must be world-prefixed (a bare /alliance/forum/{id} would 404).
+    assert!(
+        loc.starts_with(&format!("/w/{home}/alliance/forum/")),
+        "new-thread redirect is world-prefixed, got {loc}"
+    );
     let thread_id = loc.rsplit('/').next().unwrap().to_owned();
 
     // Bob (same alliance) sees it in the list and can reply.
     let list = cb
-        .get(format!("{base}/alliance/forum"))
+        .get(format!("{base}/w/{home}/alliance/forum"))
         .send()
         .await
         .unwrap();
     assert!(list.text().await.unwrap().contains("Muster"));
     let reply = cb
-        .post(format!("{base}/alliance/forum/{thread_id}/reply"))
+        .post(format!("{base}/w/{home}/alliance/forum/{thread_id}/reply"))
         .form(&[("body", "Confirmed")])
         .send()
         .await
         .unwrap();
     assert_eq!(reply.status().as_u16(), 303);
+    // 056: the reply redirect is world-prefixed back to the thread, not a bare 404 path.
+    assert_eq!(
+        reply.headers().get(LOCATION).unwrap().to_str().unwrap(),
+        format!("/w/{home}/alliance/forum/{thread_id}"),
+        "reply redirect returns to the world-prefixed thread"
+    );
     let thread = cb
-        .get(format!("{base}/alliance/forum/{thread_id}"))
+        .get(format!("{base}/w/{home}/alliance/forum/{thread_id}"))
         .send()
         .await
         .unwrap()
@@ -5504,7 +5617,7 @@ async fn alliance_forum_flow_and_access(pool: sqlx::PgPool) {
 
     // Carol (no alliance) is refused the forum.
     let carol = cc
-        .get(format!("{base}/alliance/forum"))
+        .get(format!("{base}/w/{home}/alliance/forum"))
         .send()
         .await
         .unwrap();
@@ -5512,7 +5625,7 @@ async fn alliance_forum_flow_and_access(pool: sqlx::PgPool) {
 
     // Dave (other alliance) cannot open alliance A's thread.
     let cross = cd
-        .get(format!("{base}/alliance/forum/{thread_id}"))
+        .get(format!("{base}/w/{home}/alliance/forum/{thread_id}"))
         .send()
         .await
         .unwrap();
@@ -5520,7 +5633,7 @@ async fn alliance_forum_flow_and_access(pool: sqlx::PgPool) {
 
     // Bob lacks the Announce right ⇒ a forged announcement post is rejected (server-enforced).
     let forged = cb
-        .post(format!("{base}/alliance/forum/new"))
+        .post(format!("{base}/w/{home}/alliance/forum/new"))
         .form(&[("title", "Notice"), ("body", "x"), ("announcement", "1")])
         .send()
         .await
@@ -5529,7 +5642,7 @@ async fn alliance_forum_flow_and_access(pool: sqlx::PgPool) {
 
     // Alice (founder, has Announce) can post an announcement; it is locked to replies.
     let ann = ca
-        .post(format!("{base}/alliance/forum/new"))
+        .post(format!("{base}/w/{home}/alliance/forum/new"))
         .form(&[
             ("title", "Rules"),
             ("body", "Read them"),
@@ -5548,14 +5661,14 @@ async fn alliance_forum_flow_and_access(pool: sqlx::PgPool) {
         .to_owned();
     let ann_id = ann_loc.rsplit('/').next().unwrap();
     let blocked = cb
-        .post(format!("{base}/alliance/forum/{ann_id}/reply"))
+        .post(format!("{base}/w/{home}/alliance/forum/{ann_id}/reply"))
         .form(&[("body", "me too")])
         .send()
         .await
         .unwrap();
     // The action guard / use-case rejects a reply to a locked thread (redirect back, no post added).
     let ann_page = cb
-        .get(format!("{base}/alliance/forum/{ann_id}"))
+        .get(format!("{base}/w/{home}/alliance/forum/{ann_id}"))
         .send()
         .await
         .unwrap()
@@ -5574,6 +5687,7 @@ async fn alliance_forum_flow_and_access(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn search_finds_players_alliances_and_coordinates(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let (_ca, alice) = register_client(&base, &pool, &unique("sx")).await;
     // Rename to a deterministic prefix.
     sqlx::query("UPDATE users SET username = 'Aragorn' WHERE id = $1")
@@ -5588,7 +5702,7 @@ async fn search_finds_players_alliances_and_coordinates(pool: sqlx::PgPool) {
 
     // Player prefix.
     let body = anon
-        .get(format!("{base}/search?q=arag"))
+        .get(format!("{base}/w/{home}/search?q=arag"))
         .send()
         .await
         .unwrap()
@@ -5600,7 +5714,7 @@ async fn search_finds_players_alliances_and_coordinates(pool: sqlx::PgPool) {
 
     // Alliance by tag.
     let body = anon
-        .get(format!("{base}/search?q=iro"))
+        .get(format!("{base}/w/{home}/search?q=iro"))
         .send()
         .await
         .unwrap()
@@ -5612,7 +5726,7 @@ async fn search_finds_players_alliances_and_coordinates(pool: sqlx::PgPool) {
 
     // Coordinate jump.
     let body = anon
-        .get(format!("{base}/search?q=12%7C-7"))
+        .get(format!("{base}/w/{home}/search?q=12%7C-7"))
         .send()
         .await
         .unwrap()
@@ -5627,7 +5741,7 @@ async fn search_finds_players_alliances_and_coordinates(pool: sqlx::PgPool) {
 
     // Empty query → prompt (not "no results").
     let body = anon
-        .get(format!("{base}/search"))
+        .get(format!("{base}/w/{home}/search"))
         .send()
         .await
         .unwrap()
@@ -5641,7 +5755,7 @@ async fn search_finds_players_alliances_and_coordinates(pool: sqlx::PgPool) {
 
     // No match → clear empty state.
     let res = anon
-        .get(format!("{base}/search?q=zzzqqq"))
+        .get(format!("{base}/w/{home}/search?q=zzzqqq"))
         .send()
         .await
         .unwrap();
@@ -5769,6 +5883,7 @@ async fn settings_notification_preferences(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn account_sitting_takeover_restrictions_and_audit(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let owner_name = unique("si_o");
     let sitter_name = unique("si_s");
     let (jo, owner) = register_client(&base, &pool, &owner_name).await;
@@ -5861,7 +5976,7 @@ async fn account_sitting_takeover_restrictions_and_audit(pool: sqlx::PgPool) {
     }
 
     // A normal action is allowed (acts as the owner) and audited.
-    js.post(format!("{base}/village/build"))
+    js.post(format!("{base}/w/{home}/village/build"))
         .form(&[("table", "field"), ("slot", "1"), ("kind", "")])
         .send()
         .await
@@ -5875,7 +5990,7 @@ async fn account_sitting_takeover_restrictions_and_audit(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(
-        log.contains("POST /village/build"),
+        log.contains(&format!("POST /w/{home}/village/build")),
         "the owner's audit log shows the sitter's action"
     );
     assert!(log.contains(&sitter_name), "the audit names the sitter");
@@ -5960,9 +6075,10 @@ async fn account_sitting_respects_sanctions(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let (c, _id) = register_client(&base, &pool, &unique("eff")).await;
     let body = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -6018,6 +6134,7 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn wall_effect_is_tribe_correct(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let wall_line = |body: &str| -> String {
         body.lines()
             .find(|l| l.contains("Wall defence "))
@@ -6048,7 +6165,7 @@ async fn wall_effect_is_tribe_correct(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let gb = g
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -6056,7 +6173,7 @@ async fn wall_effect_is_tribe_correct(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let tb = t
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -6073,6 +6190,7 @@ async fn wall_effect_is_tribe_correct(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn capped_noncapital_field_shows_no_effect(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let (c, _id) = register_client(&base, &pool, &unique("cap")).await;
     // Make the village non-capital (field cap 10) and push every field above it but below the capital cap.
     let vid: uuid::Uuid = sqlx::query_scalar(
@@ -6092,7 +6210,7 @@ async fn capped_noncapital_field_shows_no_effect(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let body = c
-        .get(format!("{base}/village"))
+        .get(format!("{base}/w/{home}/village"))
         .send()
         .await
         .unwrap()
@@ -6110,6 +6228,7 @@ async fn capped_noncapital_field_shows_no_effect(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn map_shows_distance_and_send_shortcut(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
     let (ca, a) = register_client(&base, &pool, &unique("ma")).await;
     let (_cb, b) = register_client(&base, &pool, &unique("mb")).await;
     let (ax, ay): (i32, i32) = sqlx::query_as("SELECT x, y FROM villages WHERE owner_id = $1")
@@ -6127,7 +6246,7 @@ async fn map_shows_distance_and_send_shortcut(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let body = ca
-        .get(format!("{base}/map?x={ax}&y={ay}"))
+        .get(format!("{base}/w/{home}/map?x={ax}&y={ay}"))
         .send()
         .await
         .unwrap()

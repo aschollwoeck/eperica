@@ -15,21 +15,14 @@
       {% for w in joined %}
       <tr>
         <td>
-          {% if w.is_home %}<strong>Home world</strong>{% else %}<span class="mono">{{ w.id }}</span>{% endif %}
+          <strong>{{ w.name }}</strong>{% if w.is_home %} <span class="badge">Home</span>{% endif %}
           {% if w.is_current %} <span class="badge">★ Current</span>{% endif %}
         </td>
         <td class="num">{{ w.speed }}×</td>
         <td class="num">{{ w.radius }}</td>
         <td>{{ w.tribe }}</td>
         <td>
-          {% if w.is_current %}
-          <span class="muted">selected</span>
-          {% else %}
-          <form method="post" action="/world/select">
-            <input type="hidden" name="world" value="{{ w.id }}">
-            <button class="btn" type="submit">Switch to this world</button>
-          </form>
-          {% endif %}
+          <a class="btn" href="/w/{{ w.id }}/village">Enter</a>
         </td>
       </tr>
       {% endfor %}
@@ -46,7 +39,7 @@
     <tbody>
       {% for w in joinable %}
       <tr>
-        <td><span class="mono">{{ w.id }}</span></td>
+        <td><strong>{{ w.name }}</strong></td>
         <td class="num">{{ w.speed }}×</td>
         <td class="num">{{ w.radius }}</td>
         <td colspan="2">

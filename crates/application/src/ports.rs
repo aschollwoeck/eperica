@@ -3079,6 +3079,8 @@ pub struct AdminOverview {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AdminWorld {
     pub id: WorldId,
+    /// The world's display name (056).
+    pub name: String,
     pub speed: f64,
     pub radius: u32,
     pub created_ms: i64,
@@ -3156,6 +3158,7 @@ pub trait AdminRepository: Send + Sync {
         _artifact_offset_secs: i64,
         _wonder_offset_secs: i64,
         _rule_preset: &str,
+        _name: &str,
     ) -> Result<WorldId, RepoError> {
         Err(RepoError::Backend("create_world unimplemented".to_owned()))
     }

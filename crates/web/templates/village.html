@@ -5,18 +5,18 @@
 
   {% if world_won %}
   <p class="alert alert--success">🏆 The Wonder of the World is complete — the round is over and the
-    world is frozen. <a href="/wonder">See the result →</a></p>
+    world is frozen. <a href="/w/{{ world }}/wonder">See the result →</a></p>
   {% endif %}
 
   {% if is_wonder_site %}
   <div class="panel panel--inset">
     <p>This is a <strong>Wonder of the World</strong> construction site. If your alliance holds a Wonder
       plan, you can raise the Wonder here, one level at a time, toward victory.</p>
-    <form method="post" action="/wonder/build">
+    <form method="post" action="/w/{{ world }}/wonder/build">
       <input type="hidden" name="village" value="{{ village_id }}">
       <button type="submit">Build the Wonder</button>
     </form>
-    <p class="muted"><a href="/wonder">Wonder race standings →</a></p>
+    <p class="muted"><a href="/w/{{ world }}/wonder">Wonder race standings →</a></p>
   </div>
   {% endif %}
 
@@ -33,19 +33,19 @@
   {% if villages.len() > 1 %}
   <p class="muted">Your villages:
     {% for v in villages %}
-    {% if v.is_current %}<strong>{{ v.label }}{% if v.is_capital %} ★{% endif %}</strong>{% else %}<a href="/village?village={{ v.id }}">{{ v.label }}{% if v.is_capital %} ★{% endif %}</a>{% endif %}{% if !loop.last %} ·{% endif %}
+    {% if v.is_current %}<strong>{{ v.label }}{% if v.is_capital %} ★{% endif %}</strong>{% else %}<a href="/w/{{ world }}/village?village={{ v.id }}">{{ v.label }}{% if v.is_capital %} ★{% endif %}</a>{% endif %}{% if !loop.last %} ·{% endif %}
     {% endfor %}
   </p>
   {% endif %}
 
-  <p class="muted">Location ({{ x }}, {{ y }}) · Tribe: {{ tribe }} · <a href="/map?x={{ x }}&amp;y={{ y }}">Map</a>
-    · <a href="/village/rally?village={{ village_id }}">Rally Point</a>
-    · <a href="/village/market?village={{ village_id }}">Marketplace</a>
-    · <a href="/reports">Reports</a>
-    · <a href="/quests">Quests</a>
-    · <a href="/alliance">Alliance</a>
-    {% if has_academy %} · <a href="/village/academy?village={{ village_id }}">Academy</a>{% endif %}
-    {% if has_smithy %} · <a href="/village/smithy?village={{ village_id }}">Smithy</a>{% endif %}
+  <p class="muted">Location ({{ x }}, {{ y }}) · Tribe: {{ tribe }} · <a href="/w/{{ world }}/map?x={{ x }}&amp;y={{ y }}">Map</a>
+    · <a href="/w/{{ world }}/village/rally?village={{ village_id }}">Rally Point</a>
+    · <a href="/w/{{ world }}/village/market?village={{ village_id }}">Marketplace</a>
+    · <a href="/w/{{ world }}/reports">Reports</a>
+    · <a href="/w/{{ world }}/quests">Quests</a>
+    · <a href="/w/{{ world }}/alliance">Alliance</a>
+    {% if has_academy %} · <a href="/w/{{ world }}/village/academy?village={{ village_id }}">Academy</a>{% endif %}
+    {% if has_smithy %} · <a href="/w/{{ world }}/village/smithy?village={{ village_id }}">Smithy</a>{% endif %}
     {% for link in troop_links %} · <a href="{{ link.1 }}?village={{ village_id }}">{{ link.0 }}</a>{% endfor %}</p>
 
   <h2>Culture &amp; expansion</h2>
@@ -55,7 +55,7 @@
   <p>Loyalty: <strong class="num">{{ loyalty }}</strong> / 100
     {% if is_capital %}· <span class="badge">★ Capital — cannot be conquered</span>{% else %}<span class="muted">— an enemy administrator that wins here lowers it; at 0 (with a free slot) they take the village</span>{% endif %}</p>
   {% if has_free_slot %}
-  <p class="muted">You have a free expansion slot — train settlers, then <a href="/village/rally?village={{ village_id }}">send them to a free valley</a> to found a new village.</p>
+  <p class="muted">You have a free expansion slot — train settlers, then <a href="/w/{{ world }}/village/rally?village={{ village_id }}">send them to a free valley</a> to found a new village.</p>
   {% else %}
   <p class="muted">No free expansion slot — raise a Town Hall (more culture) and a Residence/Palace (more capacity) to expand.</p>
   {% endif %}
@@ -145,8 +145,8 @@
         <td>{{ o.bonus }}</td>
         <td>
           <span class="map-controls">
-            <a class="btn btn--secondary" href="/village/rally?x={{ o.x }}&amp;y={{ o.y }}&amp;village={{ village_id }}">Reinforce</a>
-            <form method="post" action="/village/oasis/recall">
+            <a class="btn btn--secondary" href="/w/{{ world }}/village/rally?x={{ o.x }}&amp;y={{ o.y }}&amp;village={{ village_id }}">Reinforce</a>
+            <form method="post" action="/w/{{ world }}/village/oasis/recall">
               <input type="hidden" name="village" value="{{ village_id }}">
               <input type="hidden" name="x" value="{{ o.x }}">
               <input type="hidden" name="y" value="{{ o.y }}">
@@ -186,7 +186,7 @@
       <tr>
         <td>{{ r.owner }}</td><td>{{ r.coord }}</td><td>{{ r.troops }}</td>
         <td>
-          <form method="post" action="/village/rally/return">
+          <form method="post" action="/w/{{ world }}/village/rally/return">
             <input type="hidden" name="village" value="{{ village_id }}">
             <input type="hidden" name="host" value="{{ r.host_id }}">
             <button class="btn btn--secondary" type="submit">Send back</button>
@@ -226,7 +226,7 @@
         <td class="muted">{{ b.effect }}</td>
         <td>
           {% if b.at_max %}<span class="muted">max</span>{% else if b.can_order %}
-          <form method="post" action="/village/build">
+          <form method="post" action="/w/{{ world }}/village/build">
             <input type="hidden" name="village" value="{{ village_id }}">
             <input type="hidden" name="table" value="{{ b.table }}">
             <input type="hidden" name="slot" value="{{ b.slot }}">
@@ -258,7 +258,7 @@
         <td class="muted">{{ f.effect }}</td>
         <td>
           {% if f.at_max %}<span class="muted">max</span>{% else if f.can_order %}
-          <form method="post" action="/village/build">
+          <form method="post" action="/w/{{ world }}/village/build">
             <input type="hidden" name="village" value="{{ village_id }}">
             <input type="hidden" name="table" value="{{ f.table }}">
             <input type="hidden" name="slot" value="{{ f.slot }}">

@@ -2,15 +2,15 @@
 {% block content %}
 <section class="panel">
   <h1>Map</h1>
-  <p class="muted"><a href="/village">← Back to the village</a>
+  <p class="muted"><a href="/w/{{ world }}/village">← Back to the village</a>
     · centered on ({{ center_x }}|{{ center_y }}) · world radius {{ radius }}</p>
 
   <div class="map-controls">
-    <a class="btn btn--secondary" href="/map?x={{ center_x }}&amp;y={{ north_y }}">↑ North</a>
-    <a class="btn btn--secondary" href="/map?x={{ west_x }}&amp;y={{ center_y }}">← West</a>
-    <a class="btn btn--secondary" href="/map?x={{ east_x }}&amp;y={{ center_y }}">East →</a>
-    <a class="btn btn--secondary" href="/map?x={{ center_x }}&amp;y={{ south_y }}">↓ South</a>
-    <form method="get" action="/map" class="map-controls">
+    <a class="btn btn--secondary" href="/w/{{ world }}/map?x={{ center_x }}&amp;y={{ north_y }}">↑ North</a>
+    <a class="btn btn--secondary" href="/w/{{ world }}/map?x={{ west_x }}&amp;y={{ center_y }}">← West</a>
+    <a class="btn btn--secondary" href="/w/{{ world }}/map?x={{ east_x }}&amp;y={{ center_y }}">East →</a>
+    <a class="btn btn--secondary" href="/w/{{ world }}/map?x={{ center_x }}&amp;y={{ south_y }}">↓ South</a>
+    <form method="get" action="/w/{{ world }}/map" class="map-controls">
       <label>x <input type="number" name="x" value="{{ center_x }}" required style="width:5em"></label>
       <label>y <input type="number" name="y" value="{{ center_y }}" required style="width:5em"></label>
       <button class="btn btn--primary" type="submit">Go</button>

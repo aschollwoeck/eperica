@@ -2,7 +2,7 @@
 {% block content %}
 <section class="panel">
   <h1>Alliance forum</h1>
-  <p class="muted"><a href="/alliance">← Back to the alliance</a></p>
+  <p class="muted"><a href="/w/{{ world }}/alliance">← Back to the alliance</a></p>
 
   <h2>Threads</h2>
   {% if threads.is_empty() %}
@@ -11,7 +11,7 @@
   <ul class="conversations">
     {% for t in threads %}
     <li>
-      <a href="/alliance/forum/{{ t.id }}">
+      <a href="/w/{{ world }}/alliance/forum/{{ t.id }}">
         {% if t.announcement %}<span class="badge">Announcement</span>{% endif %}
         <strong>{{ t.title }}</strong>
         <span class="muted preview">by {{ t.author }} · {{ t.post_count }} post(s)</span>
@@ -22,7 +22,7 @@
   {% endif %}
 
   <h2>Start a thread</h2>
-  <form method="post" action="/alliance/forum/new" class="send">
+  <form method="post" action="/w/{{ world }}/alliance/forum/new" class="send">
     <input type="text" name="title" placeholder="Thread title" maxlength="120" autocomplete="off" required>
     <textarea name="body" rows="3" placeholder="First post…" maxlength="2000" required></textarea>
     {% if can_announce %}

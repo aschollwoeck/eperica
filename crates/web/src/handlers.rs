@@ -294,16 +294,31 @@ fn selected_village(village: Option<&str>) -> Option<VillageId> {
 }
 
 /// Redirect to `path`, preserving the selected village (013 AC11) so the user stays on that village.
-fn redirect_with_village(path: &str, village: Option<&str>) -> Response {
+/// A world-scoped path (056): `/w/{uuid}{rest}` for the given world, e.g.
+/// `world_path(w, "/village")` → `/w/<uuid>/village`. `rest` must start with `/`.
+fn world_path(world: WorldId, rest: &str) -> String {
+    format!("/w/{}{rest}", uuid::Uuid::from_u128(world.0))
+}
+
+/// The world's hyphenated UUID as a string (056) — the `world` field every world-scoped template carries so
+/// its links can read `/w/{{ world }}/…`.
+fn world_id_str(world: WorldId) -> String {
+    uuid::Uuid::from_u128(world.0).to_string()
+}
+
+/// Redirect to a world-coupled `path` (056) — prefixed with `/w/{world}` — preserving the selected village
+/// (the orthogonal `?village=` query) so the user stays on it.
+fn redirect_with_village(world: WorldId, path: &str, village: Option<&str>) -> Response {
+    let base = world_path(world, path);
     match village.and_then(|s| s.trim().parse::<u128>().ok()) {
-        Some(id) => Redirect::to(&format!("{path}?village={id}")).into_response(),
-        None => Redirect::to(path).into_response(),
+        Some(id) => Redirect::to(&format!("{base}?village={id}")).into_response(),
+        None => Redirect::to(&base).into_response(),
     }
 }
 
-/// Redirect back to the village page, preserving the selected village so the user stays on it.
-fn redirect_to_village(village: Option<&str>) -> Response {
-    redirect_with_village("/village", village)
+/// Redirect back to the world's village page, preserving the selected village so the user stays on it.
+fn redirect_to_village(world: WorldId, village: Option<&str>) -> Response {
+    redirect_with_village(world, "/village", village)
 }
 
 /// A short-lived, JS-readable cookie carrying a one-shot user-facing message (034). The `base.html`
@@ -422,7 +437,7 @@ pub async fn register_submit(
                 })
             } else {
                 let jar = jar.add(auth_cookie(user.id.0));
-                (jar, Redirect::to("/village")).into_response()
+                (jar, Redirect::to("/worlds")).into_response()
             }
         }
         Err(RegisterError::Invalid(message)) => page(&RegisterTemplate {
@@ -465,7 +480,7 @@ pub async fn login_submit(
     {
         Ok(user) => {
             let jar = jar.add(auth_cookie(user.id.0));
-            (jar, Redirect::to("/village")).into_response()
+            (jar, Redirect::to("/worlds")).into_response()
         }
         Err(LoginError::InvalidCredentials) => page(&LoginTemplate {
             error: Some("Invalid username or password.".to_owned()),
@@ -494,28 +509,10 @@ pub async fn logout(jar: PrivateCookieJar) -> Response {
     (jar, Redirect::to("/")).into_response()
 }
 
-/// The world-switch form (043): the world to make current.
-#[derive(Deserialize)]
-pub struct SelectWorldForm {
-    world: String,
-}
-
-/// Select the current world (043) — sets the encrypted `world` cookie so subsequent game requests operate
-/// in it. Only a world the **account** has joined is honoured (server-authoritative); an unknown/unjoined
-/// world is ignored (stays on the current selection). The lobby that lists worlds + posts here is 045.
-pub async fn select_world(
-    State(state): State<AppState>,
-    jar: PrivateCookieJar,
-    AuthUser(account): AuthUser,
-    Form(form): Form<SelectWorldForm>,
-) -> Response {
-    let Ok(world) = form.world.trim().parse::<u128>().map(WorldId) else {
-        return Redirect::to("/village").into_response();
-    };
-    match state.accounts.player_in_world(account, world).await {
-        Ok(Some(_)) => (jar.add(world_cookie(world.0)), Redirect::to("/village")).into_response(),
-        _ => Redirect::to("/village").into_response(),
-    }
+/// Redirect a bare world-coupled route (an old `/village` link, or a nav fallback when no world is in the
+/// URL) to the lobby (056). The world lives in the path now; without one, the player picks a world here.
+pub async fn redirect_to_lobby() -> Response {
+    Redirect::to("/worlds").into_response()
 }
 
 /// The world lobby (045 AC2): the worlds the account plays (with the current one marked) + the running
@@ -546,17 +543,21 @@ pub async fn worlds_page(
     };
     let joined_ids: std::collections::HashSet<WorldId> =
         joined_worlds.iter().map(|w| w.world).collect();
-    // World metadata (speed/radius) by id, from the global worlds listing.
-    let meta: std::collections::HashMap<WorldId, (f64, u32)> = all_worlds
+    // World metadata (name/speed/radius) by id, from the global worlds listing.
+    let meta: std::collections::HashMap<WorldId, (String, f64, u32)> = all_worlds
         .iter()
-        .map(|w| (w.id, (w.speed, w.radius)))
+        .map(|w| (w.id, (w.name.clone(), w.speed, w.radius)))
         .collect();
     let joined = joined_worlds
         .iter()
         .map(|w| {
-            let (speed, radius) = meta.get(&w.world).copied().unwrap_or((1.0, 0));
+            let (name, speed, radius) = meta
+                .get(&w.world)
+                .cloned()
+                .unwrap_or_else(|| (String::new(), 1.0, 0));
             JoinedWorldRow {
-                id: w.world.0.to_string(),
+                id: world_id_str(w.world),
+                name,
                 speed,
                 radius,
                 tribe: w.tribe.slug().to_owned(),
@@ -571,6 +572,7 @@ pub async fn worlds_page(
         .filter(|w| !joined_ids.contains(&w.id) && w.won_ms.is_none())
         .map(|w| JoinableWorldRow {
             id: w.id.0.to_string(),
+            name: w.name.clone(),
             speed: w.speed,
             radius: w.radius,
         })
@@ -623,10 +625,13 @@ pub async fn join_world(
         .create_player_in_world(account, tribe, &rules.starting_village)
         .await
     {
-        // Joined now, or already joined (idempotent) — select the world and drop into its village.
-        Ok(_) | Err(RepoError::Duplicate) => {
-            (jar.add(world_cookie(world.0)), Redirect::to("/village")).into_response()
-        }
+        // Joined now, or already joined (idempotent) — drop into the world's village (056). The cookie is
+        // just the non-essential "last-visited" hint; the URL is what selects the world.
+        Ok(_) | Err(RepoError::Duplicate) => (
+            jar.add(world_cookie(world.0)),
+            Redirect::to(&world_path(world, "/village")),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "join world failed");
             server_error()
@@ -1174,6 +1179,7 @@ pub async fn village(ctx: GameContext, Query(q): Query<VillageQuery>) -> Respons
     let world_won = matches!(ctx.accounts.world_ended().await, Ok(Some(_)));
 
     page(&VillageTemplate {
+        world: world_id_str(ctx.world_id),
         username: user.username,
         world_won,
         is_wonder_site: village.is_wonder_site,
@@ -1424,7 +1430,10 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
                         );
                         // A send shortcut to another player's village (you can't target your own).
                         if marker.owner_name != user.username {
-                            href = Some(format!("/village/rally?x={}&y={}", coord.x, coord.y));
+                            href = Some(world_path(
+                                ctx.world_id,
+                                &format!("/village/rally?x={}&y={}", coord.x, coord.y),
+                            ));
                         }
                     } else if matches!(cell.tile, TileKind::Oasis(_)) {
                         // An oasis links to the Rally Point pre-filled with the tile (attack, or
@@ -1440,7 +1449,10 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
                             label =
                                 format!("{base_label} — wild animals ({}|{})", coord.x, coord.y);
                         }
-                        href = Some(format!("/village/rally?x={}&y={}", coord.x, coord.y));
+                        href = Some(world_path(
+                            ctx.world_id,
+                            &format!("/village/rally?x={}&y={}", coord.x, coord.y),
+                        ));
                     }
                     // Distance from home (toroidal, rounded) — helps judge travel time at a glance.
                     if let Some(o) = origin {
@@ -1462,6 +1474,7 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
 
     let span = 2 * MAP_HALF + 1;
     page(&MapTemplate {
+        world: world_id_str(ctx.world_id),
         center_x: center.x,
         center_y: center.y,
         radius: i32::try_from(radius).unwrap_or(i32::MAX),
@@ -1505,9 +1518,9 @@ pub async fn build_submit(ctx: GameContext, Form(form): Form<BuildForm>) -> Resp
                 slot: building_slot(kind),
                 kind,
             },
-            None => return redirect_to_village(form.village.as_deref()),
+            None => return redirect_to_village(ctx.world_id, form.village.as_deref()),
         },
-        _ => return redirect_to_village(form.village.as_deref()),
+        _ => return redirect_to_village(ctx.world_id, form.village.as_deref()),
     };
 
     let flash = order_build(
@@ -1529,7 +1542,10 @@ pub async fn build_submit(ctx: GameContext, Form(form): Form<BuildForm>) -> Resp
         tracing::warn!(error = %e, "build order rejected");
         user_msg(e.to_string())
     });
-    with_flash(redirect_to_village(form.village.as_deref()), flash)
+    with_flash(
+        redirect_to_village(ctx.world_id, form.village.as_deref()),
+        flash,
+    )
 }
 
 fn role_label(role: UnitRole) -> &'static str {
@@ -1730,6 +1746,7 @@ pub async fn academy(ctx: GameContext, Query(q): Query<VillageQuery>) -> Respons
         .collect();
 
     page(&AcademyTemplate {
+        world: world_id_str(ctx.world_id),
         village_id: village.id.0.to_string(),
         has_academy: building_level(&village, BuildingKind::Academy) > 0,
         rows,
@@ -1847,6 +1864,7 @@ pub async fn smithy(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response
         .collect();
 
     page(&SmithyTemplate {
+        world: world_id_str(ctx.world_id),
         village_id: village.id.0.to_string(),
         has_smithy: building_level(&village, BuildingKind::Smithy) > 0,
         smithy_level: building_level(&village, BuildingKind::Smithy),
@@ -1886,7 +1904,7 @@ pub async fn research_submit(ctx: GameContext, Form(form): Form<UnitForm>) -> Re
         user_msg(e.to_string())
     });
     with_flash(
-        redirect_with_village("/village/academy", form.village.as_deref()),
+        redirect_with_village(ctx.world_id, "/village/academy", form.village.as_deref()),
         flash,
     )
 }
@@ -1904,12 +1922,12 @@ fn parse_troop_building(slug: &str) -> Option<BuildingKind> {
 /// Player only, P4).
 pub async fn troops(
     ctx: GameContext,
-    axum::extract::Path(building_slug): axum::extract::Path<String>,
+    axum::extract::Path((_world, building_slug)): axum::extract::Path<(String, String)>,
     Query(q): Query<VillageQuery>,
 ) -> Response {
     let player = ctx.player;
     let Some(building) = parse_troop_building(&building_slug) else {
-        return Redirect::to("/village").into_response();
+        return Redirect::to(&world_path(ctx.world_id, "/village")).into_response();
     };
     let (village, _amounts) =
         match village_view_data(&ctx, selected_village(q.village.as_deref())).await {
@@ -1987,6 +2005,7 @@ pub async fn troops(
     };
 
     page(&TroopsTemplate {
+        world: world_id_str(ctx.world_id),
         village_id: village.id.0.to_string(),
         building: building_label(building),
         has_building: building_level > 0,
@@ -2042,7 +2061,7 @@ pub async fn train_submit(ctx: GameContext, Form(form): Form<TrainForm>) -> Resp
         _ => "/village",
     };
     with_flash(
-        redirect_with_village(target, form.village.as_deref()),
+        redirect_with_village(ctx.world_id, target, form.village.as_deref()),
         flash,
     )
 }
@@ -2069,7 +2088,7 @@ pub async fn smithy_upgrade_submit(ctx: GameContext, Form(form): Form<UnitForm>)
         user_msg(e.to_string())
     });
     with_flash(
-        redirect_with_village("/village/smithy", form.village.as_deref()),
+        redirect_with_village(ctx.world_id, "/village/smithy", form.village.as_deref()),
         flash,
     )
 }
@@ -2153,6 +2172,7 @@ pub async fn rally(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
         }
     };
     page(&RallyTemplate {
+        world: world_id_str(ctx.world_id),
         village_id: village.id.0.to_string(),
         units,
         target_x: q.x,
@@ -2181,7 +2201,7 @@ pub async fn rally_send(
     let x = form.get("x").and_then(|s| s.trim().parse::<i32>().ok());
     let y = form.get("y").and_then(|s| s.trim().parse::<i32>().ok());
     let (Some(x), Some(y)) = (x, y) else {
-        return redirect_with_village("/village/rally", village);
+        return redirect_with_village(ctx.world_id, "/village/rally", village);
     };
     let troops: Vec<(UnitId, u32)> = form
         .iter()
@@ -2348,7 +2368,7 @@ pub async fn rally_send(
             }
         }
     };
-    with_flash(redirect_to_village(village), flash)
+    with_flash(redirect_to_village(ctx.world_id, village), flash)
 }
 
 /// Send-back form fields (the host village whose stationed troops to recall).
@@ -2364,7 +2384,7 @@ pub struct RallyReturnForm {
 pub async fn rally_return(ctx: GameContext, Form(form): Form<RallyReturnForm>) -> Response {
     let player = ctx.player;
     let Ok(host) = form.host.trim().parse::<u128>() else {
-        return Redirect::to("/village").into_response();
+        return Redirect::to(&world_path(ctx.world_id, "/village")).into_response();
     };
     let flash = order_return(
         &ctx.accounts,
@@ -2382,7 +2402,10 @@ pub async fn rally_return(ctx: GameContext, Form(form): Form<RallyReturnForm>) -
         tracing::warn!(error = %e, "return order rejected");
         user_msg(e.to_string())
     });
-    with_flash(redirect_to_village(form.village.as_deref()), flash)
+    with_flash(
+        redirect_to_village(ctx.world_id, form.village.as_deref()),
+        flash,
+    )
 }
 
 /// Recall form fields (the oasis tile to recall stationed troops from).
@@ -2417,7 +2440,10 @@ pub async fn oasis_recall(ctx: GameContext, Form(form): Form<OasisRecallForm>) -
         tracing::warn!(error = %e, "oasis recall rejected");
         user_msg(e.to_string())
     });
-    with_flash(redirect_to_village(form.village.as_deref()), flash)
+    with_flash(
+        redirect_to_village(ctx.world_id, form.village.as_deref()),
+        flash,
+    )
 }
 
 /// The Marketplace: the merchant pool (free/total + capacity) and a send-resources form (008 AC6;
@@ -2437,6 +2463,7 @@ pub async fn market(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response
     let level = building_level(&village, BuildingKind::Marketplace);
     if level == 0 {
         return page(&MarketTemplate {
+            world: world_id_str(ctx.world_id),
             village_id,
             has_marketplace: false,
             capacity: 0,
@@ -2459,6 +2486,7 @@ pub async fn market(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response
     let total = ctx.rules.merchant.merchants_total(level);
     let profile = ctx.rules.merchant.profile(tribe);
     page(&MarketTemplate {
+        world: world_id_str(ctx.world_id),
         village_id,
         has_marketplace: true,
         capacity: profile.capacity,
@@ -2485,7 +2513,7 @@ pub async fn market_send(
     let x = form.get("x").and_then(|s| s.trim().parse::<i32>().ok());
     let y = form.get("y").and_then(|s| s.trim().parse::<i32>().ok());
     let (Some(x), Some(y)) = (x, y) else {
-        return redirect_with_village("/village/market", village);
+        return redirect_with_village(ctx.world_id, "/village/market", village);
     };
     let amount = |k: &str| {
         form.get(k)
@@ -2519,7 +2547,7 @@ pub async fn market_send(
         tracing::warn!(error = %e, "trade order rejected");
         user_msg(e.to_string())
     });
-    with_flash(redirect_to_village(village), flash)
+    with_flash(redirect_to_village(ctx.world_id, village), flash)
 }
 
 /// A one-line headline for a report from this player's perspective.
@@ -2569,7 +2597,7 @@ fn force_rows(
 }
 
 /// One inbox row for a scout report from the viewer's perspective (010 AC12).
-fn scout_report_row(r: &ScoutReportView) -> ReportRow {
+fn scout_report_row(world: WorldId, r: &ScoutReportView) -> ReportRow {
     let (name, coord) = if r.viewer_is_scouter {
         (&r.target_name, r.target_coord)
     } else {
@@ -2594,7 +2622,7 @@ fn scout_report_row(r: &ScoutReportView) -> ReportRow {
         when_ms: r.occurred_at.0,
         headline,
         outcome,
-        href: format!("/reports/scout/{}", r.id),
+        href: world_path(world, &format!("/reports/scout/{}", r.id)),
     }
 }
 
@@ -2623,11 +2651,11 @@ pub async fn reports(ctx: GameContext) -> Response {
                 when_ms: r.occurred_at.0,
                 headline: report_headline(r, i_attacked),
                 outcome: report_outcome(r, i_attacked),
-                href: format!("/reports/{}", r.id),
+                href: world_path(ctx.world_id, &format!("/reports/{}", r.id)),
             }
         })
         .collect();
-    rows.extend(scouts.iter().map(scout_report_row));
+    rows.extend(scouts.iter().map(|r| scout_report_row(ctx.world_id, r)));
     // 016 AC3/AC12: battles where the player **reinforced** an ally — their own report (the owner's
     // own defenses are already above as `defender_player`). Informational rows (no separate detail).
     let defended = match reinforcement_reports(&ctx.accounts, &ctx.rules.ranking, player).await {
@@ -2654,7 +2682,10 @@ pub async fn reports(ctx: GameContext) -> Response {
         }
     }));
     rows.sort_by_key(|r| std::cmp::Reverse(r.when_ms));
-    page(&ReportsTemplate { reports: rows })
+    page(&ReportsTemplate {
+        world: world_id_str(ctx.world_id),
+        reports: rows,
+    })
 }
 
 /// Query for the public leaderboard page (016): category, region scope, time window.
@@ -2702,6 +2733,7 @@ fn window_options(rules: &eperica_domain::RankingRules) -> Vec<(String, String)>
 
 /// Map player leaderboard rows to view rows (rank + stat-page link + 025 presence indicator).
 fn player_rows(
+    world: WorldId,
     rows: Vec<LeaderboardRow>,
     now: Timestamp,
     online_secs: i64,
@@ -2714,7 +2746,7 @@ fn player_rows(
                 rank: i + 1,
                 name: r.name,
                 tag: String::new(),
-                href: format!("/stats/player/{}", r.player.0),
+                href: world_path(world, &format!("/stats/player/{}", r.player.0)),
                 value: r.value,
                 has_presence: true,
                 online,
@@ -2726,14 +2758,14 @@ fn player_rows(
 
 /// Map alliance leaderboard rows to view rows (rank + tag + stat-page link). Alliances have no
 /// presence — `has_presence` is false so the template renders no indicator.
-fn alliance_rows(rows: Vec<AllianceLeaderboardRow>) -> Vec<LeaderboardRowView> {
+fn alliance_rows(world: WorldId, rows: Vec<AllianceLeaderboardRow>) -> Vec<LeaderboardRowView> {
     rows.into_iter()
         .enumerate()
         .map(|(i, r)| LeaderboardRowView {
             rank: i + 1,
             name: r.name,
             tag: r.tag,
-            href: format!("/stats/alliance/{}", r.alliance.0),
+            href: world_path(world, &format!("/stats/alliance/{}", r.alliance.0)),
             value: r.value,
             has_presence: false,
             online: false,
@@ -2777,7 +2809,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "attackers" => (
                 conflict_leaderboard(repo, rules, ConflictMetric::Attack, scope, window, now_ts)
                     .await
-                    .map(|r| player_rows(r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
                 "Attack points",
                 false,
                 true,
@@ -2785,7 +2817,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "defenders" => (
                 conflict_leaderboard(repo, rules, ConflictMetric::Defense, scope, window, now_ts)
                     .await
-                    .map(|r| player_rows(r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
                 "Defense points",
                 false,
                 true,
@@ -2793,7 +2825,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "raiders" => (
                 conflict_leaderboard(repo, rules, ConflictMetric::Raided, scope, window, now_ts)
                     .await
-                    .map(|r| player_rows(r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
                 "Resources looted",
                 false,
                 true,
@@ -2801,7 +2833,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "climbers" => (
                 climbers_leaderboard(repo, rules, scope)
                     .await
-                    .map(|r| player_rows(r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
                 "Population gained",
                 false,
                 false,
@@ -2809,7 +2841,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "alliances" => (
                 alliance_population_leaderboard(repo, econ, rules, scope)
                     .await
-                    .map(alliance_rows),
+                    .map(|r| alliance_rows(world.world_id, r)),
                 "Population",
                 true,
                 false,
@@ -2824,7 +2856,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
                     now_ts,
                 )
                 .await
-                .map(alliance_rows),
+                .map(|r| alliance_rows(world.world_id, r)),
                 "Attack points",
                 true,
                 true,
@@ -2839,7 +2871,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
                     now_ts,
                 )
                 .await
-                .map(alliance_rows),
+                .map(|r| alliance_rows(world.world_id, r)),
                 "Defense points",
                 true,
                 true,
@@ -2847,7 +2879,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             _ => (
                 population_leaderboard(repo, econ, rules, scope)
                     .await
-                    .map(|r| player_rows(r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
                 "Population",
                 false,
                 false,
@@ -2861,6 +2893,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
         }
     };
     page(&LeaderboardTemplate {
+        world: world_id_str(world.world_id),
         category,
         categories,
         scope: scope_key,
@@ -2915,6 +2948,7 @@ pub async fn wonder(world: WorldScope) -> Response {
         }
     };
     page(&WonderTemplate {
+        world: world_id_str(world.world_id),
         winner,
         max_level: eperica_domain::MAX_WONDER_LEVEL,
         standings,
@@ -2945,7 +2979,10 @@ pub async fn wonder_build_submit(ctx: GameContext, Form(form): Form<WonderBuildF
         tracing::warn!(error = %e, "Wonder build order rejected");
         user_msg(e.to_string())
     });
-    with_flash(redirect_to_village(form.village.as_deref()), flash)
+    with_flash(
+        redirect_to_village(ctx.world_id, form.village.as_deref()),
+        flash,
+    )
 }
 
 /// The Wonder-build form: which controlled site village to build the Wonder in (013 AC11).
@@ -3167,6 +3204,7 @@ pub async fn admin(
                 .into_iter()
                 .map(|w| AdminWorldRow {
                     id: w.id.0.to_string(),
+                    name: w.name,
                     speed: w.speed,
                     radius: w.radius,
                     created_ms: w.created_ms,
@@ -3215,6 +3253,9 @@ pub struct CreateWorldForm {
     /// The rule preset the world plays under (052) — omitted ⇒ `classic` (the default).
     #[serde(default)]
     preset: Option<String>,
+    /// The world's display name (056) — shown to players in the lobby/nav.
+    #[serde(default)]
+    name: String,
 }
 
 /// Create a new world from the admin console and start it running live (041 AC1/AC2). Admin-gated on the
@@ -3256,6 +3297,7 @@ pub async fn admin_world_submit(
         artifact_offset,
         wonder_offset,
         preset,
+        form.name.trim(),
     )
     .await
     {
@@ -3345,7 +3387,7 @@ pub async fn report_submit(
     Form(form): Form<ReportForm>,
 ) -> Response {
     let Some(subject) = form.subject.trim().parse::<u128>().ok().map(PlayerId) else {
-        return Redirect::to("/leaderboard").into_response();
+        return Redirect::to("/worlds").into_response();
     };
     let reason = ReportReason::parse(&form.reason).unwrap_or(ReportReason::Other);
     let note = form.note.unwrap_or_default();
@@ -3357,10 +3399,7 @@ pub async fn report_submit(
             tracing::warn!(error = %e, "report rejected");
             user_msg(e.to_string())
         });
-    with_flash(
-        Redirect::to(&format!("/stats/player/{}", subject.0)).into_response(),
-        flash,
-    )
+    with_flash(Redirect::to("/worlds").into_response(), flash)
 }
 
 /// Label a report reason for display.
@@ -3433,6 +3472,7 @@ pub async fn search_page(world: WorldScope, Query(sq): Query<SearchQuery>) -> Re
     let trimmed = query.trim().to_owned();
     if trimmed.is_empty() {
         return page(&SearchTemplate {
+            world: world_id_str(world.world_id),
             query,
             searched: false,
             players: Vec::new(),
@@ -3452,7 +3492,7 @@ pub async fn search_page(world: WorldScope, Query(sq): Query<SearchQuery>) -> Re
         .players
         .into_iter()
         .map(|p| SearchHitRow {
-            href: format!("/stats/player/{}", p.player.0),
+            href: world_path(world.world_id, &format!("/stats/player/{}", p.player.0)),
             label: p.name,
         })
         .collect();
@@ -3460,18 +3500,22 @@ pub async fn search_page(world: WorldScope, Query(sq): Query<SearchQuery>) -> Re
         .alliances
         .into_iter()
         .map(|a| SearchHitRow {
-            href: format!("/stats/alliance/{}", a.alliance.0),
+            href: world_path(world.world_id, &format!("/stats/alliance/{}", a.alliance.0)),
             label: format!("{} [{}]", a.name, a.tag),
         })
         .collect();
     let (coordinate_href, coordinate_label) = match results.coordinate {
         Some(c) => (
-            Some(format!("/map?x={}&y={}", c.x, c.y)),
+            Some(world_path(
+                world.world_id,
+                &format!("/map?x={}&y={}", c.x, c.y),
+            )),
             format!("({}|{})", c.x, c.y),
         ),
         None => (None, String::new()),
     };
     page(&SearchTemplate {
+        world: world_id_str(world.world_id),
         query,
         searched: true,
         players,
@@ -3484,7 +3528,9 @@ pub async fn search_page(world: WorldScope, Query(sq): Query<SearchQuery>) -> Re
 /// Public player statistics page (016 AC9).
 pub async fn player_stats_page(
     world: WorldScope,
-    axum::extract::Path(id): axum::extract::Path<String>,
+    // Under `/w/{world}/…` the route captures both `world` and `id`; the world is read by the extractor
+    // (056), so take it as a 2-tuple and use only the id.
+    axum::extract::Path((_world, id)): axum::extract::Path<(String, String)>,
 ) -> Response {
     let Ok(pid) = id.parse::<u128>() else {
         return not_found();
@@ -3541,6 +3587,7 @@ pub async fn player_stats_page(
         .collect();
     achievements.sort_by(|a, b| a.label.cmp(&b.label));
     page(&PlayerStatsTemplate {
+        world: world_id_str(world.world_id),
         subject_id: pid.to_string(),
         name: s.name,
         bio: profile.bio,
@@ -3850,7 +3897,7 @@ pub async fn sitting_start(
     match authorize_sit(state.accounts.as_ref(), owner, me, now()).await {
         Ok(true) => {
             let jar = jar.add(crate::auth::sit_cookie(owner.0));
-            (jar, Redirect::to("/village")).into_response()
+            (jar, Redirect::to("/worlds")).into_response()
         }
         // Not authorised (not a sitter / blocked owner) — refuse.
         Ok(false) => forbidden(),
@@ -3914,6 +3961,7 @@ pub async fn quests_page(ctx: GameContext) -> Response {
         })
         .collect();
     page(&QuestsTemplate {
+        world: world_id_str(ctx.world_id),
         village_id,
         current,
         completed: done,
@@ -3923,7 +3971,9 @@ pub async fn quests_page(ctx: GameContext) -> Response {
 /// Public alliance statistics page (016 AC10).
 pub async fn alliance_stats_page(
     world: WorldScope,
-    axum::extract::Path(id): axum::extract::Path<String>,
+    // Under `/w/{world}/…` the route captures both `world` and `id`; the world is read by the extractor
+    // (056), so take it as a 2-tuple and use only the id.
+    axum::extract::Path((_world, id)): axum::extract::Path<(String, String)>,
 ) -> Response {
     let Ok(aid) = id.parse::<u128>() else {
         return not_found();
@@ -3945,6 +3995,7 @@ pub async fn alliance_stats_page(
         }
     };
     page(&AllianceStatsTemplate {
+        world: world_id_str(world.world_id),
         name: s.name,
         tag: s.tag,
         population: s.population,
@@ -3956,7 +4007,7 @@ pub async fn alliance_stats_page(
             .map(
                 |(player, name, population, attack_points, defense_points)| MemberStatRow {
                     name,
-                    href: format!("/stats/player/{}", player.0),
+                    href: world_path(world.world_id, &format!("/stats/player/{}", player.0)),
                     population,
                     attack_points,
                     defense_points,
@@ -3978,15 +4029,17 @@ pub async fn alliance_stats_page(
 /// redaction is enforced by the repository (010 AC11, P4).
 pub async fn scout_report_detail(
     ctx: GameContext,
-    axum::extract::Path(id): axum::extract::Path<String>,
+    // Under `/w/{world}/…` the route captures both `world` and `id`; the world is read by the extractor
+    // (056), so take it as a 2-tuple and use only the id.
+    axum::extract::Path((_world, id)): axum::extract::Path<(String, String)>,
 ) -> Response {
     let player = ctx.player;
     let Ok(id) = id.parse::<u128>() else {
-        return Redirect::to("/reports").into_response();
+        return Redirect::to(&world_path(ctx.world_id, "/reports")).into_response();
     };
     let r = match ctx.accounts.scout_report(id, player).await {
         Ok(Some(r)) => r,
-        Ok(None) => return Redirect::to("/reports").into_response(),
+        Ok(None) => return Redirect::to(&world_path(ctx.world_id, "/reports")).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "scout report lookup failed");
             return server_error();
@@ -4048,6 +4101,7 @@ pub async fn scout_report_detail(
         None => ("none", Vec::new(), Vec::new(), 0),
     };
     page(&ScoutReportTemplate {
+        world: world_id_str(ctx.world_id),
         headline,
         summary,
         is_scouter: r.viewer_is_scouter,
@@ -4062,15 +4116,17 @@ pub async fn scout_report_detail(
 /// One battle report's detail — only a party to it may view it (009 AC8, P4).
 pub async fn report_detail(
     ctx: GameContext,
-    axum::extract::Path(id): axum::extract::Path<String>,
+    // Under `/w/{world}/…` the route captures both `world` and `id`; the world is read by the extractor
+    // (056), so take it as a 2-tuple and use only the id.
+    axum::extract::Path((_world, id)): axum::extract::Path<(String, String)>,
 ) -> Response {
     let player = ctx.player;
     let Ok(id) = id.parse::<u128>() else {
-        return Redirect::to("/reports").into_response();
+        return Redirect::to(&world_path(ctx.world_id, "/reports")).into_response();
     };
     let report = match ctx.accounts.report(id, player).await {
         Ok(Some(r)) => r,
-        Ok(None) => return Redirect::to("/reports").into_response(),
+        Ok(None) => return Redirect::to(&world_path(ctx.world_id, "/reports")).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "report lookup failed");
             return server_error();
@@ -4103,6 +4159,7 @@ pub async fn report_detail(
         _ => None,
     };
     page(&ReportTemplate {
+        world: world_id_str(ctx.world_id),
         kind: if report.kind == MovementKind::Raid {
             "Raid"
         } else {
@@ -4243,6 +4300,7 @@ pub async fn alliance(ctx: GameContext) -> Response {
                 }
             };
             page(&AllianceTemplate {
+                world: world_id_str(ctx.world_id),
                 in_alliance: true,
                 can_found: false,
                 embassy_level: 0,
@@ -4281,6 +4339,7 @@ pub async fn alliance(ctx: GameContext) -> Response {
                 }
             };
             page(&AllianceTemplate {
+                world: world_id_str(ctx.world_id),
                 in_alliance: false,
                 can_found: rules.can_found(embassy),
                 embassy_level: embassy,
@@ -4330,7 +4389,10 @@ pub async fn alliance_found(ctx: GameContext, Form(form): Form<FoundForm>) -> Re
         tracing::warn!(error = %e, "found alliance rejected");
         user_msg(e.to_string())
     });
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 #[derive(Deserialize)]
@@ -4366,7 +4428,10 @@ pub async fn alliance_invite(
             }),
         None => Some("No player with that name.".to_owned()),
     };
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 pub async fn alliance_revoke(
@@ -4385,7 +4450,10 @@ pub async fn alliance_revoke(
             }),
         None => Some("No player with that name.".to_owned()),
     };
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 #[derive(Deserialize)]
@@ -4412,7 +4480,10 @@ pub async fn alliance_respond(ctx: GameContext, Form(form): Form<RespondForm>) -
         }),
         Err(_) => None,
     };
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 pub async fn alliance_leave(ctx: GameContext) -> Response {
@@ -4421,7 +4492,10 @@ pub async fn alliance_leave(ctx: GameContext) -> Response {
         tracing::warn!(error = %e, "leave rejected");
         user_msg(e.to_string())
     });
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 pub async fn alliance_disband(ctx: GameContext) -> Response {
@@ -4433,7 +4507,10 @@ pub async fn alliance_disband(ctx: GameContext) -> Response {
             tracing::warn!(error = %e, "disband rejected");
             user_msg(e.to_string())
         });
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 #[derive(Deserialize)]
@@ -4453,7 +4530,10 @@ pub async fn alliance_expel(ctx: GameContext, Form(form): Form<TargetForm>) -> R
             }),
         Err(_) => None,
     };
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 pub async fn alliance_transfer(ctx: GameContext, Form(form): Form<TargetForm>) -> Response {
@@ -4468,7 +4548,10 @@ pub async fn alliance_transfer(ctx: GameContext, Form(form): Form<TargetForm>) -
             }),
         Err(_) => None,
     };
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 #[derive(Deserialize)]
@@ -4490,7 +4573,7 @@ pub struct RoleForm {
 pub async fn alliance_role(ctx: GameContext, Form(form): Form<RoleForm>) -> Response {
     let player = ctx.player;
     let Ok(id) = form.target.parse::<u128>() else {
-        return Redirect::to("/alliance").into_response();
+        return Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response();
     };
     let role = match form.role.as_str() {
         "leader" => AllianceRole::Leader,
@@ -4519,7 +4602,10 @@ pub async fn alliance_role(ctx: GameContext, Form(form): Form<RoleForm>) -> Resp
             tracing::warn!(error = %e, "role change rejected");
             user_msg(e.to_string())
         });
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 #[derive(Deserialize)]
@@ -4531,14 +4617,14 @@ pub struct DiplomacyForm {
 pub async fn alliance_diplomacy(ctx: GameContext, Form(form): Form<DiplomacyForm>) -> Response {
     let player = ctx.player;
     let Ok(id) = form.other.parse::<u128>() else {
-        return Redirect::to("/alliance").into_response();
+        return Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response();
     };
     let command = match form.command.as_str() {
         "declare_war" => DiplomacyCommand::DeclareWar,
         "propose_confederation" => DiplomacyCommand::ProposeConfederation,
         "accept_confederation" => DiplomacyCommand::AcceptConfederation,
         "cancel" => DiplomacyCommand::Cancel,
-        _ => return Redirect::to("/alliance").into_response(),
+        _ => return Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
     };
     let flash = set_diplomacy(
         &ctx.accounts,
@@ -4552,7 +4638,10 @@ pub async fn alliance_diplomacy(ctx: GameContext, Form(form): Form<DiplomacyForm
         tracing::warn!(error = %e, "diplomacy change rejected");
         user_msg(e.to_string())
     });
-    with_flash(Redirect::to("/alliance").into_response(), flash)
+    with_flash(
+        Redirect::to(&world_path(ctx.world_id, "/alliance")).into_response(),
+        flash,
+    )
 }
 
 // ---- Alliance forum (027) ----
@@ -4586,6 +4675,7 @@ pub async fn forum_page(ctx: GameContext) -> Response {
         })
         .collect();
     page(&ForumTemplate {
+        world: world_id_str(ctx.world_id),
         threads,
         can_announce,
     })
@@ -4614,20 +4704,25 @@ pub async fn forum_new(ctx: GameContext, Form(form): Form<NewThreadForm>) -> Res
     )
     .await
     {
-        Ok(id) => Redirect::to(&format!("/alliance/forum/{id}")).into_response(),
+        Ok(id) => Redirect::to(&world_path(ctx.world_id, &format!("/alliance/forum/{id}")))
+            .into_response(),
         Err(ForumError::NotAMember | ForumError::MissingRight) => forbidden(),
-        Err(_) => Redirect::to("/alliance/forum").into_response(),
+        Err(_) => Redirect::to(&world_path(ctx.world_id, "/alliance/forum")).into_response(),
     }
 }
 
 /// A single forum thread + its posts (027 AC1, members of the owning alliance only).
-pub async fn forum_thread_page(ctx: GameContext, Path(id): Path<String>) -> Response {
+pub async fn forum_thread_page(
+    ctx: GameContext,
+    Path((_world, id)): Path<(String, String)>,
+) -> Response {
     let player = ctx.player;
     let Ok(tid) = id.parse::<u128>() else {
         return not_found();
     };
     match open_thread(&ctx.accounts, player, tid).await {
         Ok((head, posts)) => page(&ForumThreadTemplate {
+            world: world_id_str(ctx.world_id),
             thread_id: id,
             title: head.title,
             locked: head.announcement,
@@ -4657,7 +4752,7 @@ pub struct ForumReplyForm {
 /// Reply to a forum thread (027 AC3, member; locked threads rejected).
 pub async fn forum_reply(
     ctx: GameContext,
-    Path(id): Path<String>,
+    Path((_world, id)): Path<(String, String)>,
     Form(form): Form<ForumReplyForm>,
 ) -> Response {
     let player = ctx.player;
@@ -4665,10 +4760,12 @@ pub async fn forum_reply(
         return not_found();
     };
     match reply(&ctx.accounts, player, tid, &form.body, now()).await {
-        Ok(_) => Redirect::to(&format!("/alliance/forum/{id}")).into_response(),
+        Ok(_) => Redirect::to(&world_path(ctx.world_id, &format!("/alliance/forum/{id}")))
+            .into_response(),
         Err(ForumError::NotAMember) => forbidden(),
         Err(ForumError::NotFound) => not_found(),
-        Err(_) => Redirect::to(&format!("/alliance/forum/{id}")).into_response(),
+        Err(_) => Redirect::to(&world_path(ctx.world_id, &format!("/alliance/forum/{id}")))
+            .into_response(),
     }
 }
 
@@ -4932,13 +5029,15 @@ pub struct SendForm {
     body: String,
 }
 
-/// Deep-link for a notification's referenced entity (026), or empty when there's nothing to link to.
-fn notification_href(ref_kind: Option<&str>, ref_id: Option<&str>) -> String {
+/// Deep-link for a notification's referenced entity (026), or empty when there's nothing to link to. The
+/// world-coupled targets (report, village) are prefixed with the notification's world (056) — today the
+/// account-level feed reads the home world, so `world` is the home world.
+fn notification_href(world: WorldId, ref_kind: Option<&str>, ref_id: Option<&str>) -> String {
     match (ref_kind, ref_id) {
-        (Some("report"), Some(id)) => format!("/reports/{id}"),
+        (Some("report"), Some(id)) => world_path(world, &format!("/reports/{id}")),
         (Some("dm"), Some(other)) => format!("/messages/c/dm:{other}"),
         (Some("village"), Some(coord)) => match coord.split_once('|') {
-            Some((x, y)) => format!("/map?x={x}&y={y}"),
+            Some((x, y)) => world_path(world, &format!("/map?x={x}&y={y}")),
             None => String::new(),
         },
         _ => String::new(),
@@ -4967,7 +5066,7 @@ pub async fn notifications_page(
         .into_iter()
         .map(|n| NotificationRowView {
             label: n.kind.label().to_owned(),
-            href: notification_href(n.ref_kind.as_deref(), n.ref_id.as_deref()),
+            href: notification_href(state.world_id, n.ref_kind.as_deref(), n.ref_id.as_deref()),
             body: n.body,
             read: n.read,
         })

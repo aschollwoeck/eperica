@@ -238,22 +238,10 @@ async fn sitting_guard(State(state): State<AppState>, req: Request, next: Next) 
     next.run(Request::from_parts(parts, body)).await
 }
 
-/// Build the application router for the given state.
-pub fn router(state: AppState) -> Router {
+/// The world-coupled routes (056) — mounted under `/w/{world}/…` by [`router`]. Leaf paths are unchanged;
+/// the `{world}` prefix is read by the `GameContext`/`WorldScope` extractors (the game + public read pages).
+fn world_router() -> Router<AppState> {
     Router::new()
-        .route("/", get(handlers::index))
-        .route(
-            "/register",
-            get(handlers::register_form).post(handlers::register_submit),
-        )
-        .route(
-            "/login",
-            get(handlers::login_form).post(handlers::login_submit),
-        )
-        .route("/logout", post(handlers::logout))
-        .route("/world/select", post(handlers::select_world))
-        .route("/worlds", get(handlers::worlds_page))
-        .route("/worlds/join", post(handlers::join_world))
         .route("/village", get(handlers::village))
         .route("/village/build", post(handlers::build_submit))
         .route("/map", get(handlers::map))
@@ -293,6 +281,35 @@ pub fn router(state: AppState) -> Router {
         .route("/reports/{id}", get(handlers::report_detail))
         .route("/leaderboard", get(handlers::leaderboard))
         .route("/search", get(handlers::search_page))
+        .route("/wonder", get(handlers::wonder))
+        .route("/wonder/build", post(handlers::wonder_build_submit))
+        .route("/stats/player/{id}", get(handlers::player_stats_page))
+        .route("/stats/alliance/{id}", get(handlers::alliance_stats_page))
+}
+
+/// Build the application router for the given state.
+pub fn router(state: AppState) -> Router {
+    Router::new()
+        .route("/", get(handlers::index))
+        .route(
+            "/register",
+            get(handlers::register_form).post(handlers::register_submit),
+        )
+        .route(
+            "/login",
+            get(handlers::login_form).post(handlers::login_submit),
+        )
+        .route("/logout", post(handlers::logout))
+        .route("/worlds", get(handlers::worlds_page))
+        .route("/worlds/join", post(handlers::join_world))
+        // World-coupled routes live under `/w/{world}/…` (056); the world (its UUID) is read from the path.
+        .nest("/w/{world}", world_router())
+        // Bare landing routes (old links / nav fallbacks) bounce to the lobby — the URL is the sole world
+        // authority, so without one we send the player to pick a world (056).
+        .route("/village", get(handlers::redirect_to_lobby))
+        .route("/map", get(handlers::redirect_to_lobby))
+        .route("/leaderboard", get(handlers::redirect_to_lobby))
+        .route("/wonder", get(handlers::redirect_to_lobby))
         .route("/messages", get(handlers::messages))
         .route("/messages/unread", get(handlers::messages_unread))
         .route("/messages/send", post(handlers::messages_send))
@@ -303,10 +320,6 @@ pub fn router(state: AppState) -> Router {
         .route("/notifications/unread", get(handlers::notifications_unread))
         .route("/notifications/read", post(handlers::notifications_read))
         .route("/notifications/stream", get(handlers::notifications_stream))
-        .route("/wonder", get(handlers::wonder))
-        .route("/wonder/build", post(handlers::wonder_build_submit))
-        .route("/stats/player/{id}", get(handlers::player_stats_page))
-        .route("/stats/alliance/{id}", get(handlers::alliance_stats_page))
         .route("/profile", get(handlers::profile_page))
         .route("/profile/bio", post(handlers::profile_bio_submit))
         .route("/settings", get(handlers::settings_page))

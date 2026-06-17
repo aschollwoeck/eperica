@@ -11,17 +11,18 @@
   <header class="topbar">
     <a class="topbar__brand" href="/">Eperica</a>
     <nav class="topbar__nav">
-      <!-- Public links — shown to everyone. -->
-      <a href="/leaderboard">Leaderboards</a> <a href="/wonder">Wonder</a>
+      <!-- Public links — shown to everyone. `data-wl` carries the leaf path; JS (below) rewrites these to
+           /w/{world}/… when the current URL is inside a world, else to /worlds (056). -->
+      <a href="/leaderboard" data-wl="/leaderboard">Leaderboards</a> <a href="/wonder" data-wl="/wonder">Wonder</a>
       <!-- Member links — revealed by JS (/me) only when logged in (035). Hidden by default to avoid
            showing account-only links to visitors. -->
       <span class="topbar__group" data-auth="in" hidden>
-        <a href="/village">Village</a> <a href="/worlds">Worlds</a> <a href="/notifications" title="Notifications">🔔 <span id="notif-badge" class="badge" hidden></span></a> <a href="/messages">Messages <span id="unread-badge" class="badge" hidden></span></a> <a href="/profile">Profile</a> <a href="/settings">Settings</a> <a href="/sitting">Sitting</a> <a href="/mod" id="nav-mod" hidden>Moderation</a> <a href="/admin" id="nav-admin" hidden>Admin</a>
+        <a href="/village" data-wl="/village">Village</a> <a href="/worlds">Worlds</a> <a href="/notifications" title="Notifications">🔔 <span id="notif-badge" class="badge" hidden></span></a> <a href="/messages">Messages <span id="unread-badge" class="badge" hidden></span></a> <a href="/profile">Profile</a> <a href="/settings">Settings</a> <a href="/sitting">Sitting</a> <a href="/mod" id="nav-mod" hidden>Moderation</a> <a href="/admin" id="nav-admin" hidden>Admin</a>
         <form method="post" action="/logout" class="topbar__logout"><button type="submit">Log out</button></form>
       </span>
       <!-- Visitor links — revealed by JS only when logged out. -->
       <span class="topbar__group" data-auth="out" hidden><a href="/login">Log in</a> <a href="/register">Register</a></span>
-      <form method="get" action="/search" class="topbar__search"><input type="text" name="q" placeholder="Search…" autocomplete="off"></form></nav>
+      <form method="get" action="/search" class="topbar__search" data-wl-action="/search"><input type="text" name="q" placeholder="Search…" autocomplete="off"></form></nav>
   </header>
   <div id="sitting-banner" class="banner" hidden></div>
   <div id="flash" class="container" hidden></div>
@@ -30,6 +31,21 @@
   </main>
   <footer class="footer">Eperica — a faithful Travian-style strategy MMO</footer>
   <script>
+    // 056: world-aware nav — the world lives in the URL (/w/{world}/…), so derive it from the current
+    // path and point the world-coupled nav links/forms at /w/{world}/… . Outside a world (account pages,
+    // the lobby) they fall back to /worlds. The URL is the sole source of truth — no cookie involved.
+    (function () {
+      var m = window.location.pathname.match(/^\/w\/([^/]+)/);
+      var world = m ? m[1] : null;
+      function target(leaf) { return world ? "/w/" + world + leaf : "/worlds"; }
+      document.querySelectorAll("[data-wl]").forEach(function (el) {
+        el.setAttribute("href", target(el.getAttribute("data-wl")));
+      });
+      document.querySelectorAll("[data-wl-action]").forEach(function (el) {
+        el.setAttribute("action", target(el.getAttribute("data-wl-action")));
+      });
+    })();
+
     // 035: auth-aware nav — ask /me who the viewer is and reveal the matching link group. Default is
     // everything hidden, so a visitor never sees member-only links (and vice versa). Best-effort: on
     // failure the public links remain and the rest stays hidden.

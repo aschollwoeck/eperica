@@ -7602,7 +7602,7 @@ impl AdminRepository for PgAccountRepository {
 
     async fn list_worlds(&self) -> Result<Vec<AdminWorld>, RepoError> {
         let rows = sqlx::query(
-            "SELECT id, speed, radius, \
+            "SELECT id, name, speed, radius, \
              (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ms, \
              (EXTRACT(EPOCH FROM won_at) * 1000)::bigint AS won_ms \
              FROM worlds ORDER BY created_at, id",
@@ -7615,6 +7615,7 @@ impl AdminRepository for PgAccountRepository {
                 let id: Uuid = r.try_get("id").map_err(backend)?;
                 Ok(AdminWorld {
                     id: WorldId(id.as_u128()),
+                    name: r.try_get("name").map_err(backend)?,
                     speed: r.try_get("speed").map_err(backend)?,
                     radius: u32::try_from(r.try_get::<i32, _>("radius").map_err(backend)?)
                         .unwrap_or(0),
@@ -7632,6 +7633,7 @@ impl AdminRepository for PgAccountRepository {
         artifact_offset_secs: i64,
         wonder_offset_secs: i64,
         rule_preset: &str,
+        name: &str,
     ) -> Result<WorldId, RepoError> {
         let config = WorldConfig::new(
             GameSpeed::new(speed).map_err(|e| RepoError::Backend(e.to_string()))?,
@@ -7643,6 +7645,7 @@ impl AdminRepository for PgAccountRepository {
             artifact_offset_secs,
             wonder_offset_secs,
             rule_preset,
+            name,
         )
         .await
         .map_err(backend)?;
