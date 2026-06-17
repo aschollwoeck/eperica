@@ -5,7 +5,7 @@
 //! transparently); `RealUser` is the human (for sitting management).
 
 use crate::state::AppState;
-use axum::extract::FromRequestParts;
+use axum::extract::{FromRequestParts, RawPathParams};
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
@@ -180,9 +180,10 @@ impl FromRequestParts<AppState> for MaybeAuthUser {
 
 /// The **game** identity for a request (043): the selected world's repo/map/speed/radius + the account's
 /// player in that world. Game handlers use this instead of the home `AppState` fields + `AuthUser`. The
-/// selected world comes from the `world` cookie (default home); if the account has no player in it (or the
-/// registry is not running it) it falls back to the **home** world (always joined). Resolves to the
-/// effective account (sit-aware), so a sit transparently plays the owner's world. A missing/invalid auth
+/// selected world comes from the **URL path** (056) — `/w/{world}/…`, where `{world}` is the world's UUID;
+/// if the UUID is bad, the account has no player in that world, or the registry is not running it, the
+/// request is redirected to the lobby `/worlds` (P4 — the path selects, the server validates). Resolves to
+/// the effective account (sit-aware), so a sit transparently plays the owner's world. A missing/invalid auth
 /// cookie redirects to `/login`.
 pub struct GameContext {
     /// The selected world's account repository (world-scoped reads/writes).
@@ -216,43 +217,28 @@ impl FromRequestParts<AppState> for GameContext {
         };
         let account = sitting_owner.unwrap_or(real);
 
-        // The selected world from the `world` cookie, defaulting to the home world.
-        let jar: PrivateCookieJar = PrivateCookieJar::from_request_parts(parts, state)
-            .await
-            .map_err(|_| Redirect::to("/login").into_response())?;
-        let selected = jar
-            .get(WORLD_COOKIE)
-            .and_then(|c| c.value().parse::<u128>().ok())
-            .map(eperica_domain::WorldId)
-            .unwrap_or(state.world_id);
-
-        // Resolve the account's player in the selected world; fall back to home if not joined, or if the
-        // registry is not running the selected world.
-        let resolve = |world: eperica_domain::WorldId| async move {
-            let player = state
-                .accounts
-                .player_in_world(account, world)
-                .await
-                .ok()??;
-            let ctx = state.world_registry.context_for(world).await?;
-            Some((world, player, ctx))
+        // The selected world from the URL path (056) — `/w/{world}/…`. No/invalid world → the lobby.
+        let Some(world) = world_from_path(parts).await else {
+            return Err(Redirect::to("/worlds").into_response());
         };
-        let (world_id, player, (accounts, map, speed, radius, rules)) =
-            match resolve(selected).await {
-                Some(found) => found,
-                None => match resolve(state.world_id).await {
-                    Some(home) => home,
-                    // The account has no player even in the home world (should not happen for a real login).
-                    None => return Err(Redirect::to("/login").into_response()),
-                },
-            };
+        // The account must have a player in that world, and the registry must be running it — else the
+        // lobby, so a path to an unjoined/unknown world never leaks game state (P4).
+        let player = match state.accounts.player_in_world(account, world).await {
+            Ok(Some(p)) => p,
+            _ => return Err(Redirect::to("/worlds").into_response()),
+        };
+        let Some((accounts, map, speed, radius, rules)) =
+            state.world_registry.context_for(world).await
+        else {
+            return Err(Redirect::to("/worlds").into_response());
+        };
 
         Ok(GameContext {
             accounts,
             map,
             player,
             account,
-            world_id,
+            world_id: world,
             speed,
             radius,
             rules,
@@ -261,9 +247,9 @@ impl FromRequestParts<AppState> for GameContext {
 }
 
 /// A **player-less, login-less** world scope for the public read pages (046): the selected world's
-/// repo/map/speed/radius, resolved from the `world` cookie (default = home), with no auth requirement — an
-/// anonymous visitor sees the home world. Used by `leaderboard`/`wonder`/`search`/stat pages so a logged-in
-/// player who selected a second world sees **that** world's boards, while public access is preserved.
+/// repo/map/speed/radius, resolved from the **URL path** (056) — `/w/{world}/leaderboard` etc. — with no auth
+/// requirement, so an anonymous visitor can read any world's boards. An unknown/not-running world → the lobby
+/// `/worlds`. Used by `leaderboard`/`wonder`/`search`/stat pages.
 pub struct WorldScope {
     pub accounts: eperica_infrastructure::PgAccountRepository,
     pub map: std::sync::Arc<eperica_domain::WorldMap>,
@@ -281,44 +267,37 @@ impl FromRequestParts<AppState> for WorldScope {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        // The selected world from the `world` cookie, defaulting to home; no auth, never redirects.
-        let jar: PrivateCookieJar = PrivateCookieJar::from_request_parts(parts, state)
-            .await
-            .map_err(|_| {
-                (
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal error",
-                )
-                    .into_response()
-            })?;
-        let selected = jar
-            .get(WORLD_COOKIE)
-            .and_then(|c| c.value().parse::<u128>().ok())
-            .map(eperica_domain::WorldId)
-            .unwrap_or(state.world_id);
-        // Build the selected world's context; fall back to home if it is not running.
-        let (world_id, (accounts, map, speed, radius, rules)) =
-            match state.world_registry.context_for(selected).await {
-                Some(ctx) => (selected, ctx),
-                None => match state.world_registry.context_for(state.world_id).await {
-                    Some(home) => (state.world_id, home),
-                    None => {
-                        tracing::error!("world scope: home world has no context");
-                        return Err((
-                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                            "internal error",
-                        )
-                            .into_response());
-                    }
-                },
-            };
+        // The selected world from the URL path (056); unknown/not-running → the lobby.
+        let Some(world) = world_from_path(parts).await else {
+            return Err(Redirect::to("/worlds").into_response());
+        };
+        let Some((accounts, map, speed, radius, rules)) =
+            state.world_registry.context_for(world).await
+        else {
+            return Err(Redirect::to("/worlds").into_response());
+        };
         Ok(WorldScope {
             accounts,
             map,
-            world_id,
+            world_id: world,
             speed,
             radius,
             rules,
         })
     }
+}
+
+/// The selected world from the URL path (056) — `/w/{world}/…`, where `{world}` is the world's UUID. Read via
+/// [`RawPathParams`] (the raw captured pairs) rather than `Path<…>`, so it is **arity-agnostic** and coexists
+/// with a handler's own `{id}` Path extraction on the same route. `None` if there is no `world` capture or it
+/// is not a valid UUID — the caller then redirects to the lobby.
+pub(crate) async fn world_from_path(parts: &mut Parts) -> Option<eperica_domain::WorldId> {
+    let params = RawPathParams::from_request_parts(parts, &()).await.ok()?;
+    let raw = params
+        .iter()
+        .find(|(k, _)| *k == "world")
+        .map(|(_, v)| v.to_owned())?;
+    Some(eperica_domain::WorldId(
+        uuid::Uuid::parse_str(&raw).ok()?.as_u128(),
+    ))
 }

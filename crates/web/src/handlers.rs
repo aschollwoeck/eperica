@@ -1909,7 +1909,7 @@ fn parse_troop_building(slug: &str) -> Option<BuildingKind> {
 /// Player only, P4).
 pub async fn troops(
     ctx: GameContext,
-    axum::extract::Path(building_slug): axum::extract::Path<String>,
+    axum::extract::Path((_world, building_slug)): axum::extract::Path<(String, String)>,
     Query(q): Query<VillageQuery>,
 ) -> Response {
     let player = ctx.player;
@@ -3494,7 +3494,9 @@ pub async fn search_page(world: WorldScope, Query(sq): Query<SearchQuery>) -> Re
 /// Public player statistics page (016 AC9).
 pub async fn player_stats_page(
     world: WorldScope,
-    axum::extract::Path(id): axum::extract::Path<String>,
+    // Under `/w/{world}/…` the route captures both `world` and `id`; the world is read by the extractor
+    // (056), so take it as a 2-tuple and use only the id.
+    axum::extract::Path((_world, id)): axum::extract::Path<(String, String)>,
 ) -> Response {
     let Ok(pid) = id.parse::<u128>() else {
         return not_found();
@@ -3933,7 +3935,9 @@ pub async fn quests_page(ctx: GameContext) -> Response {
 /// Public alliance statistics page (016 AC10).
 pub async fn alliance_stats_page(
     world: WorldScope,
-    axum::extract::Path(id): axum::extract::Path<String>,
+    // Under `/w/{world}/…` the route captures both `world` and `id`; the world is read by the extractor
+    // (056), so take it as a 2-tuple and use only the id.
+    axum::extract::Path((_world, id)): axum::extract::Path<(String, String)>,
 ) -> Response {
     let Ok(aid) = id.parse::<u128>() else {
         return not_found();
@@ -3988,7 +3992,9 @@ pub async fn alliance_stats_page(
 /// redaction is enforced by the repository (010 AC11, P4).
 pub async fn scout_report_detail(
     ctx: GameContext,
-    axum::extract::Path(id): axum::extract::Path<String>,
+    // Under `/w/{world}/…` the route captures both `world` and `id`; the world is read by the extractor
+    // (056), so take it as a 2-tuple and use only the id.
+    axum::extract::Path((_world, id)): axum::extract::Path<(String, String)>,
 ) -> Response {
     let player = ctx.player;
     let Ok(id) = id.parse::<u128>() else {
@@ -4072,7 +4078,9 @@ pub async fn scout_report_detail(
 /// One battle report's detail — only a party to it may view it (009 AC8, P4).
 pub async fn report_detail(
     ctx: GameContext,
-    axum::extract::Path(id): axum::extract::Path<String>,
+    // Under `/w/{world}/…` the route captures both `world` and `id`; the world is read by the extractor
+    // (056), so take it as a 2-tuple and use only the id.
+    axum::extract::Path((_world, id)): axum::extract::Path<(String, String)>,
 ) -> Response {
     let player = ctx.player;
     let Ok(id) = id.parse::<u128>() else {
@@ -4631,7 +4639,10 @@ pub async fn forum_new(ctx: GameContext, Form(form): Form<NewThreadForm>) -> Res
 }
 
 /// A single forum thread + its posts (027 AC1, members of the owning alliance only).
-pub async fn forum_thread_page(ctx: GameContext, Path(id): Path<String>) -> Response {
+pub async fn forum_thread_page(
+    ctx: GameContext,
+    Path((_world, id)): Path<(String, String)>,
+) -> Response {
     let player = ctx.player;
     let Ok(tid) = id.parse::<u128>() else {
         return not_found();
@@ -4667,7 +4678,7 @@ pub struct ForumReplyForm {
 /// Reply to a forum thread (027 AC3, member; locked threads rejected).
 pub async fn forum_reply(
     ctx: GameContext,
-    Path(id): Path<String>,
+    Path((_world, id)): Path<(String, String)>,
     Form(form): Form<ForumReplyForm>,
 ) -> Response {
     let player = ctx.player;
