@@ -494,28 +494,10 @@ pub async fn logout(jar: PrivateCookieJar) -> Response {
     (jar, Redirect::to("/")).into_response()
 }
 
-/// The world-switch form (043): the world to make current.
-#[derive(Deserialize)]
-pub struct SelectWorldForm {
-    world: String,
-}
-
-/// Select the current world (043) — sets the encrypted `world` cookie so subsequent game requests operate
-/// in it. Only a world the **account** has joined is honoured (server-authoritative); an unknown/unjoined
-/// world is ignored (stays on the current selection). The lobby that lists worlds + posts here is 045.
-pub async fn select_world(
-    State(state): State<AppState>,
-    jar: PrivateCookieJar,
-    AuthUser(account): AuthUser,
-    Form(form): Form<SelectWorldForm>,
-) -> Response {
-    let Ok(world) = form.world.trim().parse::<u128>().map(WorldId) else {
-        return Redirect::to("/village").into_response();
-    };
-    match state.accounts.player_in_world(account, world).await {
-        Ok(Some(_)) => (jar.add(world_cookie(world.0)), Redirect::to("/village")).into_response(),
-        _ => Redirect::to("/village").into_response(),
-    }
+/// Redirect a bare world-coupled route (an old `/village` link, or a nav fallback when no world is in the
+/// URL) to the lobby (056). The world lives in the path now; without one, the player picks a world here.
+pub async fn redirect_to_lobby() -> Response {
+    Redirect::to("/worlds").into_response()
 }
 
 /// The world lobby (045 AC2): the worlds the account plays (with the current one marked) + the running
