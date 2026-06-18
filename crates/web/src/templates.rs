@@ -4,13 +4,41 @@ use askama::Template;
 
 #[derive(Template)]
 #[template(path = "index.html")]
-pub struct IndexTemplate;
+pub struct IndexTemplate {
+    /// Open worlds shown on the landing — a visitor clicks one to register straight into it.
+    pub worlds: Vec<LandingWorldRow>,
+}
+
+/// One open world on the landing page.
+pub struct LandingWorldRow {
+    /// Hyphenated world UUID — used in `/register?world={id}` and the `/w/{id}` routes.
+    pub id: String,
+    pub name: String,
+    /// Human speed label, e.g. "3× speed".
+    pub speed_label: String,
+}
+
+#[derive(Template)]
+#[template(path = "impressum.html")]
+pub struct ImpressumTemplate;
+
+#[derive(Template)]
+#[template(path = "privacy.html")]
+pub struct PrivacyTemplate;
+
+#[derive(Template)]
+#[template(path = "terms.html")]
+pub struct TermsTemplate;
 
 #[derive(Template)]
 #[template(path = "register.html")]
 pub struct RegisterTemplate {
     /// An error message to show above the form, if any.
     pub error: Option<String>,
+    /// Preselected world (from a landing "Enlist" link) — carried as a hidden field so registration drops
+    /// the new account straight into it. `world_name` is shown in the heading.
+    pub world: Option<String>,
+    pub world_name: Option<String>,
 }
 
 #[derive(Template)]

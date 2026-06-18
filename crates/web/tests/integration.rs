@@ -1449,6 +1449,119 @@ async fn register_rejects_invalid_input(pool: sqlx::PgPool) {
     assert!(res.text().await.unwrap().contains("choose a tribe"));
 }
 
+/// 063 AC3: the landing lists the open world as a register link, and registering with a chosen world drops
+/// the new account straight into that world's village (account first, then world).
+#[sqlx::test(migrations = "../../migrations")]
+async fn register_into_chosen_world(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    // The landing offers the open world as an "Enlist" link into registration.
+    let landing = client()
+        .get(format!("{base}/"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        landing.contains(&format!("/register?world={home}")),
+        "landing links the open world to register"
+    );
+
+    // Registering with that world chosen → straight into its village (303), not the lobby.
+    let user = unique("enlist");
+    let res = client()
+        .post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", format!("{user}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+            ("world", home.as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+    assert_eq!(
+        res.headers().get(LOCATION).unwrap().to_str().unwrap(),
+        format!("/w/{home}/village"),
+        "the chosen world routes the new account into that world"
+    );
+}
+
+/// 063 AC3 (the P4-sensitive branch): registering with a chosen world that is NOT the home world joins
+/// that world server-side — a player row is created there and the account lands in its village.
+#[sqlx::test(migrations = "../../migrations")]
+async fn register_into_a_second_world(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+
+    // A second open world; the registry self-populates its runtime from the row on first access.
+    let world_b = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 30, 313)")
+        .bind(world_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Register choosing world B → into B's village (not the lobby, not the home world).
+    let user = unique("benlist");
+    let res = client()
+        .post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", format!("{user}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "teutons"),
+            ("world", world_b.to_string().as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+    assert_eq!(
+        res.headers().get(LOCATION).unwrap().to_str().unwrap(),
+        format!("/w/{world_b}/village"),
+        "a non-home chosen world routes into that world"
+    );
+
+    // P4: a player for the new account now exists in world B (the join actually happened).
+    let uid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind(&user)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let n: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM players WHERE world_id = $1 AND user_id = $2")
+            .bind(world_b)
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(n, 1, "the account was joined into the chosen world");
+}
+
+/// 063 AC6: static assets and dynamic HTML are served `Cache-Control: no-cache`, so edited CSS/templates
+/// are never served stale.
+#[sqlx::test(migrations = "../../migrations")]
+async fn responses_send_no_cache(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    for path in ["/", "/static/base.css"] {
+        let res = client().get(format!("{base}{path}")).send().await.unwrap();
+        let cc = res
+            .headers()
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            cc.contains("no-cache"),
+            "{path} sends no-cache (got {cc:?})"
+        );
+    }
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn logout_ends_session(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;

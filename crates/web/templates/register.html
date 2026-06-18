@@ -2,8 +2,10 @@
 {% block content %}
 <section class="panel">
   <h1>Create account</h1>
+  {% if let Some(name) = world_name %}<p class="muted">Enlisting in <strong>{{ name }}</strong> — you'll march straight in.</p>{% endif %}
   {% if let Some(message) = error %}<p class="alert alert--danger">{{ message }}</p>{% endif %}
   <form method="post" action="/register" class="form">
+    {% if let Some(w) = world %}<input type="hidden" name="world" value="{{ w }}">{% endif %}
     <div class="field">
       <label for="username">Username</label>
       <input id="username" name="username" required autofocus>

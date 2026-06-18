@@ -1,0 +1,20 @@
+/* Theme: Forged Steel (grim) — cold iron in the dark, blued-steel actions, tarnished-brass fittings.
+   A metal-led, grim palette: deep gunmetal surfaces, desaturated steel, aged brass highlight. */
+:root {
+  --c-bg: #090C10;        /* near-black gunmetal */
+  --c-panel: #11161C;     /* cold iron plate */
+  --c-panel-alt: #19212A; /* brushed steel surface */
+  --c-ink: #CDD5DD;       /* dimmed silver text */
+  --c-ink-muted: #757F8B; /* cold steel grey */
+  --c-border: #2A333D;    /* dark riveted edge */
+  --c-accent: #517EA3;    /* blued steel — primary action (cold, not bright) */
+  --c-accent-ink: #080B0E;/* near-black on accent */
+  --c-gold: #A6864B;      /* tarnished brass — hairlines, wordmark, numerals */
+  --c-danger: #B0473C;    /* dried-blood red */
+  --c-success: #6E945A;   /* dull patina green */
+  --c-warning: #BB8B3E;   /* aged brass amber */
+  --c-lumber: #82A05F;    /* timber */
+  --c-clay: #AE6F4E;      /* copper-clay */
+  --c-iron-res: #9BA6B1;  /* steel */
+  --c-crop: #C6A248;      /* wheat brass */
+}

@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% block body_class %}has-building-bg{% endblock %}
+{% block body_style %}--building-img: url('/static/buildings/main_building.webp');{% endblock %}
 {% block content %}
 <section class="panel">
   <h1>{{ username }}'s village{% if is_capital %} <span class="badge">★ Capital</span>{% endif %}</h1>

@@ -28,8 +28,10 @@ P11 budget. Presentation-layer; commit per task group on `feature/063-visual-ide
   `static/buildings/` (README) + `docs/art/building-backgrounds.md` prompt sheet. (AC5)
 - [x] **T9 — Cache freshness.** `static_cache_control` middleware → `Cache-Control: no-cache` on all
   responses. (AC6)
-- [ ] **T10 — Gate + reviewer + PR.** Full workspace tests + Playwright sweep (widths + register + building
-  pages + legal); `eperica-reviewer` → APPROVE; squash-merge.
+- [x] **T10 — Gate + reviewer + PR.** Full workspace tests green (web 83, infra 123, all crates 0 failures);
+  Playwright sweep (widths 1280–2560 + mobile, register-into-world, building pages incl. fallback, legal);
+  `eperica-reviewer` → APPROVE (after adding the cross-world-join + no-cache integration tests); PR opened.
 
-> Implementation landed iteratively (live Playwright review); T1–T9 are complete and verified, T10 (reviewer
-> gate + PR) is the remaining step. Tasks are recorded here to keep the spec→plan→tasks trail intact.
+> Implementation landed iteratively (live Playwright review); recorded here to keep the spec→plan→tasks trail
+> intact. The reviewer's MUST-FIX (cross-world register-into-world join test) and SHOULD-FIX (no-cache header
+> test + clarifying comments) were folded into the implementation commit before APPROVE.
