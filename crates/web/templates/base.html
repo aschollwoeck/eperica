@@ -5,11 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Eperica</title>
   <link rel="stylesheet" href="/static/base.css">
-  <link rel="stylesheet" href="/static/theme-ash.css">
+  <link rel="stylesheet" href="/static/theme-steel.css">
+  {% block head %}{% endblock %}
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}" style="{% block body_style %}{% endblock %}">
   <header class="topbar">
-    <a class="topbar__brand" href="/">Eperica</a>
+    <a class="topbar__brand" href="/">
+      <svg class="topbar__crest" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 21V9l2-1V5h2v2l2-1V3h2v3l2-1V5h2v3l2 1v12"/><path d="M4 21h16"/><path d="M10 21v-4h4v4"/>
+      </svg>
+      Eperica
+    </a>
     <nav class="topbar__nav">
       <!-- Public links — shown to everyone. `data-wl` carries the leaf path; JS (below) rewrites these to
            /w/{world}/… when the current URL is inside a world, else to /worlds (056). -->
@@ -17,11 +23,11 @@
       <!-- Member links — revealed by JS (/me) only when logged in (035). Hidden by default to avoid
            showing account-only links to visitors. -->
       <span class="topbar__group" data-auth="in" hidden>
-        <a href="/village" data-wl="/village">Village</a> <a href="/worlds">Worlds</a> <a href="/notifications" title="Notifications">🔔 <span id="notif-badge" class="badge" hidden></span></a> <a href="/messages">Messages <span id="unread-badge" class="badge" hidden></span></a> <a href="/profile">Profile</a> <a href="/settings">Settings</a> <a href="/sitting">Sitting</a> <a href="/mod" id="nav-mod" hidden>Moderation</a> <a href="/admin" id="nav-admin" hidden>Admin</a>
+        <a href="/village" data-wl="/village">Village</a> <a href="/worlds">Worlds</a> <a href="/notifications" title="Notifications" aria-label="Notifications"><svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 20a2 2 0 0 0 4 0"/></svg> <span id="notif-badge" class="badge" hidden></span></a> <a href="/messages">Messages <span id="unread-badge" class="badge" hidden></span></a> <a href="/profile">Profile</a> <a href="/settings">Settings</a> <a href="/sitting">Sitting</a> <a href="/mod" id="nav-mod" hidden>Moderation</a> <a href="/admin" id="nav-admin" hidden>Admin</a>
         <form method="post" action="/logout" class="topbar__logout"><button type="submit">Log out</button></form>
       </span>
       <!-- Visitor links — revealed by JS only when logged out. -->
-      <span class="topbar__group" data-auth="out" hidden><a href="/login">Log in</a> <a href="/register">Register</a></span>
+      <span class="topbar__group" data-auth="out" hidden><a href="/login">Log in</a> <a class="topbar__cta" href="/register">Create account</a></span>
       <form method="get" action="/search" class="topbar__search" data-wl-action="/search"><input type="text" name="q" placeholder="Search…" autocomplete="off"></form></nav>
   </header>
   <div id="sitting-banner" class="banner" hidden></div>
@@ -29,7 +35,35 @@
   <main class="container">
     {% block content %}{% endblock %}
   </main>
-  <footer class="footer">Eperica — a faithful Travian-style strategy MMO</footer>
+  <footer class="site-footer">
+    <div class="site-footer__inner">
+      <div class="site-footer__brand">
+        <span class="site-footer__mark">Eperica</span>
+        <p class="site-footer__tag">A faithful Travian-style strategy MMO. Built for the love of the game.</p>
+      </div>
+      <nav class="site-footer__col" aria-label="Play">
+        <h2 class="site-footer__h">Play</h2>
+        <a href="/worlds">Worlds</a>
+        <a href="/leaderboard">Leaderboards</a>
+        <a href="/wonder">Wonder</a>
+      </nav>
+      <nav class="site-footer__col" aria-label="Account">
+        <h2 class="site-footer__h">Account</h2>
+        <a href="/register">Create account</a>
+        <a href="/login">Log in</a>
+      </nav>
+      <nav class="site-footer__col" aria-label="Legal">
+        <h2 class="site-footer__h">Legal</h2>
+        <a href="/impressum">Impressum</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+      </nav>
+    </div>
+    <div class="site-footer__bar">
+      <span>© Eperica</span>
+      <span class="site-footer__muted">Server-authoritative · No pay-to-win</span>
+    </div>
+  </footer>
   <script>
     // 056: world-aware nav — the world lives in the URL (/w/{world}/…), so derive it from the current
     // path and point the world-coupled nav links/forms at /w/{world}/… . Outside a world (account pages,

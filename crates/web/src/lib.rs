@@ -311,6 +311,10 @@ fn world_router() -> Router<AppState> {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(handlers::index))
+        // Public legal/static pages (footer).
+        .route("/impressum", get(handlers::impressum))
+        .route("/privacy", get(handlers::privacy))
+        .route("/terms", get(handlers::terms))
         .route(
             "/register",
             get(handlers::register_form).post(handlers::register_submit),
@@ -383,8 +387,22 @@ pub fn router(state: AppState) -> Router {
             state.clone(),
             presence_touch,
         ))
+        .layer(axum::middleware::from_fn(static_cache_control))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+/// Make browsers revalidate every response. Neither the dynamic HTML nor `ServeDir`'s static assets
+/// send `Cache-Control`, so browsers heuristically cache them — leaving a stale page/CSS after an edit.
+/// `no-cache` forces a conditional request each load (cheap 304 when unchanged, fresh 200 the moment a
+/// file changes). Applied to all responses since the app is dynamic and not meant to be cached blindly.
+async fn static_cache_control(req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    res.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
+    res
 }
 
 #[cfg(test)]

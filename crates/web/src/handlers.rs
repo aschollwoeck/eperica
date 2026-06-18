@@ -10,17 +10,18 @@ use crate::templates::{
     AdminWorldRow, AllianceStatsTemplate, AllianceTemplate, AlliedVillageView, ArtifactRowView,
     AuditRow, BuildRow, ChatLineView, CompletedQuestView, ConversationRow, ConversationTemplate,
     CurrentQuestView, DiploRowView, ForceRow, ForumPostRow, ForumTemplate, ForumThreadRow,
-    ForumThreadTemplate, GarrisonRow, HistoryPointView, IncomingView, IndexTemplate,
-    JoinableWorldRow, JoinedWorldRow, LeaderboardRowView, LeaderboardTemplate, LoginTemplate,
-    MapCellView, MapTemplate, MarketTemplate, MedalRowView, MemberStatRow, MessagesTemplate,
-    ModAccountTemplate, ModQueueTemplate, ModReportRow, MovementRow, NotificationRowView,
-    NotificationsTemplate, OasisRow, OutgoingInviteView, PendingInviteView, PlayerStatsTemplate,
-    ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate,
-    ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, RosterRowView,
-    ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate, SettingsTemplate,
-    SettingsToggleRow, ShipmentRow, SitterRow, SittingTemplate, SmithyRow, SmithyTemplate,
-    StyleGuideTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
-    VillageTemplate, WonderStandingView, WonderTemplate, WorldsTemplate,
+    ForumThreadTemplate, GarrisonRow, HistoryPointView, ImpressumTemplate, IncomingView,
+    IndexTemplate, JoinableWorldRow, JoinedWorldRow, LandingWorldRow, LeaderboardRowView,
+    LeaderboardTemplate, LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MedalRowView,
+    MemberStatRow, MessagesTemplate, ModAccountTemplate, ModQueueTemplate, ModReportRow,
+    MovementRow, NotificationRowView, NotificationsTemplate, OasisRow, OutgoingInviteView,
+    PendingInviteView, PlayerStatsTemplate, PrivacyTemplate, ProfileTemplate, QuestsTemplate,
+    QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow,
+    ReportTemplate, ReportsTemplate, RosterRowView, ScoutReportTemplate, ScoutResourceRow,
+    SearchHitRow, SearchTemplate, SettingsTemplate, SettingsToggleRow, ShipmentRow, SitterRow,
+    SittingTemplate, SmithyRow, SmithyTemplate, StyleGuideTemplate, TermsTemplate, TrainRow,
+    TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate, WonderStandingView,
+    WonderTemplate, WorldsTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -371,14 +372,129 @@ fn with_flash(resp: Response, msg: Option<String>) -> Response {
     resp
 }
 
-/// Public landing page (Visitor).
-pub async fn index() -> Response {
-    page(&IndexTemplate)
+/// Public landing page (Visitor). Lists the open worlds so a visitor can pick one and register straight
+/// into it.
+pub async fn index(State(state): State<AppState>) -> Response {
+    let worlds = match state.accounts.list_worlds().await {
+        Ok(ws) => ws
+            .into_iter()
+            .filter(|w| w.won_ms.is_none())
+            .map(|w| LandingWorldRow {
+                id: world_id_str(w.id),
+                name: w.name,
+                speed_label: format!("{}× speed", w.speed),
+            })
+            .collect(),
+        Err(e) => {
+            // A landing without the worlds list is still useful — log and show the page anyway.
+            tracing::error!(error = %e, "landing list_worlds failed");
+            Vec::new()
+        }
+    };
+    page(&IndexTemplate { worlds })
+}
+
+/// Resolve a `?world=<uuid>` choice to a (validated hyphenated id, name) pair — only for a real, open
+/// (not-won) world the registry can serve. `(None, None)` otherwise.
+async fn resolve_world_choice(
+    state: &AppState,
+    world: Option<&str>,
+) -> (Option<String>, Option<String>) {
+    let Some(raw) = world else {
+        return (None, None);
+    };
+    let Ok(uuid) = uuid::Uuid::parse_str(raw.trim()) else {
+        return (None, None);
+    };
+    let wid = WorldId(uuid.as_u128());
+    match state.accounts.list_worlds().await {
+        Ok(ws) => ws
+            .into_iter()
+            .find(|w| w.id == wid && w.won_ms.is_none())
+            .map(|w| (Some(world_id_str(w.id)), Some(w.name)))
+            .unwrap_or((None, None)),
+        Err(_) => (None, None),
+    }
+}
+
+/// Where to send a freshly-registered account: into the world they picked on the landing (joining it if
+/// it isn't their home world), or the lobby when no/invalid world was chosen.
+async fn route_after_register(
+    state: &AppState,
+    account: PlayerId,
+    tribe_slug: &str,
+    world: Option<&str>,
+) -> String {
+    let Some(raw) = world else {
+        return "/worlds".to_owned();
+    };
+    let Ok(uuid) = uuid::Uuid::parse_str(raw.trim()) else {
+        return "/worlds".to_owned();
+    };
+    let wid = WorldId(uuid.as_u128());
+    // The home world's player is created by registration itself — just drop into it.
+    if wid == state.world_id {
+        return world_path(wid, "/village");
+    }
+    // Another world: it must be real + open, and the registry must run it; join with the registered tribe.
+    let Some(tribe) = Tribe::from_slug(tribe_slug) else {
+        return "/worlds".to_owned();
+    };
+    // Re-validate on the success path that creates a player — never trust the earlier resolution (`world`
+    // arrives as a plain string, P4); a stale/invalid id falls back to the lobby instead of a bad join.
+    match state.accounts.list_worlds().await {
+        Ok(ws) if ws.iter().any(|w| w.id == wid && w.won_ms.is_none()) => {}
+        _ => return "/worlds".to_owned(),
+    }
+    let Some((repo, _map, _speed, _radius, rules)) = state.world_registry.context_for(wid).await
+    else {
+        return "/worlds".to_owned();
+    };
+    match repo
+        .create_player_in_world(account, tribe, &rules.starting_village)
+        .await
+    {
+        Ok(_) | Err(RepoError::Duplicate) => world_path(wid, "/village"),
+        Err(e) => {
+            tracing::error!(error = %e, "post-register world join failed");
+            "/worlds".to_owned()
+        }
+    }
+}
+
+/// Legal: Impressum (operator disclosure, § 5 DDG) — public, static.
+pub async fn impressum() -> Response {
+    page(&ImpressumTemplate)
+}
+
+/// Legal: privacy policy — public, static.
+pub async fn privacy() -> Response {
+    page(&PrivacyTemplate)
+}
+
+/// Legal: terms of service — public, static.
+pub async fn terms() -> Response {
+    page(&TermsTemplate)
 }
 
 /// Registration form (Visitor).
-pub async fn register_form() -> Response {
-    page(&RegisterTemplate { error: None })
+pub async fn register_form(
+    State(state): State<AppState>,
+    Query(q): Query<RegisterQuery>,
+) -> Response {
+    let (world, world_name) = resolve_world_choice(&state, q.world.as_deref()).await;
+    page(&RegisterTemplate {
+        error: None,
+        world,
+        world_name,
+    })
+}
+
+/// `/register?world=<uuid>` — the world a landing "Enlist" link preselected.
+#[derive(Deserialize)]
+pub struct RegisterQuery {
+    #[serde(default)]
+    world: Option<String>,
 }
 
 /// Login form (Visitor).
@@ -400,6 +516,9 @@ pub struct RegisterForm {
     /// Tribe slug; validated server-side (004 AC1, P4).
     #[serde(default)]
     tribe: String,
+    /// Optional world the visitor chose on the landing — drop them into it on success.
+    #[serde(default)]
+    world: Option<String>,
 }
 
 /// Handle registration (AC1, AC3). On success (no confirmation required) logs the user in.
@@ -410,11 +529,22 @@ pub async fn register_submit(
     jar: PrivateCookieJar,
     Form(form): Form<RegisterForm>,
 ) -> Response {
+    // Resolve the chosen world (validated) so it survives both an error re-render and the success redirect.
+    let (world_field, world_name) = resolve_world_choice(&state, form.world.as_deref()).await;
+    let tribe_slug = form.tribe.clone();
     let cmd = RegisterCommand {
         username: form.username,
         email: form.email,
         password: form.password,
         tribe: form.tribe,
+    };
+    // Re-render the form (on a rejected submission) keeping the preselected world.
+    let reject = |error: String| {
+        page(&RegisterTemplate {
+            error: Some(error),
+            world: world_field.clone(),
+            world_name: world_name.clone(),
+        })
     };
     match register(
         state.accounts.as_ref(),
@@ -433,23 +563,24 @@ pub async fn register_submit(
                 tracing::error!(error = %e, "failed to record registration IP");
             }
             if state.require_email_confirmation {
+                // Not logged in yet, so a landing world choice is intentionally dropped here — the player
+                // picks a world from the lobby after confirming their email.
                 page(&LoginTemplate {
                     error: Some("Account created. Confirm your email, then log in.".to_owned()),
                 })
             } else {
                 let jar = jar.add(auth_cookie(user.id.0));
-                (jar, Redirect::to("/worlds")).into_response()
+                let dest =
+                    route_after_register(&state, user.id, &tribe_slug, world_field.as_deref())
+                        .await;
+                (jar, Redirect::to(&dest)).into_response()
             }
         }
-        Err(RegisterError::Invalid(message)) => page(&RegisterTemplate {
-            error: Some(message),
-        }),
-        Err(RegisterError::Taken) => page(&RegisterTemplate {
-            error: Some("That username or email is already taken.".to_owned()),
-        }),
-        Err(RegisterError::WorldFull) => page(&RegisterTemplate {
-            error: Some("The world is full — no free tile to settle.".to_owned()),
-        }),
+        Err(RegisterError::Invalid(message)) => reject(message),
+        Err(RegisterError::Taken) => reject("That username or email is already taken.".to_owned()),
+        Err(RegisterError::WorldFull) => {
+            reject("The world is full — no free tile to settle.".to_owned())
+        }
         Err(RegisterError::Backend(e)) => {
             tracing::error!(error = %e, "register failed");
             server_error()

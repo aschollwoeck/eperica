@@ -24,6 +24,18 @@ body {
   background: var(--c-bg);
 }
 
+/* Grim atmosphere — a soft vignette and a fine soot/grain over the whole page. Both are fixed,
+   pointer-transparent overlays, so they tint every page without affecting layout or interaction. */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: 59; pointer-events: none;
+  background: radial-gradient(132% 120% at 50% 30%, transparent 55%, rgba(0, 0, 0, 0.58) 100%);
+}
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: 60; pointer-events: none;
+  opacity: 0.05; mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
 h1, h2, h3 {
   font-family: Georgia, "Times New Roman", serif;
   letter-spacing: 0.02em;
@@ -34,38 +46,116 @@ a { color: var(--c-gold); }
 .res, .num { font-variant-numeric: tabular-nums; }
 
 .topbar {
-  background: var(--c-panel-alt);
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap;
+  background: color-mix(in srgb, var(--c-panel-alt) 92%, transparent);
+  backdrop-filter: blur(6px);
   border-bottom: 1px solid var(--c-border);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--space-5);
 }
 .topbar__brand {
+  display: inline-flex; align-items: center; gap: var(--space-2);
   color: var(--c-gold);
   font-family: Georgia, serif;
-  font-size: 1.3rem;
+  font-size: 1.2rem;
   font-weight: bold;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   text-decoration: none;
 }
+.topbar__crest { width: 22px; height: 22px; color: var(--c-accent); flex: none; }
 
-/* 035: auth-aware nav groups — keep the logout form and link groups inline with the other nav links.
-   The explicit [hidden] rule must win over `display: inline` (an author rule would otherwise override
-   the UA `[hidden] { display: none }`, leaking the hidden group). */
-.topbar__group { display: inline; }
+.topbar__nav {
+  margin-left: auto;
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+}
+.topbar__nav a {
+  color: var(--c-ink-muted); text-decoration: none; white-space: nowrap;
+  padding: 6px 9px; border-radius: var(--radius-sm); font-size: 0.92rem;
+}
+.topbar__nav a:hover { color: var(--c-gold); background: color-mix(in srgb, var(--c-gold) 9%, transparent); }
+
+/* 035: auth-aware nav groups — `display: contents` lets the grouped links sit in the topbar flex row
+   with even spacing. The explicit [hidden] rule must win (an author rule would otherwise override the
+   UA `[hidden] { display: none }`, leaking the hidden group). */
+.topbar__group { display: contents; }
 .topbar__group[hidden], #nav-mod[hidden], #nav-admin[hidden] { display: none; }
-.topbar__logout { display: inline; margin: 0; }
+.topbar__logout { margin: 0; }
 .topbar__logout button {
-  background: none;
-  border: 0;
-  padding: 0;
-  font: inherit;
-  color: var(--c-gold);
-  cursor: pointer;
-  text-decoration: underline;
+  background: none; border: 0; cursor: pointer; font: inherit; font-size: 0.92rem;
+  padding: 6px 9px; border-radius: var(--radius-sm);
+  color: var(--c-ink-muted);
+}
+.topbar__logout button:hover { color: var(--c-gold); background: color-mix(in srgb, var(--c-gold) 9%, transparent); }
+
+/* Primary call-to-action in the bar (Register / Create account). */
+.topbar__cta, .topbar__nav a.topbar__cta {
+  background: var(--c-accent); color: var(--c-accent-ink);
+  border: 1px solid color-mix(in srgb, var(--c-accent) 70%, black);
+  font-weight: 600; padding: 7px 14px;
+}
+.topbar__cta:hover, .topbar__nav a.topbar__cta:hover {
+  background: color-mix(in srgb, var(--c-accent) 88%, white); color: var(--c-accent-ink);
 }
 
+.topbar__search { margin: 0; }
+.topbar__search input {
+  background: var(--c-bg); border: 1px solid var(--c-border); color: var(--c-ink);
+  border-radius: var(--radius-sm); padding: 7px 11px; font: inherit; font-size: 0.9rem;
+  width: 9rem; max-width: 40vw;
+}
+.topbar__search input::placeholder { color: var(--c-ink-muted); }
+.topbar__search input:focus-visible { outline: 2px solid var(--c-gold); outline-offset: 1px; width: 12rem; }
+@media (max-width: 600px) { .topbar__search { display: none; } }
+
 .container { max-width: 880px; margin: var(--space-6) auto; padding: 0 var(--space-4); }
-.footer { color: var(--c-ink-muted); text-align: center; padding: var(--space-6); font-size: 0.85rem; }
+
+/* Building-page background — a darkened building plate behind the page. Layer order (top→bottom):
+   scrim gradient · the building image · the theme base colour. The image sits UNDER the scrim, so when
+   `/static/buildings/<slug>.webp` is missing the image layer renders nothing and the scrim + base colour
+   show through unchanged — a graceful fallback with no broken-image artifacts. The page also keeps the
+   global vignette/grain overlays on top. Panels go slightly translucent so the plate reads behind content. */
+.has-building-bg {
+  background:
+    linear-gradient(to bottom,
+      color-mix(in srgb, var(--c-bg) 42%, transparent) 0%,
+      color-mix(in srgb, var(--c-bg) 80%, transparent) 58%,
+      var(--c-bg) 100%),
+    var(--building-img, none) center top / cover no-repeat fixed,
+    var(--c-bg);
+}
+.has-building-bg .panel { background: color-mix(in srgb, var(--c-panel) 88%, transparent); }
+
+/* Site footer — brand + link columns + a legal bar; global (every page). */
+.site-footer { border-top: 1px solid var(--c-border); background: var(--c-panel-alt); color: var(--c-ink-muted); margin-top: var(--space-7); }
+.site-footer__inner {
+  max-width: 1140px; margin: 0 auto; padding: var(--space-6) var(--space-5);
+  display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: var(--space-5);
+}
+.site-footer__mark { font-family: Georgia, serif; color: var(--c-gold); font-size: 1.2rem; letter-spacing: 0.07em; text-transform: uppercase; }
+.site-footer__tag { margin: var(--space-2) 0 0; font-size: 0.9rem; max-width: 34ch; }
+.site-footer__col { display: flex; flex-direction: column; gap: var(--space-2); }
+.site-footer__h { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.16em; color: var(--c-ink-muted); margin: 0 0 var(--space-2); }
+.site-footer__col a { color: var(--c-ink); text-decoration: none; font-size: 0.92rem; }
+.site-footer__col a:hover { color: var(--c-gold); }
+.site-footer__bar {
+  border-top: 1px solid var(--c-border);
+  max-width: 1140px; margin: 0 auto; padding: var(--space-3) var(--space-5);
+  display: flex; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; font-size: 0.8rem;
+}
+@media (max-width: 700px) { .site-footer__inner { grid-template-columns: 1fr 1fr; } }
+
+/* Legal / static prose pages (impressum, privacy, terms). */
+.legal { max-width: 70ch; }
+.legal h1 { font-size: 1.9rem; margin: 0 0 var(--space-3); color: var(--c-ink); }
+.legal h2 { font-size: 1.15rem; margin: var(--space-6) 0 var(--space-2); color: var(--c-gold); }
+.legal p, .legal li { color: var(--c-ink-muted); }
+.legal a { color: var(--c-gold); }
+.legal__todo {
+  margin: var(--space-4) 0; padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--c-border); border-radius: var(--radius-md);
+  color: var(--c-ink-muted); font-size: 0.9rem; background: color-mix(in srgb, var(--c-warning) 8%, transparent);
+}
 
 .panel {
   background: var(--c-panel);
@@ -178,6 +268,11 @@ a { color: var(--c-gold); }
   font-size: 0.8rem;
   font-weight: 700;
 }
+/* The `.badge` author `display` would otherwise beat the UA `[hidden] { display: none }`, leaking an
+   empty pill when the count is zero (the nav bell/messages badges are `hidden` until they have a count). */
+.badge[hidden] { display: none; }
+/* Inline nav icons (bell, …) sized + vertically centred next to their label. */
+.topbar__nav .nav-icon { vertical-align: -3px; }
 
 /* 032: resource bars — a fill track under each resource line. Stacks the resources full-width. */
 .resource-list { flex-direction: column; gap: var(--space-2); }

@@ -1,0 +1,271 @@
+/* Eperica landing page — "forge at night": near-black ground, ember heat, gilt hairlines.
+   Loaded only on the landing (index.html). Consumes the Ash & Rust --c-* tokens + base spacing. */
+
+:root {
+  --lp-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --lp-maxw: 1140px;
+}
+
+/* Full-bleed: free the landing from the 880px content container, and lay an ember ground that spans
+   the page (so the now-transparent topbar floats over the glow). */
+.lp main.container { max-width: none; margin: 0; padding: 0; }
+.lp {
+  background:
+    radial-gradient(72% 56% at 80% -6%, color-mix(in srgb, var(--c-accent) 22%, transparent), transparent 60%),
+    radial-gradient(46% 40% at 8% 4%, color-mix(in srgb, var(--c-gold) 7%, transparent), transparent 55%),
+    var(--c-bg);
+  background-attachment: fixed;
+}
+/* Marketing header: float a transparent, non-sticky bar over the hero glow and drop the in-game search. */
+.lp .topbar {
+  position: static;
+  background: transparent;
+  backdrop-filter: none;
+  border-bottom-color: color-mix(in srgb, var(--c-border) 60%, transparent);
+}
+.lp .topbar__search { display: none; }
+
+.mono { font-family: var(--lp-mono); font-variant-numeric: tabular-nums; }
+.lp-wrap { max-width: var(--lp-maxw); margin: 0 auto; padding: 0 var(--space-5); }
+
+/* ---- Hero -------------------------------------------------------------------------------------- */
+.lp-hero { position: relative; padding: clamp(48px, 9vw, 104px) 0 clamp(40px, 7vw, 80px); }
+/* Faint war-map grid behind the hero, masked to fade toward the headline so it never fights the text. */
+.lp-hero::before {
+  content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0 47px, color-mix(in srgb, var(--c-ink-muted) 5%, transparent) 47px 48px),
+    repeating-linear-gradient(90deg, transparent 0 47px, color-mix(in srgb, var(--c-ink-muted) 5%, transparent) 47px 48px);
+  -webkit-mask-image: radial-gradient(110% 95% at 78% 26%, #000 4%, transparent 58%);
+  mask-image: radial-gradient(110% 95% at 78% 26%, #000 4%, transparent 58%);
+}
+.lp-hero__glow {
+  position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background: radial-gradient(40% 52% at 74% 34%, color-mix(in srgb, var(--c-accent) 20%, transparent), transparent 64%);
+}
+/* Warm uplight — torchlight washing up from the ramparts. z-index 2 keeps it in front of the hero
+   panels, so the glow spills over the war-table's edge (light in front) rather than being clipped by it. */
+.lp-hero::after {
+  content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  background: radial-gradient(52% 60% at 48% 120%, color-mix(in srgb, #d9742f 15%, transparent), transparent 62%);
+}
+/* A pale, cold moon above the keep — a counterpoint to the warm torches, and depth. */
+.lp-hero__moon {
+  position: absolute; z-index: 0; pointer-events: none;
+  top: clamp(36px, 9vw, 104px); left: 53%;
+  width: clamp(48px, 6vw, 76px); aspect-ratio: 1; border-radius: 50%;
+  background: radial-gradient(circle at 38% 34%, #cdd6df, #92a2b0 58%, #6d8290 100%);
+  box-shadow: 0 0 56px 10px color-mix(in srgb, #aebecb 22%, transparent);
+  opacity: 0.42;
+}
+
+/* Fortress skyline + torches at the hero base — a sense of place, and warm fire against the cold steel. */
+/* Anchored to the same centred content column as the lede/box (.lp-wrap), so the gatehouse + its torches
+   stay in the gap between them at every viewport width — the gap is centred, so full-width positioning
+   would let the torches drift under the text/box as the window widens. */
+.lp-hero__skyline {
+  position: absolute; left: 0; right: 0; bottom: 0; margin: 0 auto; pointer-events: none;
+  width: 100%; max-width: var(--lp-maxw); padding: 0 var(--space-5);
+  height: clamp(120px, 17vw, 190px);
+}
+/* No z-index on the container, so each layer's z applies in the hero's stacking context:
+   the silhouette sits behind the content (z 0), the keep torches in front of it + the uplight (z 3). */
+/* overflow: visible so the torch/ember glow (which reaches above the viewBox top) isn't clipped by the
+   SVG viewport into a hard horizontal edge. */
+.lp-hero__skyline .lp-sky { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: visible; }
+.lp-sky--back { z-index: 0; }
+.lp-sky--front { z-index: 3; }
+.lp-torch__flame, .lp-torch__glow { transform-box: fill-box; transform-origin: center bottom; }
+.lp-torch__flame { animation: lp-flicker 1.5s ease-in-out infinite; }
+.lp-torch__glow { transform-origin: center; animation: lp-glow 1.5s ease-in-out infinite; }
+.lp-torch--b .lp-torch__flame, .lp-torch--b .lp-torch__glow { animation-duration: 1.8s; animation-delay: 0.35s; }
+.lp-torch--c .lp-torch__flame, .lp-torch--c .lp-torch__glow { animation-duration: 1.6s; animation-delay: 0.7s; }
+.lp-torch--d .lp-torch__flame, .lp-torch--d .lp-torch__glow { animation-duration: 1.9s; animation-delay: 0.15s; }
+@keyframes lp-flicker {
+  0%, 100% { transform: scaleY(1) scaleX(1); opacity: 1; }
+  45% { transform: scaleY(1.13) scaleX(0.92); opacity: 0.9; }
+  70% { transform: scaleY(0.96) scaleX(1.04); opacity: 1; }
+}
+@keyframes lp-glow { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.78; } }
+
+/* Rising embers from the central torches. */
+.lp-spark { transform-box: fill-box; opacity: 0; animation: lp-spark 2.6s ease-out infinite; }
+.lp-spark--2 { animation-duration: 3.2s; animation-delay: 1.2s; }
+@keyframes lp-spark {
+  0% { transform: translate(0, 0) scale(1); opacity: 0; }
+  18% { opacity: 0.85; }
+  100% { transform: translate(-5px, -34px) scale(0.35); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-torch__flame, .lp-torch__glow, .lp-spark { animation: none; }
+  .lp-spark { opacity: 0; }
+}
+.lp-hero__grid {
+  position: relative; z-index: 1;
+  display: grid; grid-template-columns: 1.05fr 0.95fr;
+  gap: clamp(28px, 5vw, 64px); align-items: center;
+}
+
+.lp-eyebrow {
+  font-family: var(--lp-mono);
+  text-transform: uppercase; letter-spacing: 0.28em;
+  font-size: 0.74rem; color: var(--c-gold);
+  margin: 0 0 var(--space-4);
+}
+.lp-title {
+  font-size: clamp(2.6rem, 6.2vw, 4.5rem);
+  line-height: 1.02; font-weight: 700; margin: 0;
+  color: var(--c-ink); letter-spacing: 0.005em;
+}
+.lp-title__hot {
+  color: var(--c-accent);
+  box-shadow: inset 0 -0.12em 0 color-mix(in srgb, var(--c-gold) 55%, transparent);
+}
+.lp-sub {
+  margin: var(--space-5) 0 0; max-width: 52ch;
+  font-size: clamp(1rem, 1.4vw, 1.16rem); color: var(--c-ink-muted);
+}
+.lp-cta { display: flex; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-6); }
+.lp-cta .btn { padding: 14px 26px; font-size: 1.02rem; }
+.lp-note {
+  margin: var(--space-5) 0 0; font-size: 0.78rem;
+  letter-spacing: 0.04em; color: var(--c-ink-muted);
+}
+
+/* ---- War-table card (the signature element) ---------------------------------------------------- */
+.wartable {
+  position: relative;
+  background: linear-gradient(180deg, var(--c-panel-alt), var(--c-panel));
+  border: 1px solid var(--c-border);
+  border-top: 2px solid color-mix(in srgb, var(--c-gold) 70%, var(--c-border));
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--c-ink) 10%, transparent),
+    var(--shadow-md),
+    0 0 60px -22px color-mix(in srgb, var(--c-accent) 55%, transparent);
+}
+/* Forged-plate corner brackets (top-left + bottom-right) — a riveted, targeted readout. */
+.wartable::before, .wartable::after {
+  content: ""; position: absolute; width: 13px; height: 13px; pointer-events: none;
+  border: 2px solid color-mix(in srgb, var(--c-gold) 75%, transparent);
+}
+.wartable::before { top: 7px; left: 7px; border-right: 0; border-bottom: 0; }
+.wartable::after { bottom: 7px; right: 7px; border-left: 0; border-top: 0; }
+.wartable__head {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-family: var(--lp-mono); text-transform: uppercase;
+  letter-spacing: 0.18em; font-size: 0.74rem; color: var(--c-ink-muted);
+  padding-bottom: var(--space-4); border-bottom: 1px solid var(--c-border);
+}
+.wartable__dot {
+  width: 8px; height: 8px; border-radius: 999px;
+  background: var(--c-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-accent) 28%, transparent);
+}
+.wartable__rows { margin: 0; padding: var(--space-4) 0 0; display: grid; gap: var(--space-3); }
+.wartable__row { display: grid; grid-template-columns: 7rem 1fr; align-items: baseline; gap: var(--space-3); }
+.wartable__row dt { margin: 0; color: var(--c-ink-muted); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.wartable__row dd { margin: 0; color: var(--c-ink); font-size: 0.92rem; }
+.wartable__clock { color: var(--c-gold); font-size: clamp(1.5rem, 3.4vw, 2.1rem); font-weight: 600; line-height: 1; }
+.wartable__cs { color: var(--c-accent); }
+.wartable__map {
+  display: block; width: 100%; height: auto;
+  margin: var(--space-4) 0; color: var(--c-ink-muted);
+  border: 1px solid var(--c-border); border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--c-bg) 55%, transparent);
+}
+.wartable__foot { margin-top: var(--space-4); font-size: 0.72rem; color: var(--c-ink-muted); letter-spacing: 0.04em; }
+
+/* ---- Pillars ----------------------------------------------------------------------------------- */
+.lp-pillars { position: relative; padding: clamp(44px, 6vw, 76px) 0 clamp(36px, 6vw, 72px); }
+/* Heraldic divider — a fading hairline with a brass lozenge at its centre, between hero and pillars. */
+.lp-pillars::before {
+  content: ""; position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+  width: min(62%, 540px); height: 1px;
+  background: linear-gradient(90deg, transparent, var(--c-border) 18%, var(--c-border) 82%, transparent);
+}
+.lp-pillars::after {
+  content: ""; position: absolute; top: -4px; left: 50%; transform: translateX(-50%) rotate(45deg);
+  width: 9px; height: 9px; background: var(--c-gold);
+  box-shadow: 0 0 0 4px var(--c-bg);
+}
+.lp-pillars__grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-5); }
+.pillar {
+  background: color-mix(in srgb, var(--c-panel) 70%, transparent);
+  border: 1px solid var(--c-border); border-radius: var(--radius-md);
+  padding: var(--space-5);
+  transition: border-color 0.2s, transform 0.2s;
+}
+.pillar:hover { border-color: color-mix(in srgb, var(--c-gold) 60%, var(--c-border)); transform: translateY(-2px); }
+.pillar__icon { width: 30px; height: 30px; color: var(--c-gold); margin-bottom: var(--space-3); }
+.pillar__title { font-size: 1.22rem; margin: 0 0 var(--space-2); color: var(--c-ink); }
+.pillar__body { margin: 0; color: var(--c-ink-muted); font-size: 0.96rem; }
+
+/* ---- Dispatches feed --------------------------------------------------------------------------- */
+.lp-feed { padding: clamp(34px, 6vw, 64px) 0; border-top: 1px solid color-mix(in srgb, var(--c-border) 70%, transparent); }
+.lp-feed__title { font-size: clamp(1.4rem, 3vw, 1.9rem); margin: 0 0 var(--space-5); color: var(--c-ink); text-align: center; }
+.lp-feed__log {
+  list-style: none; margin: 0 auto; padding: var(--space-2) var(--space-5); max-width: 760px;
+  background: color-mix(in srgb, var(--c-panel) 70%, transparent);
+  border: 1px solid var(--c-border); border-radius: var(--radius-md); font-size: 0.9rem;
+}
+.lp-feed__log li { padding: var(--space-3) 0; border-bottom: 1px solid color-mix(in srgb, var(--c-border) 55%, transparent); color: var(--c-ink-muted); }
+.lp-feed__log li:last-child { border-bottom: 0; }
+.lp-feed__log b { color: var(--c-ink); font-weight: 700; }
+.lp-tag {
+  display: inline-block; min-width: 4.8em; text-align: center; margin-right: var(--space-3);
+  padding: 1px 8px; border-radius: var(--radius-sm);
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.1em; border: 1px solid;
+}
+.lp-tag--raid { color: var(--c-accent); border-color: color-mix(in srgb, var(--c-accent) 70%, transparent); }
+.lp-tag--hold { color: var(--c-success); border-color: color-mix(in srgb, var(--c-success) 70%, transparent); }
+.lp-tag--fall { color: var(--c-danger); border-color: color-mix(in srgb, var(--c-danger) 70%, transparent); }
+.lp-tag--wonder { color: var(--c-gold); border-color: color-mix(in srgb, var(--c-gold) 70%, transparent); }
+
+/* ---- Worlds ------------------------------------------------------------------------------------ */
+.lp-worlds { padding: clamp(36px, 6vw, 68px) 0; border-top: 1px solid color-mix(in srgb, var(--c-border) 70%, transparent); }
+.lp-worlds__title { font-size: clamp(1.6rem, 3.2vw, 2.2rem); margin: 0; text-align: center; color: var(--c-ink); }
+.lp-worlds__sub { text-align: center; color: var(--c-ink-muted); margin: var(--space-2) auto var(--space-6); max-width: 52ch; }
+.lp-worlds__grid {
+  list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-4);
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+.world-card {
+  display: flex; flex-direction: column; gap: 5px; text-decoration: none;
+  background: var(--c-panel); border: 1px solid var(--c-border);
+  border-top: 2px solid color-mix(in srgb, var(--c-gold) 55%, var(--c-border));
+  border-radius: var(--radius-md); padding: var(--space-4) var(--space-5);
+  transition: border-color 0.2s, transform 0.2s;
+}
+.world-card:hover { border-color: var(--c-accent); transform: translateY(-2px); }
+.world-card__name { font-family: Georgia, serif; font-size: 1.2rem; color: var(--c-ink); letter-spacing: 0.02em; }
+.world-card__meta { color: var(--c-ink-muted); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.world-card__cta { margin-top: var(--space-2); color: var(--c-accent); font-weight: 700; font-size: 0.9rem; }
+
+/* ---- Closing CTA ------------------------------------------------------------------------------- */
+.lp-finale { padding: clamp(40px, 7vw, 88px) 0; }
+.lp-finale__inner {
+  text-align: center;
+  background:
+    radial-gradient(80% 130% at 50% 0%, color-mix(in srgb, var(--c-accent) 14%, transparent), transparent 70%),
+    var(--c-panel);
+  border: 1px solid var(--c-border); border-radius: var(--radius-md);
+  padding: clamp(32px, 6vw, 64px) var(--space-5);
+}
+.lp-finale__title { font-size: clamp(1.8rem, 4vw, 2.6rem); margin: 0; color: var(--c-ink); }
+.lp-finale__sub { margin: var(--space-3) 0 var(--space-5); color: var(--c-ink-muted); }
+.lp-finale .btn { padding: 14px 30px; font-size: 1.05rem; }
+
+/* ---- Responsive -------------------------------------------------------------------------------- */
+@media (max-width: 880px) {
+  .lp-hero__grid { grid-template-columns: 1fr; }
+  .lp-pillars__grid { grid-template-columns: 1fr; }
+  /* Single column: there's no centre gap for the gatehouse torches, so drop the skyline here. */
+  .lp-hero__skyline, .lp-hero__moon { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pillar { transition: none; }
+}

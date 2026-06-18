@@ -1,11 +1,199 @@
 {% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/landing.css">{% endblock %}
+{% block body_class %}lp{% endblock %}
 {% block content %}
-<section class="hero panel">
-  <h1>Eperica</h1>
-  <p>Forge a village, raise an army, and outlast your rivals in a grim medieval world.</p>
-  <div class="actions" style="justify-content:center">
-    <a class="btn btn--primary" href="/register">Create account</a>
-    <a class="btn btn--secondary" href="/login">Log in</a>
+<section class="lp-hero">
+  <div class="lp-hero__glow" aria-hidden="true"></div>
+  <div class="lp-hero__moon" aria-hidden="true"></div>
+  <div class="lp-wrap lp-hero__grid">
+    <div class="lp-lede">
+      <p class="lp-eyebrow">Medieval strategy · No mercy</p>
+      <h1 class="lp-title">Raise a village.<br>Raise an army.<br>Raise <span class="lp-title__hot">hell</span>.</h1>
+      <p class="lp-sub">A living world of thousands, at war around the clock. Build, raid and conquer;
+        bind allies and break enemies; and time the killing blow for the moment they least expect it.</p>
+      <div class="lp-cta">
+        <a class="btn btn--primary" href="/register">Create account</a>
+        <a class="btn btn--secondary" href="/login">Log in</a>
+      </div>
+      <p class="lp-note mono">Free to play · No pay-to-win · Skill decides</p>
+    </div>
+
+    <aside class="wartable" aria-label="Example incoming attack">
+      <header class="wartable__head">
+        <span class="wartable__dot" aria-hidden="true"></span> Raid inbound
+      </header>
+      <svg class="wartable__map" viewBox="0 0 300 130" fill="none" aria-hidden="true">
+        <defs>
+          <pattern id="lp-grid" width="30" height="30" patternUnits="userSpaceOnUse">
+            <path d="M30 0H0V30" stroke="currentColor" stroke-width="1" opacity="0.12"/>
+          </pattern>
+        </defs>
+        <rect x="0.5" y="0.5" width="299" height="129" rx="4" fill="url(#lp-grid)"/>
+        <circle cx="70" cy="44" r="2.5" fill="currentColor" opacity="0.4"/>
+        <circle cx="120" cy="96" r="2.5" fill="currentColor" opacity="0.4"/>
+        <circle cx="196" cy="58" r="2.5" fill="currentColor" opacity="0.4"/>
+        <circle cx="232" cy="104" r="2.5" fill="currentColor" opacity="0.4"/>
+        <circle cx="156" cy="22" r="2.5" fill="currentColor" opacity="0.4"/>
+        <!-- march path: your village → the target -->
+        <path d="M40 104 L250 34" stroke="var(--c-accent)" stroke-width="1.5" stroke-dasharray="3 4"/>
+        <circle cx="40" cy="104" r="4" fill="var(--c-gold)"/>
+        <circle cx="170" cy="60" r="3" fill="var(--c-accent)"/>
+        <circle cx="250" cy="34" r="6.5" fill="none" stroke="var(--c-accent)" stroke-width="1.6"/>
+        <path d="M250 24v20M240 34h20" stroke="var(--c-accent)" stroke-width="1.1" opacity="0.85"/>
+      </svg>
+      <dl class="wartable__rows">
+        <div class="wartable__row"><dt>Target</dt><dd class="mono">(&minus;12 | 34) Oakhold</dd></div>
+        <div class="wartable__row"><dt>Force</dt><dd class="mono">120 swords · 40 archers · 8 horse</dd></div>
+        <div class="wartable__row"><dt>Impact in</dt>
+          <dd class="mono wartable__clock"><span id="lp-clock">02:14:07</span><span class="wartable__cs" id="lp-cs">.0</span></dd>
+        </div>
+      </dl>
+      <footer class="wartable__foot mono">Resolved server-side · drift ±0.00s</footer>
+    </aside>
+  </div>
+
+  <div class="lp-hero__skyline" aria-hidden="true">
+    <svg class="lp-sky lp-sky--back" viewBox="0 0 1200 190" preserveAspectRatio="xMidYMax slice">
+      <defs>
+        <linearGradient id="lp-keep" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#1A222B"/>
+          <stop offset="1" stop-color="#070A0E"/>
+        </linearGradient>
+        <linearGradient id="lp-flame" x1="0" y1="1" x2="0" y2="0">
+          <stop offset="0" stop-color="#A8431A"/>
+          <stop offset="0.5" stop-color="#E1823A"/>
+          <stop offset="1" stop-color="#F6CE64"/>
+        </linearGradient>
+        <radialGradient id="lp-ember" cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0" stop-color="#DC7733" stop-opacity="0.6"/>
+          <stop offset="1" stop-color="#DC7733" stop-opacity="0"/>
+        </radialGradient>
+        <radialGradient id="lp-cold" cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0" stop-color="#9FB4C6" stop-opacity="0.20"/>
+          <stop offset="1" stop-color="#9FB4C6" stop-opacity="0"/>
+        </radialGradient>
+      </defs>
+      <!-- cold rim-light behind the gatehouse, for depth -->
+      <ellipse cx="620" cy="58" rx="178" ry="76" fill="url(#lp-cold)"/>
+      <!-- Ramparts: flanking towers (unlit) frame a central gatehouse. The gatehouse + its torches sit at
+           ~50-55% of the width — the gap between the lede and the war-table, which stays clear of text at
+           every viewport width because the content column is centred. -->
+      <path fill="url(#lp-keep)" d="M0 134 H120 V92 H138 V80 H156 V92 H174 V80 H192 V92 H210 V122 H560 V58 H584 V44 H608 V58 H632 V44 H656 V58 H680 V122 H960 V96 H978 V84 H996 V96 H1014 V84 H1032 V96 H1050 V128 H1200 V190 H0 Z"/>
+    </svg>
+    <!-- The two gatehouse torches live on a front layer so the warm uplight never veils them. -->
+    <svg class="lp-sky lp-sky--front" viewBox="0 0 1200 190" preserveAspectRatio="xMidYMax slice">
+      <g class="lp-torch lp-torch--a" transform="translate(600 44)">
+        <circle class="lp-torch__glow" cx="0" cy="-15" r="40" fill="url(#lp-ember)"/>
+        <path class="lp-torch__flame" d="M0 0 C -9 -10 -8 -22 0 -31 C 8 -22 9 -10 0 0 Z" fill="url(#lp-flame)"/>
+        <path d="M0 -4 C -4 -10 -3 -17 0 -24 C 4 -17 5 -10 0 -4 Z" fill="#F7D479"/>
+        <circle class="lp-spark lp-spark--1" cx="-1" cy="-28" r="1.4" fill="#F0B45A"/>
+        <circle class="lp-spark lp-spark--2" cx="3" cy="-25" r="1.1" fill="#E8923C"/>
+      </g>
+      <g class="lp-torch lp-torch--b" transform="translate(650 44)">
+        <circle class="lp-torch__glow" cx="0" cy="-15" r="40" fill="url(#lp-ember)"/>
+        <path class="lp-torch__flame" d="M0 0 C -9 -10 -8 -22 0 -31 C 8 -22 9 -10 0 0 Z" fill="url(#lp-flame)"/>
+        <path d="M0 -4 C -4 -10 -3 -17 0 -24 C 4 -17 5 -10 0 -4 Z" fill="#F7D479"/>
+        <circle class="lp-spark lp-spark--1" cx="1" cy="-28" r="1.4" fill="#F0B45A"/>
+        <circle class="lp-spark lp-spark--2" cx="-3" cy="-25" r="1.1" fill="#E8923C"/>
+      </g>
+    </svg>
   </div>
 </section>
+
+<section class="lp-worlds">
+  <div class="lp-wrap">
+    <h2 class="lp-worlds__title">Choose your battlefield</h2>
+    <p class="lp-worlds__sub">Each world is its own season. Pick one — you'll create your account, then march straight in.</p>
+    {% if worlds.is_empty() %}
+    <p class="muted">No worlds are open right now. <a href="/register">Create an account</a> and we'll seat you as soon as one starts.</p>
+    {% else %}
+    <ul class="lp-worlds__grid">
+      {% for w in worlds %}
+      <li>
+        <a class="world-card" href="/register?world={{ w.id }}">
+          <span class="world-card__name">{{ w.name }}</span>
+          <span class="world-card__meta mono">{{ w.speed_label }}</span>
+          <span class="world-card__cta">Enlist →</span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+</section>
+
+<section class="lp-feed">
+  <div class="lp-wrap">
+    <h2 class="lp-feed__title">Dispatches from the front</h2>
+    <ul class="lp-feed__log mono">
+      <li><span class="lp-tag lp-tag--raid">RAID</span> Looted (12 | &minus;4) Mooredge — <b>+1,240 wood · +980 iron</b>; 18 troops lost.</li>
+      <li><span class="lp-tag lp-tag--hold">HELD</span> (&minus;8 | 31) Stonewatch turned back 600 attackers — the wall held.</li>
+      <li><span class="lp-tag lp-tag--fall">FELL</span> House Vael stormed (5 | 17) — loyalty hit zero, the village changed hands.</li>
+      <li><span class="lp-tag lp-tag--wonder">WONDER</span> The Iron Pact laid the first stone of the Wonder of the World.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="lp-pillars">
+  <div class="lp-wrap lp-pillars__grid">
+    <article class="pillar">
+      <svg class="pillar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M6 3h12M6 21h12M8 3v3l4 6 4-6V3M8 21v-3l4-6 4 6v3"/>
+      </svg>
+      <h2 class="pillar__title">Real-time war</h2>
+      <p class="pillar__body">Marches take real hours and land to the second. Scout, raid, siege,
+        and time your hits for the moment your enemy is asleep.</p>
+    </article>
+    <article class="pillar">
+      <svg class="pillar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3l7 3v5c0 4.6-3 7.6-7 9-4-1.4-7-4.4-7-9V6z"/><path d="M9 12l2 2 4-4"/>
+      </svg>
+      <h2 class="pillar__title">Alliances &amp; conquest</h2>
+      <p class="pillar__body">Band together, share defence, and chief enemy capitals. Co-ordinate
+        sieges and race rival alliances to build the Wonder of the World.</p>
+    </article>
+    <article class="pillar">
+      <svg class="pillar__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3v18M7 21h10M4 7h16"/><circle cx="12" cy="4.5" r="1.4"/>
+        <path d="M4 7l-2.5 5h5z"/><path d="M2.5 12a2.5 2.5 0 0 0 5 0"/>
+        <path d="M20 7l-2.5 5h5z"/><path d="M17.5 12a2.5 2.5 0 0 0 5 0"/>
+      </svg>
+      <h2 class="pillar__title">A fair fight</h2>
+      <p class="pillar__body">No pay-to-win, no client tricks, no shortcuts. Everyone plays by the same
+        rules on the same server — skill and timing decide who wins, not who spends.</p>
+    </article>
+  </div>
+</section>
+
+<section class="lp-finale">
+  <div class="lp-wrap lp-finale__inner">
+    <h2 class="lp-finale__title">The round is already running.</h2>
+    <p class="lp-finale__sub">Stake your first village and start raiding tonight.</p>
+    <a class="btn btn--primary" href="/register">Create account</a>
+  </div>
+</section>
+
+<script>
+  // Signature: a live "impact" countdown in the war-table — sub-second timing is the gameplay, so the
+  // hero demonstrates it. One moving element only; frozen under reduced-motion.
+  (function () {
+    var clock = document.getElementById("lp-clock");
+    var cs = document.getElementById("lp-cs");
+    if (!clock || !cs) return;
+    var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) return; // leave the static 02:14:07.0
+    var target = Date.now() + ((2 * 3600 + 14 * 60 + 7) * 1000); // counts down, never hits 0 in a session
+    function pad(n, w) { n = String(n); while (n.length < w) n = "0" + n; return n; }
+    function tick() {
+      var ms = Math.max(0, target - Date.now());
+      var h = Math.floor(ms / 3600000);
+      var m = Math.floor((ms % 3600000) / 60000);
+      var s = Math.floor((ms % 60000) / 1000);
+      clock.textContent = pad(h, 2) + ":" + pad(m, 2) + ":" + pad(s, 2);
+      cs.textContent = "." + Math.floor((ms % 1000) / 100);
+    }
+    tick();
+    setInterval(tick, 80);
+  })();
+</script>
 {% endblock %}
