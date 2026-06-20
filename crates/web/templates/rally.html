@@ -4,7 +4,7 @@
 {% block content %}
 <section class="panel">
   <h1>Rally Point</h1>
-  <p class="muted"><a href="/w/{{ world }}/village?village={{ village_id }}">← Back to the village</a> · send troops to
+  <p class="muted"><a href="/w/{{ world }}/village/{{ village_id }}">← Back to the village</a> · send troops to
     <strong>reinforce</strong> a friendly village, <strong>attack/raid</strong> an enemy, or
     <strong>scout</strong> to spy. Travel time depends on distance and your slowest unit.
     <a href="/w/{{ world }}/reports">Reports →</a></p>
@@ -12,8 +12,7 @@
   {% if units.is_empty() %}
   <p class="muted">No troops to send — train some at the Barracks, Stable, or Workshop first.</p>
   {% else %}
-  <form method="post" action="/w/{{ world }}/village/rally/send" class="form">
-    <input type="hidden" name="village" value="{{ village_id }}">
+  <form method="post" action="/w/{{ world }}/village/{{ village_id }}/rally/send" class="form">
     <div class="field">
       <label>Order</label>
       <select name="mode">

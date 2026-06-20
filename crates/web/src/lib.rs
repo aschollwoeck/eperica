@@ -256,24 +256,49 @@ async fn sitting_guard(State(state): State<AppState>, req: Request, next: Next) 
 /// the `{world}` prefix is read by the `GameContext`/`WorldScope` extractors (the game + public read pages).
 fn world_router() -> Router<AppState> {
     Router::new()
-        .route("/village", get(handlers::village))
-        .route("/village/build", post(handlers::build_submit))
+        // The acting village rides in the path as a hyphenated UUID (064): `/village/{village}/…`. The bare
+        // `/village` (no id) is the canonical entry — it 302s to the player's capital village.
+        .route("/village", get(handlers::village_index))
+        .route("/village/{village}", get(handlers::village))
+        .route("/village/{village}/build", post(handlers::build_submit))
         .route("/map", get(handlers::map))
-        .route("/village/academy", get(handlers::academy))
-        .route("/village/academy/research", post(handlers::research_submit))
-        .route("/village/smithy", get(handlers::smithy))
+        .route("/village/{village}/academy", get(handlers::academy))
         .route(
-            "/village/smithy/upgrade",
+            "/village/{village}/academy/research",
+            post(handlers::research_submit),
+        )
+        .route("/village/{village}/smithy", get(handlers::smithy))
+        .route(
+            "/village/{village}/smithy/upgrade",
             post(handlers::smithy_upgrade_submit),
         )
-        .route("/village/troops/{building}", get(handlers::troops))
-        .route("/village/train", post(handlers::train_submit))
-        .route("/village/rally", get(handlers::rally))
-        .route("/village/rally/send", post(handlers::rally_send))
-        .route("/village/rally/return", post(handlers::rally_return))
-        .route("/village/oasis/recall", post(handlers::oasis_recall))
-        .route("/village/market", get(handlers::market))
-        .route("/village/market/send", post(handlers::market_send))
+        // The three training pages are static leaf routes (a `{building}` capture would conflict with the
+        // static `academy`/`smithy`/… siblings in axum 0.8); each wrapper fixes its `BuildingKind`.
+        .route(
+            "/village/{village}/barracks",
+            get(handlers::troops_barracks),
+        )
+        .route("/village/{village}/stable", get(handlers::troops_stable))
+        .route(
+            "/village/{village}/workshop",
+            get(handlers::troops_workshop),
+        )
+        .route("/village/{village}/train", post(handlers::train_submit))
+        .route("/village/{village}/rally", get(handlers::rally))
+        .route("/village/{village}/rally/send", post(handlers::rally_send))
+        .route(
+            "/village/{village}/rally/return",
+            post(handlers::rally_return),
+        )
+        .route(
+            "/village/{village}/oasis/recall",
+            post(handlers::oasis_recall),
+        )
+        .route("/village/{village}/market", get(handlers::market))
+        .route(
+            "/village/{village}/market/send",
+            post(handlers::market_send),
+        )
         .route("/alliance", get(handlers::alliance))
         .route("/alliance/found", post(handlers::alliance_found))
         .route("/alliance/invite", post(handlers::alliance_invite))

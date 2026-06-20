@@ -277,22 +277,19 @@ fn quest_reward_label(reward: &QuestReward) -> String {
     }
 }
 
-/// Optional village selector for the multi-village pages (013 AC11): `?village=<id>` chooses which of
-/// the player's villages to act on; absent ⇒ the capital / first village (single-village default).
-/// The id rides as a **string** because the form/query decoder (`serde_urlencoded`) cannot parse the
-/// 128-bit village id.
-#[derive(Deserialize)]
-pub struct VillageQuery {
-    #[serde(default)]
-    village: Option<String>,
-}
-
-/// The selected village as a domain id (server re-validates ownership in the use-case, P4). An
-/// absent or unparseable id ⇒ `None` (the capital / first-village default).
+/// The selected village as a domain id (server re-validates ownership in the use-case, P4). The id rides in
+/// the URL path as a hyphenated **UUID** (064), the same form as the `{world}` segment. An absent or
+/// unparseable id ⇒ `None` (the capital / first-village default).
 fn selected_village(village: Option<&str>) -> Option<VillageId> {
     village
-        .and_then(|s| s.trim().parse::<u128>().ok())
-        .map(VillageId)
+        .and_then(|s| uuid::Uuid::parse_str(s.trim()).ok())
+        .map(|u| VillageId(u.as_u128()))
+}
+
+/// A village id as its hyphenated-UUID path segment (064) — the `village_id` every village-coupled template
+/// carries so its links/forms read `/w/{world}/village/{village}/…`.
+fn village_seg(village: VillageId) -> String {
+    uuid::Uuid::from_u128(village.0).to_string()
 }
 
 /// Redirect to `path`, preserving the selected village (013 AC11) so the user stays on that village.
@@ -308,19 +305,16 @@ fn world_id_str(world: WorldId) -> String {
     uuid::Uuid::from_u128(world.0).to_string()
 }
 
-/// Redirect to a world-coupled `path` (056) — prefixed with `/w/{world}` — preserving the selected village
-/// (the orthogonal `?village=` query) so the user stays on it.
-fn redirect_with_village(world: WorldId, path: &str, village: Option<&str>) -> Response {
-    let base = world_path(world, path);
-    match village.and_then(|s| s.trim().parse::<u128>().ok()) {
-        Some(id) => Redirect::to(&format!("{base}?village={id}")).into_response(),
-        None => Redirect::to(&base).into_response(),
-    }
+/// A village-coupled path (064): `/w/{world}/village/{village}{leaf}`, where `village` is the hyphenated-UUID
+/// path segment and `leaf` is the trailing route (`""` = overview, `"/academy"`, `"/barracks"`, …; must start
+/// with `/` when non-empty).
+fn village_path(world: WorldId, village: &str, leaf: &str) -> String {
+    world_path(world, &format!("/village/{village}{leaf}"))
 }
 
-/// Redirect back to the world's village page, preserving the selected village so the user stays on it.
-fn redirect_to_village(world: WorldId, village: Option<&str>) -> Response {
-    redirect_with_village(world, "/village", village)
+/// Redirect back to a village-coupled page (064), staying on the same village (the id is the path segment).
+fn redirect_to_village_leaf(world: WorldId, village: &str, leaf: &str) -> Response {
+    Redirect::to(&village_path(world, village, leaf)).into_response()
 }
 
 /// A short-lived, JS-readable cookie carrying a one-shot user-facing message (034). The `base.html`
@@ -782,12 +776,27 @@ pub async fn join_world(
     }
 }
 
+/// The canonical village entry (064): `/w/{world}/village` (no id) → 302 to the player's capital (or first)
+/// village's path, so the nav "Village" link and old bare links always land on a concrete village URL.
+pub async fn village_index(ctx: GameContext) -> Response {
+    match village_view_data(&ctx, None).await {
+        Ok((village, _)) => {
+            redirect_to_village_leaf(ctx.world_id, &village_seg(village.id), "").into_response()
+        }
+        Err(r) => r,
+    }
+}
+
 /// A player's village with its live economy, switchable across all their villages (Player only —
-/// AC3/AC4/AC7, 013 AC11). `?village=<id>` selects which to show; absent ⇒ the capital / first.
-pub async fn village(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response {
+/// AC3/AC4/AC7, 013 AC11). The `{village}` path segment (a UUID, 064) selects which to show; the use-case
+/// re-validates ownership and falls back to the capital for a bad/foreign id (P4).
+pub async fn village(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+) -> Response {
     let player = ctx.player;
     let account = ctx.account;
-    let selected = selected_village(q.village.as_deref());
+    let selected = selected_village(Some(&village));
     let user = match ctx.accounts.find_user_by_id(account).await {
         Ok(Some(u)) => u,
         Ok(None) => return Redirect::to("/login").into_response(),
@@ -905,18 +914,12 @@ pub async fn village(ctx: GameContext, Query(q): Query<VillageQuery>) -> Respons
         })
         .collect();
     let total_upkeep = garrison_upkeep(&economy.garrison, roster);
+    // (label, leaf) for each built training building; the template renders
+    // `/w/{world}/village/{village}/{leaf}` (064).
     let troop_links: Vec<(&'static str, &'static str)> = [
-        (
-            BuildingKind::Barracks,
-            "Barracks",
-            "/village/troops/barracks",
-        ),
-        (BuildingKind::Stable, "Stable", "/village/troops/stable"),
-        (
-            BuildingKind::Workshop,
-            "Workshop",
-            "/village/troops/workshop",
-        ),
+        (BuildingKind::Barracks, "Barracks", "barracks"),
+        (BuildingKind::Stable, "Stable", "stable"),
+        (BuildingKind::Workshop, "Workshop", "workshop"),
     ]
     .into_iter()
     .filter(|(kind, _, _)| {
@@ -925,7 +928,7 @@ pub async fn village(ctx: GameContext, Query(q): Query<VillageQuery>) -> Respons
             .iter()
             .any(|b| b.kind == *kind && b.level > 0)
     })
-    .map(|(_, label, href)| (label, href))
+    .map(|(_, label, leaf)| (label, leaf))
     .collect();
 
     let active = match ctx.accounts.active_builds(village.id).await {
@@ -1278,7 +1281,7 @@ pub async fn village(ctx: GameContext, Query(q): Query<VillageQuery>) -> Respons
     let switcher: Vec<VillageSwitchRow> = owned
         .iter()
         .map(|v| VillageSwitchRow {
-            id: v.id.0.to_string(),
+            id: village_seg(v.id),
             label: format!("({}|{})", v.coordinate.x, v.coordinate.y),
             is_capital: v.is_capital,
             is_current: v.id == village.id,
@@ -1326,7 +1329,7 @@ pub async fn village(ctx: GameContext, Query(q): Query<VillageQuery>) -> Respons
         username: user.username,
         world_won,
         is_wonder_site: village.is_wonder_site,
-        village_id: village.id.0.to_string(),
+        village_id: village_seg(village.id),
         is_capital: village.is_capital,
         loyalty,
         villages: switcher,
@@ -1425,8 +1428,6 @@ const MAP_HALF: i32 = 4;
 pub struct MapQuery {
     x: Option<i32>,
     y: Option<i32>,
-    #[serde(default)]
-    village: Option<String>,
 }
 
 fn oasis_label(b: OasisBonus) -> String {
@@ -1481,6 +1482,13 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
     };
     // The player's capital tile, distinguished on the map (013 AC9/AC11).
     let capital_coord = villages.iter().find(|v| v.is_capital).map(|v| v.coordinate);
+    // The acting village for the map's "send" shortcuts — the capital, else the first village (064): the
+    // Rally links carry it in the path (`/village/{acting}/rally?x=…`).
+    let acting_vid = villages
+        .iter()
+        .find(|v| v.is_capital)
+        .or_else(|| villages.first())
+        .map(|v| village_seg(v.id));
     let radius = ctx.map.radius();
     // Center on the query (if given) or the player's first village, wrapped into bounds.
     let center = match (q.x, q.y) {
@@ -1573,10 +1581,13 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
                         );
                         // A send shortcut to another player's village (you can't target your own).
                         if marker.owner_name != user.username {
-                            href = Some(world_path(
-                                ctx.world_id,
-                                &format!("/village/rally?x={}&y={}", coord.x, coord.y),
-                            ));
+                            href = acting_vid.as_ref().map(|vid| {
+                                village_path(
+                                    ctx.world_id,
+                                    vid,
+                                    &format!("/rally?x={}&y={}", coord.x, coord.y),
+                                )
+                            });
                         }
                     } else if matches!(cell.tile, TileKind::Oasis(_)) {
                         // An oasis links to the Rally Point pre-filled with the tile (attack, or
@@ -1592,10 +1603,13 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
                             label =
                                 format!("{base_label} — wild animals ({}|{})", coord.x, coord.y);
                         }
-                        href = Some(world_path(
-                            ctx.world_id,
-                            &format!("/village/rally?x={}&y={}", coord.x, coord.y),
-                        ));
+                        href = acting_vid.as_ref().map(|vid| {
+                            village_path(
+                                ctx.world_id,
+                                vid,
+                                &format!("/rally?x={}&y={}", coord.x, coord.y),
+                            )
+                        });
                     }
                     // Distance from home (toroidal, rounded) — helps judge travel time at a glance.
                     if let Some(o) = origin {
@@ -1644,13 +1658,15 @@ pub struct BuildForm {
     slot: u8,
     #[serde(default)]
     kind: Option<String>,
-    /// Which of the player's villages to build in (013 AC11); absent ⇒ capital / first.
-    #[serde(default)]
-    village: Option<String>,
 }
 
-/// Order an upgrade/construction for the selected village, then return to it (Player only, P4).
-pub async fn build_submit(ctx: GameContext, Form(form): Form<BuildForm>) -> Response {
+/// Order an upgrade/construction for the path village, then return to it (Player only, P4). The village rides
+/// in the path (064); the use-case re-validates ownership (P4).
+pub async fn build_submit(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+    Form(form): Form<BuildForm>,
+) -> Response {
     let player = ctx.player;
     let target = match form.table.as_str() {
         "field" => BuildTarget::Field { slot: form.slot },
@@ -1661,9 +1677,9 @@ pub async fn build_submit(ctx: GameContext, Form(form): Form<BuildForm>) -> Resp
                 slot: building_slot(kind),
                 kind,
             },
-            None => return redirect_to_village(ctx.world_id, form.village.as_deref()),
+            None => return redirect_to_village_leaf(ctx.world_id, &village, ""),
         },
-        _ => return redirect_to_village(ctx.world_id, form.village.as_deref()),
+        _ => return redirect_to_village_leaf(ctx.world_id, &village, ""),
     };
 
     let flash = order_build(
@@ -1676,7 +1692,7 @@ pub async fn build_submit(ctx: GameContext, Form(form): Form<BuildForm>) -> Resp
         ctx.speed,
         now(),
         player,
-        selected_village(form.village.as_deref()),
+        selected_village(Some(&village)),
         target,
     )
     .await
@@ -1685,10 +1701,7 @@ pub async fn build_submit(ctx: GameContext, Form(form): Form<BuildForm>) -> Resp
         tracing::warn!(error = %e, "build order rejected");
         user_msg(e.to_string())
     });
-    with_flash(
-        redirect_to_village(ctx.world_id, form.village.as_deref()),
-        flash,
-    )
+    with_flash(redirect_to_village_leaf(ctx.world_id, &village, ""), flash)
 }
 
 fn role_label(role: UnitRole) -> &'static str {
@@ -1789,13 +1802,15 @@ async fn village_view_data(
 }
 
 /// The Academy: the tribe's roster with research state and actions (004 AC15; Player only, P4).
-pub async fn academy(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response {
+pub async fn academy(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+) -> Response {
     let player = ctx.player;
-    let (village, amounts) =
-        match village_view_data(&ctx, selected_village(q.village.as_deref())).await {
-            Ok(v) => v,
-            Err(r) => return r,
-        };
+    let (village, amounts) = match village_view_data(&ctx, selected_village(Some(&village))).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
     let Some(tribe) = village.tribe else {
         tracing::error!(?player, "village has no tribe");
         return server_error();
@@ -1890,7 +1905,7 @@ pub async fn academy(ctx: GameContext, Query(q): Query<VillageQuery>) -> Respons
 
     page(&AcademyTemplate {
         world: world_id_str(ctx.world_id),
-        village_id: village.id.0.to_string(),
+        village_id: village_seg(village.id),
         has_academy: building_level(&village, BuildingKind::Academy) > 0,
         rows,
         active,
@@ -1898,13 +1913,12 @@ pub async fn academy(ctx: GameContext, Query(q): Query<VillageQuery>) -> Respons
 }
 
 /// The Smithy: researched units with upgrade levels and actions (004 AC15; Player only, P4).
-pub async fn smithy(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response {
+pub async fn smithy(ctx: GameContext, Path((_world, village)): Path<(String, String)>) -> Response {
     let player = ctx.player;
-    let (village, amounts) =
-        match village_view_data(&ctx, selected_village(q.village.as_deref())).await {
-            Ok(v) => v,
-            Err(r) => return r,
-        };
+    let (village, amounts) = match village_view_data(&ctx, selected_village(Some(&village))).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
     let Some(tribe) = village.tribe else {
         tracing::error!(?player, "village has no tribe");
         return server_error();
@@ -2008,7 +2022,7 @@ pub async fn smithy(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response
 
     page(&SmithyTemplate {
         world: world_id_str(ctx.world_id),
-        village_id: village.id.0.to_string(),
+        village_id: village_seg(village.id),
         has_smithy: building_level(&village, BuildingKind::Smithy) > 0,
         smithy_level: building_level(&village, BuildingKind::Smithy),
         rows,
@@ -2020,13 +2034,14 @@ pub async fn smithy(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response
 #[derive(Deserialize)]
 pub struct UnitForm {
     unit: String,
-    /// Which of the player's villages to act on (013 AC11); absent ⇒ capital / first.
-    #[serde(default)]
-    village: Option<String>,
 }
 
-/// Order a unit research for the player's village, then return to the Academy (Player only, P4).
-pub async fn research_submit(ctx: GameContext, Form(form): Form<UnitForm>) -> Response {
+/// Order a unit research for the path village, then return to the Academy (Player only, P4).
+pub async fn research_submit(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+    Form(form): Form<UnitForm>,
+) -> Response {
     let player = ctx.player;
     let flash = order_research(
         &ctx.accounts,
@@ -2037,7 +2052,7 @@ pub async fn research_submit(ctx: GameContext, Form(form): Form<UnitForm>) -> Re
         ctx.speed,
         now(),
         player,
-        selected_village(form.village.as_deref()),
+        selected_village(Some(&village)),
         UnitId(form.unit),
     )
     .await
@@ -2047,36 +2062,44 @@ pub async fn research_submit(ctx: GameContext, Form(form): Form<UnitForm>) -> Re
         user_msg(e.to_string())
     });
     with_flash(
-        redirect_with_village(ctx.world_id, "/village/academy", form.village.as_deref()),
+        redirect_to_village_leaf(ctx.world_id, &village, "/academy"),
         flash,
     )
 }
 
-fn parse_troop_building(slug: &str) -> Option<BuildingKind> {
-    match slug {
-        "barracks" => Some(BuildingKind::Barracks),
-        "stable" => Some(BuildingKind::Stable),
-        "workshop" => Some(BuildingKind::Workshop),
-        _ => None,
-    }
+/// The three static training routes (064): `/village/{village}/barracks|stable|workshop`. Each fixes its
+/// `BuildingKind` and shares [`troops`]; a `{building}` capture would conflict with the static `academy`/
+/// `smithy`/… siblings, so they are explicit.
+pub async fn troops_barracks(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+) -> Response {
+    troops(ctx, village, BuildingKind::Barracks).await
+}
+
+pub async fn troops_stable(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+) -> Response {
+    troops(ctx, village, BuildingKind::Stable).await
+}
+
+pub async fn troops_workshop(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+) -> Response {
+    troops(ctx, village, BuildingKind::Workshop).await
 }
 
 /// A troop building's training view: researched units it trains, the running batch (005 AC9;
-/// Player only, P4).
-pub async fn troops(
-    ctx: GameContext,
-    axum::extract::Path((_world, building_slug)): axum::extract::Path<(String, String)>,
-    Query(q): Query<VillageQuery>,
-) -> Response {
+/// Player only, P4). The `{village}` rides in the path (064); the building is fixed by the caller.
+async fn troops(ctx: GameContext, village: String, building: BuildingKind) -> Response {
     let player = ctx.player;
-    let Some(building) = parse_troop_building(&building_slug) else {
-        return Redirect::to(&world_path(ctx.world_id, "/village")).into_response();
+    let (village, _amounts) = match village_view_data(&ctx, selected_village(Some(&village))).await
+    {
+        Ok(v) => v,
+        Err(r) => return r,
     };
-    let (village, _amounts) =
-        match village_view_data(&ctx, selected_village(q.village.as_deref())).await {
-            Ok(v) => v,
-            Err(r) => return r,
-        };
     let Some(tribe) = village.tribe else {
         tracing::error!(?player, "village has no tribe");
         return server_error();
@@ -2150,7 +2173,7 @@ pub async fn troops(
 
     page(&TroopsTemplate {
         world: world_id_str(ctx.world_id),
-        village_id: village.id.0.to_string(),
+        village_id: village_seg(village.id),
         building: building_label(building),
         has_building: building_level > 0,
         rows,
@@ -2163,14 +2186,14 @@ pub async fn troops(
 pub struct TrainForm {
     unit: String,
     count: u32,
-    /// Which of the player's villages to train in (013 AC11); absent ⇒ capital / first.
-    #[serde(default)]
-    village: Option<String>,
 }
 
-/// Order a training batch for the player's village, then return to the building page (Player
-/// only, P4).
-pub async fn train_submit(ctx: GameContext, Form(form): Form<TrainForm>) -> Response {
+/// Order a training batch for the path village, then return to the building page (Player only, P4).
+pub async fn train_submit(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+    Form(form): Form<TrainForm>,
+) -> Response {
     let player = ctx.player;
     let unit = UnitId(form.unit);
     let flash = order_train(
@@ -2183,7 +2206,7 @@ pub async fn train_submit(ctx: GameContext, Form(form): Form<TrainForm>) -> Resp
         ctx.speed,
         now(),
         player,
-        selected_village(form.village.as_deref()),
+        selected_village(Some(&village)),
         unit.clone(),
         form.count,
     )
@@ -2198,20 +2221,24 @@ pub async fn train_submit(ctx: GameContext, Form(form): Form<TrainForm>) -> Resp
         .into_iter()
         .find_map(|t| ctx.rules.units.unit(t, &unit))
         .map(|s| s.trained_in);
-    let target = match building {
-        Some(BuildingKind::Barracks) => "/village/troops/barracks",
-        Some(BuildingKind::Stable) => "/village/troops/stable",
-        Some(BuildingKind::Workshop) => "/village/troops/workshop",
-        _ => "/village",
+    let leaf = match building {
+        Some(BuildingKind::Barracks) => "/barracks",
+        Some(BuildingKind::Stable) => "/stable",
+        Some(BuildingKind::Workshop) => "/workshop",
+        _ => "",
     };
     with_flash(
-        redirect_with_village(ctx.world_id, target, form.village.as_deref()),
+        redirect_to_village_leaf(ctx.world_id, &village, leaf),
         flash,
     )
 }
 
 /// Order a Smithy upgrade for the player's village, then return to the Smithy (Player only, P4).
-pub async fn smithy_upgrade_submit(ctx: GameContext, Form(form): Form<UnitForm>) -> Response {
+pub async fn smithy_upgrade_submit(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+    Form(form): Form<UnitForm>,
+) -> Response {
     let player = ctx.player;
     let flash = order_smithy_upgrade(
         &ctx.accounts,
@@ -2222,7 +2249,7 @@ pub async fn smithy_upgrade_submit(ctx: GameContext, Form(form): Form<UnitForm>)
         ctx.speed,
         now(),
         player,
-        selected_village(form.village.as_deref()),
+        selected_village(Some(&village)),
         UnitId(form.unit),
     )
     .await
@@ -2232,19 +2259,23 @@ pub async fn smithy_upgrade_submit(ctx: GameContext, Form(form): Form<UnitForm>)
         user_msg(e.to_string())
     });
     with_flash(
-        redirect_with_village(ctx.world_id, "/village/smithy", form.village.as_deref()),
+        redirect_to_village_leaf(ctx.world_id, &village, "/smithy"),
         flash,
     )
 }
 
 /// The Rally Point: the garrison troops that can be sent to reinforce (007 AC7; Player only, P4).
-pub async fn rally(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
+pub async fn rally(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+    Query(q): Query<MapQuery>,
+) -> Response {
     let player = ctx.player;
-    let (village, _amounts) =
-        match village_view_data(&ctx, selected_village(q.village.as_deref())).await {
-            Ok(v) => v,
-            Err(r) => return r,
-        };
+    let (village, _amounts) = match village_view_data(&ctx, selected_village(Some(&village))).await
+    {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
     let Some(tribe) = village.tribe else {
         tracing::error!(?player, "village has no tribe");
         return server_error();
@@ -2317,7 +2348,7 @@ pub async fn rally(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
     };
     page(&RallyTemplate {
         world: world_id_str(ctx.world_id),
-        village_id: village.id.0.to_string(),
+        village_id: village_seg(village.id),
         units,
         target_x: q.x,
         target_y: q.y,
@@ -2337,15 +2368,15 @@ pub async fn rally(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
 /// parsed and re-validated server-side (P4) — the use-case rejects anything over the garrison.
 pub async fn rally_send(
     ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
     let player = ctx.player;
-    let village = form.get("village").map(String::as_str);
-    let selected = selected_village(village);
+    let selected = selected_village(Some(&village));
     let x = form.get("x").and_then(|s| s.trim().parse::<i32>().ok());
     let y = form.get("y").and_then(|s| s.trim().parse::<i32>().ok());
     let (Some(x), Some(y)) = (x, y) else {
-        return redirect_with_village(ctx.world_id, "/village/rally", village);
+        return redirect_to_village_leaf(ctx.world_id, &village, "/rally");
     };
     let troops: Vec<(UnitId, u32)> = form
         .iter()
@@ -2512,23 +2543,24 @@ pub async fn rally_send(
             }
         }
     };
-    with_flash(redirect_to_village(ctx.world_id, village), flash)
+    with_flash(redirect_to_village_leaf(ctx.world_id, &village, ""), flash)
 }
 
 /// Send-back form fields (the host village whose stationed troops to recall).
 #[derive(Deserialize)]
 pub struct RallyReturnForm {
     host: String,
-    /// The village page to return to (013 AC11); absent ⇒ capital / first.
-    #[serde(default)]
-    village: Option<String>,
 }
 
 /// Recall the player's troops stationed at a host, then return to the village (Player only, P4).
-pub async fn rally_return(ctx: GameContext, Form(form): Form<RallyReturnForm>) -> Response {
+pub async fn rally_return(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+    Form(form): Form<RallyReturnForm>,
+) -> Response {
     let player = ctx.player;
     let Ok(host) = form.host.trim().parse::<u128>() else {
-        return Redirect::to(&world_path(ctx.world_id, "/village")).into_response();
+        return redirect_to_village_leaf(ctx.world_id, &village, "");
     };
     let flash = order_return(
         &ctx.accounts,
@@ -2546,10 +2578,7 @@ pub async fn rally_return(ctx: GameContext, Form(form): Form<RallyReturnForm>) -
         tracing::warn!(error = %e, "return order rejected");
         user_msg(e.to_string())
     });
-    with_flash(
-        redirect_to_village(ctx.world_id, form.village.as_deref()),
-        flash,
-    )
+    with_flash(redirect_to_village_leaf(ctx.world_id, &village, ""), flash)
 }
 
 /// Recall form fields (the oasis tile to recall stationed troops from).
@@ -2557,14 +2586,15 @@ pub async fn rally_return(ctx: GameContext, Form(form): Form<RallyReturnForm>) -
 pub struct OasisRecallForm {
     x: i32,
     y: i32,
-    /// The village to recall the troops to (013 AC11); absent ⇒ capital / first.
-    #[serde(default)]
-    village: Option<String>,
 }
 
 /// Recall the player's troops stationed at one of their oases, then return to the village (012 AC7;
 /// Player only, P4).
-pub async fn oasis_recall(ctx: GameContext, Form(form): Form<OasisRecallForm>) -> Response {
+pub async fn oasis_recall(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+    Form(form): Form<OasisRecallForm>,
+) -> Response {
     let player = ctx.player;
     let target = Coordinate::new(form.x, form.y);
     let flash = order_oasis_recall(
@@ -2575,7 +2605,7 @@ pub async fn oasis_recall(ctx: GameContext, Form(form): Form<OasisRecallForm>) -
         ctx.speed,
         now(),
         player,
-        selected_village(form.village.as_deref()),
+        selected_village(Some(&village)),
         target,
     )
     .await
@@ -2584,22 +2614,19 @@ pub async fn oasis_recall(ctx: GameContext, Form(form): Form<OasisRecallForm>) -
         tracing::warn!(error = %e, "oasis recall rejected");
         user_msg(e.to_string())
     });
-    with_flash(
-        redirect_to_village(ctx.world_id, form.village.as_deref()),
-        flash,
-    )
+    with_flash(redirect_to_village_leaf(ctx.world_id, &village, ""), flash)
 }
 
 /// The Marketplace: the merchant pool (free/total + capacity) and a send-resources form (008 AC6;
 /// Player only, P4).
-pub async fn market(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response {
+pub async fn market(ctx: GameContext, Path((_world, village)): Path<(String, String)>) -> Response {
     let player = ctx.player;
-    let (village, _amounts) =
-        match village_view_data(&ctx, selected_village(q.village.as_deref())).await {
-            Ok(v) => v,
-            Err(r) => return r,
-        };
-    let village_id = village.id.0.to_string();
+    let (village, _amounts) = match village_view_data(&ctx, selected_village(Some(&village))).await
+    {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let village_id = village_seg(village.id);
     let Some(tribe) = village.tribe else {
         tracing::error!(?player, "village has no tribe");
         return server_error();
@@ -2650,14 +2677,14 @@ pub async fn market(ctx: GameContext, Query(q): Query<VillageQuery>) -> Response
 /// and re-validated server-side (P4) — the use-case rejects an over-stored or over-merchant load.
 pub async fn market_send(
     ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
     let player = ctx.player;
-    let village = form.get("village").map(String::as_str);
     let x = form.get("x").and_then(|s| s.trim().parse::<i32>().ok());
     let y = form.get("y").and_then(|s| s.trim().parse::<i32>().ok());
     let (Some(x), Some(y)) = (x, y) else {
-        return redirect_with_village(ctx.world_id, "/village/market", village);
+        return redirect_to_village_leaf(ctx.world_id, &village, "/market");
     };
     let amount = |k: &str| {
         form.get(k)
@@ -2681,7 +2708,7 @@ pub async fn market_send(
         ctx.speed,
         now(),
         player,
-        selected_village(village),
+        selected_village(Some(&village)),
         Coordinate::new(x, y),
         bundle,
     )
@@ -2691,7 +2718,7 @@ pub async fn market_send(
         tracing::warn!(error = %e, "trade order rejected");
         user_msg(e.to_string())
     });
-    with_flash(redirect_to_village(ctx.world_id, village), flash)
+    with_flash(redirect_to_village_leaf(ctx.world_id, &village, ""), flash)
 }
 
 /// A one-line headline for a report from this player's perspective.
@@ -3123,10 +3150,12 @@ pub async fn wonder_build_submit(ctx: GameContext, Form(form): Form<WonderBuildF
         tracing::warn!(error = %e, "Wonder build order rejected");
         user_msg(e.to_string())
     });
-    with_flash(
-        redirect_to_village(ctx.world_id, form.village.as_deref()),
-        flash,
-    )
+    // Return to the site village if the form named one (064), else the canonical entry → capital.
+    let back = match form.village.as_deref().map(str::trim) {
+        Some(v) if !v.is_empty() => redirect_to_village_leaf(ctx.world_id, v, ""),
+        _ => Redirect::to(&world_path(ctx.world_id, "/village")).into_response(),
+    };
+    with_flash(back, flash)
 }
 
 /// The Wonder-build form: which controlled site village to build the Wonder in (013 AC11).
@@ -4084,12 +4113,12 @@ pub async fn quests_page(ctx: GameContext) -> Response {
             return server_error();
         }
     };
-    // Capital (else first) village — only used for the nav back-link.
+    // Capital (else first) village — only used for the nav back-link (064: the hyphenated-UUID path segment).
     let village_id = villages
         .iter()
         .find(|v| v.is_capital)
         .or_else(|| villages.first())
-        .map(|v| v.id.0.to_string())
+        .map(|v| village_seg(v.id))
         .unwrap_or_default();
     let chain = &ctx.rules.quests;
     let current = current_quest(chain, &completed).map(|q| CurrentQuestView {

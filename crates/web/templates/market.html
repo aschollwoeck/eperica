@@ -4,7 +4,7 @@
 {% block content %}
 <section class="panel">
   <h1>Marketplace</h1>
-  <p class="muted"><a href="/w/{{ world }}/village?village={{ village_id }}">← Back to the village</a> · send resources to another village.
+  <p class="muted"><a href="/w/{{ world }}/village/{{ village_id }}">← Back to the village</a> · send resources to another village.
     Travel time depends on distance and your merchants' speed.</p>
 
   {% if !has_marketplace %}
@@ -15,8 +15,7 @@
   {% if free == 0 %}
   <p class="muted">All your merchants are on the road. They free up as shipments return.</p>
   {% else %}
-  <form method="post" action="/w/{{ world }}/village/market/send" class="form">
-    <input type="hidden" name="village" value="{{ village_id }}">
+  <form method="post" action="/w/{{ world }}/village/{{ village_id }}/market/send" class="form">
     <div class="field">
       <label>Target tile</label>
       <span class="map-controls">

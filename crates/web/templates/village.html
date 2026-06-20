@@ -35,20 +35,20 @@
   {% if villages.len() > 1 %}
   <p class="muted">Your villages:
     {% for v in villages %}
-    {% if v.is_current %}<strong>{{ v.label }}{% if v.is_capital %} ★{% endif %}</strong>{% else %}<a href="/w/{{ world }}/village?village={{ v.id }}">{{ v.label }}{% if v.is_capital %} ★{% endif %}</a>{% endif %}{% if !loop.last %} ·{% endif %}
+    {% if v.is_current %}<strong>{{ v.label }}{% if v.is_capital %} ★{% endif %}</strong>{% else %}<a href="/w/{{ world }}/village/{{ v.id }}">{{ v.label }}{% if v.is_capital %} ★{% endif %}</a>{% endif %}{% if !loop.last %} ·{% endif %}
     {% endfor %}
   </p>
   {% endif %}
 
   <p class="muted">Location ({{ x }}, {{ y }}) · Tribe: {{ tribe }} · <a href="/w/{{ world }}/map?x={{ x }}&amp;y={{ y }}">Map</a>
-    · <a href="/w/{{ world }}/village/rally?village={{ village_id }}">Rally Point</a>
-    · <a href="/w/{{ world }}/village/market?village={{ village_id }}">Marketplace</a>
+    · <a href="/w/{{ world }}/village/{{ village_id }}/rally">Rally Point</a>
+    · <a href="/w/{{ world }}/village/{{ village_id }}/market">Marketplace</a>
     · <a href="/w/{{ world }}/reports">Reports</a>
     · <a href="/w/{{ world }}/quests">Quests</a>
     · <a href="/w/{{ world }}/alliance">Alliance</a>
-    {% if has_academy %} · <a href="/w/{{ world }}/village/academy?village={{ village_id }}">Academy</a>{% endif %}
-    {% if has_smithy %} · <a href="/w/{{ world }}/village/smithy?village={{ village_id }}">Smithy</a>{% endif %}
-    {% for link in troop_links %} · <a href="/w/{{ world }}{{ link.1 }}?village={{ village_id }}">{{ link.0 }}</a>{% endfor %}</p>
+    {% if has_academy %} · <a href="/w/{{ world }}/village/{{ village_id }}/academy">Academy</a>{% endif %}
+    {% if has_smithy %} · <a href="/w/{{ world }}/village/{{ village_id }}/smithy">Smithy</a>{% endif %}
+    {% for link in troop_links %} · <a href="/w/{{ world }}/village/{{ village_id }}/{{ link.1 }}">{{ link.0 }}</a>{% endfor %}</p>
 
   <h2>Culture &amp; expansion</h2>
   <p>Culture points: <strong class="num">{{ cp }}</strong> (+{{ cp_rate }}/h pooled across your villages) ·
@@ -57,7 +57,7 @@
   <p>Loyalty: <strong class="num">{{ loyalty }}</strong> / 100
     {% if is_capital %}· <span class="badge">★ Capital — cannot be conquered</span>{% else %}<span class="muted">— an enemy administrator that wins here lowers it; at 0 (with a free slot) they take the village</span>{% endif %}</p>
   {% if has_free_slot %}
-  <p class="muted">You have a free expansion slot — train settlers, then <a href="/w/{{ world }}/village/rally?village={{ village_id }}">send them to a free valley</a> to found a new village.</p>
+  <p class="muted">You have a free expansion slot — train settlers, then <a href="/w/{{ world }}/village/{{ village_id }}/rally">send them to a free valley</a> to found a new village.</p>
   {% else %}
   <p class="muted">No free expansion slot — raise a Town Hall (more culture) and a Residence/Palace (more capacity) to expand.</p>
   {% endif %}
@@ -147,9 +147,8 @@
         <td>{{ o.bonus }}</td>
         <td>
           <span class="map-controls">
-            <a class="btn btn--secondary" href="/w/{{ world }}/village/rally?x={{ o.x }}&amp;y={{ o.y }}&amp;village={{ village_id }}">Reinforce</a>
-            <form method="post" action="/w/{{ world }}/village/oasis/recall">
-              <input type="hidden" name="village" value="{{ village_id }}">
+            <a class="btn btn--secondary" href="/w/{{ world }}/village/{{ village_id }}/rally?x={{ o.x }}&amp;y={{ o.y }}">Reinforce</a>
+            <form method="post" action="/w/{{ world }}/village/{{ village_id }}/oasis/recall">
               <input type="hidden" name="x" value="{{ o.x }}">
               <input type="hidden" name="y" value="{{ o.y }}">
               <button class="btn btn--secondary" type="submit">Recall troops</button>
@@ -188,8 +187,7 @@
       <tr>
         <td>{{ r.owner }}</td><td>{{ r.coord }}</td><td>{{ r.troops }}</td>
         <td>
-          <form method="post" action="/w/{{ world }}/village/rally/return">
-            <input type="hidden" name="village" value="{{ village_id }}">
+          <form method="post" action="/w/{{ world }}/village/{{ village_id }}/rally/return">
             <input type="hidden" name="host" value="{{ r.host_id }}">
             <button class="btn btn--secondary" type="submit">Send back</button>
           </form>
@@ -228,8 +226,7 @@
         <td class="muted">{{ b.effect }}</td>
         <td>
           {% if b.at_max %}<span class="muted">max</span>{% else if b.can_order %}
-          <form method="post" action="/w/{{ world }}/village/build">
-            <input type="hidden" name="village" value="{{ village_id }}">
+          <form method="post" action="/w/{{ world }}/village/{{ village_id }}/build">
             <input type="hidden" name="table" value="{{ b.table }}">
             <input type="hidden" name="slot" value="{{ b.slot }}">
             <input type="hidden" name="kind" value="{{ b.kind }}">
@@ -260,8 +257,7 @@
         <td class="muted">{{ f.effect }}</td>
         <td>
           {% if f.at_max %}<span class="muted">max</span>{% else if f.can_order %}
-          <form method="post" action="/w/{{ world }}/village/build">
-            <input type="hidden" name="village" value="{{ village_id }}">
+          <form method="post" action="/w/{{ world }}/village/{{ village_id }}/build">
             <input type="hidden" name="table" value="{{ f.table }}">
             <input type="hidden" name="slot" value="{{ f.slot }}">
             <button class="btn btn--primary" type="submit">Upgrade</button>

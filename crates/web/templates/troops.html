@@ -4,7 +4,7 @@
 {% block content %}
 <section class="panel">
   <h1>{{ building }}</h1>
-  <p class="muted"><a href="/w/{{ world }}/village?village={{ village_id }}">← Back to the village</a></p>
+  <p class="muted"><a href="/w/{{ world }}/village/{{ village_id }}">← Back to the village</a></p>
 
   {% if !has_building %}
   <p>Training here requires a <strong>{{ building }}</strong>. Build one in the village first.</p>
@@ -16,7 +16,7 @@
   {% endif %}
 
   {% if rows.is_empty() %}
-  <p class="muted">No researched units train here yet — visit the <a href="/w/{{ world }}/village/academy?village={{ village_id }}">Academy</a>.</p>
+  <p class="muted">No researched units train here yet — visit the <a href="/w/{{ world }}/village/{{ village_id }}/academy">Academy</a>.</p>
   {% else %}
   <table class="table">
     <thead>
@@ -44,10 +44,9 @@
         <td class="num">{{ u.time }}</td>
         <td>
           {% if u.can_order %}
-          <form method="post" action="/w/{{ world }}/village/train" class="train-form" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"
+          <form method="post" action="/w/{{ world }}/village/{{ village_id }}/train" class="train-form" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"
                 data-w="{{ u.cost_wood }}" data-c="{{ u.cost_clay }}" data-i="{{ u.cost_iron }}" data-cr="{{ u.cost_crop }}"
                 data-secs="{{ u.time_secs }}" data-up="{{ u.upkeep }}">
-            <input type="hidden" name="village" value="{{ village_id }}">
             <input type="hidden" name="unit" value="{{ u.id }}">
             <input type="number" name="count" value="1" min="1" max="9999" required style="width:5.5em">
             <button class="btn btn--primary" type="submit">Train</button>
