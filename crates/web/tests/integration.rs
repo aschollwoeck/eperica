@@ -579,7 +579,9 @@ async fn training_flow_and_garrison(pool: sqlx::PgPool) {
     assert!(body.contains("Garrison"));
     assert!(body.contains("Phalanx"));
     assert!(body.contains("Total upkeep: 10 crop/h"));
-    assert!(body.contains("/village/troops/barracks"));
+    // 056: the Barracks link must carry the world prefix (a bare `/village/troops/barracks` 404s).
+    assert!(body.contains(&format!("/w/{home}/village/troops/barracks")));
+    assert!(!body.contains("\"/village/troops/barracks"));
     assert_eq!(crop_rate(&body), before - 10); // 10 phalanxes × 1 crop/h (AC6)
 
     // Visitors are redirected to login (roles table).
