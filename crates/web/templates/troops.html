@@ -30,7 +30,12 @@
     <tbody>
       {% for u in rows %}
       <tr>
-        <td>{{ u.name }}</td>
+        <td>
+          <span class="unit-cell">
+            <span class="unit-thumb" style="--unit-img: url('/static/units/{{ u.portrait }}.webp')" aria-hidden="true"></span>
+            {{ u.name }}
+          </span>
+        </td>
         <td class="num">{{ u.attack }}</td>
         <td class="num">{{ u.def_inf }}</td>
         <td class="num">{{ u.def_cav }}</td>

@@ -242,6 +242,9 @@ pub struct SmithyTemplate {
 pub struct TrainRow {
     /// Unit slug for the POST `unit` value.
     pub id: String,
+    /// Tribe-prefixed portrait slug (`<tribe>_<id>`, e.g. `romans_legionnaire`); the page resolves
+    /// `/static/units/<portrait>.webp` as a thumbnail, falling back to a placeholder when absent (063).
+    pub portrait: String,
     /// Display name.
     pub name: String,
     pub attack: u32,

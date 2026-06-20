@@ -32,6 +32,13 @@ P11 budget. Presentation-layer; commit per task group on `feature/063-visual-ide
   Playwright sweep (widths 1280–2560 + mobile, register-into-world, building pages incl. fallback, legal);
   `eperica-reviewer` → APPROVE (after adding the cross-world-join + no-cache integration tests); PR opened.
 
+- [x] **T11 — Per-unit roster portraits (follow-up).** `TrainRow.portrait` (`<tribe>_<id>`) + handler;
+  `.unit-thumb` thumbnail with the AC5 graceful fallback (dark placeholder tile) in `troops.html`/`base.css`;
+  `static/units/` drop-in (README) + a "Troop & unit art" section (all tribes + wild animals) in the prompt
+  sheet. Also finishes the building-art loose end: rename `smithly.webp → smithy.webp` and drop the stray
+  oversized `smithy.png`. (AC7)
+
 > Implementation landed iteratively (live Playwright review); recorded here to keep the spec→plan→tasks trail
 > intact. The reviewer's MUST-FIX (cross-world register-into-world join test) and SHOULD-FIX (no-cache header
-> test + clarifying comments) were folded into the implementation commit before APPROVE.
+> test + clarifying comments) were folded into the implementation commit before APPROVE. T11 (unit portraits)
+> landed as a follow-up after the slice merged.

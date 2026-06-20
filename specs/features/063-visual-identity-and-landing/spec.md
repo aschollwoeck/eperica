@@ -41,6 +41,10 @@ static assets are served with no `Cache-Control` (browsers cache stale CSS/HTML 
   (`/static/buildings/<slug>.webp`) behind its content, with a graceful fallback to the plain theme when the
   file is absent (no broken-image artifact, no layout shift). An art-direction **prompt sheet**
   (`docs/art/building-backgrounds.md`) gives a consistent on-theme prompt per building.
+- **AC7 — Per-unit roster portraits.** Each training-roster row shows a small **unit portrait thumbnail**
+  (`/static/units/<tribe>_<id>.webp`, tribe-prefixed because unit ids collide across tribes), with the same
+  graceful fallback as AC5 (a dark placeholder tile, no broken-image artifact). The same prompt sheet gains a
+  **Troop & unit art** section (one figure portrait per unit, all tribes + wild animals).
 - **AC6 — Fresh assets.** `/static` **and** the dynamic HTML send `Cache-Control: no-cache`, so a normal
   reload always reflects the latest CSS/templates (cheap 304s otherwise).
 

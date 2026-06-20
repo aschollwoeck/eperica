@@ -2116,6 +2116,7 @@ pub async fn troops(
             .filter(|spec| spec.researched_by_default() || researched.contains(&spec.id))
             .map(|spec| TrainRow {
                 id: spec.id.as_str().to_owned(),
+                portrait: format!("{}_{}", tribe.slug(), spec.id.as_str()),
                 name: spec.name.clone(),
                 attack: spec.attack,
                 def_inf: spec.defense_infantry,

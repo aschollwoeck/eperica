@@ -516,6 +516,10 @@ async fn training_flow_and_garrison(pool: sqlx::PgPool) {
     assert!(body.contains("Phalanx"));
     assert!(body.contains("value=\"phalanx\""));
     assert!(body.contains("name=\"count\""));
+    // 063 AC7: each roster row carries its tribe-prefixed portrait thumbnail (missing art falls back
+    // to the dark placeholder tile — no broken-image artifact).
+    assert!(body.contains("unit-thumb"));
+    assert!(body.contains("/static/units/gauls_phalanx.webp"));
 
     // 005 AC2/AC9: order a batch; PRG back to the page, which shows the queue + countdown.
     let res = c
