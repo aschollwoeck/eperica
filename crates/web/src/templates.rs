@@ -527,10 +527,10 @@ pub struct ShipmentRow {
     pub arrive_ms: i64,
 }
 
-/// One entry in the village switcher (013 AC11): an owned village, the page links to it via
-/// `?village=<id>`.
+/// One entry in the village switcher (013 AC11): an owned village, the page links to it at
+/// `/w/{world}/village/{id}` (064 — the id is the path segment).
 pub struct VillageSwitchRow {
-    /// The village id (the `?village=` selector value).
+    /// The village id as its hyphenated-UUID path segment (064).
     pub id: String,
     /// Display label, e.g. "(3|4)".
     pub label: String,
