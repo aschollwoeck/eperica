@@ -48,7 +48,7 @@
     · <a href="/w/{{ world }}/alliance">Alliance</a>
     {% if has_academy %} · <a href="/w/{{ world }}/village/academy?village={{ village_id }}">Academy</a>{% endif %}
     {% if has_smithy %} · <a href="/w/{{ world }}/village/smithy?village={{ village_id }}">Smithy</a>{% endif %}
-    {% for link in troop_links %} · <a href="{{ link.1 }}?village={{ village_id }}">{{ link.0 }}</a>{% endfor %}</p>
+    {% for link in troop_links %} · <a href="/w/{{ world }}{{ link.1 }}?village={{ village_id }}">{{ link.0 }}</a>{% endfor %}</p>
 
   <h2>Culture &amp; expansion</h2>
   <p>Culture points: <strong class="num">{{ cp }}</strong> (+{{ cp_rate }}/h pooled across your villages) ·
