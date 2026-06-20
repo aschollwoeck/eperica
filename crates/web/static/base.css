@@ -121,6 +121,9 @@ a { color: var(--c-gold); }
       color-mix(in srgb, var(--c-bg) 42%, transparent) 0%,
       color-mix(in srgb, var(--c-bg) 80%, transparent) 58%,
       var(--c-bg) 100%),
+    /* 065: the village's tribe-specific plate sits on top; if absent it 404s to transparent and the
+       neutral plate below shows through — a pure-CSS graceful fallback (no broken-image artifact). */
+    var(--building-img-tribe, none) center top / cover no-repeat fixed,
     var(--building-img, none) center top / cover no-repeat fixed,
     var(--c-bg);
 }

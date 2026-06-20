@@ -59,6 +59,7 @@ mod tests {
     fn village(crop_rate: i64) -> VillageTemplate {
         VillageTemplate {
             world: "00000000-0000-0000-0000-000000000000".to_owned(),
+            tribe_slug: "gauls",
             username: "player".to_owned(),
             world_won: false,
             is_wonder_site: false,
@@ -109,6 +110,35 @@ mod tests {
         assert!(village(-5).render().unwrap().contains("starving"));
         assert!(village(0).render().unwrap().contains("starving"));
         assert!(!village(5).render().unwrap().contains("starving"));
+    }
+
+    // 065: a building page emits the village's tribe-specific plate (`<tribe>_<slug>.webp`) layered over the
+    // neutral plate; an empty tribe slug emits no tribe layer (the neutral plate is the sole fallback).
+    #[test]
+    fn building_bg_layers_the_tribe_plate_when_tribe_is_known() {
+        let html = village(5).render().unwrap(); // tribe_slug = "gauls"
+        assert!(html.contains("--building-img: url('/static/buildings/main_building.webp')"));
+        assert!(
+            html.contains(
+                "--building-img-tribe: url('/static/buildings/gauls_main_building.webp')"
+            ),
+            "the tribe plate is layered for a known tribe"
+        );
+    }
+
+    #[test]
+    fn building_bg_omits_the_tribe_plate_when_tribe_is_unknown() {
+        let html = VillageTemplate {
+            tribe_slug: "",
+            ..village(5)
+        }
+        .render()
+        .unwrap();
+        assert!(html.contains("--building-img: url('/static/buildings/main_building.webp')"));
+        assert!(
+            !html.contains("--building-img-tribe"),
+            "no tribe layer (nor a stray `_main_building.webp`) when the tribe is unknown"
+        );
     }
 }
 
@@ -188,6 +218,8 @@ pub struct AcademyRow {
 pub struct AcademyTemplate {
     /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
     pub world: String,
+    /// The village's tribe slug for the tribe-specific background plate (065); empty ⇒ neutral plate.
+    pub tribe_slug: &'static str,
     /// The village this page acts on (carried into the research form + back link, 013 AC11).
     pub village_id: String,
     /// Whether the village has an Academy (otherwise the page only explains the requirement).
@@ -226,6 +258,8 @@ pub struct SmithyRow {
 pub struct SmithyTemplate {
     /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
     pub world: String,
+    /// The village's tribe slug for the tribe-specific background plate (065); empty ⇒ neutral plate.
+    pub tribe_slug: &'static str,
     /// The village this page acts on (carried into the upgrade form + back link, 013 AC11).
     pub village_id: String,
     /// Whether the village has a Smithy (otherwise the page only explains the requirement).
@@ -271,6 +305,8 @@ pub struct TrainRow {
 pub struct TroopsTemplate {
     /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
     pub world: String,
+    /// The village's tribe slug for the tribe-specific background plate (065); empty ⇒ neutral plate.
+    pub tribe_slug: &'static str,
     /// The village this page acts on (carried into the train form + back link, 013 AC11).
     pub village_id: String,
     /// "Barracks" / "Stable" / "Workshop".
@@ -346,6 +382,8 @@ pub struct RallyUnitRow {
 pub struct RallyTemplate {
     /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
     pub world: String,
+    /// The village's tribe slug for the tribe-specific background plate (065); empty ⇒ neutral plate.
+    pub tribe_slug: &'static str,
     /// The id of the village these troops are sent from (carried into the form, AC11).
     pub village_id: String,
     /// The garrison units that can be sent (empty hides the form).
@@ -496,6 +534,8 @@ pub struct ScoutReportTemplate {
 pub struct MarketTemplate {
     /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
     pub world: String,
+    /// The village's tribe slug for the tribe-specific background plate (065); empty ⇒ neutral plate.
+    pub tribe_slug: &'static str,
     /// The village this page acts on (carried into the send form + back link, 013 AC11).
     pub village_id: String,
     /// Whether the village has a Marketplace (otherwise the page only explains the requirement).
@@ -545,6 +585,8 @@ pub struct VillageSwitchRow {
 pub struct VillageTemplate {
     /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
     pub world: String,
+    /// The village's tribe slug for the tribe-specific background plate (065); empty ⇒ neutral plate.
+    pub tribe_slug: &'static str,
     /// Owner's username.
     pub username: String,
     /// Whether the world has been won (021 AC7) — shows a victory notice + freeze warning.

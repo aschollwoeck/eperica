@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block body_class %}has-building-bg{% endblock %}
-{% block body_style %}--building-img: url('/static/buildings/academy.webp');{% endblock %}
+{% block body_style %}--building-img: url('/static/buildings/academy.webp');{% if !tribe_slug.is_empty() %} --building-img-tribe: url('/static/buildings/{{ tribe_slug }}_academy.webp');{% endif %}{% endblock %}
 {% block content %}
 <section class="panel">
   <h1>Academy</h1>
