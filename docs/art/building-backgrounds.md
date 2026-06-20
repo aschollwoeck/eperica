@@ -4,9 +4,10 @@ AI image prompts for the game's art, all in the landing page's "Grim Forged Stee
 torch/ember warmth, tarnished brass, heavy vignette). Two families:
 
 - **[Building backgrounds](#building-backgrounds--ai-image-prompts)** — one 16:9 image per building, shown as a
-  **darkened background** behind that building's page.
-- **[Troop & unit portraits](#troop--unit-art--ai-image-prompts)** — one figure portrait per unit, for the
-  roster / training cards.
+  **darkened background** behind that building's page. Each has an optional **[per-tribe architecture
+  variant](#per-tribe-architecture)** (Roman stone / Teuton timber / Gaul oak).
+- **[Troop & unit portraits](#troop--unit-art--ai-image-prompts)** — one figure portrait per unit, already
+  written **per tribe** (+ wild animals), for the roster / training cards.
 
 # Building backgrounds — AI image prompts
 
@@ -14,12 +15,21 @@ One image per building, shown as a **darkened background** behind that building'
 
 ## How to use
 
-1. For each building below, the full prompt is **`<subject>` + the [Style block](#style-block)**. Use the
-   [Negative prompt](#negative-prompt) on tools that take one (Stable Diffusion, etc.).
-2. Save each result as `crates/web/static/buildings/<slug>.webp` — the `<slug>` shown matches the game's
-   building slug, so the page can resolve `/static/buildings/<slug>.webp` automatically.
+1. The full prompt is **`<subject>` + a [tribe-architecture descriptor](#per-tribe-architecture) + the
+   [Style block](#style-block)**. The building **subject** (below) is the *what*; the tribe descriptor is the
+   *how it's built* (Roman dressed stone vs Teuton rough timber vs Gaul carved oak); the style block is the
+   shared grim-night *mood*. Use the [Negative prompt](#negative-prompt) on tools that take one.
+2. Slugs:
+   - **Tribe-neutral** (the default the page loads today): save as `crates/web/static/buildings/<slug>.webp`.
+     Use a neutral, weathered medieval rendering — skip the tribe descriptor or blend all three.
+   - **Tribe-specific** (optional, richer): save as `crates/web/static/buildings/<tribe>_<slug>.webp`
+     (`romans_`/`teutons_`/`gauls_`), built with that tribe's architecture descriptor. **This is wired (065):**
+     each building page already resolves its village's `<tribe>_<slug>.webp` and falls back to the neutral
+     `<slug>.webp` (and then the plain theme) when the tribe plate is absent — drop one in and it appears for
+     that tribe only, no code change.
 3. These sit **under page text**, so keep them dark and low-key. The page also lays a black 55–70 % scrim +
-   vignette over them in CSS, so a little extra darkness in the art is good, not bad.
+   vignette over them in CSS, so a little extra darkness in the art is good, not bad. The tribe should read in
+   the **architecture and silhouette**, never in bright colour — the palette stays the shared forged-steel one.
 
 ## Technical specs
 
@@ -43,6 +53,28 @@ One image per building, shown as a **darkened background** behind that building'
 > *text, words, letters, logo, watermark, UI, frame, border, signature, people in foreground, faces,
 > bright daylight, blue sky, vivid saturated colours, cheerful, cartoon, anime, cute, modern objects,
 > cars, low detail, blurry, washed out, overexposed.*
+
+## Per-tribe architecture
+
+Each tribe builds in a distinct way. Drop **one** of these descriptors between the building `<subject>` and the
+[Style block](#style-block) to make a tribe-specific variant (`<tribe>_<slug>.webp`). The descriptor governs
+**materials, construction and silhouette only** — the colour palette and night mood always come from the shared
+style block (a tribe is recognised by *how it's built*, not by bright colour). The three echo the unit
+identities ([Romans](#romans--iron-discipline) / [Teutons](#teutons--brute-iron-and-fury) /
+[Gauls](#gauls--lithe-and-warded)).
+
+- **Romans** (`romans_`) — *imperial military engineering: precise dressed-ashlar stone and brick-faced
+  concrete, round arches, barrel vaults and columns, low terracotta-tiled roofs, an ordered rectilinear plan
+  with right-angles and symmetry; tarnished marble and bronze fittings, an eagle standard and a muted oxblood
+  banner; disciplined, monumental, built to last — even war-worn it reads as engineered and exact.*
+- **Teutons** (`teutons_`) — *brutal frontier construction: massive rough-hewn timber and undressed fieldstone,
+  steep shingled or thatched gable roofs, log palisades and earth ramparts, wattle-and-daub between heavy
+  beams; animal skulls, antlers and horns nailed up, bone and furs, crude black iron banding and runes carved
+  into the wood; squat, heavy, fortress-like and unrefined — smoke-stained and defiant.*
+- **Gauls** (`gauls_`) — *organic Celtic craft: conical thatched roundhouses and finely carpentered oak frames,
+  woven-wattle walls and dry-stone footings, an earthwork hillfort with palisade; carved knotwork and spirals,
+  standing stones and weather-greyed totems, mistletoe-and-oak and antler motifs, woad-tinted cloth muted to
+  blue-grey; lithe, naturalistic and warded — graceful where the Teutons are brutal.*
 
 ---
 
@@ -266,3 +298,23 @@ These guard oases on the map; portrait them as **menacing beasts** in the same d
 > desaturated, low overall brightness, strong vignette, deep atmospheric depth. Framed as a darkened
 > background plate — the structure set back with large areas of shadow and empty sky for text overlay, wide
 > 16:9. Painterly, highly detailed, oppressive, war-torn, no people in the foreground. `--ar 16:9 --style raw --stylize 250`
+
+## Fully assembled example — tribe-specific (Teuton Main Building → `teutons_main_building`)
+
+The same subject + the **Teuton** architecture descriptor + the style block:
+
+> The village's main hall and works yard: a stout great hall with a watch-tower and a banner, torches flanking
+> heavy iron-bound doors, timber scaffolding and stacked stone of ongoing construction — the beating heart of a
+> war-village at night — *brutal frontier construction: massive rough-hewn timber and undressed fieldstone, a
+> steep shingled gable roof, log palisades and earth ramparts, wattle-and-daub between heavy beams; animal
+> skulls, antlers and horns nailed up, bone and furs, crude black iron banding and runes carved into the wood;
+> squat, heavy, fortress-like and unrefined* — grim dark-fantasy medieval concept art, cinematic night
+> establishing shot. Forged-steel palette: near-black gunmetal and cold iron, deep blue-grey shadow, lit only by
+> flickering torchlight and forge-embers (warm amber-orange) with a faint cold moonlight rim; tarnished brass
+> accents. Heavy chiaroscuro, volumetric haze and drifting smoke, soot, weathered stone, iron and aged timber.
+> Muted, desaturated, low overall brightness, strong vignette, deep atmospheric depth. Framed as a darkened
+> background plate — the structure set back with large areas of shadow and empty sky for text overlay, wide
+> 16:9. Painterly, highly detailed, oppressive, war-torn, no people in the foreground. `--ar 16:9 --style raw --stylize 250`
+
+> Swap the italic descriptor for the **Roman** or **Gaul** one (and the slug prefix) to get the other two
+> tribe variants of the same building.

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block body_class %}has-building-bg{% endblock %}
-{% block body_style %}--building-img: url('/static/buildings/smithy.webp');{% endblock %}
+{% block body_style %}--building-img: url('/static/buildings/smithy.webp');{% if !tribe_slug.is_empty() %} --building-img-tribe: url('/static/buildings/{{ tribe_slug }}_smithy.webp');{% endif %}{% endblock %}
 {% block content %}
 <section class="panel">
   <h1>Smithy</h1>

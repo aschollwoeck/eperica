@@ -1326,6 +1326,7 @@ pub async fn village(
 
     page(&VillageTemplate {
         world: world_id_str(ctx.world_id),
+        tribe_slug: village.tribe.map_or("", |t| t.slug()),
         username: user.username,
         world_won,
         is_wonder_site: village.is_wonder_site,
@@ -1905,6 +1906,7 @@ pub async fn academy(
 
     page(&AcademyTemplate {
         world: world_id_str(ctx.world_id),
+        tribe_slug: village.tribe.map_or("", |t| t.slug()),
         village_id: village_seg(village.id),
         has_academy: building_level(&village, BuildingKind::Academy) > 0,
         rows,
@@ -2022,6 +2024,7 @@ pub async fn smithy(ctx: GameContext, Path((_world, village)): Path<(String, Str
 
     page(&SmithyTemplate {
         world: world_id_str(ctx.world_id),
+        tribe_slug: village.tribe.map_or("", |t| t.slug()),
         village_id: village_seg(village.id),
         has_smithy: building_level(&village, BuildingKind::Smithy) > 0,
         smithy_level: building_level(&village, BuildingKind::Smithy),
@@ -2173,6 +2176,7 @@ async fn troops(ctx: GameContext, village: String, building: BuildingKind) -> Re
 
     page(&TroopsTemplate {
         world: world_id_str(ctx.world_id),
+        tribe_slug: village.tribe.map_or("", |t| t.slug()),
         village_id: village_seg(village.id),
         building: building_label(building),
         has_building: building_level > 0,
@@ -2348,6 +2352,7 @@ pub async fn rally(
     };
     page(&RallyTemplate {
         world: world_id_str(ctx.world_id),
+        tribe_slug: village.tribe.map_or("", |t| t.slug()),
         village_id: village_seg(village.id),
         units,
         target_x: q.x,
@@ -2635,6 +2640,7 @@ pub async fn market(ctx: GameContext, Path((_world, village)): Path<(String, Str
     if level == 0 {
         return page(&MarketTemplate {
             world: world_id_str(ctx.world_id),
+            tribe_slug: village.tribe.map_or("", |t| t.slug()),
             village_id,
             has_marketplace: false,
             capacity: 0,
@@ -2658,6 +2664,7 @@ pub async fn market(ctx: GameContext, Path((_world, village)): Path<(String, Str
     let profile = ctx.rules.merchant.profile(tribe);
     page(&MarketTemplate {
         world: world_id_str(ctx.world_id),
+        tribe_slug: village.tribe.map_or("", |t| t.slug()),
         village_id,
         has_marketplace: true,
         capacity: profile.capacity,
