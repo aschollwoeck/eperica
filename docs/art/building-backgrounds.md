@@ -30,12 +30,24 @@ One image per building, shown as a **darkened background** behind that building'
 3. These sit **under page text**, so keep them dark and low-key. The page also lays a black 55–70 % scrim +
    vignette over them in CSS, so a little extra darkness in the art is good, not bad. The tribe should read in
    the **architecture and silhouette**, never in bright colour — the palette stays the shared forged-steel one.
+4. **Hero-band composition (important).** The redesign uses the image as a **full-bleed hero band across the
+   top of the building page**, with the building's **title, crest and a one-line note overlaid on the
+   lower-left** — not just a faint full-page wash. So compose for that overlay:
+   - Keep the **lower-left third dark and quiet** (shadow, haze, empty ground) so white title text reads over
+     it; push the lit subject (the forge/hearth, the stalls, the structure) toward the **centre-right and
+     upper area**.
+   - Leave **dark headroom along the top** (the sticky nav bar crosses it) and a soft fade-friendly bottom
+     (the band blends down into the dark page).
+   - It's a **wide band, not a full frame** — roughly the top ~340 px of a ~1180 px-wide column is what shows,
+     so the interesting read should live in the **upper ~40 %** of the 16:9 image.
 
 ## Technical specs
 
 - **16:9**, ≥ 1600×900 (1920×1080 ideal). Export **WebP**, aim for **< ~250 KB** each (page-weight budget, P11).
 - Very dark / low-key, desaturated. The recognisable structure should read as a moody silhouette/establishing
   shot with large shadow areas and empty sky for the UI to overlay.
+- **Composition for the hero band:** subject toward centre-right / upper, a **dark quiet lower-left** for the
+  overlaid title + crest, dark headroom top, fade-friendly bottom (see *Hero-band composition* above).
 - Midjourney params: `--ar 16:9 --style raw --stylize 250`
 
 ## Style block
