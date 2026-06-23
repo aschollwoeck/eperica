@@ -318,3 +318,208 @@ The same subject + the **Teuton** architecture descriptor + the style block:
 
 > Swap the italic descriptor for the **Roman** or **Gaul** one (and the slug prefix) to get the other two
 > tribe variants of the same building.
+
+---
+
+# Roman set — "Warm Ruin" style (full, copy-paste prompts)
+
+The actual shipped Roman art (`crates/web/static/units/romans_legionnaire.webp`) uses a warm dusty-sepia,
+hazy-backlit look (the [shared style blocks](#repeatable-part-the-shared-style--params) below), **not** the
+grim forged-steel night style at the top of this file. Below is the **complete Roman roster + every building**, each as a
+**fully assembled, copy-paste-ready Midjourney prompt** (style and params already baked in — no need to append
+anything). Slugs and save paths are as documented above.
+
+> **Make the whole set match:** generate the legionnaire (or the main building) first, then add
+> `--sref <that image's URL> --sw 75` to every other prompt — text alone won't reproduce the haze and brushwork
+> across a set. Drag the image into Midjourney's prompt bar to get a URL (it can't read a local file path).
+
+## Repeatable part (the shared style + params)
+
+Every prompt below = **`<subject>` + one of these style blocks + its params**. If you write new subjects, just
+paste the matching block on the end.
+
+**Unit style block** (single-figure portraits):
+```
+Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents, the figure reading dark against a glowing pale sky; a thriving monumental ancient-Roman city — Colosseum, columns, arches — dissolving in dusty haze behind at shallow depth of field; soft atmospheric perspective, drifting dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+**Building style block** (exterior background plates):
+```
+Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+**Interior style block** (for `cranny` and `treasury` — no open sky):
+```
+Painterly digital concept art, moody and cinematic. Dim interior in warm sepia and dusty cream tones with muted oxblood accents, lit by a single narrow shaft of dusty light against deep sepia shadow; soft atmospheric haze, fine drifting dust, desaturated, highly detailed, dark empty areas for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+## Roman units → `crates/web/static/units/<slug>.webp`
+
+### `romans_legionnaire`
+```
+A Roman legionary in segmented iron lorica and a crested helm hiding his eyes, a scarred rectangular scutum on one arm and a short gladius in the other, a tattered oxblood cloak, jaw set, standing on dusty ground, the backbone of the legion. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents, the figure reading dark against a glowing pale sky; a thriving monumental ancient-Roman city — Colosseum, columns, arches — dissolving in dusty haze behind at shallow depth of field; soft atmospheric perspective, drifting dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `romans_praetorian`
+```
+An elite Roman Praetorian guardsman in heavier blackened iron plate, a tall tower shield braced before him and a spear couched, an oxblood crest and sash, an unyielding bulwark in the dust and haze. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents, the figure reading dark against a glowing pale sky; a thriving monumental ancient-Roman city — Colosseum, columns, arches — dissolving in dusty haze behind at shallow depth of field; soft atmospheric perspective, drifting dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `romans_imperian`
+```
+A hard-faced Roman assault legionary in lighter agile armour, gladius drawn mid-stride and scutum raised, cloak streaming, a brutal close-quarters attacker caught moving through dusty light. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents, the figure reading dark against a glowing pale sky; a thriving monumental ancient-Roman city — Colosseum, columns, arches — dissolving in dusty haze behind at shallow depth of field; soft atmospheric perspective, drifting dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `romans_equites_legati`
+```
+A light Roman scout-rider leaning low on a lean horse, a hooded cloak and no heavy armour, a sharp watchful look, dust and pale haze around horse and rider, built for speed and seeing. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents, the figure reading dark against a glowing pale sky; a thriving monumental ancient-Roman city — Colosseum, columns, arches — dissolving in dusty haze behind at shallow depth of field; soft atmospheric perspective, drifting dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `romans_equites_imperatoris`
+```
+A Roman cavalryman on an armoured horse, mailed and helmed with a long spear and an oval shield, charging through drifting dust, disciplined and deadly. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents, the figure reading dark against a glowing pale sky; a thriving monumental ancient-Roman city — Colosseum, columns, arches — dissolving in dusty haze behind at shallow depth of field; soft atmospheric perspective, drifting dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `romans_equites_caesaris`
+```
+The heaviest Roman knight, man and destrier in full blackened barding, lance levelled, a crimson-grey crest, an unstoppable shock charge kicking up dust in the pale backlight. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents, the figure reading dark against a glowing pale sky; a thriving monumental ancient-Roman city — Colosseum, columns, arches — dissolving in dusty haze behind at shallow depth of field; soft atmospheric perspective, drifting dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `romans_battering_ram`
+```
+A great iron-headed Roman battering ram with a ram's-head cap, slung in a wheeled timber A-frame, crewed by shadowed soldiers, scarred from gate-work, a heavy siege-engine portrait in dusty haze. Painterly digital concept art, moody and cinematic. Subject centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents, the engine reading dark against a glowing pale sky; a thriving monumental ancient-Roman city — Colosseum, columns, arches — dissolving in dusty haze behind at shallow depth of field; soft atmospheric perspective, drifting dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `romans_fire_catapult`
+```
+A heavy Roman torsion catapult, arm cocked with a blazing pitch payload throwing warm firelight, ropes and iron fittings, smoke and sparks against the pale dusty backlight, a siege-engine portrait. Painterly digital concept art, moody and cinematic. Subject centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents, the engine reading dark against a glowing pale sky; a thriving monumental ancient-Roman city — Colosseum, columns, arches — dissolving in dusty haze behind at shallow depth of field; soft atmospheric perspective, drifting dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `romans_senator`
+```
+A robed Roman senator-instigator, an austere toga over a mail shirt, a scroll and wax seal of conquest in hand, cold and calculating, a taker of villages rather than a fighter, framed against hazy columns. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents, the figure reading dark against a glowing pale sky; a thriving monumental ancient-Roman city — Colosseum, columns, arches — dissolving in dusty haze behind at shallow depth of field; soft atmospheric perspective, drifting dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `romans_settler`
+```
+A Roman pioneer with a heavy pack, a spade and a surveyor's rod, a travel cloak against the dust, gazing out at unclaimed land, a hardy founder of new villages in the pale haze. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents, the figure reading dark against a glowing pale sky; a thriving monumental ancient-Roman city — Colosseum, columns, arches — dissolving in dusty haze behind at shallow depth of field; soft atmospheric perspective, drifting dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+## Roman resource fields → `crates/web/static/buildings/<slug>.webp`
+
+### `woodcutter`
+```
+A Roman lumber yard at the edge of a sun-hazed forest: felled trunks and neatly stacked timber, a sawpit, ordered woodpiles, a tiled-roof lodge, drifting dust and woodsmoke, the city skyline faint beyond the trees. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `clay_pit`
+```
+A terraced Roman clay pit cut into a hillside: ordered timber scaffolds and ladders, buckets and a hand-winch, stepped excavation walls, standing pools catching the pale light, dust hanging in the air. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `iron_mine`
+```
+The timber-braced mouth of a Roman iron mine in a dusty crag: ore carts on wooden rails, ordered slag heaps, picks and chains, a faint warm glow from the tunnel, the city hazed in the distance. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `cropland`
+```
+Sun-hazed Roman farmland: ordered rows of grain and bound sheaves, a stone-and-timber granary on the horizon, low ground-haze and drifting dust, the monumental city skyline pale beyond the fields. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+## Roman buildings → `crates/web/static/buildings/<slug>.webp`
+
+### `main_building`
+```
+A grand Roman great hall and works yard: a stout dressed-stone hall with round arches, a square watch-tower and a tiled roof, an oxblood banner hanging proud, torches at heavy iron-bound doors, fresh scaffolding and neatly stacked stone of active construction, the thriving heart of the village. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `rally_point`
+```
+A Roman muster yard and war camp: a raised stone command platform hung with an oxblood standard and an eagle, racked spears and scuta, ordered tent rows, marching tracks in the dust, ranks of soldiers as faint shapes in the haze. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `warehouse`
+```
+A fortified Roman storehouse: a long dressed-stone building with massive iron-banded doors, ordered stacks of crates, amphorae and sacks, a colonnaded loading porch, a hooded guard, dust and pale light. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `granary`
+```
+A tall Roman grain store raised on stone arches: sacks of grain and bound straw, a loading hoist, a colonnaded base, the silo standing solid against a pale hazy sky, drifting chaff and dust. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `marketplace`
+```
+A thriving Roman market square: canvas-awning stalls, merchant scales and crates of goods, a laden cart and tethered ox, columns and a fountain, faint townsfolk and drifting dust in the warm backlight. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `embassy`
+```
+An austere Roman diplomatic hall, grander than its neighbours: heraldic shields and alliance banners above a sealed studded bronze door, flanking columns, an eagle standard in the courtyard, long hazy shadows. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `wall`
+```
+A massive Roman defensive wall and gatehouse: a crenellated dressed-stone rampart with a barred iron portcullis and flanking towers, an eagle standard on the battlements, sentries silhouetted, dust drifting in the pale light. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `barracks`
+```
+A Roman soldiers' barracks and drill yard: racks of gladii, spears and scuta, straw practice posts, armour on stands, an ordered colonnaded yard, recruits as faint shapes drilling in the dusty haze. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `academy`
+```
+A Roman war academy and map-room: a strategist's table strewn with charts and weapon schematics, shelves of scrolls, a quill and dividers, austere columned stone, warm dusty light pooling through high windows. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `smithy`
+```
+A Roman blacksmith's forge: a great stone hearth blasting warm light, an anvil with glowing iron and flying sparks, racked hammers, tongs and half-forged blades, smoke and dust, the warmest most fire-lit plate, set in a colonnaded yard. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `stable`
+```
+A Roman war-horse stable: rows of dressed-stone stalls under a tiled roof, armoured destriers shifting in warm shadow, hay, tack and horse-barding on hooks, dust in the air, pale light through the arches. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `workshop`
+```
+A Roman siege workshop: half-built catapults, ballistae and a battering ram in timber frames, coils of rope, sawn beams and iron fittings, a hand-crane and sawdust, busy and ordered in the dusty light. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `residence`
+```
+A lord's fortified Roman residence wing: a dressed-stone manor with a warm hearth glimpsed through an arched window, oxblood banners, a planning table and maps for new settlements, retainers as faint shapes, columns at the steps. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `cranny`  *(interior style block)*
+```
+A hidden Roman cache below the village: a concealed vaulted cellar reached by a trapdoor, sacks and small chests of resources tucked in warm shadow, a single shaft of dusty light, secrecy and dim sepia gloom. Painterly digital concept art, moody and cinematic. Dim interior in warm sepia and dusty cream tones with muted oxblood accents, lit by a single narrow shaft of dusty light against deep sepia shadow; soft atmospheric haze, fine drifting dust, desaturated, highly detailed, dark empty areas for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `outpost`
+```
+A Roman frontier outpost on a captured oasis: a dressed-stone watchtower and palisade beside hazy reed-fringed water in the wilds, an eagle standard and signal-brazier, a lone sentry, dust and pale light over the pool. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `town_hall`
+```
+A great Roman civic hall for triumphs: a large columned stone hall with a raised dais and long oxblood banners, trophies of war on the walls, braziers and faint celebration, grander and prouder, warm dusty light. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `palace`
+```
+The capital's Roman palace: a towering royal keep and columned throne-hall with tarnished bronze and gold accents, sweeping oxblood banners, armoured guards at the gate, commanding the village from on high, magnificent in the pale haze. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `treasury`  *(interior style block)*
+```
+A guarded Roman vault holding a captured artifact: a heavy dressed-stone treasury, an ancient relic on a pedestal radiating a faint eerie glow, iron-bound chests and chains, a single shaft of dusty light, deep sepia shadow. Painterly digital concept art, moody and cinematic. Dim interior in warm sepia and dusty cream tones with muted oxblood accents, lit by a single narrow shaft of dusty light against deep sepia shadow; soft atmospheric haze, fine drifting dust, desaturated, highly detailed, dark empty areas for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `wonder`
+```
+The Roman Wonder of the World under construction: a colossal columned monument rising amid immense timber scaffolding and cranes, hundreds of tiny labourer-figures, an awe-and-dread silhouette against a vast pale hazy sky, the endgame of the war. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
