@@ -1,52 +1,116 @@
 {% extends "base.html" %}
-{% block body_class %}has-building-bg{% endblock %}
+{% block body_class %}bld-page{% endblock %}
 {% block body_style %}--building-img: url('/static/buildings/smithy.webp');{% if !tribe_slug.is_empty() %} --building-img-tribe: url('/static/buildings/{{ tribe_slug }}_smithy.webp');{% endif %}{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Smithy</h1>
-  <p class="muted"><a href="/w/{{ world }}/village/{{ village_id }}">← Back to the village</a></p>
 
-  {% if !has_smithy %}
-  <p>Upgrading units requires a <strong>Smithy</strong>. Build one in the village first.</p>
-  {% else %}
-  <p class="muted">Smithy level {{ smithy_level }} — units can be upgraded up to this level.</p>
-
-  {% if let Some(r) = active %}
-  <p>{{ r.label }} — completes in
-    <span class="countdown num" data-deadline="{{ r.complete_ms }}">…</span></p>
-  {% endif %}
-
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Unit</th><th class="num">Level</th>
-        <th>Upgrade cost (W/C/I/Cr)</th><th class="num">Time</th><th>Next level</th><th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for u in rows %}
-      <tr>
-        <td>{{ u.name }}</td>
-        <td class="num">{{ u.level }}</td>
-        <td><span class="num">{{ u.cost_wood }}/{{ u.cost_clay }}/{{ u.cost_iron }}/{{ u.cost_crop }}</span></td>
-        <td class="num">{{ u.time }}</td>
-        <td class="muted">{{ u.effect }}</td>
-        <td>
-          {% if u.can_order %}
-          <form method="post" action="/w/{{ world }}/village/{{ village_id }}/smithy/upgrade">
-            <input type="hidden" name="unit" value="{{ u.id }}">
-            <button class="btn btn--primary" type="submit">Upgrade</button>
-          </form>
-          {% else %}<span class="muted">{{ u.gate }}</span>{% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
+<section class="bld-hero">
+  <div class="bld-hero__inner">
+    <span class="bld-crest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h11l4-2 3 1-2 4h-3l-3 3H7zM8 14l-1 4M13 14l1 4M6 21h10"/></svg></span>
+    <div class="bld-hid">
+      <div class="bld-eyebrow">Forge · {{ village_label }}</div>
+      <h1 class="bld-title">Smithy{% if has_smithy %} <span class="bld-lvl">Level {{ smithy_level }}</span>{% endif %}</h1>
+      <p class="bld-sub">Sharpen your troops' edge and armour — each unit can be forged up to the Smithy's level.</p>
+    </div>
+    <a class="bld-back" href="/w/{{ world }}/village/{{ village_id }}">← Village</a>
+  </div>
 </section>
 
+<div class="bld-body">
+  {% if !has_smithy %}
+  <section class="panel">
+    <p>Forging upgrades requires a <strong>Smithy</strong>. Build one in the village first.</p>
+    <p><a href="/w/{{ world }}/village/{{ village_id }}">← Back to the village</a></p>
+  </section>
+  {% else %}
+
+  <section class="res-ribbon">
+    <div class="gauge gauge--wood" data-amt="{{ wood }}" data-cap="{{ warehouse }}"><div class="gauge__top"><span class="gauge__name">Wood</span><span class="gauge__rate">+{{ wood_rate }}/h</span></div><div class="gauge__amt">{{ wood }}<small> / {{ warehouse }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
+    <div class="gauge gauge--clay" data-amt="{{ clay }}" data-cap="{{ warehouse }}"><div class="gauge__top"><span class="gauge__name">Clay</span><span class="gauge__rate">+{{ clay_rate }}/h</span></div><div class="gauge__amt">{{ clay }}<small> / {{ warehouse }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
+    <div class="gauge gauge--iron" data-amt="{{ iron }}" data-cap="{{ warehouse }}"><div class="gauge__top"><span class="gauge__name">Iron</span><span class="gauge__rate">+{{ iron_rate }}/h</span></div><div class="gauge__amt">{{ iron }}<small> / {{ warehouse }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
+    <div class="gauge gauge--crop" data-amt="{{ crop }}" data-cap="{{ granary }}"><div class="gauge__top"><span class="gauge__name">Crop</span><span class="gauge__rate{% if crop_rate < 0 %} gauge__rate--neg{% endif %}">{% if crop_rate < 0 %}{{ crop_rate }}{% else %}+{{ crop_rate }}{% endif %}/h</span></div><div class="gauge__amt">{{ crop }}<small> / {{ granary }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
+  </section>
+
+  <div class="bld-cols">
+    <div>
+      <div class="bld-cols__head"><h2>The Armoury</h2><span class="bld-cols__rule"></span><span class="sub">forge up to Level {{ smithy_level }}</span></div>
+
+      {% if rows.is_empty() %}
+      <section class="panel"><p class="muted">No researched units yet — research units at the
+        <a href="/w/{{ world }}/village/{{ village_id }}/academy">Academy</a>, then forge them here.</p></section>
+      {% else %}
+      <div class="roster">
+        {% for u in rows %}
+        <article class="unit{% if u.forging %} unit--forging{% else if u.can_order %} unit--ready{% endif %}">
+          <span class="unit__thumb" style="background-image:url('/static/units/{{ u.portrait }}.webp')" aria-hidden="true"></span>
+          <div>
+            <div class="unit__name">{{ u.name }}</div>
+            <div class="unit__role">{{ u.role }}</div>
+          </div>
+          <div class="forge">
+            {% if u.forging %}<div class="forge__lvl">forging <b>+{{ u.level }} → +{{ u.target }}</b></div>
+            {% else %}<div class="forge__lvl"><b>+{{ u.level }}</b>{% if !u.effect.is_empty() %} · to +{{ u.target }}{% endif %}</div>{% endif %}
+            <div class="pips">{% for p in u.pips %}<i class="{% if p %}on{% endif %}"></i>{% endfor %}</div>
+          </div>
+          <div class="unit__eff">
+            {% if u.effect.is_empty() %}<span class="muted">Forged to its limit.</span>{% else %}{{ u.effect }}{% endif %}
+            {% if u.can_order %}<div class="unit__cost"><b class="w">{{ u.cost_wood }}</b><b class="c">{{ u.cost_clay }}</b><b class="i">{{ u.cost_iron }}</b><b class="r">{{ u.cost_crop }}</b></div>{% endif %}
+          </div>
+          <div class="unit__act">
+            {% if u.forging %}
+              {% if let Some(a) = active %}<div class="unit__time">completes <span class="countdown num" data-deadline="{{ a.complete_ms }}">…</span></div>{% endif %}
+              <span class="unit__gate">at the anvil</span>
+            {% else if u.can_order %}
+              <div class="unit__time">forge time {{ u.time }}</div>
+              <form method="post" action="/w/{{ world }}/village/{{ village_id }}/smithy/upgrade">
+                <input type="hidden" name="unit" value="{{ u.id }}">
+                <button class="btn btn--primary" type="submit">Forge +{{ u.target }}</button>
+              </form>
+            {% else %}
+              <span class="unit__gate">{{ u.gate }}</span>
+            {% endif %}
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+
+    <aside class="bld-aside">
+      <div class="bld-card">
+        <div class="bld-card__h"><h3>At the anvil</h3><span class="meta">{% if let Some(_a) = active %}1 / 1{% else %}idle{% endif %}</span></div>
+        <div class="bld-card__b">
+          {% if let Some(a) = active %}
+          <div class="forging">
+            <span class="forging__ico"{% if let Some(p) = active_portrait %} style="background-image:url('/static/units/{{ p }}.webp')"{% endif %}></span>
+            <div><div class="forging__t">{{ a.label }}</div><div class="forging__s">completes <span class="countdown num" data-deadline="{{ a.complete_ms }}">…</span></div></div>
+          </div>
+          <p class="bld-tip">The Smithy forges one upgrade at a time. The next blade waits its turn at the anvil.</p>
+          {% else %}
+          <p class="bld-tip">The anvil is cold — no upgrade in progress. Forge a unit from the Armoury.</p>
+          {% endif %}
+        </div>
+      </div>
+      <div class="bld-card">
+        <div class="bld-card__h"><h3>The Forge</h3><span class="meta">Lvl {{ smithy_level }}</span></div>
+        <div class="bld-card__b">
+          <div class="statline"><span>Forge cap</span><b>+{{ smithy_level }} per unit</b></div>
+          <div class="statline"><span>Forgeable units</span><b>{{ rows.len() }}</b></div>
+          <p class="bld-tip">Each Smithy level lifts the cap and adds to a unit's attack and defence. Raise the Smithy on the village to forge further.</p>
+          <a class="btn btn--primary btn--wide" href="/w/{{ world }}/village/{{ village_id }}">Raise the Smithy →</a>
+        </div>
+      </div>
+    </aside>
+  </div>
+  {% endif %}
+</div>
+
 <script>
+  // Resource gauges — set each fill from current / capacity.
+  for (const g of document.querySelectorAll(".gauge")) {
+    const amt = +g.dataset.amt, cap = +g.dataset.cap, f = g.querySelector(".gauge__fill");
+    if (cap > 0 && f) f.style.width = Math.max(0, Math.min(100, (amt / cap) * 100)).toFixed(1) + "%";
+  }
+  // Live countdowns (P1/P11) — reload shortly after one elapses so the page reflects the new state.
   for (const el of document.querySelectorAll(".countdown")) {
     const deadline = Number(el.dataset.deadline);
     const tick = () => {
