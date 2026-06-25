@@ -535,3 +535,393 @@ A guarded Roman vault holding a captured artifact: a heavy dressed-stone treasur
 ```
 The Roman Wonder of the World under construction: a colossal columned monument rising amid immense timber scaffolding and cranes, hundreds of tiny labourer-figures, an awe-and-dread silhouette against a vast pale hazy sky, the endgame of the war. Painterly digital concept art, moody and cinematic, monumental and orderly. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted oxblood accents; a thriving ancient-Roman city solid in the dusty haze behind, soft atmospheric perspective, gentle drifting dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
 ```
+
+---
+
+# Teuton set — "Warm Ruin" style (full, copy-paste prompts)
+
+Same warm dusty-sepia, hazy-backlit look as the Roman set, adapted to Teuton identity (materials, setting and accent colour). **Units** save as `crates/web/static/units/teutons_<id>.webp`; **buildings and resource fields** save as the tribe override `crates/web/static/buildings/teutons_<slug>.webp` (the page shows the tribe plate when present, else the neutral Roman/`<slug>.webp` default). Generate one anchor image first, then add `--sref <its URL> --sw 75` to the rest for a coherent set.
+
+## Repeatable part (the shared style + params)
+
+**Unit style block** (single-figure portraits):
+```
+Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents, the figure reading dark against a glowing pale sky; a rugged thriving Teuton frontier stronghold of rough timber halls, log palisades and steep gabled roofs amid dark pine forest dissolving in cold smoky haze behind at shallow depth of field; soft atmospheric perspective, drifting smoke and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+**Building style block** (exterior background plates):
+```
+Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+**Interior style block** (for `teutons_cranny` and `teutons_treasury`):
+```
+Painterly digital concept art, moody and cinematic. Dim interior in warm sepia and ash-grey tones with muted rust-red and bone-white accents, lit by a single narrow shaft of dusty light against deep shadow; soft atmospheric haze, fine drifting dust, desaturated, highly detailed, dark empty areas for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+## Teuton units → `crates/web/static/units/teutons_<id>.webp`
+
+### `teutons_clubswinger`
+```
+A wild Teuton clubswinger swinging a crude iron-studded club, furs and bare scarred arms, matted hair and no real armour, snarling, savage and unkempt. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents, the figure reading dark against a glowing pale sky; a rugged thriving Teuton frontier stronghold of rough timber halls, log palisades and steep gabled roofs amid dark pine forest dissolving in cold smoky haze behind at shallow depth of field; soft atmospheric perspective, drifting smoke and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `teutons_spearman`
+```
+A Teuton spearman in furs and a rough round shield, a long boar-spear set low to gut cavalry, braced and grim in the churned mud. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents, the figure reading dark against a glowing pale sky; a rugged thriving Teuton frontier stronghold of rough timber halls, log palisades and steep gabled roofs amid dark pine forest dissolving in cold smoky haze behind at shallow depth of field; soft atmospheric perspective, drifting smoke and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `teutons_axeman`
+```
+A hulking Teuton axeman with a great two-handed war-axe, leather and scrap-iron armour and bone charms, caught mid-roar, a brutal cleaver of shields. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents, the figure reading dark against a glowing pale sky; a rugged thriving Teuton frontier stronghold of rough timber halls, log palisades and steep gabled roofs amid dark pine forest dissolving in cold smoky haze behind at shallow depth of field; soft atmospheric perspective, drifting smoke and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `teutons_scout`
+```
+A Teuton outrider on foot in a fur hood, light and watchful with a hand-axe and a horn, slipping through cold fog at the treeline. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents, the figure reading dark against a glowing pale sky; a rugged thriving Teuton frontier stronghold of rough timber halls, log palisades and steep gabled roofs amid dark pine forest dissolving in cold smoky haze behind at shallow depth of field; soft atmospheric perspective, drifting smoke and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `teutons_paladin`
+```
+A heavily armoured Teuton paladin, mailed and fur-cloaked on a shaggy warhorse, a round shield raised, a stout defensive rider. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents, the figure reading dark against a glowing pale sky; a rugged thriving Teuton frontier stronghold of rough timber halls, log palisades and steep gabled roofs amid dark pine forest dissolving in cold smoky haze behind at shallow depth of field; soft atmospheric perspective, drifting smoke and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `teutons_teutonic_knight`
+```
+The dread Teutonic Knight in blackened plate and a horned helm on an armoured destrier, a heavy blade raised, the terror of the raid. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents, the figure reading dark against a glowing pale sky; a rugged thriving Teuton frontier stronghold of rough timber halls, log palisades and steep gabled roofs amid dark pine forest dissolving in cold smoky haze behind at shallow depth of field; soft atmospheric perspective, drifting smoke and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `teutons_ram`
+```
+A rough-hewn Teuton battering ram, a whole iron-shod tree trunk slung under a hide-covered timber frame on log wheels, brutal and crude, a heavy siege-engine portrait. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents, the figure reading dark against a glowing pale sky; a rugged thriving Teuton frontier stronghold of rough timber halls, log palisades and steep gabled roofs amid dark pine forest dissolving in cold smoky haze behind at shallow depth of field; soft atmospheric perspective, drifting smoke and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `teutons_catapult`
+```
+A massive Teuton catapult of heavy raw timber, the arm loaded with a great boulder, rope and iron banding, a siege-engine portrait. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents, the figure reading dark against a glowing pale sky; a rugged thriving Teuton frontier stronghold of rough timber halls, log palisades and steep gabled roofs amid dark pine forest dissolving in cold smoky haze behind at shallow depth of field; soft atmospheric perspective, drifting smoke and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `teutons_chief`
+```
+A Teuton chief in furs and battle-trophies, a torc and a great war-horn, an arm raised to rally his warband, commanding and fierce. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents, the figure reading dark against a glowing pale sky; a rugged thriving Teuton frontier stronghold of rough timber halls, log palisades and steep gabled roofs amid dark pine forest dissolving in cold smoky haze behind at shallow depth of field; soft atmospheric perspective, drifting smoke and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `teutons_settler`
+```
+A Teuton settler dragging an ox-cart laden with stakes and stores, furs against the cold and an axe on the shoulder, founding a new village. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents, the figure reading dark against a glowing pale sky; a rugged thriving Teuton frontier stronghold of rough timber halls, log palisades and steep gabled roofs amid dark pine forest dissolving in cold smoky haze behind at shallow depth of field; soft atmospheric perspective, drifting smoke and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+## Teuton resource fields → `crates/web/static/buildings/teutons_<slug>.webp`
+
+### `teutons_woodcutter`
+```
+A Teuton lumber camp at the edge of a dark pine forest: felled trunks and stacked timber, a sawpit and axes buried in stumps, a rough log lodge, woodsmoke between the trees. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_clay_pit`
+```
+A Teuton clay pit gouged into a hillside: rough timber scaffolds and ladders, mud-caked buckets and a hand-winch, standing pools, churned earth and mist. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_iron_mine`
+```
+The timber-braced mouth of a Teuton iron mine cut into a dark crag: ore carts on rough wooden rails, a brazier at the entrance, picks and chains, slag heaps and smoke. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_cropland`
+```
+Teuton farmland at the forest's edge: rough rows of grain and bound sheaves, a timber granary on log stilts, low ground-mist, crows over a leaning fence. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+## Teuton buildings → `crates/web/static/buildings/teutons_<slug>.webp`
+
+### `teutons_main_building`
+```
+A Teuton great hall and works yard: a massive rough-hewn timber and fieldstone hall with a steep gabled roof and a watch-tower, animal skulls and antlers nailed up, a tattered war-banner, torches at heavy iron-banded doors, timber scaffolding of active construction. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_rally_point`
+```
+A Teuton muster yard and war camp: a raised log command post hung with a tattered war-banner and skulls, racked spears and round shields, churned mud, campfires and ranks of warriors as shapes in the smoke. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_warehouse`
+```
+A fortified Teuton storehouse: a long timber-and-fieldstone building with massive iron-banded doors, stacked crates, barrels and furs, a hooded guard, frost on the rough stone. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_granary`
+```
+A tall Teuton grain store raised on heavy timber stilts: sacks of grain and bound straw, a loading hoist, the dark silo against a pale hazy sky, drifting chaff. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_marketplace`
+```
+A Teuton trade yard: rough plank stalls and hide awnings, crates of goods and barrels, a laden ox-cart, furs and iron wares, woodsmoke and braziers. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_embassy`
+```
+An austere Teuton diplomatic hall: alliance banners and heraldic shields above a heavy studded timber door flanked by carved totems, a standard planted in the muddy yard, long shadows. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_wall`
+```
+A massive Teuton defensive rampart and gatehouse: a log palisade and earth ramparts with flanking timber towers, a barred gate, skulls and runes on the stakes, sentries silhouetted, smoke drifting. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_barracks`
+```
+A Teuton warriors' barracks and drill yard: racks of axes, clubs and round shields, hacked straw dummies, furs and scrap-iron armour on stands, a muddy training ground, a forge-glow from a side door. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_academy`
+```
+A Teuton war-lodge and council room: a rough table strewn with crude maps and runic carvings, antlers and trophies on the timber walls, hanging furs, firelight pooling in the gloom. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_smithy`
+```
+A Teuton blacksmith's forge roaring in the dark: a rough stone hearth blasting warm light, an anvil with glowing iron and flying sparks, racked hammers and crude blades, smoke and soot, timber and fieldstone walls. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_stable`
+```
+A Teuton warhorse stable: rows of rough timber stalls, shaggy armoured warhorses shifting in shadow, hay, tack and barding on hooks, breath steaming in the cold. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_workshop`
+```
+A Teuton siege workshop: half-built catapults and a great tree-trunk ram in heavy timber frames, coils of rope, sawn logs and iron fittings, sawdust and menace in the gloom. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_residence`
+```
+A Teuton chief's fortified hall-wing: a heavy timber-and-fieldstone hall with a warm hearth glimpsed through a narrow window, war-banners and antlers, a planning table and maps, retainers in shadow. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_cranny`  *(interior style block)*
+```
+A hidden Teuton cache below the hall: a concealed timber-lined cellar reached by a trapdoor, sacks and chests of stores in shadow, a single guttering candle, damp earth and secrecy. Painterly digital concept art, moody and cinematic. Dim interior in warm sepia and ash-grey tones with muted rust-red and bone-white accents, lit by a single narrow shaft of dusty light against deep shadow; soft atmospheric haze, fine drifting dust, desaturated, highly detailed, dark empty areas for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_outpost`
+```
+A Teuton frontier outpost on a captured oasis: a rough timber watchtower and log palisade beside reed-fringed water in the wilds, a signal-beacon brazier and skulls on stakes, a lone sentry, mist over the pool. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_town_hall`
+```
+A great Teuton mead-hall for triumphs: a vast timber hall with a raised dais, long war-banners and battle-trophies, antlers and skulls on the walls, braziers and the embers of feasting, smoke and torchlight. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_palace`
+```
+The Teuton capital's great fortress-hall: a towering timber-and-stone stronghold with steep gabled roofs and a watch-tower, sweeping war-banners and trophies, armoured guards at the gate, brooding and massive. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_treasury`  *(interior style block)*
+```
+A guarded Teuton vault holding a captured artifact: a heavy timber-and-fieldstone strongroom, an ancient relic on a rough pedestal radiating an eerie glow, iron-bound chests and chains, runes and dread, deep shadow. Painterly digital concept art, moody and cinematic. Dim interior in warm sepia and ash-grey tones with muted rust-red and bone-white accents, lit by a single narrow shaft of dusty light against deep shadow; soft atmospheric haze, fine drifting dust, desaturated, highly detailed, dark empty areas for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `teutons_wonder`
+```
+The Teuton Wonder of the World under construction: a colossal timber-and-stone monument rising amid immense scaffolding and cranes, hundreds of tiny torch-lights of labourers, an awe-and-dread silhouette against the pale hazy sky. Painterly digital concept art, moody and cinematic, brooding and massive. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and ash-grey tones with muted rust-red and bone-white accents; a thriving Teuton timber stronghold of gabled halls, log palisades and earth ramparts amid dark pine forest solid in the smoky haze behind, soft atmospheric perspective, gentle drifting smoke and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+
+---
+
+# Gaul set — "Warm Ruin" style (full, copy-paste prompts)
+
+Same warm dusty-sepia, hazy-backlit look as the Roman set, adapted to Gaul identity (materials, setting and accent colour). **Units** save as `crates/web/static/units/gauls_<id>.webp`; **buildings and resource fields** save as the tribe override `crates/web/static/buildings/gauls_<slug>.webp` (the page shows the tribe plate when present, else the neutral Roman/`<slug>.webp` default). Generate one anchor image first, then add `--sref <its URL> --sw 75` to the rest for a coherent set.
+
+## Repeatable part (the shared style + params)
+
+**Unit style block** (single-figure portraits):
+```
+Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents, the figure reading dark against a glowing pale sky; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and weathered standing stones amid misty oak woodland dissolving in soft haze behind at shallow depth of field; soft atmospheric perspective, drifting mist and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+**Building style block** (exterior background plates):
+```
+Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+**Interior style block** (for `gauls_cranny` and `gauls_treasury`):
+```
+Painterly digital concept art, moody and cinematic. Dim interior in warm sepia and dusty cream tones with muted woad blue-grey accents, lit by a single narrow shaft of dusty light against deep shadow; soft atmospheric haze, fine drifting dust, desaturated, highly detailed, dark empty areas for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+## Gaul units → `crates/web/static/units/gauls_<id>.webp`
+
+### `gauls_phalanx`
+```
+A Gaulish phalanx spearman in leather and a tall oval shield with woad blue-grey markings, a long spear set against cavalry, calm and defensive in the mist. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents, the figure reading dark against a glowing pale sky; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and weathered standing stones amid misty oak woodland dissolving in soft haze behind at shallow depth of field; soft atmospheric perspective, drifting mist and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `gauls_swordsman`
+```
+A Gaulish swordsman with a long iron blade and a light shield, a teal cloak, quick-footed and lean, a balanced attacker. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents, the figure reading dark against a glowing pale sky; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and weathered standing stones amid misty oak woodland dissolving in soft haze behind at shallow depth of field; soft atmospheric perspective, drifting mist and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `gauls_pathfinder`
+```
+A Gaulish pathfinder on a fast light horse, hooded with a bow and short spear, reading the land, the fastest eyes on the map, silent and watchful. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents, the figure reading dark against a glowing pale sky; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and weathered standing stones amid misty oak woodland dissolving in soft haze behind at shallow depth of field; soft atmospheric perspective, drifting mist and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `gauls_theutates_thunder`
+```
+A Gaulish Theutates Thunder rider on a famously swift horse at full gallop, light armour and a couched lance, hair and cloak streaming, raw raiding speed. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents, the figure reading dark against a glowing pale sky; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and weathered standing stones amid misty oak woodland dissolving in soft haze behind at shallow depth of field; soft atmospheric perspective, drifting mist and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `gauls_druidrider`
+```
+A mystic Gaulish druidrider, an antlered hooded druid helm, runic charms and a warded shield on an armoured horse, a defensive rider wreathed in faint eerie light. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents, the figure reading dark against a glowing pale sky; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and weathered standing stones amid misty oak woodland dissolving in soft haze behind at shallow depth of field; soft atmospheric perspective, drifting mist and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `gauls_haeduan`
+```
+The elite Gaulish Haeduan knight in fine scale armour with teal and tarnished-brass accents, a long lance and shield on a swift armoured horse, proud and lethal. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents, the figure reading dark against a glowing pale sky; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and weathered standing stones amid misty oak woodland dissolving in soft haze behind at shallow depth of field; soft atmospheric perspective, drifting mist and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `gauls_ram`
+```
+A Gaulish battering ram, an iron-capped trunk in a lighter, finely braced timber frame on wheels, leather-shrouded, a siege-engine portrait. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents, the figure reading dark against a glowing pale sky; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and weathered standing stones amid misty oak woodland dissolving in soft haze behind at shallow depth of field; soft atmospheric perspective, drifting mist and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `gauls_trebuchet`
+```
+A tall Gaulish trebuchet, the counterweight raised and the sling loaded, elegant heavy timber and rope against the hazy sky, the longest reach of the siege lines. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents, the figure reading dark against a glowing pale sky; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and weathered standing stones amid misty oak woodland dissolving in soft haze behind at shallow depth of field; soft atmospheric perspective, drifting mist and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `gauls_chieftain`
+```
+A Gaulish chieftain in a wolf-pelt and torc, woad-marked, a war-horn and a fine blade, an arm raised to sway a village's loyalty, defiant. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents, the figure reading dark against a glowing pale sky; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and weathered standing stones amid misty oak woodland dissolving in soft haze behind at shallow depth of field; soft atmospheric perspective, drifting mist and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+### `gauls_settler`
+```
+A Gaulish settler with a laden pony, a surveyor's cord and stakes, a warded charm at the neck, scouting unclaimed wilderness to found a new village. Painterly digital concept art, moody and cinematic. Single figure centred, slight low angle. Strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents, the figure reading dark against a glowing pale sky; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and weathered standing stones amid misty oak woodland dissolving in soft haze behind at shallow depth of field; soft atmospheric perspective, drifting mist and dust, desaturated, highly detailed. --ar 1:1 --style raw --stylize 250 --no text, watermark, frame, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay, deformed hands, extra limbs
+```
+
+## Gaul resource fields → `crates/web/static/buildings/gauls_<slug>.webp`
+
+### `gauls_woodcutter`
+```
+A Gaulish lumber camp at the edge of an oak wood: felled trunks and stacked timber, a sawpit and axes in stumps, a thatched log lodge, woodsmoke and mist among the oaks. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_clay_pit`
+```
+A terraced Gaulish clay pit cut into a hillside: finely carpentered wooden scaffolds and ladders, buckets and a hand-winch, standing pools, fog clinging to the excavation. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_iron_mine`
+```
+The timber-braced mouth of a Gaulish iron mine in a crag: ore carts on wooden rails, a brazier at the entrance, picks and chains, slag heaps and cold mist, carved totems at the mouth. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_cropland`
+```
+Gaulish farmland under soft haze: ordered rows of grain and bound sheaves, a thatched granary on dry-stone footings, low ground-mist, standing stones at the field's edge. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+## Gaul buildings → `crates/web/static/buildings/gauls_<slug>.webp`
+
+### `gauls_main_building`
+```
+A Gaulish great hall and works yard: a finely carpentered oak-framed hall with a conical thatched roof and a watch-tower, carved knotwork and spirals, a woad-blue banner, torches at the carved doors, timber scaffolding of active construction. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_rally_point`
+```
+A Gaulish muster yard and war camp: a raised oak command post hung with a woad war-banner, racked spears and oval shields, churned earth, campfires and ranks of warriors as shapes in the mist. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_warehouse`
+```
+A fortified Gaulish storehouse: a long oak-framed building on dry-stone footings with barred doors, stacked crates, barrels and sacks, a hooded guard, mist and cool light. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_granary`
+```
+A tall Gaulish grain store raised on dry-stone stilts: sacks of grain and bound straw, a loading hoist, a thatched cap, the silo against a pale hazy sky, drifting chaff. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_marketplace`
+```
+A Gaulish market square: woven-awning stalls, merchant scales and crates of goods, a laden cart and tethered pony, carved posts and lanterns, cool mist and soft light. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_embassy`
+```
+An austere Gaulish diplomatic hall: alliance banners and heraldic shields above a carved oak door flanked by standing stones, a standard in the green courtyard, long misty shadows. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_wall`
+```
+A massive Gaulish hillfort rampart and gatehouse: an oak palisade on earthwork ramparts with flanking towers, a barred gate, carved knotwork on the stakes, sentries silhouetted, mist drifting. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_barracks`
+```
+A Gaulish warriors' barracks and drill yard: racks of spears, swords and oval shields, straw practice dummies, leather armour on stands, a training ground, torch and forge-glow. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_academy`
+```
+A Gaulish druid's lodge and map-room: a carved oak table strewn with charts and runic schematics, shelves of scrolls and charms, woven walls, candlelight pooling in the dark. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_smithy`
+```
+A Gaulish blacksmith's forge roaring in the dark: a stone hearth blasting warm light, an anvil with glowing iron and flying sparks, racked hammers and fine blades, smoke and soot, oak-framed walls. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_stable`
+```
+A Gaulish horse stable: rows of finely carpentered oak stalls, swift armoured horses shifting in shadow, hay, tack and barding on hooks, breath steaming, a swaying lantern. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_workshop`
+```
+A Gaulish siege workshop: a half-built trebuchet and a light ram in finely braced timber frames, coils of rope, sawn oak and iron fittings, a hand-crane and sawdust, torch-lit. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_residence`
+```
+A Gaulish lord's fortified roundhouse-wing: an oak-framed hall with a warm hearth glimpsed through a window, woad banners and carved totems, a planning table and maps, retainers in shadow. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_cranny`  *(interior style block)*
+```
+A hidden Gaulish cache below the village: a concealed wattle-and-timber cellar reached by a trapdoor, sacks and chests of stores in shadow, a single guttering candle, damp earth and secrecy. Painterly digital concept art, moody and cinematic. Dim interior in warm sepia and dusty cream tones with muted woad blue-grey accents, lit by a single narrow shaft of dusty light against deep shadow; soft atmospheric haze, fine drifting dust, desaturated, highly detailed, dark empty areas for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_outpost`
+```
+A Gaulish frontier outpost on a captured oasis: an oak watchtower and palisade beside reed-fringed water in the wilds, a signal-beacon brazier and a carved totem, a lone sentry, mist over the pool. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_town_hall`
+```
+A great Gaulish feasting hall for triumphs: a large oak-framed hall with a raised dais and long woad banners, trophies and carved knotwork on the walls, braziers and the embers of festivities, mist and torchlight. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_palace`
+```
+The Gaulish capital's great hall: a towering oak-and-thatch stronghold with carved knotwork and a watch-tower, sweeping woad banners, armoured guards at the gate, graceful and commanding. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_treasury`  *(interior style block)*
+```
+A guarded Gaulish vault holding a captured artifact: a dry-stone strongroom, an ancient relic on a carved pedestal radiating an eerie glow, iron-bound chests and chains, runes and dread, deep shadow. Painterly digital concept art, moody and cinematic. Dim interior in warm sepia and dusty cream tones with muted woad blue-grey accents, lit by a single narrow shaft of dusty light against deep shadow; soft atmospheric haze, fine drifting dust, desaturated, highly detailed, dark empty areas for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
+### `gauls_wonder`
+```
+The Gaulish Wonder of the World under construction: a colossal oak-and-stone monument rising amid immense scaffolding and cranes, hundreds of tiny torch-lights of labourers, an awe-and-dread silhouette against the pale hazy sky. Painterly digital concept art, moody and cinematic, organic and graceful. Wide establishing shot, the structure reading dark against a glowing pale sky; strong hazy backlight, warm sepia and dusty cream tones with muted woad blue-grey accents; a thriving Gaulish hillfort of thatched roundhouses, oak palisades and standing stones amid misty oak woodland solid in the hazy light behind, soft atmospheric perspective, gentle drifting mist and dust, desaturated, highly detailed, large empty hazy sky above for text overlay. --ar 16:9 --style raw --stylize 250 --no text, watermark, frame, people in foreground, faces, bright colours, blue sky, modern objects, cartoon, anime, ruins, rubble, broken, derelict, decay
+```
+
