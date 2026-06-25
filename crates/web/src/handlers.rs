@@ -58,7 +58,7 @@ use eperica_application::{
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, ChatChannel,
-    Coordinate, DiplomacyStance, DiplomacyStatus, MedalCategory, MovementKind, OasisBonus,
+    Coordinate, DiplomacyStance, DiplomacyStatus, Economy, MedalCategory, MovementKind, OasisBonus,
     PlayerId, Presence, Quadrant, QuestReward, QueueLane, ReportReason, ResearchDenied,
     ResourceAmounts, ResourceKind, RightSet, SanctionKind, ScoutTarget, TileKind, Timestamp,
     TradeKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, VillageId, WorldId,
@@ -1775,7 +1775,7 @@ fn building_level(village: &Village, kind: BuildingKind) -> u8 {
 async fn village_view_data(
     ctx: &GameContext,
     selected: Option<VillageId>,
-) -> Result<(Village, ResourceAmounts), Response> {
+) -> Result<(Village, Economy), Response> {
     match load_economy(
         &ctx.accounts,
         &ctx.rules.economy,
@@ -1787,10 +1787,8 @@ async fn village_view_data(
     )
     .await
     {
-        Ok(Some(e)) => {
-            let amounts = e.economy.amounts;
-            Ok((e.village, amounts))
-        }
+        // The full economy (amounts + rates + capacities) so building pages can show the resource ribbon (066).
+        Ok(Some(e)) => Ok((e.village, e.economy)),
         Ok(None) => {
             tracing::error!(player = ?ctx.player, "authenticated user has no village/economy");
             Err(server_error())
@@ -1808,10 +1806,11 @@ pub async fn academy(
     Path((_world, village)): Path<(String, String)>,
 ) -> Response {
     let player = ctx.player;
-    let (village, amounts) = match village_view_data(&ctx, selected_village(Some(&village))).await {
+    let (village, economy) = match village_view_data(&ctx, selected_village(Some(&village))).await {
         Ok(v) => v,
         Err(r) => return r,
     };
+    let amounts = economy.amounts;
     let Some(tribe) = village.tribe else {
         tracing::error!(?player, "village has no tribe");
         return server_error();
@@ -1917,10 +1916,11 @@ pub async fn academy(
 /// The Smithy: researched units with upgrade levels and actions (004 AC15; Player only, P4).
 pub async fn smithy(ctx: GameContext, Path((_world, village)): Path<(String, String)>) -> Response {
     let player = ctx.player;
-    let (village, amounts) = match village_view_data(&ctx, selected_village(Some(&village))).await {
+    let (village, economy) = match village_view_data(&ctx, selected_village(Some(&village))).await {
         Ok(v) => v,
         Err(r) => return r,
     };
+    let amounts = economy.amounts;
     let Some(tribe) = village.tribe else {
         tracing::error!(?player, "village has no tribe");
         return server_error();
@@ -1937,6 +1937,7 @@ pub async fn smithy(ctx: GameContext, Path((_world, village)): Path<(String, Str
         }
     };
     let unit_rules: &UnitRules = &ctx.rules.units;
+    let smithy_lvl = building_level(&village, BuildingKind::Smithy);
     let upgrade_active = orders
         .iter()
         .find(|o| o.kind == UnitOrderKind::SmithyUpgrade);
@@ -1950,6 +1951,8 @@ pub async fn smithy(ctx: GameContext, Path((_world, village)): Path<(String, Str
         ),
         complete_ms: o.complete_at.0,
     });
+    // The portrait of the unit at the anvil, for the aside (066).
+    let active_portrait = upgrade_active.map(|o| format!("{}_{}", tribe.slug(), o.unit.as_str()));
 
     let rows = unit_rules
         .roster(tribe)
@@ -2008,8 +2011,13 @@ pub async fn smithy(ctx: GameContext, Path((_world, village)): Path<(String, Str
             };
             SmithyRow {
                 id: spec.id.as_str().to_owned(),
+                portrait: format!("{}_{}", tribe.slug(), spec.id.as_str()),
                 name: spec.name.clone(),
+                role: role_label(spec.role),
                 level,
+                target: level + 1,
+                forging: upgrade_active.is_some_and(|o| o.unit == spec.id),
+                pips: (0..smithy_lvl).map(|i| i < level).collect(),
                 can_order,
                 gate,
                 cost_wood: c.wood,
@@ -2026,10 +2034,22 @@ pub async fn smithy(ctx: GameContext, Path((_world, village)): Path<(String, Str
         world: world_id_str(ctx.world_id),
         tribe_slug: village.tribe.map_or("", |t| t.slug()),
         village_id: village_seg(village.id),
-        has_smithy: building_level(&village, BuildingKind::Smithy) > 0,
-        smithy_level: building_level(&village, BuildingKind::Smithy),
+        village_label: format!("({}|{})", village.coordinate.x, village.coordinate.y),
+        has_smithy: smithy_lvl > 0,
+        smithy_level: smithy_lvl,
+        wood: amounts.wood,
+        clay: amounts.clay,
+        iron: amounts.iron,
+        crop: amounts.crop,
+        wood_rate: economy.rates.wood,
+        clay_rate: economy.rates.clay,
+        iron_rate: economy.rates.iron,
+        crop_rate: economy.rates.crop_net,
+        warehouse: economy.capacities.warehouse,
+        granary: economy.capacities.granary,
         rows,
         active,
+        active_portrait,
     })
 }
 

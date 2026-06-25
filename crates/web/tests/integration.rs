@@ -537,6 +537,27 @@ async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
         body.contains("Att ") && body.contains('→'),
         "smithy shows the upgrade's stat gain"
     );
+    // 066: the redesigned building-page chrome — hero band (title + level), resource ribbon, and the
+    // armoury roster (real unit portrait, pip track, affordable cue, the Forge action).
+    assert!(body.contains("bld-hero"), "066 hero band");
+    assert!(
+        body.contains("bld-title") && body.contains("Level 1"),
+        "066 hero shows the building + level"
+    );
+    assert!(
+        body.contains("res-ribbon") && body.contains("gauge--iron"),
+        "066 resource ribbon"
+    );
+    assert!(body.contains("class=\"roster\""), "066 armoury roster");
+    assert!(
+        body.contains("/static/units/gauls_phalanx.webp"),
+        "066 roster shows the unit portrait thumbnail"
+    );
+    assert!(body.contains("class=\"pips\""), "066 forge-level pip track");
+    assert!(
+        body.contains("Forge +1") && body.contains("unit--ready"),
+        "066 an affordable unit is marked ready with the Forge action"
+    );
     let res = c
         .post(format!("{base}/w/{home}/village/{vid}/smithy/upgrade"))
         .form(&[("unit", "phalanx")])
@@ -554,6 +575,15 @@ async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
         .unwrap();
     assert!(body.contains("Upgrading Phalanx to level 1"));
     assert!(body.contains("data-deadline"));
+    // 066: the unit at the anvil is highlighted and shown in the aside.
+    assert!(
+        body.contains("unit--forging"),
+        "066 the upgrading unit is highlighted"
+    );
+    assert!(
+        body.contains("At the anvil") && body.contains("forging__ico"),
+        "066 the aside shows the active forge"
+    );
 
     // Visitors are redirected to login (roles table).
     let anon = client()

@@ -234,10 +234,20 @@ pub struct AcademyTemplate {
 pub struct SmithyRow {
     /// Unit slug for the POST `unit` value.
     pub id: String,
+    /// Tribe-prefixed portrait slug (`<tribe>_<id>`) for the roster thumbnail (066).
+    pub portrait: String,
     /// Display name.
     pub name: String,
+    /// Role label (Infantry/Cavalry/…), 066.
+    pub role: &'static str,
     /// Current upgrade level.
     pub level: u8,
+    /// The level this upgrade forges to (`level + 1`), 066.
+    pub target: u8,
+    /// This unit is the one currently at the anvil (066).
+    pub forging: bool,
+    /// Pip track to the Smithy's cap (066): one entry per forgeable level, `true` where already forged.
+    pub pips: Vec<bool>,
     /// The Upgrade action is offered now.
     pub can_order: bool,
     /// Why the action is unavailable (cap reached, smithy level, insufficient resources); empty
@@ -262,14 +272,29 @@ pub struct SmithyTemplate {
     pub tribe_slug: &'static str,
     /// The village this page acts on (carried into the upgrade form + back link, 013 AC11).
     pub village_id: String,
+    /// The acting village's coordinate label, shown in the hero eyebrow (066).
+    pub village_label: String,
     /// Whether the village has a Smithy (otherwise the page only explains the requirement).
     pub has_smithy: bool,
-    /// The Smithy's building level (caps unit levels).
+    /// The Smithy's building level (caps unit levels; the pip-track length, 066).
     pub smithy_level: u8,
+    /// Resource ribbon — current amounts, hourly rates and storage caps (066).
+    pub wood: i64,
+    pub clay: i64,
+    pub iron: i64,
+    pub crop: i64,
+    pub wood_rate: i64,
+    pub clay_rate: i64,
+    pub iron_rate: i64,
+    pub crop_rate: i64,
+    pub warehouse: i64,
+    pub granary: i64,
     /// Researched units with their upgrade state.
     pub rows: Vec<SmithyRow>,
     /// The upgrade in progress, if any.
     pub active: Option<QueueView>,
+    /// The portrait slug of the unit at the anvil (066), for the aside; `None` when idle.
+    pub active_portrait: Option<String>,
 }
 
 /// One trainable unit row in a troop-building view (005 AC9).
