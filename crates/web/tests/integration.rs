@@ -4645,6 +4645,21 @@ async fn moderation_report_to_sanction_flow(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(queue.contains(&subject), "the report shows the subject");
+    // 080: the redesigned per-account moderation view — header + detection signals + the sanction form.
+    let acct = cm
+        .get(format!("{base}/mod/account/{}", subject_id.as_u128()))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        acct.contains("phead")
+            && acct.contains("Detection signals")
+            && acct.contains("name=\"kind\""),
+        "the mod account view renders the redesigned chrome + the sanction form"
+    );
 
     // AC4: the moderator resolves the report with a ban.
     let report_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM reports WHERE status = 'open'")
