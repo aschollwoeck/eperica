@@ -505,6 +505,8 @@ async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
     // research roster with unit portraits.
     assert!(body.contains("bld-hero") && body.contains("res-ribbon"));
     assert!(body.contains("roster--research"));
+    // 073: the shared roster row puts the cost in the dedicated price column on every roster page.
+    assert!(body.contains("unit__price") && body.contains("unit__cost"));
     assert!(body.contains("/static/units/gauls_phalanx.webp"));
 
     // Order the research: PRG back to the Academy, which now shows the countdown (AC6/AC15).
@@ -559,6 +561,8 @@ async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
         "066 roster shows the unit portrait thumbnail"
     );
     assert!(body.contains("class=\"pips\""), "066 forge-level pip track");
+    // 073: the Smithy shares the roster row shape — cost in the price column like the other pages.
+    assert!(body.contains("unit__price") && body.contains("unit__cost"));
     assert!(
         body.contains("Forge +1") && body.contains("unit--ready"),
         "066 an affordable unit is marked ready with the Forge action"
@@ -681,6 +685,8 @@ async fn training_flow_and_garrison(pool: sqlx::PgPool) {
     // training roster with each unit's portrait thumbnail (063 art, graceful fallback).
     assert!(body.contains("bld-hero") && body.contains("res-ribbon"));
     assert!(body.contains("roster--train") && body.contains("unit__thumb"));
+    // 073: the training row shares the roster shape — cost in the price column, not under the name.
+    assert!(body.contains("unit__price") && body.contains("unit__cost"));
     assert!(body.contains("/static/units/gauls_phalanx.webp"));
     // 072: a "Max" button prefills the largest affordable count.
     assert!(body.contains("train-max") && body.contains(">Max<"));
