@@ -231,6 +231,7 @@
 
   for (const el of document.querySelectorAll(".countdown")) {
     const deadline = Number(el.dataset.deadline);
+    let timer; // declared before tick() so a deadline already in the past can clear it without a TDZ error
     const tick = () => {
       let s = Math.max(0, Math.round((deadline - Date.now()) / 1000));
       const h = Math.floor(s / 3600); s -= h * 3600;
@@ -240,7 +241,7 @@
       if (deadline - Date.now() <= 0) { clearInterval(timer); setTimeout(() => location.reload(), 1500); }
     };
     tick();
-    const timer = setInterval(tick, 1000);
+    timer = setInterval(tick, 1000);
   }
 </script>
 {% endblock %}
