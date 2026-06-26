@@ -1,69 +1,79 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Account sitting</h1>
-  <p class="muted"><a href="/worlds">← Worlds</a></p>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Account</div>
+    <h1 class="phead__title">Account sitting</h1>
+    <p class="phead__sub">Let players you trust operate your account while you're away — every action is logged.</p>
+    <a class="phead__back" href="/worlds">← Worlds</a>
+  </section>
 
   {% if let Some(owner) = currently_sitting %}
   <p class="banner">You are currently sitting for <strong>{{ owner }}</strong>.
-    <form method="post" action="/sitting/stop" class="inline"><button type="submit">Stop sitting</button></form>
+    <form method="post" action="/sitting/stop" class="inline"><button class="btn btn--small" type="submit">Stop sitting</button></form>
   </p>
   {% endif %}
 
-  <h2>Your sitters</h2>
-  <p class="muted">Players you trust to operate your account while you're away. They cannot change your
-    settings or manage your sitters, and everything they do is logged below.</p>
-  {% if my_sitters.is_empty() %}
-  <p class="muted">You haven't authorised any sitters.</p>
-  {% else %}
-  <table class="table">
-    <tbody>
-      {% for s in my_sitters %}
-      <tr>
-        <td>{{ s.name }}</td>
-        <td><form method="post" action="/sitting/revoke" class="inline">
-          <input type="hidden" name="sitter" value="{{ s.id }}">
-          <button type="submit">Revoke</button>
-        </form></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
-  <form method="post" action="/sitting/grant" class="form">
-    <label>Add a sitter <input type="text" name="username" placeholder="username" required></label>
-    <button class="btn btn--primary" type="submit">Authorise</button>
-  </form>
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Your sitters</h2><span class="bld-cols__rule"></span></div>
+    <p class="bld-tip">Players you trust to operate your account while you're away. They cannot change your settings or manage your sitters, and everything they do is logged below.</p>
+    {% if my_sitters.is_empty() %}
+    <p class="muted">You haven't authorised any sitters.</p>
+    {% else %}
+    <table class="table">
+      <tbody>
+        {% for s in my_sitters %}
+        <tr>
+          <td>{{ s.name }}</td>
+          <td><form method="post" action="/sitting/revoke" class="inline">
+            <input type="hidden" name="sitter" value="{{ s.id }}">
+            <button class="btn btn--small" type="submit">Revoke</button>
+          </form></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    <form method="post" action="/sitting/grant" class="form">
+      <label>Add a sitter <input type="text" name="username" placeholder="username" required></label>
+      <p><button class="btn btn--primary" type="submit">Authorise</button></p>
+    </form>
+  </div>
 
-  <h2>Accounts you sit for</h2>
-  {% if sitting_for.is_empty() %}
-  <p class="muted">No one has authorised you as a sitter.</p>
-  {% else %}
-  <table class="table">
-    <tbody>
-      {% for o in sitting_for %}
-      <tr>
-        <td>{{ o.name }}</td>
-        <td><form method="post" action="/sitting/start" class="inline">
-          <input type="hidden" name="owner" value="{{ o.id }}">
-          <button type="submit">Sit</button>
-        </form></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Accounts you sit for</h2><span class="bld-cols__rule"></span></div>
+    {% if sitting_for.is_empty() %}
+    <p class="muted">No one has authorised you as a sitter.</p>
+    {% else %}
+    <table class="table">
+      <tbody>
+        {% for o in sitting_for %}
+        <tr>
+          <td>{{ o.name }}</td>
+          <td><form method="post" action="/sitting/start" class="inline">
+            <input type="hidden" name="owner" value="{{ o.id }}">
+            <button class="btn btn--small" type="submit">Sit</button>
+          </form></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
 
-  <h2>Recent sitter activity (your account)</h2>
-  {% if audit.is_empty() %}
-  <p class="muted">No sitter activity yet.</p>
-  {% else %}
-  <table class="table">
-    <thead><tr><th>Sitter</th><th>Action</th><th>When</th></tr></thead>
-    <tbody>
-      {% for a in audit %}<tr><td>{{ a.sitter }}</td><td>{{ a.action }}</td><td class="muted">{{ a.when }}</td></tr>{% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
-</section>
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Recent sitter activity</h2><span class="bld-cols__rule"></span><span class="sub">your account</span></div>
+    {% if audit.is_empty() %}
+    <p class="muted">No sitter activity yet.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th>Sitter</th><th>Action</th><th>When</th></tr></thead>
+      <tbody>
+        {% for a in audit %}<tr><td>{{ a.sitter }}</td><td>{{ a.action }}</td><td class="muted">{{ a.when }}</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
 {% endblock %}

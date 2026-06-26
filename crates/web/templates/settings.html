@@ -1,19 +1,28 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Settings</h1>
-  <p class="muted"><a href="/worlds">← Worlds</a></p>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Account</div>
+    <h1 class="phead__title">Settings</h1>
+    <p class="phead__sub">Control which alerts you receive.</p>
+    <a class="phead__back" href="/worlds">← Worlds</a>
+  </section>
 
-  <h2>Notifications</h2>
-  <p class="muted">Choose which alerts you want. Unchecked kinds won't be recorded for you.</p>
-  <form method="post" action="/settings/notifications" class="form">
-    {% for n in notifications %}
-    <label class="checkbox">
-      <input type="checkbox" name="{{ n.token }}" value="1" {% if n.enabled %}checked{% endif %}>
-      {{ n.label }}
-    </label>
-    {% endfor %}
-    <button class="btn btn--primary" type="submit">Save</button>
-  </form>
-</section>
+  <div class="bld-card">
+    <div class="bld-card__h"><h3>Notifications</h3></div>
+    <div class="bld-card__b">
+      <p class="bld-tip">Choose which alerts you want. Unchecked kinds won't be recorded for you.</p>
+      <form method="post" action="/settings/notifications" class="form">
+        {% for n in notifications %}
+        <label class="checkbox">
+          <input type="checkbox" name="{{ n.token }}" value="1" {% if n.enabled %}checked{% endif %}>
+          {{ n.label }}
+        </label>
+        {% endfor %}
+        <p><button class="btn btn--primary" type="submit">Save</button></p>
+      </form>
+    </div>
+  </div>
+</div>
 {% endblock %}

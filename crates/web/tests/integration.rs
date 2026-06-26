@@ -5386,6 +5386,7 @@ async fn lobby_join_play_and_switch_back(pool: sqlx::PgPool) {
         "no dead switch form remains"
     );
     assert!(lobby.contains("World B"), "world B is offered to join");
+    assert!(lobby.contains("phead")); // 078: the redesigned worlds lobby header
 
     // Join world B as Teutons → lands in world B's village (a new village, ≠ the home one).
     let r = c
@@ -6787,6 +6788,7 @@ async fn search_finds_players_alliances_and_coordinates(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(body.contains("Aragorn"));
+    assert!(body.contains("phead")); // 078: the redesigned search page header
     assert!(body.contains(&format!("/stats/player/{}", alice.as_u128())));
 
     // Alliance by tag.
@@ -6860,6 +6862,7 @@ async fn settings_notification_preferences(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(page.contains("New message") && page.contains("checked"));
+    assert!(page.contains("phead") && page.contains("checkbox")); // 078: redesigned settings
 
     let unread = |c: &reqwest::Client| {
         let c = c.clone();

@@ -1,12 +1,16 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Search</h1>
-  <p class="muted">Find a player, an alliance (name or tag), or a coordinate (e.g. <code>12|-7</code>).</p>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Find</div>
+    <h1 class="phead__title">Search</h1>
+    <p class="phead__sub">Find a player, an alliance (name or tag), or a coordinate (e.g. <code>12|-7</code>).</p>
+  </section>
 
   <form method="get" action="/w/{{ world }}/search" class="filters">
     <input type="text" name="q" value="{{ query }}" placeholder="Search…" autocomplete="off" autofocus>
-    <button type="submit">Search</button>
+    <button class="btn btn--primary" type="submit">Search</button>
   </form>
 
   {% if !searched %}
@@ -14,28 +18,24 @@
   {% else %}
 
   {% if let Some(href) = coordinate_href %}
-  <h2>Coordinate</h2>
-  <p><a href="{{ href }}">Go to {{ coordinate_label }} on the map →</a></p>
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Coordinate</h2><span class="bld-cols__rule"></span></div>
+    <p><a href="{{ href }}">Go to {{ coordinate_label }} on the map →</a></p>
+  </div>
   {% endif %}
 
-  <h2>Players</h2>
-  {% if players.is_empty() %}
-  <p class="muted">No players found.</p>
-  {% else %}
-  <ul class="conversations">
-    {% for p in players %}<li><a href="{{ p.href }}">{{ p.label }}</a></li>{% endfor %}
-  </ul>
-  {% endif %}
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Players</h2><span class="bld-cols__rule"></span><span class="sub">{{ players.len() }}</span></div>
+    {% if players.is_empty() %}<p class="muted">No players found.</p>
+    {% else %}<ul class="conversations">{% for p in players %}<li><a href="{{ p.href }}">{{ p.label }}</a></li>{% endfor %}</ul>{% endif %}
+  </div>
 
-  <h2>Alliances</h2>
-  {% if alliances.is_empty() %}
-  <p class="muted">No alliances found.</p>
-  {% else %}
-  <ul class="conversations">
-    {% for a in alliances %}<li><a href="{{ a.href }}">{{ a.label }}</a></li>{% endfor %}
-  </ul>
-  {% endif %}
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Alliances</h2><span class="bld-cols__rule"></span><span class="sub">{{ alliances.len() }}</span></div>
+    {% if alliances.is_empty() %}<p class="muted">No alliances found.</p>
+    {% else %}<ul class="conversations">{% for a in alliances %}<li><a href="{{ a.href }}">{{ a.label }}</a></li>{% endfor %}</ul>{% endif %}
+  </div>
 
   {% endif %}
-</section>
+</div>
 {% endblock %}
