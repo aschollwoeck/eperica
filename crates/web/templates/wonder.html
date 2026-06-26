@@ -34,6 +34,8 @@
       <span class="wonder-row__rank">{{ s.rank }}</span>
       <div class="wonder-row__main">
         <div class="wonder-row__name">{{ s.name }} <span class="wonder-row__tag">[{{ s.tag }}]</span></div>
+        {# The bar width uses `level` directly as a percentage — correct because the cap is 100; if
+           MAX_WONDER_LEVEL is ever rebalanced this must become level / max_level * 100. #}
         <div class="wonder-row__track"><i style="width:{{ s.level }}%"></i></div>
       </div>
       <span class="wonder-row__lvl">{{ s.level }} / {{ max_level }}</span>
