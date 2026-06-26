@@ -1,46 +1,44 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>{{ kind }} report</h1>
-  <p class="muted"><a href="/w/{{ world }}/reports">← All reports</a></p>
-  <p><strong>{{ headline }}</strong> — {{ outcome }}</p>
-  <p class="muted">Luck {{ luck_pct }}% · Morale {{ morale_pct }}% · Wall {{ wall_before }} →
-    {{ wall_after }}</p>
-  {% match scouted_note %}{% when Some with (note) %}
-  <p class="muted">⚠ {{ note }}</p>
-  {% when None %}{% endmatch %}
-  {% match loot %}{% when Some with (l) %}
-  <p><strong>Loot:</strong> {{ l }}</p>
-  {% when None %}{% endmatch %}
-  {% match razed %}{% when Some with (r) %}
-  <p><strong>Building razed:</strong> {{ r }}</p>
-  {% when None %}{% endmatch %}
-  {% match loyalty %}{% when Some with (l) %}
-  <p><strong>Loyalty:</strong> {{ l }}{% if conquered %} — <strong style="color:var(--c-warning)">Village captured!</strong>{% endif %}</p>
-  {% when None %}{% endmatch %}
-</section>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">{{ kind }} report</div>
+    <h1 class="phead__title">{{ headline }}</h1>
+    <p class="phead__sub">{{ outcome }}</p>
+    <a class="phead__back" href="/w/{{ world }}/reports">← All reports</a>
+  </section>
 
-<section class="panel">
-  <h2>{{ attacker_name }} (attacker)</h2>
-  <table class="table">
-    <thead><tr><th>Unit</th><th class="num">Sent</th><th class="num">Lost</th></tr></thead>
-    <tbody>
-      {% for u in attacker_rows %}
-      <tr><td>{{ u.name }}</td><td class="num">{{ u.count }}</td><td class="num">{{ u.lost }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</section>
+  <div class="repsum">
+    <span>Luck <b>{{ luck_pct }}%</b></span>
+    <span>Morale <b>{{ morale_pct }}%</b></span>
+    <span>Wall <b>{{ wall_before }} → {{ wall_after }}</b></span>
+  </div>
 
-<section class="panel">
-  <h2>{{ defender_name }} (defender)</h2>
-  <table class="table">
-    <thead><tr><th>Unit</th><th class="num">Defending</th><th class="num">Lost</th></tr></thead>
-    <tbody>
-      {% for u in defender_rows %}
-      <tr><td>{{ u.name }}</td><td class="num">{{ u.count }}</td><td class="num">{{ u.lost }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</section>
+  {% if scouted_note.is_some() || loot.is_some() || razed.is_some() || loyalty.is_some() %}
+  <div class="repnotes">
+    {% match scouted_note %}{% when Some with (note) %}<div class="repnote">⚠ {{ note }}</div>{% when None %}{% endmatch %}
+    {% match loot %}{% when Some with (l) %}<div class="repnote">💰 <strong>Loot:</strong> {{ l }}</div>{% when None %}{% endmatch %}
+    {% match razed %}{% when Some with (r) %}<div class="repnote">🔥 <strong>Building razed:</strong> {{ r }}</div>{% when None %}{% endmatch %}
+    {% match loyalty %}{% when Some with (l) %}<div class="repnote{% if conquered %} repnote--win{% endif %}"><strong>Loyalty:</strong> {{ l }}{% if conquered %} — <strong>Village captured!</strong>{% endif %}</div>{% when None %}{% endmatch %}
+  </div>
+  {% endif %}
+
+  <div class="repsides">
+    <div class="bld-card">
+      <div class="bld-card__h"><h3>{{ attacker_name }}</h3><span class="meta">attacker</span></div>
+      <div class="bld-card__b">
+        <div class="cas"><span class="cas__h">Unit</span><span class="cas__h cas__n">Sent</span><span class="cas__h cas__lost">Lost</span></div>
+        {% for u in attacker_rows %}<div class="cas"><span>{{ u.name }}</span><span class="cas__n">{{ u.count }}</span><span class="cas__lost">{{ u.lost }}</span></div>{% endfor %}
+      </div>
+    </div>
+    <div class="bld-card">
+      <div class="bld-card__h"><h3>{{ defender_name }}</h3><span class="meta">defender</span></div>
+      <div class="bld-card__b">
+        <div class="cas"><span class="cas__h">Unit</span><span class="cas__h cas__n">Def</span><span class="cas__h cas__lost">Lost</span></div>
+        {% for u in defender_rows %}<div class="cas"><span>{{ u.name }}</span><span class="cas__n">{{ u.count }}</span><span class="cas__lost">{{ u.lost }}</span></div>{% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}

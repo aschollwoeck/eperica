@@ -1,27 +1,35 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Reports</h1>
-  <p class="muted"><a href="/w/{{ world }}/village">← Back to the village</a></p>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">War room</div>
+    <h1 class="phead__title">Reports</h1>
+    <p class="phead__sub">Battle, raid and scouting reports — newest first.</p>
+    <a class="phead__back" href="/w/{{ world }}/village">← Village</a>
+  </section>
 
   {% if reports.is_empty() %}
-  <p class="muted">No reports yet. Launch an attack, raid, or scout from the Rally Point.</p>
+  <section class="panel"><p class="muted">No reports yet. Launch an attack, raid, or scout from the Rally Point.</p></section>
   {% else %}
-  <table class="table">
-    <thead><tr><th>When</th><th>Report</th><th>Result</th><th></th></tr></thead>
-    <tbody>
-      {% for r in reports %}
-      <tr>
-        <td class="muted"><span class="when" data-ms="{{ r.when_ms }}">…</span></td>
-        <td>{{ r.headline }}</td>
-        <td>{{ r.outcome }}</td>
-        <td>{% if r.href != "" %}<a href="{{ r.href }}">View</a>{% endif %}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="replist">
+    {% for r in reports %}
+    {% if r.href != "" %}
+    <a class="repcard" href="{{ r.href }}">
+      <div class="repcard__main"><div class="repcard__head">{{ r.headline }}</div><div class="repcard__out">{{ r.outcome }}</div></div>
+      <span class="repcard__when when" data-ms="{{ r.when_ms }}">…</span>
+      <span class="repcard__arrow">→</span>
+    </a>
+    {% else %}
+    <div class="repcard">
+      <div class="repcard__main"><div class="repcard__head">{{ r.headline }}</div><div class="repcard__out">{{ r.outcome }}</div></div>
+      <span class="repcard__when when" data-ms="{{ r.when_ms }}">…</span>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
   {% endif %}
-</section>
+</div>
 <script>
   for (const el of document.querySelectorAll(".when")) {
     const d = new Date(Number(el.dataset.ms));

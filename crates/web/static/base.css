@@ -707,3 +707,44 @@ a { color: var(--c-gold); }
 /* a field under construction (069): ember edge + the live build countdown in its detail line */
 .vfield--build { border-color: color-mix(in srgb, var(--c-ember, #C8762E) 55%, var(--c-border)); box-shadow: inset 0 1px 0 rgba(255,255,255,.03), 0 0 18px -10px var(--c-ember, #C8762E); }
 .vfield--build .vfield__r { color: var(--c-ember, #C8762E); }
+
+/* ============================================================================
+   075 — content-page header (.phead) + the battle/scout reports. Reusable header
+   for non-village content pages (reports, and later leaderboard/stats/profile…).
+   ============================================================================ */
+.page { max-width: 940px; margin: 0 auto; padding: 22px var(--space-5) var(--space-6); }
+.phead { position: relative; padding: 18px 22px; margin-bottom: 18px; overflow: hidden;
+  border: 1px solid var(--c-border); border-radius: var(--radius-md);
+  background: linear-gradient(180deg, var(--c-panel-alt), var(--c-panel));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.03); }
+.phead::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: linear-gradient(var(--c-gold), transparent 72%); opacity: .6; }
+.phead__eyebrow { font-family: ui-monospace, monospace; font-size: .7rem; letter-spacing: .2em; text-transform: uppercase; color: var(--c-ink-muted); }
+.phead__title { font-family: var(--c-serif, Georgia, serif); font-size: 1.8rem; color: var(--c-ink); margin: 2px 0 0; line-height: 1.1; }
+.phead__sub { margin: 6px 0 0; color: var(--c-ink-muted); }
+.phead__sub b { color: var(--c-ink); }
+.phead__back { display: inline-block; margin-top: 10px; font-family: ui-monospace, monospace; font-size: .8rem; color: var(--c-gold); }
+
+/* reports list — a clickable card per report */
+.replist { display: flex; flex-direction: column; gap: 10px; }
+.repcard { display: flex; align-items: center; gap: 14px; padding: 13px 16px; text-decoration: none; color: var(--c-ink);
+  border: 1px solid var(--c-border); border-radius: var(--radius-md); background: var(--c-panel); box-shadow: inset 0 1px 0 rgba(255,255,255,.03); }
+.repcard:hover { border-color: var(--c-gold); }
+.repcard__main { flex: 1; min-width: 0; }
+.repcard__head { font-family: var(--c-serif, Georgia, serif); font-size: 1.04rem; color: var(--c-ink); }
+.repcard__out { font-size: .85rem; color: var(--c-ink-muted); margin-top: 2px; }
+.repcard__when { font-family: ui-monospace, monospace; font-size: .76rem; color: var(--c-ink-muted); white-space: nowrap; }
+.repcard__arrow { color: var(--c-ink-muted); }
+
+/* battle report — summary stats, callout notes, the two combatant panels */
+.repsum { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-bottom: 16px; font-family: ui-monospace, monospace; font-size: .85rem; color: var(--c-ink-muted); }
+.repsum b { color: var(--c-ink); }
+.repnotes { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+.repnote { padding: 10px 14px; font-size: .92rem; color: var(--c-ink); border: 1px solid var(--c-border); border-left: 3px solid var(--c-gold); border-radius: var(--radius-sm); background: var(--c-panel); }
+.repnote--win { border-left-color: var(--c-warning); background: color-mix(in srgb, var(--c-warning) 12%, var(--c-panel)); }
+.repsides { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.cas { display: grid; grid-template-columns: 1fr auto auto; gap: 14px; padding: 6px 0; border-top: 1px solid #1b232c; font-size: .9rem; align-items: baseline; }
+.cas:first-child { border-top: 0; }
+.cas__h { color: var(--c-ink-muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .09em; }
+.cas__n { font-variant-numeric: tabular-nums; color: var(--c-ink); text-align: right; min-width: 3ch; }
+.cas__lost { font-variant-numeric: tabular-nums; color: var(--c-danger); text-align: right; min-width: 3ch; }
+@media (max-width: 640px) { .repsides { grid-template-columns: 1fr; } }
