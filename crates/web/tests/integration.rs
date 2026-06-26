@@ -501,6 +501,11 @@ async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
     assert!(body.contains("Researched"));
     assert!(body.contains("Swordsman"));
     assert!(body.contains("value=\"swordsman\""));
+    // 067: the academy is the redesigned building-page chrome — hero band, resource ribbon, and the
+    // research roster with unit portraits.
+    assert!(body.contains("bld-hero") && body.contains("res-ribbon"));
+    assert!(body.contains("roster--research"));
+    assert!(body.contains("/static/units/gauls_phalanx.webp"));
 
     // Order the research: PRG back to the Academy, which now shows the countdown (AC6/AC15).
     let res = c
@@ -672,9 +677,10 @@ async fn training_flow_and_garrison(pool: sqlx::PgPool) {
     assert!(body.contains("Phalanx"));
     assert!(body.contains("value=\"phalanx\""));
     assert!(body.contains("name=\"count\""));
-    // 063 AC7: each roster row carries its tribe-prefixed portrait thumbnail (missing art falls back
-    // to the dark placeholder tile — no broken-image artifact).
-    assert!(body.contains("unit-thumb"));
+    // 067: the training page is the redesigned building-page chrome — hero band, resource ribbon, and the
+    // training roster with each unit's portrait thumbnail (063 art, graceful fallback).
+    assert!(body.contains("bld-hero") && body.contains("res-ribbon"));
+    assert!(body.contains("roster--train") && body.contains("unit__thumb"));
     assert!(body.contains("/static/units/gauls_phalanx.webp"));
 
     // 005 AC2/AC9: order a batch; PRG back to the page, which shows the queue + countdown.
@@ -2002,6 +2008,8 @@ async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
     assert!(rally.contains("Rally Point"));
     assert!(rally.contains("Phalanx"));
     assert!(rally.contains("name=\"count_phalanx\""));
+    // 067: the redesigned building-page chrome (hero band + resource ribbon) wraps the send form.
+    assert!(rally.contains("bld-hero") && rally.contains("res-ribbon"));
     // 031: per-unit stats are plumbed for the live army preview (power / carry / speed / ETA).
     assert!(
         rally.contains("rally-count") && rally.contains("data-att="),
@@ -2216,6 +2224,8 @@ async fn marketplace_send_and_deliver_flow(pool: sqlx::PgPool) {
     assert!(market.contains("750")); // Gaul merchant capacity
     assert!(market.contains("free of 5"));
     assert!(market.contains("name=\"amount_wood\""));
+    // 067: the redesigned building-page chrome (hero band + resource ribbon) wraps the trade form.
+    assert!(market.contains("bld-hero") && market.contains("res-ribbon"));
     // 031: the live shipment preview (merchants needed + round-trip) is wired in.
     assert!(
         market.contains("ship-preview") && market.contains("ship-amt"),
@@ -2293,7 +2303,7 @@ async fn marketplace_send_and_deliver_flow(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
-    assert!(plain.contains("no Marketplace"));
+    assert!(plain.contains("has no") && plain.contains("Marketplace"));
     assert!(!plain.contains("name=\"amount_wood\""));
 
     // Visitors cannot reach the Marketplace (roles table, P4).

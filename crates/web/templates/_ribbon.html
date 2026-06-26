@@ -1,0 +1,14 @@
+{# Shared resource ribbon (067) — included by every in-village building page. Reads the `ribbon`
+   ResourceRibbon field from the including template's context. #}
+<section class="res-ribbon">
+  <div class="gauge gauge--wood" data-amt="{{ ribbon.wood }}" data-cap="{{ ribbon.warehouse }}"><div class="gauge__top"><span class="gauge__name">Wood</span><span class="gauge__rate">+{{ ribbon.wood_rate }}/h</span></div><div class="gauge__amt">{{ ribbon.wood }}<small> / {{ ribbon.warehouse }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
+  <div class="gauge gauge--clay" data-amt="{{ ribbon.clay }}" data-cap="{{ ribbon.warehouse }}"><div class="gauge__top"><span class="gauge__name">Clay</span><span class="gauge__rate">+{{ ribbon.clay_rate }}/h</span></div><div class="gauge__amt">{{ ribbon.clay }}<small> / {{ ribbon.warehouse }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
+  <div class="gauge gauge--iron" data-amt="{{ ribbon.iron }}" data-cap="{{ ribbon.warehouse }}"><div class="gauge__top"><span class="gauge__name">Iron</span><span class="gauge__rate">+{{ ribbon.iron_rate }}/h</span></div><div class="gauge__amt">{{ ribbon.iron }}<small> / {{ ribbon.warehouse }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
+  <div class="gauge gauge--crop" data-amt="{{ ribbon.crop }}" data-cap="{{ ribbon.granary }}"><div class="gauge__top"><span class="gauge__name">Crop</span><span class="gauge__rate{% if ribbon.crop_rate < 0 %} gauge__rate--neg{% endif %}">{% if ribbon.crop_rate < 0 %}{{ ribbon.crop_rate }}{% else %}+{{ ribbon.crop_rate }}{% endif %}/h</span></div><div class="gauge__amt">{{ ribbon.crop }}<small> / {{ ribbon.granary }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
+</section>
+<script>
+  for (const g of document.querySelectorAll(".gauge")) {
+    const amt = +g.dataset.amt, cap = +g.dataset.cap, f = g.querySelector(".gauge__fill");
+    if (cap > 0 && f) f.style.width = Math.max(0, Math.min(100, (amt / cap) * 100)).toFixed(1) + "%";
+  }
+</script>

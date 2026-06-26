@@ -1,61 +1,86 @@
 {% extends "base.html" %}
-{% block body_class %}has-building-bg{% endblock %}
+{% block body_class %}bld-page{% endblock %}
 {% block body_style %}--building-img: url('/static/buildings/academy.webp');{% if !tribe_slug.is_empty() %} --building-img-tribe: url('/static/buildings/{{ tribe_slug }}_academy.webp');{% endif %}{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Academy</h1>
-  <p class="muted"><a href="/w/{{ world }}/village/{{ village_id }}">← Back to the village</a></p>
 
+<section class="bld-hero">
+  <div class="bld-hero__inner">
+    <span class="bld-crest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5c3-1 6-1 9 1 3-2 6-2 9-1v13c-3-1-6-1-9 1-3-2-6-2-9-1zM12 6v13"/></svg></span>
+    <div class="bld-hid">
+      <div class="bld-eyebrow">Academy · {{ village_label }}</div>
+      <h1 class="bld-title">Academy</h1>
+      <p class="bld-sub">Research new troop types — a researched unit can then be trained at its Barracks, Stable or Workshop.</p>
+    </div>
+    <a class="bld-back" href="/w/{{ world }}/village/{{ village_id }}">← Village</a>
+  </div>
+</section>
+
+<div class="bld-body">
   {% if !has_academy %}
-  <p>Research requires an <strong>Academy</strong>. Build one in the village first.</p>
+  <section class="panel">
+    <p>Research requires an <strong>Academy</strong>. Build one in the village first.</p>
+    <p><a href="/w/{{ world }}/village/{{ village_id }}">← Back to the village</a></p>
+  </section>
   {% else %}
 
-  {% if let Some(r) = active %}
-  <p>{{ r.label }} — completes in
-    <span class="countdown num" data-deadline="{{ r.complete_ms }}">…</span></p>
-  {% endif %}
+  {% include "_ribbon.html" %}
 
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Unit</th><th>Role</th>
-        <th class="num">Att</th><th class="num">Def i</th><th class="num">Def c</th>
-        <th class="num">Speed</th><th class="num">Carry</th><th class="num">Upkeep</th>
-        <th>Research cost (W/C/I/Cr)</th><th class="num">Time</th><th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for u in rows %}
-      <tr>
-        <td>{{ u.name }}</td>
-        <td>{{ u.role }}</td>
-        <td class="num">{{ u.attack }}</td>
-        <td class="num">{{ u.def_inf }}</td>
-        <td class="num">{{ u.def_cav }}</td>
-        <td class="num">{{ u.speed }}</td>
-        <td class="num">{{ u.carry }}</td>
-        <td class="num">{{ u.upkeep }}</td>
-        {% if u.researched %}
-        <td>—</td><td class="num">—</td>
-        <td><span class="badge">Researched</span></td>
-        {% else %}
-        <td><span class="num">{{ u.cost_wood }}/{{ u.cost_clay }}/{{ u.cost_iron }}/{{ u.cost_crop }}</span></td>
-        <td class="num">{{ u.time }}</td>
-        <td>
-          {% if u.can_order %}
-          <form method="post" action="/w/{{ world }}/village/{{ village_id }}/academy/research">
-            <input type="hidden" name="unit" value="{{ u.id }}">
-            <button class="btn btn--primary" type="submit">Research</button>
-          </form>
-          {% else %}<span class="muted">{{ u.gate }}</span>{% endif %}
-        </td>
-        {% endif %}
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="bld-cols">
+    <div>
+      <div class="bld-cols__head"><h2>Research</h2><span class="bld-cols__rule"></span><span class="sub">{{ rows.len() }} units</span></div>
+      <div class="roster roster--research">
+        {% for u in rows %}
+        <article class="unit{% if u.can_order %} unit--ready{% endif %}">
+          <span class="unit__thumb" style="background-image:url('/static/units/{{ u.portrait }}.webp')" aria-hidden="true"></span>
+          <div class="unit__info">
+            <div class="unit__name">{{ u.name }} <span class="unit__role--inline">· {{ u.role }}</span></div>
+            <div class="unit__stats"><span>Att <b>{{ u.attack }}</b></span><span>Def <b>{{ u.def_inf }}/{{ u.def_cav }}</b></span><span>Spd <b>{{ u.speed }}</b></span><span>Carry <b>{{ u.carry }}</b></span><span>Upkeep <b>{{ u.upkeep }}</b></span></div>
+          </div>
+          <div class="unit__act">
+            {% if u.researched %}
+              <span class="unit__researched">✓ Researched</span>
+            {% else if u.can_order %}
+              <div class="unit__cost"><b class="w">{{ u.cost_wood }}</b><b class="c">{{ u.cost_clay }}</b><b class="i">{{ u.cost_iron }}</b><b class="r">{{ u.cost_crop }}</b></div>
+              <div class="unit__time">{{ u.time }}</div>
+              <form method="post" action="/w/{{ world }}/village/{{ village_id }}/academy/research">
+                <input type="hidden" name="unit" value="{{ u.id }}">
+                <button class="btn btn--primary" type="submit">Research</button>
+              </form>
+            {% else %}
+              <span class="unit__gate">{{ u.gate }}</span>
+            {% endif %}
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+
+    <aside class="bld-aside">
+      <div class="bld-card">
+        <div class="bld-card__h"><h3>In the academy</h3><span class="meta">{% if let Some(_a) = active %}1 / 1{% else %}idle{% endif %}</span></div>
+        <div class="bld-card__b">
+          {% if let Some(r) = active %}
+          <div class="forging">
+            <span class="forging__ico"></span>
+            <div><div class="forging__t">{{ r.label }}</div><div class="forging__s">completes <span class="countdown num" data-deadline="{{ r.complete_ms }}">…</span></div></div>
+          </div>
+          <p class="bld-tip">One research at a time. A researched unit unlocks training at its building.</p>
+          {% else %}
+          <p class="bld-tip">No research underway. Pick a unit to unlock it for training.</p>
+          {% endif %}
+        </div>
+      </div>
+      <div class="bld-card">
+        <div class="bld-card__h"><h3>The Academy</h3></div>
+        <div class="bld-card__b">
+          <div class="statline"><span>Units in the roster</span><b>{{ rows.len() }}</b></div>
+          <p class="bld-tip">Research widens what this village can field. Cost and requirements rise with the unit's strength.</p>
+        </div>
+      </div>
+    </aside>
+  </div>
   {% endif %}
-</section>
+</div>
 
 <script>
   for (const el of document.querySelectorAll(".countdown")) {

@@ -1,74 +1,93 @@
 {% extends "base.html" %}
-{% block body_class %}has-building-bg{% endblock %}
+{% block body_class %}bld-page{% endblock %}
 {% block body_style %}--building-img: url('/static/buildings/marketplace.webp');{% if !tribe_slug.is_empty() %} --building-img-tribe: url('/static/buildings/{{ tribe_slug }}_marketplace.webp');{% endif %}{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Marketplace</h1>
-  <p class="muted"><a href="/w/{{ world }}/village/{{ village_id }}">← Back to the village</a> · send resources to another village.
-    Travel time depends on distance and your merchants' speed.</p>
 
-  {% if !has_marketplace %}
-  <p class="muted">Your village has no Marketplace yet — build one from the village page to trade.</p>
-  {% else %}
-  <p>Merchants: <strong class="num">{{ free }}</strong> free of {{ total }}
-    · each carries <strong class="num">{{ capacity }}</strong> resources.</p>
-  {% if free == 0 %}
-  <p class="muted">All your merchants are on the road. They free up as shipments return.</p>
-  {% else %}
-  <form method="post" action="/w/{{ world }}/village/{{ village_id }}/market/send" class="form">
-    <div class="field">
-      <label>Target tile</label>
-      <span class="map-controls">
-        x <input type="number" name="x" required style="width:5em">
-        y <input type="number" name="y" required style="width:5em">
-      </span>
+<section class="bld-hero">
+  <div class="bld-hero__inner">
+    <span class="bld-crest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v15M7 19h10M5 8h14M5 8l-2 5h4zM19 8l2 5h-4z"/></svg></span>
+    <div class="bld-hid">
+      <div class="bld-eyebrow">Market · {{ village_label }}</div>
+      <h1 class="bld-title">Marketplace</h1>
+      <p class="bld-sub">Send resources to another village — travel time depends on distance and your merchants' speed.</p>
     </div>
-    <table class="table">
-      <thead><tr><th>Resource</th><th>Send</th></tr></thead>
-      <tbody>
-        <tr><td>Wood</td><td><input type="number" name="amount_wood" value="0" min="0" style="width:7em" class="ship-amt"></td></tr>
-        <tr><td>Clay</td><td><input type="number" name="amount_clay" value="0" min="0" style="width:7em" class="ship-amt"></td></tr>
-        <tr><td>Iron</td><td><input type="number" name="amount_iron" value="0" min="0" style="width:7em" class="ship-amt"></td></tr>
-        <tr><td>Crop</td><td><input type="number" name="amount_crop" value="0" min="0" style="width:7em" class="ship-amt"></td></tr>
-      </tbody>
-    </table>
-    <p id="ship-preview" class="muted"></p>
-    <button class="btn btn--primary" type="submit">Send resources</button>
-  </form>
-
-  <script>
-    // 031: live shipment preview — merchants needed (each carries {{ capacity }}) + round-trip time,
-    // matching the server's toroidal distance × merchant speed × world speed.
-    (function () {
-      const out = document.getElementById("ship-preview");
-      if (!out) return;
-      const amts = Array.from(document.querySelectorAll(".ship-amt"));
-      const xEl = document.querySelector("input[name=x]"), yEl = document.querySelector("input[name=y]");
-      const CAP = {{ capacity }}, FREE = {{ free }}, SPD = {{ merchant_speed }}, MULT = {{ speed_mult }};
-      const W = {{ radius }} * 2 + 1, OX = {{ origin_x }}, OY = {{ origin_y }};
-      const gap = (p, q) => { const m = (((p - q) % W) + W) % W; return Math.min(m, W - m); };
-      const fmt = (s) => { const h=Math.floor(s/3600); s-=h*3600; const m=Math.floor(s/60);
-        return `${h}:${String(m).padStart(2,"0")}:${String(s-m*60).padStart(2,"0")}`; };
-      const upd = () => {
-        const total = amts.reduce((a, el) => a + Math.max(0, parseInt(el.value, 10) || 0), 0);
-        if (!total) { out.textContent = ""; return; }
-        const need = CAP > 0 ? Math.ceil(total / CAP) : 0;
-        let s = `${total} resources → ${need} merchant(s)`;
-        if (need > FREE) s += ` (only ${FREE} free)`;
-        const tx = parseInt(xEl.value, 10), ty = parseInt(yEl.value, 10);
-        if (Number.isInteger(tx) && Number.isInteger(ty) && SPD > 0) {
-          const dx = gap(OX, tx), dy = gap(OY, ty);
-          const secs = Math.round((Math.sqrt(dx*dx + dy*dy) / (SPD * MULT)) * 3600);
-          s += ` · round trip ${fmt(secs * 2)}`;
-        }
-        out.textContent = s;
-      };
-      for (const el of amts) el.addEventListener("input", upd);
-      for (const el of [xEl, yEl]) if (el) el.addEventListener("input", upd);
-      upd();
-    })();
-  </script>
-  {% endif %}
-  {% endif %}
+    <a class="bld-back" href="/w/{{ world }}/village/{{ village_id }}">← Village</a>
+  </div>
 </section>
+
+<div class="bld-body">
+  {% if !has_marketplace %}
+  <section class="panel">
+    <p>Your village has no <strong>Marketplace</strong> yet — build one from the village page to trade.</p>
+    <p><a href="/w/{{ world }}/village/{{ village_id }}">← Back to the village</a></p>
+  </section>
+  {% else %}
+
+  {% include "_ribbon.html" %}
+
+  <section class="panel bld-form">
+    <div class="bld-merchants">
+      <span>Merchants <b>{{ free }}</b> free of {{ total }}</span>
+      <span>each carries <b>{{ capacity }}</b> resources</span>
+    </div>
+    {% if free == 0 %}
+    <p class="muted">All your merchants are on the road. They free up as shipments return.</p>
+    {% else %}
+    <form method="post" action="/w/{{ world }}/village/{{ village_id }}/market/send" class="form">
+      <div class="field">
+        <label>Target tile</label>
+        <span class="map-controls">
+          x <input type="number" name="x" required style="width:5em">
+          y <input type="number" name="y" required style="width:5em">
+        </span>
+      </div>
+      <table class="table">
+        <thead><tr><th>Resource</th><th>Send</th></tr></thead>
+        <tbody>
+          <tr><td>Wood</td><td><input type="number" name="amount_wood" value="0" min="0" style="width:7em" class="ship-amt"></td></tr>
+          <tr><td>Clay</td><td><input type="number" name="amount_clay" value="0" min="0" style="width:7em" class="ship-amt"></td></tr>
+          <tr><td>Iron</td><td><input type="number" name="amount_iron" value="0" min="0" style="width:7em" class="ship-amt"></td></tr>
+          <tr><td>Crop</td><td><input type="number" name="amount_crop" value="0" min="0" style="width:7em" class="ship-amt"></td></tr>
+        </tbody>
+      </table>
+      <p id="ship-preview" class="muted"></p>
+      <button class="btn btn--primary" type="submit">Send resources</button>
+    </form>
+
+    <script>
+      // 031: live shipment preview — merchants needed (each carries {{ capacity }}) + round-trip time,
+      // matching the server's toroidal distance × merchant speed × world speed.
+      (function () {
+        const out = document.getElementById("ship-preview");
+        if (!out) return;
+        const amts = Array.from(document.querySelectorAll(".ship-amt"));
+        const xEl = document.querySelector("input[name=x]"), yEl = document.querySelector("input[name=y]");
+        const CAP = {{ capacity }}, FREE = {{ free }}, SPD = {{ merchant_speed }}, MULT = {{ speed_mult }};
+        const W = {{ radius }} * 2 + 1, OX = {{ origin_x }}, OY = {{ origin_y }};
+        const gap = (p, q) => { const m = (((p - q) % W) + W) % W; return Math.min(m, W - m); };
+        const fmt = (s) => { const h=Math.floor(s/3600); s-=h*3600; const m=Math.floor(s/60);
+          return `${h}:${String(m).padStart(2,"0")}:${String(s-m*60).padStart(2,"0")}`; };
+        const upd = () => {
+          const total = amts.reduce((a, el) => a + Math.max(0, parseInt(el.value, 10) || 0), 0);
+          if (!total) { out.textContent = ""; return; }
+          const need = CAP > 0 ? Math.ceil(total / CAP) : 0;
+          let s = `${total} resources → ${need} merchant(s)`;
+          if (need > FREE) s += ` (only ${FREE} free)`;
+          const tx = parseInt(xEl.value, 10), ty = parseInt(yEl.value, 10);
+          if (Number.isInteger(tx) && Number.isInteger(ty) && SPD > 0) {
+            const dx = gap(OX, tx), dy = gap(OY, ty);
+            const secs = Math.round((Math.sqrt(dx*dx + dy*dy) / (SPD * MULT)) * 3600);
+            s += ` · round trip ${fmt(secs * 2)}`;
+          }
+          out.textContent = s;
+        };
+        for (const el of amts) el.addEventListener("input", upd);
+        for (const el of [xEl, yEl]) if (el) el.addEventListener("input", upd);
+        upd();
+      })();
+    </script>
+    {% endif %}
+  </section>
+  {% endif %}
+</div>
 {% endblock %}
