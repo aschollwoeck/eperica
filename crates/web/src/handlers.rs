@@ -1681,6 +1681,8 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
                         glyph,
                         label,
                         href,
+                        x: coord.x,
+                        y: coord.y,
                     }
                 })
                 .collect()
