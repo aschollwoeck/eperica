@@ -4,8 +4,8 @@
 <div class="page">
   <section class="phead">
     <div class="phead__eyebrow">Player
-      {% if online %}· <span class="presence presence--online">● online</span>
-      {% else %}· <span class="presence presence--away">○ {{ presence_label }}</span>{% endif %}
+      {% if online %}· <span class="presence presence--online" title="Online">● online</span>
+      {% else %}· <span class="presence presence--away" title="{{ presence_label }}">○ {{ presence_label }}</span>{% endif %}
     </div>
     <h1 class="phead__title">{{ name }}</h1>
     {% if !bio.is_empty() %}<p class="bio-read">{{ bio }}</p>{% endif %}
