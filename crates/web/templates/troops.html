@@ -1,69 +1,98 @@
 {% extends "base.html" %}
-{% block body_class %}has-building-bg{% endblock %}
+{% block body_class %}bld-page{% endblock %}
 {% block body_style %}--building-img: url('/static/buildings/{{ building|lower }}.webp');{% if !tribe_slug.is_empty() %} --building-img-tribe: url('/static/buildings/{{ tribe_slug }}_{{ building|lower }}.webp');{% endif %}{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>{{ building }}</h1>
-  <p class="muted"><a href="/w/{{ world }}/village/{{ village_id }}">← Back to the village</a></p>
 
-  {% if !has_building %}
-  <p>Training here requires a <strong>{{ building }}</strong>. Build one in the village first.</p>
-  {% else %}
-
-  {% if let Some(t) = active %}
-  <p>{{ t.label }} — next completes in
-    <span class="countdown num" data-deadline="{{ t.complete_ms }}">…</span></p>
-  {% endif %}
-
-  {% if rows.is_empty() %}
-  <p class="muted">No researched units train here yet — visit the <a href="/w/{{ world }}/village/{{ village_id }}/academy">Academy</a>.</p>
-  {% else %}
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Unit</th>
-        <th class="num">Att</th><th class="num">Def i</th><th class="num">Def c</th>
-        <th class="num">Upkeep</th>
-        <th>Cost each (W/C/I/Cr)</th><th class="num">Time each</th><th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for u in rows %}
-      <tr>
-        <td>
-          <span class="unit-cell">
-            <span class="unit-thumb" style="--unit-img: url('/static/units/{{ u.portrait }}.webp')" aria-hidden="true"></span>
-            {{ u.name }}
-          </span>
-        </td>
-        <td class="num">{{ u.attack }}</td>
-        <td class="num">{{ u.def_inf }}</td>
-        <td class="num">{{ u.def_cav }}</td>
-        <td class="num">{{ u.upkeep }}</td>
-        <td><span class="num">{{ u.cost_wood }}/{{ u.cost_clay }}/{{ u.cost_iron }}/{{ u.cost_crop }}</span></td>
-        <td class="num">{{ u.time }}</td>
-        <td>
-          {% if u.can_order %}
-          <form method="post" action="/w/{{ world }}/village/{{ village_id }}/train" class="train-form" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"
-                data-w="{{ u.cost_wood }}" data-c="{{ u.cost_clay }}" data-i="{{ u.cost_iron }}" data-cr="{{ u.cost_crop }}"
-                data-secs="{{ u.time_secs }}" data-up="{{ u.upkeep }}">
-            <input type="hidden" name="unit" value="{{ u.id }}">
-            <input type="number" name="count" value="1" min="1" max="9999" required style="width:5.5em">
-            <button class="btn btn--primary" type="submit">Train</button>
-            <span class="batch-total muted"></span>
-          </form>
-          {% else %}<span class="muted">{{ u.gate }}</span>{% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
-  {% endif %}
+<section class="bld-hero">
+  <div class="bld-hero__inner">
+    <span class="bld-crest">
+      {% if building == "Stable" %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21c-1-5-1-9 2-12 1-1 1-2 0-3 2 0 3 1 4 3 2 0 5 1 5 5 0 3-1 5-2 7M8 11c0-1 1-2 2-2"/></svg>
+      {% else if building == "Workshop" %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h14M17 9l4 3-4 3M5 8v8M9 9v6"/></svg>
+      {% else %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l9 9M19 3l-9 9M4 14l3 3-2 4 4-2 3-3M20 14l-3 3 2 4-4-2"/></svg>{% endif %}
+    </span>
+    <div class="bld-hid">
+      <div class="bld-eyebrow">Muster · {{ village_label }}</div>
+      <h1 class="bld-title">{{ building }}{% if has_building %} <span class="bld-lvl">Level {{ building_level }}</span>{% endif %}</h1>
+      <p class="bld-sub">Train your researched troops — a higher building level trains them faster.</p>
+    </div>
+    <a class="bld-back" href="/w/{{ world }}/village/{{ village_id }}">← Village</a>
+  </div>
 </section>
 
+<div class="bld-body">
+  {% if !has_building %}
+  <section class="panel">
+    <p>Training here requires a <strong>{{ building }}</strong>. Build one in the village first.</p>
+    <p><a href="/w/{{ world }}/village/{{ village_id }}">← Back to the village</a></p>
+  </section>
+  {% else %}
+
+  {% include "_ribbon.html" %}
+
+  <div class="bld-cols">
+    <div>
+      <div class="bld-cols__head"><h2>Muster</h2><span class="bld-cols__rule"></span><span class="sub">{{ rows.len() }} units</span></div>
+      {% if rows.is_empty() %}
+      <section class="panel"><p class="muted">No researched units train here yet — research units at the
+        <a href="/w/{{ world }}/village/{{ village_id }}/academy">Academy</a> first.</p></section>
+      {% else %}
+      <div class="roster roster--train">
+        {% for u in rows %}
+        <article class="unit{% if u.can_order %} unit--ready{% endif %}">
+          <span class="unit__thumb" style="background-image:url('/static/units/{{ u.portrait }}.webp')" aria-hidden="true"></span>
+          <div class="unit__info">
+            <div class="unit__name">{{ u.name }}</div>
+            <div class="unit__stats"><span>Att <b>{{ u.attack }}</b></span><span>Def <b>{{ u.def_inf }}/{{ u.def_cav }}</b></span><span>Upkeep <b>{{ u.upkeep }}</b></span><span>{{ u.time }} each</span></div>
+            <div class="unit__cost"><b class="w">{{ u.cost_wood }}</b><b class="c">{{ u.cost_clay }}</b><b class="i">{{ u.cost_iron }}</b><b class="r">{{ u.cost_crop }}</b> <span class="muted">each</span></div>
+          </div>
+          <div class="unit__act">
+            {% if u.can_order %}
+            <form method="post" action="/w/{{ world }}/village/{{ village_id }}/train" class="train-form"
+                  data-w="{{ u.cost_wood }}" data-c="{{ u.cost_clay }}" data-i="{{ u.cost_iron }}" data-cr="{{ u.cost_crop }}"
+                  data-secs="{{ u.time_secs }}" data-up="{{ u.upkeep }}">
+              <input type="hidden" name="unit" value="{{ u.id }}">
+              <input type="number" name="count" value="1" min="1" max="9999" required>
+              <button class="btn btn--primary" type="submit">Train</button>
+              <span class="batch-total"></span>
+            </form>
+            {% else %}<span class="unit__gate">{{ u.gate }}</span>{% endif %}
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+
+    <aside class="bld-aside">
+      <div class="bld-card">
+        <div class="bld-card__h"><h3>On the drill yard</h3><span class="meta">{% if let Some(_t) = active %}training{% else %}idle{% endif %}</span></div>
+        <div class="bld-card__b">
+          {% if let Some(t) = active %}
+          <div class="forging">
+            <span class="forging__ico"></span>
+            <div><div class="forging__t">{{ t.label }}</div><div class="forging__s">next in <span class="countdown num" data-deadline="{{ t.complete_ms }}">…</span></div></div>
+          </div>
+          <p class="bld-tip">A batch trains one at a time; the page refreshes as each completes.</p>
+          {% else %}
+          <p class="bld-tip">The drill yard is quiet. Set a count and train a batch.</p>
+          {% endif %}
+        </div>
+      </div>
+      <div class="bld-card">
+        <div class="bld-card__h"><h3>The {{ building }}</h3><span class="meta">Lvl {{ building_level }}</span></div>
+        <div class="bld-card__b">
+          <div class="statline"><span>Trainable units</span><b>{{ rows.len() }}</b></div>
+          <p class="bld-tip">Raise the {{ building }} on the village to cut training time.</p>
+          <a class="btn btn--primary btn--wide" href="/w/{{ world }}/village/{{ village_id }}">Raise the {{ building }} →</a>
+        </div>
+      </div>
+    </aside>
+  </div>
+  {% endif %}
+</div>
+
 <script>
-  // 031: live batch totals — as you change a count, show total cost / time / upkeep before you commit.
+  // 031: live batch totals — total cost / time / upkeep before you commit.
   for (const form of document.querySelectorAll(".train-form")) {
     const input = form.querySelector("input[name=count]");
     const out = form.querySelector(".batch-total");
@@ -78,7 +107,6 @@
     };
     input.addEventListener("input", upd); upd();
   }
-
   for (const el of document.querySelectorAll(".countdown")) {
     const deadline = Number(el.dataset.deadline);
     const tick = () => {

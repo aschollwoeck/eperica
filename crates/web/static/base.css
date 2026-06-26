@@ -490,6 +490,27 @@ a { color: var(--c-gold); }
   .res-ribbon { grid-template-columns: repeat(2, 1fr); }
   .bld-title { font-size: 1.7rem; }
   .bld-hero { min-height: 270px; }
-  .unit { grid-template-columns: 48px 1fr; }
-  .unit > .forge, .unit > .unit__eff, .unit > .unit__act { grid-column: 2; text-align: left; }
+  .roster--research .unit, .roster--train .unit, .unit { grid-template-columns: 48px 1fr; }
+  .unit > .forge, .unit > .unit__eff, .unit > .unit__info, .unit > .unit__act { grid-column: 2; text-align: left; }
+  .train-form { justify-content: flex-start; }
 }
+
+/* 067 — research / training roster variants: a 3-column row (thumb · info · action).
+   Reuses the 066 .unit / .unit--ready / .bld-* chrome. */
+.roster--research .unit,
+.roster--train .unit { grid-template-columns: 56px 1fr minmax(178px, auto); }
+.unit__info { min-width: 0; }
+.unit__role--inline { color: var(--c-ink-muted); font-weight: 400; font-size: .85rem; }
+.unit__stats { font-family: ui-monospace, monospace; font-size: .78rem; color: var(--c-ink-muted); margin-top: 3px; display: flex; flex-wrap: wrap; gap: 3px 12px; }
+.unit__stats b { color: var(--c-ink); font-weight: 500; }
+.unit__researched { display: inline-block; font-family: ui-monospace, monospace; font-size: .74rem; letter-spacing: .04em; color: var(--c-success); border: 1px solid color-mix(in srgb, var(--c-success) 45%, var(--c-border)); border-radius: 2px; padding: 3px 9px; }
+.train-form { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+.train-form input[type=number] { width: 5em; background: var(--c-bg); border: 1px solid var(--c-border); color: var(--c-ink); border-radius: var(--radius-sm); padding: 6px 8px; font: inherit; font-variant-numeric: tabular-nums; }
+.train-form input[type=number]:focus-visible { outline: 2px solid var(--c-gold); outline-offset: 1px; }
+.batch-total { font-family: ui-monospace, monospace; font-size: .74rem; color: var(--c-ink-muted); width: 100%; text-align: right; }
+
+/* a building page whose main content is a form (Rally / Market) — keep it in the building chrome */
+.bld-form { max-width: 720px; }
+.bld-form .panel { background: var(--c-panel); }
+.bld-merchants { display: flex; gap: 18px; flex-wrap: wrap; font-size: .95rem; margin: 0 0 var(--space-4); }
+.bld-merchants b { font-family: ui-monospace, monospace; color: var(--c-ink); }

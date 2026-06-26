@@ -176,6 +176,21 @@ pub struct ActiveView {
     pub complete_ms: i64,
 }
 
+/// The resource ribbon shown on every in-village building page (067): current amounts, hourly production
+/// rates and storage caps. `crop_rate` is net of upkeep and may be negative. Rendered by `_ribbon.html`.
+pub struct ResourceRibbon {
+    pub wood: i64,
+    pub clay: i64,
+    pub iron: i64,
+    pub crop: i64,
+    pub wood_rate: i64,
+    pub clay_rate: i64,
+    pub iron_rate: i64,
+    pub crop_rate: i64,
+    pub warehouse: i64,
+    pub granary: i64,
+}
+
 /// An in-progress order on a unit page (research or upgrade), for display + countdown.
 pub struct QueueView {
     /// What is in progress (e.g. "Researching Swordsman").
@@ -188,6 +203,8 @@ pub struct QueueView {
 pub struct AcademyRow {
     /// Unit slug for the POST `unit` value.
     pub id: String,
+    /// Tribe-prefixed portrait slug (`<tribe>_<id>`) for the roster thumbnail (067).
+    pub portrait: String,
     /// Display name.
     pub name: String,
     /// Role label (Infantry/Cavalry/…).
@@ -222,6 +239,10 @@ pub struct AcademyTemplate {
     pub tribe_slug: &'static str,
     /// The village this page acts on (carried into the research form + back link, 013 AC11).
     pub village_id: String,
+    /// The acting village's coordinate label, shown in the hero eyebrow (067).
+    pub village_label: String,
+    /// The shared resource ribbon (067).
+    pub ribbon: ResourceRibbon,
     /// Whether the village has an Academy (otherwise the page only explains the requirement).
     pub has_academy: bool,
     /// The tribe's roster.
@@ -278,17 +299,8 @@ pub struct SmithyTemplate {
     pub has_smithy: bool,
     /// The Smithy's building level (caps unit levels; the pip-track length, 066).
     pub smithy_level: u8,
-    /// Resource ribbon — current amounts, hourly rates and storage caps (066).
-    pub wood: i64,
-    pub clay: i64,
-    pub iron: i64,
-    pub crop: i64,
-    pub wood_rate: i64,
-    pub clay_rate: i64,
-    pub iron_rate: i64,
-    pub crop_rate: i64,
-    pub warehouse: i64,
-    pub granary: i64,
+    /// The shared resource ribbon (067).
+    pub ribbon: ResourceRibbon,
     /// Researched units with their upgrade state.
     pub rows: Vec<SmithyRow>,
     /// The upgrade in progress, if any.
@@ -334,8 +346,14 @@ pub struct TroopsTemplate {
     pub tribe_slug: &'static str,
     /// The village this page acts on (carried into the train form + back link, 013 AC11).
     pub village_id: String,
+    /// The acting village's coordinate label, shown in the hero eyebrow (067).
+    pub village_label: String,
+    /// The shared resource ribbon (067).
+    pub ribbon: ResourceRibbon,
     /// "Barracks" / "Stable" / "Workshop".
     pub building: &'static str,
+    /// The training building's level, shown in the hero (067).
+    pub building_level: u8,
     /// Whether the village has this building (otherwise the page explains the requirement).
     pub has_building: bool,
     /// Researched units this building trains.
@@ -411,6 +429,10 @@ pub struct RallyTemplate {
     pub tribe_slug: &'static str,
     /// The id of the village these troops are sent from (carried into the form, AC11).
     pub village_id: String,
+    /// The acting village's coordinate label, shown in the hero eyebrow (067).
+    pub village_label: String,
+    /// The shared resource ribbon (067).
+    pub ribbon: ResourceRibbon,
     /// The garrison units that can be sent (empty hides the form).
     pub units: Vec<RallyUnitRow>,
     /// Pre-filled target tile from a map link (012 AC12), if any.
@@ -563,6 +585,10 @@ pub struct MarketTemplate {
     pub tribe_slug: &'static str,
     /// The village this page acts on (carried into the send form + back link, 013 AC11).
     pub village_id: String,
+    /// The acting village's coordinate label, shown in the hero eyebrow (067).
+    pub village_label: String,
+    /// The shared resource ribbon (067).
+    pub ribbon: ResourceRibbon,
     /// Whether the village has a Marketplace (otherwise the page only explains the requirement).
     pub has_marketplace: bool,
     /// Total resources one of this tribe's merchants carries.

@@ -23,12 +23,7 @@
   </section>
   {% else %}
 
-  <section class="res-ribbon">
-    <div class="gauge gauge--wood" data-amt="{{ wood }}" data-cap="{{ warehouse }}"><div class="gauge__top"><span class="gauge__name">Wood</span><span class="gauge__rate">+{{ wood_rate }}/h</span></div><div class="gauge__amt">{{ wood }}<small> / {{ warehouse }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
-    <div class="gauge gauge--clay" data-amt="{{ clay }}" data-cap="{{ warehouse }}"><div class="gauge__top"><span class="gauge__name">Clay</span><span class="gauge__rate">+{{ clay_rate }}/h</span></div><div class="gauge__amt">{{ clay }}<small> / {{ warehouse }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
-    <div class="gauge gauge--iron" data-amt="{{ iron }}" data-cap="{{ warehouse }}"><div class="gauge__top"><span class="gauge__name">Iron</span><span class="gauge__rate">+{{ iron_rate }}/h</span></div><div class="gauge__amt">{{ iron }}<small> / {{ warehouse }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
-    <div class="gauge gauge--crop" data-amt="{{ crop }}" data-cap="{{ granary }}"><div class="gauge__top"><span class="gauge__name">Crop</span><span class="gauge__rate{% if crop_rate < 0 %} gauge__rate--neg{% endif %}">{% if crop_rate < 0 %}{{ crop_rate }}{% else %}+{{ crop_rate }}{% endif %}/h</span></div><div class="gauge__amt">{{ crop }}<small> / {{ granary }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
-  </section>
+  {% include "_ribbon.html" %}
 
   <div class="bld-cols">
     <div>
@@ -105,11 +100,6 @@
 </div>
 
 <script>
-  // Resource gauges — set each fill from current / capacity.
-  for (const g of document.querySelectorAll(".gauge")) {
-    const amt = +g.dataset.amt, cap = +g.dataset.cap, f = g.querySelector(".gauge__fill");
-    if (cap > 0 && f) f.style.width = Math.max(0, Math.min(100, (amt / cap) * 100)).toFixed(1) + "%";
-  }
   // Live countdowns (P1/P11) — reload shortly after one elapses so the page reflects the new state.
   for (const el of document.querySelectorAll(".countdown")) {
     const deadline = Number(el.dataset.deadline);

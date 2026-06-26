@@ -17,11 +17,11 @@ use crate::templates::{
     MovementRow, NotificationRowView, NotificationsTemplate, OasisRow, OutgoingInviteView,
     PendingInviteView, PlayerStatsTemplate, PrivacyTemplate, ProfileTemplate, QuestsTemplate,
     QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow,
-    ReportTemplate, ReportsTemplate, RosterRowView, ScoutReportTemplate, ScoutResourceRow,
-    SearchHitRow, SearchTemplate, SettingsTemplate, SettingsToggleRow, ShipmentRow, SitterRow,
-    SittingTemplate, SmithyRow, SmithyTemplate, StyleGuideTemplate, TermsTemplate, TrainRow,
-    TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate, WonderStandingView,
-    WonderTemplate, WorldsTemplate,
+    ReportTemplate, ReportsTemplate, ResourceRibbon, RosterRowView, ScoutReportTemplate,
+    ScoutResourceRow, SearchHitRow, SearchTemplate, SettingsTemplate, SettingsToggleRow,
+    ShipmentRow, SitterRow, SittingTemplate, SmithyRow, SmithyTemplate, StyleGuideTemplate,
+    TermsTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate,
+    WonderStandingView, WonderTemplate, WorldsTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -1772,6 +1772,22 @@ fn building_level(village: &Village, kind: BuildingKind) -> u8 {
 /// The selected village + settled amounts, or an error response (013 AC11; `selected` ⇒ that village).
 /// World-scoped: the repo/speed/player **and the economy/unit rules** all come from `GameContext` (050), so
 /// the economy settles under the selected world's speed (044) and its rule preset.
+/// The shared building-page resource ribbon, from a settled economy (067).
+fn resource_ribbon(e: &Economy) -> ResourceRibbon {
+    ResourceRibbon {
+        wood: e.amounts.wood,
+        clay: e.amounts.clay,
+        iron: e.amounts.iron,
+        crop: e.amounts.crop,
+        wood_rate: e.rates.wood,
+        clay_rate: e.rates.clay,
+        iron_rate: e.rates.iron,
+        crop_rate: e.rates.crop_net,
+        warehouse: e.capacities.warehouse,
+        granary: e.capacities.granary,
+    }
+}
+
 async fn village_view_data(
     ctx: &GameContext,
     selected: Option<VillageId>,
@@ -1883,6 +1899,7 @@ pub async fn academy(
             });
             AcademyRow {
                 id: spec.id.as_str().to_owned(),
+                portrait: format!("{}_{}", tribe.slug(), spec.id.as_str()),
                 name: spec.name.clone(),
                 role: role_label(spec.role),
                 attack: spec.attack,
@@ -1907,6 +1924,8 @@ pub async fn academy(
         world: world_id_str(ctx.world_id),
         tribe_slug: village.tribe.map_or("", |t| t.slug()),
         village_id: village_seg(village.id),
+        village_label: format!("({}|{})", village.coordinate.x, village.coordinate.y),
+        ribbon: resource_ribbon(&economy),
         has_academy: building_level(&village, BuildingKind::Academy) > 0,
         rows,
         active,
@@ -2037,16 +2056,7 @@ pub async fn smithy(ctx: GameContext, Path((_world, village)): Path<(String, Str
         village_label: format!("({}|{})", village.coordinate.x, village.coordinate.y),
         has_smithy: smithy_lvl > 0,
         smithy_level: smithy_lvl,
-        wood: amounts.wood,
-        clay: amounts.clay,
-        iron: amounts.iron,
-        crop: amounts.crop,
-        wood_rate: economy.rates.wood,
-        clay_rate: economy.rates.clay,
-        iron_rate: economy.rates.iron,
-        crop_rate: economy.rates.crop_net,
-        warehouse: economy.capacities.warehouse,
-        granary: economy.capacities.granary,
+        ribbon: resource_ribbon(&economy),
         rows,
         active,
         active_portrait,
@@ -2118,8 +2128,7 @@ pub async fn troops_workshop(
 /// Player only, P4). The `{village}` rides in the path (064); the building is fixed by the caller.
 async fn troops(ctx: GameContext, village: String, building: BuildingKind) -> Response {
     let player = ctx.player;
-    let (village, _amounts) = match village_view_data(&ctx, selected_village(Some(&village))).await
-    {
+    let (village, economy) = match village_view_data(&ctx, selected_village(Some(&village))).await {
         Ok(v) => v,
         Err(r) => return r,
     };
@@ -2198,7 +2207,10 @@ async fn troops(ctx: GameContext, village: String, building: BuildingKind) -> Re
         world: world_id_str(ctx.world_id),
         tribe_slug: village.tribe.map_or("", |t| t.slug()),
         village_id: village_seg(village.id),
+        village_label: format!("({}|{})", village.coordinate.x, village.coordinate.y),
+        ribbon: resource_ribbon(&economy),
         building: building_label(building),
+        building_level,
         has_building: building_level > 0,
         rows,
         active: active_view,
@@ -2295,8 +2307,7 @@ pub async fn rally(
     Query(q): Query<MapQuery>,
 ) -> Response {
     let player = ctx.player;
-    let (village, _amounts) = match village_view_data(&ctx, selected_village(Some(&village))).await
-    {
+    let (village, economy) = match village_view_data(&ctx, selected_village(Some(&village))).await {
         Ok(v) => v,
         Err(r) => return r,
     };
@@ -2374,6 +2385,8 @@ pub async fn rally(
         world: world_id_str(ctx.world_id),
         tribe_slug: village.tribe.map_or("", |t| t.slug()),
         village_id: village_seg(village.id),
+        village_label: format!("({}|{})", village.coordinate.x, village.coordinate.y),
+        ribbon: resource_ribbon(&economy),
         units,
         target_x: q.x,
         target_y: q.y,
@@ -2646,12 +2659,13 @@ pub async fn oasis_recall(
 /// Player only, P4).
 pub async fn market(ctx: GameContext, Path((_world, village)): Path<(String, String)>) -> Response {
     let player = ctx.player;
-    let (village, _amounts) = match village_view_data(&ctx, selected_village(Some(&village))).await
-    {
+    let (village, economy) = match village_view_data(&ctx, selected_village(Some(&village))).await {
         Ok(v) => v,
         Err(r) => return r,
     };
     let village_id = village_seg(village.id);
+    let village_label = format!("({}|{})", village.coordinate.x, village.coordinate.y);
+    let ribbon = resource_ribbon(&economy);
     let Some(tribe) = village.tribe else {
         tracing::error!(?player, "village has no tribe");
         return server_error();
@@ -2662,6 +2676,8 @@ pub async fn market(ctx: GameContext, Path((_world, village)): Path<(String, Str
             world: world_id_str(ctx.world_id),
             tribe_slug: village.tribe.map_or("", |t| t.slug()),
             village_id,
+            village_label,
+            ribbon,
             has_marketplace: false,
             capacity: 0,
             free: 0,
@@ -2686,6 +2702,8 @@ pub async fn market(ctx: GameContext, Path((_world, village)): Path<(String, Str
         world: world_id_str(ctx.world_id),
         tribe_slug: village.tribe.map_or("", |t| t.slug()),
         village_id,
+        village_label,
+        ribbon,
         has_marketplace: true,
         capacity: profile.capacity,
         free: total.saturating_sub(committed),
