@@ -443,8 +443,8 @@ a { color: var(--c-gold); }
   background: var(--c-panel); box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
 }
 /* the price column — the resource cost + time, always here on every roster page (AC2). */
+/* keep the (possibly empty) price column at a fixed width so the action column stays aligned across rows. */
 .unit__price { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; min-width: 122px; }
-.unit__price:empty { min-width: 0; }
 .unit__price .unit__cost { margin-top: 0; justify-content: flex-end; }
 .unit__price .unit__time { margin: 0; }
 .unit__thumb { width: 56px; height: 56px; border-radius: var(--radius-sm); border: 1px solid var(--c-border); background: #0d1217 center top / cover; }
