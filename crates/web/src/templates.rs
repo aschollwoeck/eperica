@@ -415,6 +415,9 @@ pub struct MapCellView {
     /// A target link for actionable tiles (an oasis → the Rally Point pre-filled with the tile);
     /// `None` for plain terrain (012 AC12).
     pub href: Option<String>,
+    /// The tile's coordinate, for the inspector's "center here" link + send-troops shortcut (074).
+    pub x: i32,
+    pub y: i32,
 }
 
 #[derive(Template)]

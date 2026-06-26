@@ -1533,8 +1533,10 @@ async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
-    assert!(body.contains("map-grid"));
-    assert!(body.contains("centered on"));
+    // 074: the redesigned map — a styled tile grid + the click-to-inspect panel (replaces the old table).
+    assert!(body.contains("mgrid") && body.contains("class=\"mtile"));
+    assert!(body.contains("minspect")); // the tile inspector
+    assert!(body.contains("centre of view")); // the command header's centre label
     assert!(body.contains("map-grid__cell--village"));
     assert!(body.contains("map-grid__cell--self")); // the viewer's own village is highlighted
     assert!(body.contains(&user)); // owner name on the marker (public, GDD §7.3)
@@ -1549,7 +1551,7 @@ async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
-    assert!(body.contains("centered on (10|-7)"));
+    assert!(body.contains("10 | -7")); // the centre chip reflects the recenter
 
     // Visitors are redirected to login (roles table).
     let anon = client()

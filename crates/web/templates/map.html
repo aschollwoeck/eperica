@@ -1,37 +1,78 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Map</h1>
-  <p class="muted"><a href="/w/{{ world }}/village">← Back to the village</a>
-    · centered on ({{ center_x }}|{{ center_y }}) · world radius {{ radius }}</p>
+<div class="vlg">
+  <section class="vcmd">
+    <div class="vcmd__id">
+      <div class="vcmd__eyebrow">World map · radius {{ radius }}</div>
+      <h1 class="vcmd__name">The Known World</h1>
+      <div class="vcmd__sub"><span class="vchip">{{ center_x }} | {{ center_y }}</span> <span>centre of view</span></div>
+      <div class="vquick">
+        <a href="/w/{{ world }}/village">← Village</a>
+        <a href="/w/{{ world }}/reports">✉ Reports</a>
+      </div>
+    </div>
+    <div class="map-nav">
+      <a class="btn btn--secondary" href="/w/{{ world }}/map?x={{ center_x }}&amp;y={{ north_y }}">↑ N</a>
+      <a class="btn btn--secondary" href="/w/{{ world }}/map?x={{ west_x }}&amp;y={{ center_y }}">← W</a>
+      <a class="btn btn--secondary" href="/w/{{ world }}/map?x={{ east_x }}&amp;y={{ center_y }}">E →</a>
+      <a class="btn btn--secondary" href="/w/{{ world }}/map?x={{ center_x }}&amp;y={{ south_y }}">↓ S</a>
+      <form method="get" action="/w/{{ world }}/map">
+        x <input type="number" name="x" value="{{ center_x }}" required>
+        y <input type="number" name="y" value="{{ center_y }}" required>
+        <button class="btn btn--primary" type="submit">Go</button>
+      </form>
+    </div>
+  </section>
 
-  <div class="map-controls">
-    <a class="btn btn--secondary" href="/w/{{ world }}/map?x={{ center_x }}&amp;y={{ north_y }}">↑ North</a>
-    <a class="btn btn--secondary" href="/w/{{ world }}/map?x={{ west_x }}&amp;y={{ center_y }}">← West</a>
-    <a class="btn btn--secondary" href="/w/{{ world }}/map?x={{ east_x }}&amp;y={{ center_y }}">East →</a>
-    <a class="btn btn--secondary" href="/w/{{ world }}/map?x={{ center_x }}&amp;y={{ south_y }}">↓ South</a>
-    <form method="get" action="/w/{{ world }}/map" class="map-controls">
-      <label>x <input type="number" name="x" value="{{ center_x }}" required style="width:5em"></label>
-      <label>y <input type="number" name="y" value="{{ center_y }}" required style="width:5em"></label>
-      <button class="btn btn--primary" type="submit">Go</button>
-    </form>
-  </div>
-
-  <table class="map-grid">
-    <tbody>
+  <div class="mwrap">
+    <div class="mgrid">
       {% for row in rows %}
-      <tr>
+      <div class="mrow">
         {% for cell in row %}
-        <td class="{{ cell.cell_class }}" title="{{ cell.label }}">
-          {% match cell.href %}{% when Some with (href) %}<a href="{{ href }}">{{ cell.glyph }}</a>{% when None %}{{ cell.glyph }}{% endmatch %}
-        </td>
+        <button type="button" class="mtile {{ cell.cell_class }}" data-label="{{ cell.label }}" data-x="{{ cell.x }}" data-y="{{ cell.y }}"{% match cell.href %}{% when Some with (h) %} data-href="{{ h }}"{% when None %}{% endmatch %}>{{ cell.glyph }}</button>
         {% endfor %}
-      </tr>
+      </div>
       {% endfor %}
-    </tbody>
-  </table>
+    </div>
 
-  <p class="muted">Green = valley · blue = oasis · red = Natar · ★ = a village. Hover a tile for
-    its details. Troop counts and resources are hidden until you scout.</p>
-</section>
+    <div class="minspect" id="minspect">
+      <div class="minspect__label" id="minspect-label"><span class="muted">Click a tile to inspect it.</span></div>
+      <div class="minspect__act">
+        <a id="minspect-go" class="btn btn--primary" style="display:none">Send troops →</a>
+        <a id="minspect-center" class="btn btn--secondary" style="display:none">Center here</a>
+      </div>
+    </div>
+
+    <div class="mlegend">
+      <span><i class="lg-valley"></i>Valley</span>
+      <span><i class="lg-oasis"></i>Oasis</span>
+      <span><i class="lg-natar"></i>Natar</span>
+      <span><b style="color:var(--c-gold)">★</b> a village — your own / capital are outlined</span>
+      <span>Troop counts &amp; resources stay hidden until you scout.</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  // 074: tile inspector — click a tile to see its label + the actions it affords (send troops / center).
+  (function () {
+    const label = document.getElementById("minspect-label");
+    const go = document.getElementById("minspect-go");
+    const center = document.getElementById("minspect-center");
+    if (!label) return;
+    let sel = null;
+    for (const t of document.querySelectorAll(".mtile")) {
+      t.addEventListener("click", () => {
+        if (sel) sel.classList.remove("mtile--sel");
+        sel = t; t.classList.add("mtile--sel");
+        const d = t.dataset;
+        label.textContent = d.label;
+        if (d.href) { go.href = d.href; go.style.display = ""; } else { go.style.display = "none"; }
+        center.href = "/w/{{ world }}/map?x=" + d.x + "&y=" + d.y;
+        center.style.display = "";
+      });
+    }
+  })();
+</script>
 {% endblock %}

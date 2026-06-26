@@ -235,23 +235,34 @@ a { color: var(--c-gold); }
 .choice__title { font-weight: 700; }
 .choice__desc { grid-column: 2; color: var(--c-ink-muted); font-size: 0.92em; }
 
-.map-grid { border-collapse: collapse; margin: var(--space-3) 0; }
-.map-grid__cell {
-  width: 2rem;
-  height: 2rem;
-  text-align: center;
-  vertical-align: middle;
-  border: 1px solid var(--c-border);
-  font-size: 0.8rem;
-  color: var(--c-ink);
-}
-.map-grid__cell--valley { background: color-mix(in srgb, var(--c-crop) 22%, transparent); }
-.map-grid__cell--oasis { background: color-mix(in srgb, var(--c-accent) 28%, transparent); }
-.map-grid__cell--natar { background: color-mix(in srgb, var(--c-danger) 25%, transparent); }
-.map-grid__cell--village { font-weight: 700; color: var(--c-gold); }
-.map-grid__cell--self { outline: 2px solid var(--c-gold); outline-offset: -2px; }
+/* 074 — the world map: a styled tile grid + a click-to-inspect panel (reuses the .vlg / .vcmd chrome). */
+.map-nav { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.map-nav form { display: flex; gap: 6px; align-items: center; margin: 0; }
+.map-nav input { width: 4.5em; background: var(--c-bg); border: 1px solid var(--c-border); color: var(--c-ink); border-radius: var(--radius-sm); padding: 6px 8px; font: inherit; }
+.mwrap { margin-top: 16px; }
+.mgrid { display: flex; flex-direction: column; gap: 2px; padding: 10px; border: 1px solid var(--c-border); border-radius: var(--radius-md); background: linear-gradient(180deg, #10151b, #0c1116); overflow-x: auto; }
+.mrow { display: flex; gap: 2px; }
+.mtile { flex: 1 0 26px; min-width: 26px; aspect-ratio: 1; display: grid; place-items: center; border: 1px solid #1b232c; border-radius: 2px; background: #0e141a; color: var(--c-ink-muted); font-size: .82rem; line-height: 1; cursor: pointer; padding: 0; font-family: inherit; outline: 1px solid transparent; }
+.mtile:hover, .mtile:focus-visible { outline-color: var(--c-gold); position: relative; z-index: 2; }
+.mtile--sel { outline: 2px solid var(--c-gold); position: relative; z-index: 3; }
+.map-grid__cell--valley { background: color-mix(in srgb, var(--c-lumber) 15%, #0e141a); }
+.map-grid__cell--oasis { background: color-mix(in srgb, var(--c-accent) 30%, #0e141a); color: var(--c-accent); }
+.map-grid__cell--natar { background: color-mix(in srgb, var(--c-danger) 26%, #0e141a); color: var(--c-danger); font-weight: 700; }
+.map-grid__cell--village { color: var(--c-gold); font-weight: 700; }
+.map-grid__cell--self { box-shadow: inset 0 0 0 2px var(--c-gold), 0 0 9px -2px var(--c-gold); }
+.map-grid__cell--capital { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--c-gold) 75%, transparent); }
+.map-grid__cell--occupied { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--c-accent) 60%, transparent); }
 /* 019: an inactive (farmable) owner's village is greyed. */
-.map-grid__cell--inactive { color: var(--c-ink-muted); opacity: 0.6; }
+.map-grid__cell--inactive { opacity: .5; }
+.minspect { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 12px; padding: 13px 16px; min-height: 62px; border: 1px solid var(--c-border); border-radius: var(--radius-md); background: #0d1217; }
+.minspect__label { flex: 1; min-width: 220px; color: var(--c-ink); font-size: .95rem; }
+.minspect__label .muted { color: var(--c-ink-muted); }
+.minspect__act { display: flex; gap: 10px; flex-wrap: wrap; }
+.mlegend { display: flex; flex-wrap: wrap; gap: 14px 18px; margin-top: 12px; font-size: .82rem; color: var(--c-ink-muted); }
+.mlegend span i { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; border: 1px solid #1b232c; }
+.lg-valley { background: color-mix(in srgb, var(--c-lumber) 15%, #0e141a); }
+.lg-oasis { background: color-mix(in srgb, var(--c-accent) 30%, #0e141a); }
+.lg-natar { background: color-mix(in srgb, var(--c-danger) 26%, #0e141a); }
 .map-controls { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
 
 .alert { padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); border: 1px solid; }
