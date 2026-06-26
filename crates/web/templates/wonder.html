@@ -1,42 +1,47 @@
 {% extends "base.html" %}
-{% block body_class %}has-building-bg{% endblock %}
+{% block body_class %}bld-page{% endblock %}
 {% block body_style %}--building-img: url('/static/buildings/wonder.webp');{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Wonder of the World</h1>
-  <p class="muted"><a href="/w/{{ world }}/village">← Back to the village</a></p>
 
+<section class="bld-hero">
+  <div class="bld-hero__inner">
+    <span class="bld-crest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 5 5 1-4 4 1 6-5-3-5 3 1-6-4-4 5-1zM5 22h14"/></svg></span>
+    <div class="bld-hid">
+      <div class="bld-eyebrow">Endgame</div>
+      <h1 class="bld-title">Wonder of the World</h1>
+      <p class="bld-sub">{% match winner %}{% when Some with ((name, tag)) %}{{ name }} [{{ tag }}] has completed the Wonder — the round is won and the world frozen.{% when None %}The first alliance to raise a Wonder of the World to level {{ max_level }} wins the round and freezes the world.{% endmatch %}</p>
+    </div>
+    <a class="bld-back" href="/w/{{ world }}/village">← Village</a>
+  </div>
+</section>
+
+<div class="bld-body bld-body--narrow">
   {% match winner %}
   {% when Some with ((name, tag)) %}
-  <div class="banner banner--victory">
-    <strong>The round is over.</strong>
-    {{ name }} [{{ tag }}] has completed the Wonder of the World and won the world.
-    The world is now frozen.
+  <div class="wonder-victory">
+    <span class="wonder-victory__crown" aria-hidden="true">♛</span>
+    <div><strong>The round is over.</strong> {{ name }} [{{ tag }}] has completed the Wonder of the World and won the world. The world is now frozen.</div>
   </div>
-  {% when None %}
-  <p class="muted">
-    The first alliance to raise a Wonder of the World to level {{ max_level }} wins the round.
-  </p>
-  {% endmatch %}
+  {% when None %}{% endmatch %}
 
   {% if standings.is_empty() %}
-  <p class="muted">No alliance has begun building the Wonder yet.</p>
+  <section class="panel"><p class="muted">No alliance has begun building the Wonder yet — the race is open.</p></section>
   {% else %}
-  <table class="table">
-    <thead>
-      <tr><th>#</th><th>Alliance</th><th>Tag</th><th>Wonder level</th></tr>
-    </thead>
-    <tbody>
-      {% for s in standings %}
-      <tr>
-        <td class="muted">{{ s.rank }}</td>
-        <td>{{ s.name }}</td>
-        <td class="muted">{{ s.tag }}</td>
-        <td>{{ s.level }} / {{ max_level }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="bld-cols__head"><h2>The race</h2><span class="bld-cols__rule"></span><span class="sub">to level {{ max_level }}</span></div>
+  <div class="wonder-board">
+    {% for s in standings %}
+    <div class="wonder-row{% if s.rank == 1 %} wonder-row--lead{% endif %}{% if s.level >= max_level %} wonder-row--done{% endif %}">
+      <span class="wonder-row__rank">{{ s.rank }}</span>
+      <div class="wonder-row__main">
+        <div class="wonder-row__name">{{ s.name }} <span class="wonder-row__tag">[{{ s.tag }}]</span></div>
+        {# The bar width uses `level` directly as a percentage — correct because the cap is 100; if
+           MAX_WONDER_LEVEL is ever rebalanced this must become level / max_level * 100. #}
+        <div class="wonder-row__track"><i style="width:{{ s.level }}%"></i></div>
+      </div>
+      <span class="wonder-row__lvl">{{ s.level }} / {{ max_level }}</span>
+    </div>
+    {% endfor %}
+  </div>
   {% endif %}
-</section>
+</div>
 {% endblock %}
