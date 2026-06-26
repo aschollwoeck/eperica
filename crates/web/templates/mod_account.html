@@ -1,33 +1,45 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Moderation — {{ username }}</h1>
-  <p class="muted"><a href="/mod">← Back to the review queue</a></p>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Moderation</div>
+    <h1 class="phead__title">{{ username }}</h1>
+    <a class="phead__back" href="/mod">← Review queue</a>
+  </section>
 
-  <h2>Status</h2>
-  <ul>
-    <li>Banned: {% if banned %}<strong>yes</strong>{% else %}no{% endif %}</li>
-    <li>Suspended: {% if suspended %}<strong>yes</strong>{% else %}no{% endif %}</li>
-  </ul>
+  <div class="psec">
+    <div class="bld-card">
+      <div class="bld-card__h"><h3>Status</h3></div>
+      <div class="bld-card__b">
+        <div class="statline"><span>Banned</span><b>{% if banned %}<span style="color:var(--c-danger)">yes</span>{% else %}no{% endif %}</b></div>
+        <div class="statline"><span>Suspended</span><b>{% if suspended %}<span style="color:var(--c-warning)">yes</span>{% else %}no{% endif %}</b></div>
+      </div>
+    </div>
+  </div>
 
-  <h2>Detection signals</h2>
-  <ul>
-    <li>Accounts sharing its registration IP: {{ ip_association_count }}
-      {% if shared_ip_flagged %}<span class="badge">⚠ flagged</span>{% endif %}</li>
-    <li>Peak actions in a window: {{ peak_action_count }}
-      {% if inhuman_action_rate %}<span class="badge">⚠ inhuman rate</span>{% endif %}</li>
-  </ul>
-  <p class="muted">Signals are advisory — they never sanction automatically.</p>
+  <div class="psec">
+    <div class="bld-card">
+      <div class="bld-card__h"><h3>Detection signals</h3></div>
+      <div class="bld-card__b">
+        <div class="statline"><span>Accounts sharing its registration IP</span><b>{{ ip_association_count }}{% if shared_ip_flagged %} <span class="badge">⚠ flagged</span>{% endif %}</b></div>
+        <div class="statline"><span>Peak actions in a window</span><b>{{ peak_action_count }}{% if inhuman_action_rate %} <span class="badge">⚠ inhuman rate</span>{% endif %}</b></div>
+        <p class="bld-tip">Signals are advisory — they never sanction automatically.</p>
+      </div>
+    </div>
+  </div>
 
-  <h2>Sanction</h2>
-  <form method="post" action="/mod/sanction" class="inline">
-    <input type="hidden" name="subject" value="{{ subject_id }}">
-    <select name="kind">
-      <option value="warn">Warn</option>
-      <option value="suspend">Suspend</option>
-      <option value="ban">Ban</option>
-    </select>
-    <button type="submit">Apply</button>
-  </form>
-</section>
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Sanction</h2><span class="bld-cols__rule"></span></div>
+    <form method="post" action="/mod/sanction" class="inline-form">
+      <input type="hidden" name="subject" value="{{ subject_id }}">
+      <select name="kind">
+        <option value="warn">Warn</option>
+        <option value="suspend">Suspend</option>
+        <option value="ban">Ban</option>
+      </select>
+      <button class="btn btn--primary" type="submit">Apply</button>
+    </form>
+  </div>
+</div>
 {% endblock %}

@@ -1,16 +1,19 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Moderation — review queue</h1>
-  <p class="muted"><a href="/worlds">← Worlds</a></p>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Moderation</div>
+    <h1 class="phead__title">Review queue</h1>
+    <p class="phead__sub">Open player reports awaiting a moderator decision.</p>
+    <a class="phead__back" href="/worlds">← Worlds</a>
+  </section>
 
   {% if reports.is_empty() %}
-  <p class="muted">No open reports.</p>
+  <section class="panel"><p class="muted">No open reports.</p></section>
   {% else %}
   <table class="table">
-    <thead>
-      <tr><th>Reported account</th><th>Reason</th><th>Note</th><th>Reporter</th><th></th></tr>
-    </thead>
+    <thead><tr><th>Reported account</th><th>Reason</th><th>Note</th><th>Reporter</th><th></th></tr></thead>
     <tbody>
       {% for r in reports %}
       <tr>
@@ -28,7 +31,7 @@
               <option value="suspend">Suspend</option>
               <option value="ban">Ban</option>
             </select>
-            <button type="submit">Resolve</button>
+            <button class="btn btn--small btn--secondary" type="submit">Resolve</button>
           </form>
         </td>
       </tr>
@@ -36,5 +39,5 @@
     </tbody>
   </table>
   {% endif %}
-</section>
+</div>
 {% endblock %}
