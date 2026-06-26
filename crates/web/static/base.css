@@ -540,3 +540,157 @@ a { color: var(--c-gold); }
 .wonder-row--lead { border-color: color-mix(in srgb, var(--c-gold) 50%, var(--c-border)); box-shadow: inset 3px 0 0 var(--c-gold), inset 0 1px 0 rgba(255, 255, 255, .03); }
 .wonder-row--lead .wonder-row__rank { color: var(--c-gold); }
 .wonder-row--done .wonder-row__track i { background: linear-gradient(90deg, var(--c-gold), var(--c-warning)); }
+
+/* ============================================================================
+   069 — The village page: command header + fortress plan + fields grid + rail.
+   ============================================================================ */
+.vlg { max-width: 1220px; margin: 0 auto; padding: 22px var(--space-5) var(--space-6); }
+
+/* command header */
+.vcmd { position: relative; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px 28px;
+  padding: 20px 24px; overflow: hidden; border: 1px solid var(--c-border); border-radius: var(--radius-md);
+  background: linear-gradient(180deg, var(--c-panel-alt), var(--c-panel));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.03), 0 8px 24px -14px #000; }
+.vcmd::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: linear-gradient(var(--c-gold), transparent 72%); opacity: .65; }
+.vcmd__id { min-width: 0; }
+.vcmd__eyebrow { font-family: ui-monospace, monospace; font-size: .7rem; letter-spacing: .2em; text-transform: uppercase; color: var(--c-ink-muted); }
+.vcmd__name { font-family: var(--c-serif, Georgia, serif); font-size: 2rem; color: var(--c-ink); margin: 1px 0 0; display: flex; align-items: center; gap: 11px; line-height: 1.05; }
+.vcmd__star { color: var(--c-gold); font-size: 1.1rem; }
+.vcmd__sub { margin-top: 6px; color: var(--c-ink-muted); font-size: .92rem; display: flex; flex-wrap: wrap; gap: 5px 13px; align-items: center; }
+.vcmd__sub b { color: var(--c-ink); font-family: ui-monospace, monospace; }
+.vchip { font-family: ui-monospace, monospace; font-size: .76rem; letter-spacing: .04em; color: var(--c-gold); border: 1px solid color-mix(in srgb, var(--c-gold) 40%, var(--c-border)); border-radius: 2px; padding: 2px 8px; background: #0d1217; }
+.vcmd__dials { margin-left: auto; display: flex; gap: 20px; }
+.vdial { text-align: center; }
+.vdial__ring { --p: 100; width: 60px; height: 60px; border-radius: 50%; display: grid; place-items: center;
+  background: radial-gradient(closest-side, var(--c-panel) 70%, transparent 71%), conic-gradient(var(--c-gold) calc(var(--p) * 1%), #202830 0); }
+.vdial__val { font-family: ui-monospace, monospace; font-size: 1.05rem; color: var(--c-ink); }
+.vdial__cap { font-family: ui-monospace, monospace; font-size: .62rem; letter-spacing: .14em; text-transform: uppercase; color: var(--c-ink-muted); margin-top: 6px; }
+.vquick { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.vquick a { display: inline-flex; align-items: center; gap: 6px; font-family: ui-monospace, monospace; font-size: .76rem; color: var(--c-ink); border: 1px solid var(--c-border); border-radius: 2px; padding: 5px 11px; background: #0d1217; }
+.vquick a:hover { border-color: var(--c-gold); color: #fff; }
+.vswitch { margin-top: 12px; font-size: .9rem; color: var(--c-ink-muted); }
+.vswitch a { color: var(--c-gold); } .vswitch .cur { color: var(--c-ink); font-weight: 600; }
+
+.vcols { display: grid; grid-template-columns: 1fr 320px; gap: 20px; align-items: start; margin-top: 16px; }
+
+/* fortress plan */
+.vplan { border: 1px solid var(--c-border); border-radius: var(--radius-md); background: linear-gradient(180deg, #10151b, #0c1116); overflow: hidden; box-shadow: inset 0 1px 0 rgba(255,255,255,.03); }
+.vplan__head { display: flex; align-items: center; gap: 12px; padding: 11px 16px; border-bottom: 1px solid var(--c-border); }
+.vplan__head h2 { font-size: 1.06rem; color: var(--c-ink); }
+.vplan__legend { margin-left: auto; display: flex; gap: 14px; font-family: ui-monospace, monospace; font-size: .66rem; letter-spacing: .04em; color: var(--c-ink-muted); }
+.vplan__legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+.lg-up { background: var(--c-ember, #C8762E); box-shadow: 0 0 7px -1px var(--c-ember, #C8762E); }
+.lg-bld { background: #6a4a22; border: 1px solid var(--c-ember, #C8762E); }
+.vcanvas { position: relative; height: 520px;
+  background-image: radial-gradient(60% 55% at 50% 46%, rgba(40,52,64,.4), transparent 70%),
+    linear-gradient(#19222b 1px, transparent 1px), linear-gradient(90deg, #19222b 1px, transparent 1px);
+  background-size: 100% 100%, 34px 34px, 34px 34px; background-position: center; }
+.vcanvas__label { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); font-family: ui-monospace, monospace; font-size: .6rem; letter-spacing: .2em; text-transform: uppercase; color: #46525f; }
+.rampart { position: absolute; inset: 9% 16%; border: 1.5px solid color-mix(in srgb, var(--c-gold) 50%, #3a4450); border-radius: 8px; box-shadow: 0 0 0 5px rgba(166,134,75,.05), inset 0 0 40px rgba(0,0,0,.45); }
+.tower { position: absolute; width: 15px; height: 15px; transform: translate(-50%,-50%); border: 1.5px solid color-mix(in srgb, var(--c-gold) 55%, #3a4450); background: #0d1318; border-radius: 3px; }
+.gate { position: absolute; left: 50%; bottom: 7%; transform: translateX(-50%); width: 44px; height: 13px; border: 1.5px solid color-mix(in srgb, var(--c-gold) 55%, #3a4450); border-bottom: 0; border-radius: 6px 6px 0 0; background: #0c1116; }
+
+/* a plot (building inside the plan, or a field in the grid below) */
+.vplot { position: absolute; left: var(--x); top: var(--y); transform: translate(-50%,-50%);
+  width: 70px; height: 70px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  border: 1px solid var(--c-border); border-radius: 6px; padding: 6px; cursor: pointer; text-align: center; transition: .12s;
+  background: linear-gradient(180deg, var(--c-panel-alt), var(--c-panel)); box-shadow: inset 0 1px 0 rgba(255,255,255,.04), 0 4px 12px -6px #000; color: var(--c-ink); font: inherit; }
+.vplot:hover, .vplot:focus-visible { border-color: var(--c-gold); transform: translate(-50%,-50%) translateY(-2px); outline: none; }
+.vplot svg { width: 25px; height: 25px; color: var(--c-ink); }
+.vplot__n { font-family: var(--c-serif, Georgia, serif); font-size: .6rem; line-height: 1; color: var(--c-ink-muted); max-width: 64px; }
+.vplot__lvl { position: absolute; top: -7px; right: -7px; min-width: 20px; height: 20px; padding: 0 5px; display: grid; place-items: center; font-family: ui-monospace, monospace; font-size: .72rem; font-weight: 700; color: #1a130a; background: radial-gradient(circle at 38% 32%, var(--c-gold), #7c5f28); border: 1px solid #3a2c12; border-radius: 11px; box-shadow: 0 1px 2px #000; }
+.vplot--keep { width: 92px; height: 92px; }
+.vplot--keep svg { width: 32px; height: 32px; color: var(--c-gold); }
+.vplot--keep .vplot__n { font-size: .68rem; color: var(--c-ink); }
+.vplot--up { border-color: color-mix(in srgb, var(--c-ember, #C8762E) 55%, var(--c-border)); box-shadow: inset 0 1px 0 rgba(255,255,255,.04), 0 0 20px -6px var(--c-ember, #C8762E); }
+.vplot--up svg { color: color-mix(in srgb, var(--c-ember, #C8762E) 65%, var(--c-ink)); }
+.vplot--empty { border-style: dashed; color: var(--c-ink-muted); }
+.vplot--empty .vplot__lvl { background: #0c1116; color: var(--c-ink-muted); border-color: var(--c-border); }
+.vplot--sel { border-color: var(--c-gold); box-shadow: 0 0 0 1px var(--c-gold), 0 0 22px -6px var(--c-gold); }
+.vplot--build .vplot__lvl { background: radial-gradient(circle at 38% 32%, #7a6336, #3a2c12); color: var(--c-ink); }
+/* an under-construction plot shows the live build countdown (no faked % progress — there is no start time) */
+.vplot__cd { position: absolute; left: 3px; right: 3px; bottom: 3px; font-family: ui-monospace, monospace; font-size: .56rem; line-height: 1.55; text-align: center; color: var(--c-ember, #C8762E); background: #0b0f13; border: 1px solid color-mix(in srgb, var(--c-ember, #C8762E) 40%, var(--c-border)); border-radius: 3px; }
+
+/* building positions inside the rampart (kind-keyed) */
+.vplot--main_building { --x: 50%; --y: 47%; }
+.vplot--rally_point  { --x: 50%; --y: 21%; }
+.vplot--warehouse    { --x: 31%; --y: 23%; }
+.vplot--granary      { --x: 69%; --y: 23%; }
+.vplot--embassy      { --x: 19%; --y: 38%; }
+.vplot--town_hall    { --x: 33%; --y: 39%; }
+.vplot--palace       { --x: 67%; --y: 39%; }
+.vplot--outpost      { --x: 81%; --y: 38%; }
+.vplot--marketplace  { --x: 30%; --y: 57%; }
+.vplot--smithy       { --x: 70%; --y: 57%; }
+.vplot--residence    { --x: 50%; --y: 66%; }
+.vplot--cranny       { --x: 19%; --y: 60%; }
+.vplot--wall         { --x: 81%; --y: 60%; }
+.vplot--barracks     { --x: 30%; --y: 79%; }
+.vplot--academy      { --x: 43%; --y: 82%; }
+.vplot--stable       { --x: 57%; --y: 82%; }
+.vplot--workshop     { --x: 70%; --y: 79%; }
+
+/* inspector */
+.vinspect { display: flex; align-items: center; gap: 16px; padding: 13px 16px; border-top: 1px solid var(--c-border); background: #0d1217; min-height: 76px; }
+.vinspect__ico { width: 46px; height: 46px; flex: none; display: grid; place-items: center; border: 1px solid color-mix(in srgb, var(--c-ember, #C8762E) 45%, var(--c-border)); border-radius: 6px; background: var(--c-panel); color: var(--c-ember, #C8762E); }
+.vinspect__ico svg { width: 26px; height: 26px; }
+.vinspect__main { min-width: 0; flex: 1; }
+.vinspect__name { font-family: var(--c-serif, Georgia, serif); font-size: 1.1rem; color: var(--c-ink); display: flex; align-items: center; gap: 9px; }
+.vinspect__lvl { font-family: ui-monospace, monospace; font-size: .72rem; color: var(--c-gold); border: 1px solid var(--c-border); border-radius: 2px; padding: 1px 7px; }
+.vinspect__eff { font-size: .85rem; color: var(--c-ink-muted); }
+.vinspect__act { display: flex; align-items: center; gap: 14px; flex: none; }
+.vinspect__hint { color: var(--c-ink-muted); font-style: italic; font-size: .9rem; }
+
+/* resource fields grid */
+.vfields { margin-top: 20px; }
+.vfields__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.vfield { position: relative; display: flex; align-items: center; gap: 10px; padding: 11px 13px; border: 1px solid var(--c-border); border-radius: 6px; cursor: pointer; transition: .12s; text-align: left; width: 100%; font: inherit;
+  background: linear-gradient(180deg, var(--c-panel-alt), var(--c-panel)); box-shadow: inset 0 1px 0 rgba(255,255,255,.03); color: var(--c-ink); }
+.vfield:hover, .vfield:focus-visible { border-color: var(--c-gold); outline: none; }
+.vfield::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; border-radius: 6px 0 0 6px; background: var(--rc); }
+.vfield__dot { width: 22px; height: 22px; flex: none; border-radius: 4px; display: grid; place-items: center; color: var(--rc); border: 1px solid color-mix(in srgb, var(--rc) 35%, var(--c-border)); background: #0d1217; }
+.vfield__dot svg { width: 14px; height: 14px; }
+.vfield__main { min-width: 0; flex: 1; }
+.vfield__n { font-size: .84rem; color: var(--c-ink); }
+.vfield__r { font-family: ui-monospace, monospace; font-size: .72rem; color: var(--c-ink-muted); }
+.vfield__lvl { font-family: ui-monospace, monospace; font-weight: 700; font-size: 1rem; color: var(--c-gold); }
+.vfield--up { border-color: color-mix(in srgb, var(--c-ember, #C8762E) 50%, var(--c-border)); box-shadow: inset 0 1px 0 rgba(255,255,255,.03), 0 0 18px -10px var(--c-ember, #C8762E); }
+.vfield--sel { border-color: var(--c-gold); box-shadow: 0 0 0 1px var(--c-gold); }
+.vfield--wood { --rc: var(--c-lumber); } .vfield--clay { --rc: var(--c-clay); }
+.vfield--iron { --rc: var(--c-iron-res); } .vfield--crop { --rc: var(--c-crop); }
+
+/* war-room rail (reuses .bld-card / feed rows) */
+.vrail { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 16px; }
+.vrail .feed__row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid #1b232c; }
+.vrail .feed__row:first-child { border-top: 0; }
+.feed__ico { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--c-ink-muted); }
+.feed__ico--atk { background: var(--c-danger); box-shadow: 0 0 8px -1px var(--c-danger); }
+.feed__ico--def { background: var(--c-success); } .feed__ico--build { background: var(--c-ember, #C8762E); }
+.feed__main { min-width: 0; flex: 1; }
+.feed__t { font-size: .86rem; color: var(--c-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.feed__s { font-size: .74rem; color: var(--c-ink-muted); }
+.feed__time { font-family: ui-monospace, monospace; font-size: .8rem; color: var(--c-ink); text-align: right; }
+.vrail form { margin: 4px 0 0; }
+
+@media (max-width: 980px) {
+  .vcols { grid-template-columns: 1fr; }
+  .vrail { position: static; flex-direction: row; flex-wrap: wrap; }
+  .vrail .bld-card { flex: 1 1 260px; }
+}
+@media (max-width: 680px) {
+  .vcmd__dials { margin-left: 0; }
+  .vcmd__name { font-size: 1.6rem; }
+  /* the positioned plan reflows into a simple grid (drop the absolute coordinates) */
+  .vcanvas { height: auto; padding: 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; background-image: none; }
+  .rampart, .tower, .gate, .vcanvas__label { display: none; }
+  .vplot, .vplot--keep { position: static; transform: none; width: auto; height: 96px; }
+  .vplot:hover, .vplot:focus-visible { transform: none; }
+  .vinspect { flex-wrap: wrap; } .vinspect__act { width: 100%; justify-content: space-between; }
+}
+
+/* 069 — a disabled action (e.g. the inspector's Upgrade when the build is gated) reads as inert. */
+.btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+
+/* a field under construction (069): ember edge + the live build countdown in its detail line */
+.vfield--build { border-color: color-mix(in srgb, var(--c-ember, #C8762E) 55%, var(--c-border)); box-shadow: inset 0 1px 0 rgba(255,255,255,.03), 0 0 18px -10px var(--c-ember, #C8762E); }
+.vfield--build .vfield__r { color: var(--c-ember, #C8762E); }

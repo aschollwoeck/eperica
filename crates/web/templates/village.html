@@ -1,285 +1,237 @@
 {% extends "base.html" %}
-{% block body_class %}has-building-bg{% endblock %}
-{% block body_style %}--building-img: url('/static/buildings/main_building.webp');{% if !tribe_slug.is_empty() %} --building-img-tribe: url('/static/buildings/{{ tribe_slug }}_main_building.webp');{% endif %}{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>{{ username }}'s village{% if is_capital %} <span class="badge">★ Capital</span>{% endif %}</h1>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="i-main_building" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V8l7-5 7 5v13M3 21h18M10 21v-5h4v5M9 11h6M12 3v3"/></symbol>
+<symbol id="i-rally_point" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V3M6 4c4-2 8 2 12 0v8c-4 2-8-2-12 0"/></symbol>
+<symbol id="i-warehouse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="7" height="7"/><rect x="13" y="11" width="7" height="7"/><rect x="8.5" y="4" width="7" height="7"/></symbol>
+<symbol id="i-granary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V9a6 6 0 0 1 12 0v12M6 9c0-3 3-4 6-4s6 1 6 4M9 21V11M15 21V11"/></symbol>
+<symbol id="i-marketplace" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v15M7 19h10M5 8h14M5 8l-2 5h4zM19 8l2 5h-4z"/></symbol>
+<symbol id="i-embassy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 21V4l10 2v9l-10 2M7 4L5 4v17M14 9h.01"/></symbol>
+<symbol id="i-wall" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V9h3V6h3v3h6V6h3v3h3v12M3 14h18M12 14v7"/></symbol>
+<symbol id="i-cranny" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="9" width="16" height="11" rx="1"/><path d="M4 13h16M12 9V6a3 3 0 0 1 6 0"/></symbol>
+<symbol id="i-outpost" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21l1-12h6l1 12M7 9l5-6 5 6M9 9h6"/></symbol>
+<symbol id="i-town_hall" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-5 9 5M5 9v10M9 9v10M15 9v10M19 9v10M3 21h18"/></symbol>
+<symbol id="i-residence" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V10l8-6 8 6v11M4 21h16M10 21v-6h4v6M8 11h2"/></symbol>
+<symbol id="i-palace" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V11l3 2 5-5 5 5 3-2v10M4 21h16M10 21v-5h4v5"/></symbol>
+<symbol id="i-barracks" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l9 9M19 3l-9 9M4 14l3 3-2 4 4-2 3-3M20 14l-3 3 2 4-4-2"/></symbol>
+<symbol id="i-academy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5c3-1 6-1 9 1 3-2 6-2 9-1v13c-3-1-6-1-9 1-3-2-6-2-9-1zM12 6v13"/></symbol>
+<symbol id="i-smithy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h11l4-2 3 1-2 4h-3l-3 3H7zM8 14l-1 4M13 14l1 4M6 21h10"/></symbol>
+<symbol id="i-stable" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21c-1-5-1-9 2-12 1-1 1-2 0-3 2 0 3 1 4 3 2 0 5 1 5 5 0 3-1 5-2 7M8 11c0-1 1-2 2-2"/></symbol>
+<symbol id="i-workshop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h14M17 9l4 3-4 3M5 8v8M9 9v6"/></symbol>
+<symbol id="i-wood" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M12 9l5-4M12 13l-5-4M12 17l5-4"/></symbol>
+<symbol id="i-clay" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h16M5 8l2 11h10l2-11M9 12h6"/></symbol>
+<symbol id="i-iron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4c3 0 5 2 5 5-2 0-3-1-3-1l-9 9-2-2 9-9s-1-1-1-2zM6 16l-2 4 4-2"/></symbol>
+<symbol id="i-crop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V8M12 8c0-2 2-4 4-4 0 2-2 4-4 4zM12 8c0-2-2-4-4-4 0 2 2 4 4 4zM12 13c0-2 2-3 4-3 0 2-2 3-4 3zM12 13c0-2-2-3-4-3 0 2 2 3 4 3z"/></symbol>
+</defs></svg>
+
+<div class="vlg">
+  <section class="vcmd">
+    <div class="vcmd__id">
+      <div class="vcmd__eyebrow">Under your command · {{ tribe }}</div>
+      <h1 class="vcmd__name">{{ username }}'s village{% if is_capital %} <span class="vcmd__star" title="Capital">★</span>{% endif %}</h1>
+      <div class="vcmd__sub">
+        <span class="vchip">{{ x }} | {{ y }}</span>
+        <span>Tribe: {{ tribe }}</span>
+        <span>Population <b>{{ population }}</b></span>
+        <span>Villages <b>{{ slots_used }} / {{ slots_allowed }}</b></span>
+        {% if !artifacts.is_empty() %}<span>· 🏺 {{ artifacts.len() }} artifact(s)</span>{% endif %}
+        {% if let Some(notice) = protection %}<span style="color:var(--c-success)">· 🛡 {{ notice }}</span>{% endif %}
+        {% if ribbon.crop_rate <= 0 %}<span style="color:var(--c-danger)">· ⚠ Crop starving</span>{% endif %}
+      </div>
+      <div class="vquick">
+        <a href="/w/{{ world }}/map?x={{ x }}&amp;y={{ y }}">⌖ Map</a>
+        <a href="/w/{{ world }}/village/{{ village_id }}/rally">⚔ Rally</a>
+        <a href="/w/{{ world }}/village/{{ village_id }}/market">⚖ Market</a>
+        {% if has_academy %}<a href="/w/{{ world }}/village/{{ village_id }}/academy">📜 Academy</a>{% endif %}
+        {% if has_smithy %}<a href="/w/{{ world }}/village/{{ village_id }}/smithy">⚒ Smithy</a>{% endif %}
+        {% for link in troop_links %}<a href="/w/{{ world }}/village/{{ village_id }}/{{ link.1 }}">▤ {{ link.0 }}</a>{% endfor %}
+        <a href="/w/{{ world }}/reports">✉ Reports</a>
+        <a href="/w/{{ world }}/quests">✦ Quests</a>
+        <a href="/w/{{ world }}/alliance">⚑ Alliance</a>
+      </div>
+      {% if villages.len() > 1 %}
+      <div class="vswitch">Your villages:
+        {% for v in villages %}{% if v.is_current %}<span class="cur">{{ v.label }}{% if v.is_capital %} ★{% endif %}</span>{% else %}<a href="/w/{{ world }}/village/{{ v.id }}">{{ v.label }}{% if v.is_capital %} ★{% endif %}</a>{% endif %}{% if !loop.last %} · {% endif %}{% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    <div class="vcmd__dials">
+      <div class="vdial"><div class="vdial__ring" style="--p:{{ loyalty }}"><span class="vdial__val">{{ loyalty }}</span></div><div class="vdial__cap">Loyalty</div></div>
+    </div>
+  </section>
 
   {% if world_won %}
-  <p class="alert alert--success">🏆 The Wonder of the World is complete — the round is over and the
-    world is frozen. <a href="/w/{{ world }}/wonder">See the result →</a></p>
+  <div class="wonder-victory" style="margin:16px 0 0"><span class="wonder-victory__crown" aria-hidden="true">♛</span>
+    <div><strong>The round is over.</strong> The Wonder of the World is complete and the world is frozen. <a href="/w/{{ world }}/wonder">See the result →</a></div></div>
   {% endif %}
-
   {% if is_wonder_site %}
-  <div class="panel panel--inset">
-    <p>This is a <strong>Wonder of the World</strong> construction site. If your alliance holds a Wonder
-      plan, you can raise the Wonder here, one level at a time, toward victory.</p>
-    <form method="post" action="/w/{{ world }}/wonder/build">
-      <input type="hidden" name="village" value="{{ village_id }}">
-      <button type="submit">Build the Wonder</button>
-    </form>
+  <div class="panel" style="margin-top:16px">
+    <p>This village is a <strong>Wonder of the World</strong> construction site. If your alliance holds a Wonder plan, raise it here toward victory.</p>
+    <form method="post" action="/w/{{ world }}/wonder/build"><input type="hidden" name="village" value="{{ village_id }}"><button class="btn btn--primary" type="submit">Build the Wonder</button></form>
     <p class="muted"><a href="/w/{{ world }}/wonder">Wonder race standings →</a></p>
   </div>
   {% endif %}
 
-  {% if let Some(notice) = protection %}
-  <p class="alert alert--success">🛡 {{ notice }}</p>
-  {% endif %}
+  {% include "_ribbon.html" %}
 
-  {% if !artifacts.is_empty() %}
-  <p class="muted">🏺 Artifacts held:
-    {% for a in artifacts %}<strong>{{ a.label }}</strong> @ {{ a.holder }}{% if !loop.last %} · {% endif %}{% endfor %}
-  </p>
-  {% endif %}
-
-  {% if villages.len() > 1 %}
-  <p class="muted">Your villages:
-    {% for v in villages %}
-    {% if v.is_current %}<strong>{{ v.label }}{% if v.is_capital %} ★{% endif %}</strong>{% else %}<a href="/w/{{ world }}/village/{{ v.id }}">{{ v.label }}{% if v.is_capital %} ★{% endif %}</a>{% endif %}{% if !loop.last %} ·{% endif %}
-    {% endfor %}
-  </p>
-  {% endif %}
-
-  <p class="muted">Location ({{ x }}, {{ y }}) · Tribe: {{ tribe }} · <a href="/w/{{ world }}/map?x={{ x }}&amp;y={{ y }}">Map</a>
-    · <a href="/w/{{ world }}/village/{{ village_id }}/rally">Rally Point</a>
-    · <a href="/w/{{ world }}/village/{{ village_id }}/market">Marketplace</a>
-    · <a href="/w/{{ world }}/reports">Reports</a>
-    · <a href="/w/{{ world }}/quests">Quests</a>
-    · <a href="/w/{{ world }}/alliance">Alliance</a>
-    {% if has_academy %} · <a href="/w/{{ world }}/village/{{ village_id }}/academy">Academy</a>{% endif %}
-    {% if has_smithy %} · <a href="/w/{{ world }}/village/{{ village_id }}/smithy">Smithy</a>{% endif %}
-    {% for link in troop_links %} · <a href="/w/{{ world }}/village/{{ village_id }}/{{ link.1 }}">{{ link.0 }}</a>{% endfor %}</p>
-
-  <h2>Culture &amp; expansion</h2>
-  <p>Culture points: <strong class="num">{{ cp }}</strong> (+{{ cp_rate }}/h pooled across your villages) ·
-    Villages: <strong>{{ slots_used }} / {{ slots_allowed }}</strong>
-    {% match next_threshold %}{% when Some with (t) %}· next village at <span class="num">{{ t }}</span> CP{% when None %}{% endmatch %}</p>
-  <p>Loyalty: <strong class="num">{{ loyalty }}</strong> / 100
-    {% if is_capital %}· <span class="badge">★ Capital — cannot be conquered</span>{% else %}<span class="muted">— an enemy administrator that wins here lowers it; at 0 (with a free slot) they take the village</span>{% endif %}</p>
-  {% if has_free_slot %}
-  <p class="muted">You have a free expansion slot — train settlers, then <a href="/w/{{ world }}/village/{{ village_id }}/rally">send them to a free valley</a> to found a new village.</p>
-  {% else %}
-  <p class="muted">No free expansion slot — raise a Town Hall (more culture) and a Residence/Palace (more capacity) to expand.</p>
-  {% endif %}
-
-  <h2>Resources</h2>
-  <ul class="resource-list">
-    <li class="res res--wood resbar" data-amt="{{ wood }}" data-cap="{{ warehouse }}" data-rate="{{ wood_rate }}">
-      <span class="resbar__label">Wood {{ wood }} / {{ warehouse }} (+{{ wood_rate }}/h) <span class="resbar__eta muted"></span></span>
-      <span class="resbar__track"><span class="resbar__fill"></span></span>
-    </li>
-    <li class="res res--clay resbar" data-amt="{{ clay }}" data-cap="{{ warehouse }}" data-rate="{{ clay_rate }}">
-      <span class="resbar__label">Clay {{ clay }} / {{ warehouse }} (+{{ clay_rate }}/h) <span class="resbar__eta muted"></span></span>
-      <span class="resbar__track"><span class="resbar__fill"></span></span>
-    </li>
-    <li class="res res--iron resbar" data-amt="{{ iron }}" data-cap="{{ warehouse }}" data-rate="{{ iron_rate }}">
-      <span class="resbar__label">Iron {{ iron }} / {{ warehouse }} (+{{ iron_rate }}/h) <span class="resbar__eta muted"></span></span>
-      <span class="resbar__track"><span class="resbar__fill"></span></span>
-    </li>
-    <li class="res res--crop resbar" data-amt="{{ crop }}" data-cap="{{ granary }}" data-rate="{{ crop_rate }}">
-      <span class="resbar__label">Crop {{ crop }} / {{ granary }}
-        {% if crop_rate > 0 %}(+{{ crop_rate }}/h){% else %}<strong style="color:var(--c-warning)">({{ crop_rate }}/h — starving)</strong>{% endif %}
-        <span class="resbar__eta muted"></span></span>
-      <span class="resbar__track"><span class="resbar__fill"></span></span>
-    </li>
-  </ul>
-</section>
-
-<script>
-  // 032: resource bars — fill level + time-to-full (or time-to-empty for a negative crop rate).
-  for (const el of document.querySelectorAll(".resbar")) {
-    const amt = +el.dataset.amt, cap = +el.dataset.cap, rate = +el.dataset.rate;
-    const fill = el.querySelector(".resbar__fill"), eta = el.querySelector(".resbar__eta");
-    if (cap > 0) fill.style.width = Math.max(0, Math.min(100, (amt / cap) * 100)).toFixed(1) + "%";
-    if (rate > 0 && amt < cap) fill.classList.toggle("resbar__fill--warn", (cap - amt) / rate <= 1);
-    const fmt = (s) => { s = Math.round(s); const h = Math.floor(s/3600); s -= h*3600;
-      const m = Math.floor(s/60); return `${h}:${String(m).padStart(2,"0")}:${String(s-m*60).padStart(2,"0")}`; };
-    if (rate > 0 && amt < cap) eta.textContent = `· full in ${fmt(((cap - amt) / rate) * 3600)}`;
-    else if (rate < 0 && amt > 0) eta.textContent = `· empty in ${fmt((amt / -rate) * 3600)}`;
-    else if (cap > 0 && amt >= cap) eta.textContent = "· full";
-  }
-</script>
-
-{% if !garrison.is_empty() %}
-<section class="panel">
-  <h2>Garrison</h2>
-  <table class="table">
-    <thead><tr><th>Unit</th><th class="num">Count</th><th class="num">Upkeep/h</th></tr></thead>
-    <tbody>
-      {% for g in garrison %}
-      <tr><td>{{ g.name }}</td><td class="num">{{ g.count }}</td><td class="num">{{ g.upkeep }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  <p class="muted">Total upkeep: {{ garrison_upkeep }} crop/h (already part of the net rate above).</p>
-</section>
-{% endif %}
-
-{% if !movements.is_empty() %}
-<section class="panel">
-  <h2>Movements in progress</h2>
-  {% for m in movements %}
-  <p>{{ m.label }} — {{ m.troops }} —
-    arrives in <span class="countdown num" data-deadline="{{ m.arrive_ms }}">…</span></p>
-  {% endfor %}
-</section>
-{% endif %}
-
-{% if !shipments.is_empty() %}
-<section class="panel">
-  <h2>Shipments in transit</h2>
-  {% for s in shipments %}
-  <p>{{ s.label }} — {{ s.contents }} ({{ s.merchants }} merchants) —
-    arrives in <span class="countdown num" data-deadline="{{ s.arrive_ms }}">…</span></p>
-  {% endfor %}
-</section>
-{% endif %}
-
-{% if !oases.is_empty() %}
-<section class="panel">
-  <h2>Oases you hold</h2>
-  <table class="table">
-    <thead><tr><th>Tile</th><th>Bonus</th><th></th></tr></thead>
-    <tbody>
-      {% for o in oases %}
-      <tr>
-        <td>({{ o.x }}|{{ o.y }})</td>
-        <td>{{ o.bonus }}</td>
-        <td>
-          <span class="map-controls">
-            <a class="btn btn--secondary" href="/w/{{ world }}/village/{{ village_id }}/rally?x={{ o.x }}&amp;y={{ o.y }}">Reinforce</a>
-            <form method="post" action="/w/{{ world }}/village/{{ village_id }}/oasis/recall">
-              <input type="hidden" name="x" value="{{ o.x }}">
-              <input type="hidden" name="y" value="{{ o.y }}">
-              <button class="btn btn--secondary" type="submit">Recall troops</button>
+  <div class="vcols">
+    <div>
+      <!-- fortress plan -->
+      <section class="vplan">
+        <div class="vplan__head"><h2>Village plan</h2><span class="vplan__legend"><span><i class="lg-up"></i>ready</span><span><i class="lg-bld"></i>building</span></span></div>
+        <div class="vcanvas">
+          <span class="vcanvas__label">Within the walls</span>
+          <div class="rampart"></div>
+          <div class="tower" style="left:16%;top:9%"></div><div class="tower" style="left:84%;top:9%"></div>
+          <div class="tower" style="left:16%;top:91%"></div><div class="tower" style="left:84%;top:91%"></div>
+          <div class="gate"></div>
+          {% for b in buildings %}
+          <button type="button" class="vplot vplot--{{ b.kind }}{% if b.kind == "main_building" %} vplot--keep{% endif %}{% if b.building_ms.is_some() %} vplot--build{% else if b.can_order %} vplot--up{% else if b.level == 0 %} vplot--empty{% endif %}"
+            data-name="{{ b.label }}" data-lvl="{{ b.level }}" data-target="{{ b.level + 1 }}" data-eff="{{ b.effect }}"
+            data-table="building" data-slot="{{ b.slot }}" data-kind="{{ b.kind }}"
+            data-cw="{{ b.cost_wood }}" data-cc="{{ b.cost_clay }}" data-ci="{{ b.cost_iron }}" data-cr="{{ b.cost_crop }}"
+            data-can="{% if b.can_order %}1{% else %}0{% endif %}" data-max="{% if b.at_max %}1{% else %}0{% endif %}"
+            {% if b.page != "" %}data-pageurl="/w/{{ world }}/village/{{ village_id }}/{{ b.page }}"{% endif %}>
+            <svg><use href="#i-{{ b.kind }}"/></svg>
+            <span class="vplot__n">{{ b.label }}</span>
+            <span class="vplot__lvl">{% if b.level == 0 %}+{% else %}{{ b.level }}{% endif %}</span>
+            {% if let Some(ms) = b.building_ms %}<span class="vplot__cd countdown" data-deadline="{{ ms }}">…</span>{% endif %}
+          </button>
+          {% endfor %}
+        </div>
+        <!-- inspector -->
+        <div class="vinspect" id="vinspect">
+          <div class="vinspect__ico"><svg id="vinspect-ico"><use href="#i-main_building"/></svg></div>
+          <div class="vinspect__main">
+            <div class="vinspect__name"><span id="vinspect-name">Main Building</span> <span class="vinspect__lvl" id="vinspect-lvl"></span></div>
+            <div class="vinspect__eff" id="vinspect-eff"></div>
+          </div>
+          <div class="vinspect__act">
+            <div class="unit__cost" id="vinspect-cost"></div>
+            <span class="vinspect__hint" id="vinspect-gate"></span>
+            <form method="post" action="/w/{{ world }}/village/{{ village_id }}/build" id="vinspect-form">
+              <input type="hidden" name="table" value="building"><input type="hidden" name="slot" value="0"><input type="hidden" name="kind" value="">
+              <button class="btn btn--primary" type="submit" id="vinspect-btn">Upgrade</button>
             </form>
-          </span>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  <p class="muted">Each oasis adds its bonus to this village's production while you hold it.</p>
-</section>
-{% endif %}
+            <a class="btn btn--secondary" id="vinspect-enter" style="display:none">Enter →</a>
+          </div>
+        </div>
+      </section>
 
-{% if !reinforcements_here.is_empty() %}
-<section class="panel">
-  <h2>Reinforcements stationed here</h2>
-  <table class="table">
-    <thead><tr><th>From</th><th>Village</th><th>Troops</th></tr></thead>
-    <tbody>
-      {% for r in reinforcements_here %}
-      <tr><td>{{ r.owner }}</td><td>{{ r.coord }}</td><td>{{ r.troops }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</section>
-{% endif %}
+      <!-- resource fields -->
+      <section class="vfields">
+        <div class="bld-cols__head"><h2>Resource fields</h2><span class="bld-cols__rule"></span><span class="sub">{{ fields.len() }} fields</span></div>
+        <div class="vfields__grid">
+          {% for f in fields %}
+          <button type="button" class="vfield vfield--{{ f.res }}{% if f.building_ms.is_some() %} vfield--build{% else if f.can_order %} vfield--up{% endif %}"
+            data-name="{{ f.label }}" data-lvl="{{ f.level }}" data-target="{{ f.level + 1 }}" data-eff="{{ f.effect }}"
+            data-table="field" data-slot="{{ f.slot }}" data-kind="" data-icon="i-{{ f.res }}"
+            data-cw="{{ f.cost_wood }}" data-cc="{{ f.cost_clay }}" data-ci="{{ f.cost_iron }}" data-cr="{{ f.cost_crop }}"
+            data-can="{% if f.can_order %}1{% else %}0{% endif %}" data-max="{% if f.at_max %}1{% else %}0{% endif %}">
+            <span class="vfield__dot"><svg><use href="#i-{{ f.res }}"/></svg></span>
+            <span class="vfield__main"><span class="vfield__n">{{ f.label }}</span><span class="vfield__r">{% if let Some(ms) = f.building_ms %}building · <span class="countdown" data-deadline="{{ ms }}">…</span>{% else if !f.effect.is_empty() %}{{ f.effect }}{% else %}max{% endif %}</span></span>
+            <span class="vfield__lvl">{{ f.level }}</span>
+          </button>
+          {% endfor %}
+        </div>
+      </section>
+    </div>
 
-{% if !reinforcements_abroad.is_empty() %}
-<section class="panel">
-  <h2>Your troops abroad</h2>
-  <table class="table">
-    <thead><tr><th>At</th><th>Village</th><th>Troops</th><th></th></tr></thead>
-    <tbody>
-      {% for r in reinforcements_abroad %}
-      <tr>
-        <td>{{ r.owner }}</td><td>{{ r.coord }}</td><td>{{ r.troops }}</td>
-        <td>
-          <form method="post" action="/w/{{ world }}/village/{{ village_id }}/rally/return">
-            <input type="hidden" name="host" value="{{ r.host_id }}">
-            <button class="btn btn--secondary" type="submit">Send back</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</section>
-{% endif %}
+    <!-- war-room rail -->
+    <aside class="vrail">
+      {% if !movements.is_empty() %}
+      <div class="bld-card"><div class="bld-card__h"><h3>Movements in progress</h3><span class="meta">{{ movements.len() }}</span></div>
+        <div class="bld-card__b">{% for m in movements %}<div class="feed__row"><span class="feed__ico"></span><span class="feed__main"><span class="feed__t">{{ m.label }}</span><span class="feed__s">{{ m.troops }}</span></span><span class="feed__time countdown" data-deadline="{{ m.arrive_ms }}">…</span></div>{% endfor %}</div></div>
+      {% endif %}
 
-{% if !active.is_empty() %}
-<section class="panel">
-  <h2>Under construction</h2>
-  {% for build in active %}
-  <p>{{ build.label }} → level {{ build.target_level }} —
-    completes in <span class="countdown num" data-deadline="{{ build.complete_ms }}">…</span></p>
-  {% endfor %}
-</section>
-{% endif %}
+      {% if !active.is_empty() %}
+      <div class="bld-card"><div class="bld-card__h"><h3>Build queue</h3><span class="meta">{{ active.len() }}</span></div>
+        <div class="bld-card__b">{% for b in active %}<div class="feed__row"><span class="feed__ico feed__ico--build"></span><span class="feed__main"><span class="feed__t">{{ b.label }} → {{ b.target_level }}</span></span><span class="feed__time countdown" data-deadline="{{ b.complete_ms }}">…</span></div>{% endfor %}</div></div>
+      {% endif %}
 
-<section class="panel">
-  <h2>Buildings</h2>
-  <table class="table">
-    <thead><tr><th>Building</th><th class="num">Level</th><th>Next cost (W/C/I/Cr)</th><th>Next level</th><th></th></tr></thead>
-    <tbody>
-      {% for b in buildings %}
-      <tr>
-        <td>{{ b.label }}</td>
-        <td class="num">{{ b.level }}</td>
-        <td>
-          {% if b.at_max %}—{% else %}
-          <span class="num">{{ b.cost_wood }}/{{ b.cost_clay }}/{{ b.cost_iron }}/{{ b.cost_crop }}</span>
-          {% endif %}
-        </td>
-        <td class="muted">{{ b.effect }}</td>
-        <td>
-          {% if b.at_max %}<span class="muted">max</span>{% else if b.can_order %}
-          <form method="post" action="/w/{{ world }}/village/{{ village_id }}/build">
-            <input type="hidden" name="table" value="{{ b.table }}">
-            <input type="hidden" name="slot" value="{{ b.slot }}">
-            <input type="hidden" name="kind" value="{{ b.kind }}">
-            <button class="btn btn--primary" type="submit">{% if b.level > 0 %}Upgrade{% else %}Build{% endif %}</button>
-          </form>
-          {% else %}<span class="muted">unavailable</span>{% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</section>
+      {% if !garrison.is_empty() %}
+      <div class="bld-card"><div class="bld-card__h"><h3>Garrison</h3><span class="meta">Total upkeep: {{ garrison_upkeep }} crop/h</span></div>
+        <div class="bld-card__b">{% for g in garrison %}<div class="statline"><span>{{ g.name }}</span><b>{{ g.count }}</b></div>{% endfor %}</div></div>
+      {% endif %}
 
-<section class="panel">
-  <h2>Resource fields</h2>
-  <table class="table">
-    <thead><tr><th>Field</th><th class="num">Level</th><th>Next cost (W/C/I/Cr)</th><th>Next level</th><th></th></tr></thead>
-    <tbody>
-      {% for f in fields %}
-      <tr>
-        <td>{{ f.label }}</td>
-        <td class="num">{{ f.level }}</td>
-        <td>
-          {% if f.at_max %}—{% else %}
-          <span class="num">{{ f.cost_wood }}/{{ f.cost_clay }}/{{ f.cost_iron }}/{{ f.cost_crop }}</span>
-          {% endif %}
-        </td>
-        <td class="muted">{{ f.effect }}</td>
-        <td>
-          {% if f.at_max %}<span class="muted">max</span>{% else if f.can_order %}
-          <form method="post" action="/w/{{ world }}/village/{{ village_id }}/build">
-            <input type="hidden" name="table" value="{{ f.table }}">
-            <input type="hidden" name="slot" value="{{ f.slot }}">
-            <button class="btn btn--primary" type="submit">Upgrade</button>
-          </form>
-          {% else %}<span class="muted">unavailable</span>{% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</section>
+      {% if !oases.is_empty() %}
+      <div class="bld-card"><div class="bld-card__h"><h3>Oases you hold</h3></div>
+        <div class="bld-card__b">{% for o in oases %}<div class="statline"><span>({{ o.x }}|{{ o.y }})</span><b>{{ o.bonus }}</b></div>
+          <div class="map-controls" style="margin:4px 0 8px">
+            <a class="btn btn--secondary" href="/w/{{ world }}/village/{{ village_id }}/rally?x={{ o.x }}&amp;y={{ o.y }}">Reinforce</a>
+            <form method="post" action="/w/{{ world }}/village/{{ village_id }}/oasis/recall"><input type="hidden" name="x" value="{{ o.x }}"><input type="hidden" name="y" value="{{ o.y }}"><button class="btn btn--secondary" type="submit">Recall</button></form>
+          </div>{% endfor %}</div></div>
+      {% endif %}
 
-<section class="panel actions">
-  <form method="post" action="/logout">
-    <button class="btn btn--secondary" type="submit">Log out</button>
-  </form>
-</section>
+      {% if !reinforcements_here.is_empty() %}
+      <div class="bld-card"><div class="bld-card__h"><h3>Reinforcements stationed here</h3></div>
+        <div class="bld-card__b">{% for r in reinforcements_here %}<div class="feed__row"><span class="feed__ico feed__ico--def"></span><span class="feed__main"><span class="feed__t">{{ r.owner }}</span><span class="feed__s">{{ r.coord }} · {{ r.troops }}</span></span></div>{% endfor %}</div></div>
+      {% endif %}
+
+      {% if !reinforcements_abroad.is_empty() %}
+      <div class="bld-card"><div class="bld-card__h"><h3>Your troops abroad</h3></div>
+        <div class="bld-card__b">{% for r in reinforcements_abroad %}<div class="feed__row"><span class="feed__ico feed__ico--def"></span><span class="feed__main"><span class="feed__t">{{ r.owner }}</span><span class="feed__s">{{ r.coord }} · {{ r.troops }}</span></span>
+          <form method="post" action="/w/{{ world }}/village/{{ village_id }}/rally/return"><input type="hidden" name="host" value="{{ r.host_id }}"><button class="btn btn--secondary" type="submit">Recall</button></form></div>{% endfor %}</div></div>
+      {% endif %}
+
+      {% if !artifacts.is_empty() %}
+      <div class="bld-card"><div class="bld-card__h"><h3>Artifacts held</h3></div>
+        <div class="bld-card__b">{% for a in artifacts %}<div class="statline"><span>{{ a.label }}</span><b>{{ a.holder }}</b></div>{% endfor %}</div></div>
+      {% endif %}
+
+      {% if !shipments.is_empty() %}
+      <div class="bld-card"><div class="bld-card__h"><h3>Shipments in transit</h3></div>
+        <div class="bld-card__b">{% for s in shipments %}<div class="feed__row"><span class="feed__ico"></span><span class="feed__main"><span class="feed__t">{{ s.label }}</span><span class="feed__s">{{ s.contents }}</span></span><span class="feed__time countdown" data-deadline="{{ s.arrive_ms }}">…</span></div>{% endfor %}</div></div>
+      {% endif %}
+
+      <div class="bld-card"><div class="bld-card__h"><h3>Expansion</h3></div>
+        <div class="bld-card__b">
+          <div class="statline"><span>Culture points:</span><b>{{ cp }} <span class="muted">(+{{ cp_rate }}/h)</span></b></div>
+          {% match next_threshold %}{% when Some with (t) %}<div class="statline"><span>Next village at</span><b>{{ t }} CP</b></div>{% when None %}{% endmatch %}
+          <div class="statline"><span>Loyalty:</span><b>{{ loyalty }} / 100</b></div>
+          {% if has_free_slot %}<p class="bld-tip">You have a free expansion slot — train settlers at the Residence/Palace, then send them from the Rally Point to a free valley.</p>{% endif %}
+        </div></div>
+    </aside>
+  </div>
+</div>
 
 <script>
-  // Live countdown from the server-provided completion timestamp (P1/P11).
+  // Village-plan inspector (069): clicking a plot/field fills the inspector + the build form.
+  (function () {
+    const I = (id) => document.getElementById(id);
+    const insp = I("vinspect"); if (!insp) return;
+    const ico = I("vinspect-ico"), name = I("vinspect-name"), lvl = I("vinspect-lvl"), eff = I("vinspect-eff"),
+      cost = I("vinspect-cost"), gate = I("vinspect-gate"), btn = I("vinspect-btn"), enter = I("vinspect-enter"),
+      fTable = I("vinspect-form").table, fSlot = I("vinspect-form").slot, fKind = I("vinspect-form").kind;
+    const sel = (el) => {
+      document.querySelectorAll(".vplot--sel,.vfield--sel").forEach(p => p.classList.remove("vplot--sel", "vfield--sel"));
+      el.classList.add(el.classList.contains("vfield") ? "vfield--sel" : "vplot--sel");
+      const d = el.dataset;
+      const iconId = d.icon || ("i-" + d.kind);
+      ico.querySelector("use").setAttribute("href", "#" + iconId);
+      name.textContent = d.name;
+      lvl.textContent = d.max === "1" ? ("Level " + d.lvl + " · max") : (d.lvl === "0" ? "Not built" : ("Level " + d.lvl + " → " + d.target));
+      eff.textContent = d.eff || "";
+      // Always show the next cost (unless at max) — a gated build still shows what it would cost.
+      cost.innerHTML = d.max === "1"
+        ? ""
+        : '<b class="w">' + d.cw + '</b><b class="c">' + d.cc + '</b><b class="i">' + d.ci + '</b><b class="r">' + d.cr + '</b>';
+      fTable.value = d.table; fSlot.value = d.slot; fKind.value = d.kind || "";
+      btn.disabled = d.can !== "1";
+      btn.textContent = d.lvl === "0" ? "Build" : ("Upgrade to " + d.target);
+      btn.style.display = d.max === "1" ? "none" : "";
+      gate.textContent = (d.can !== "1" && d.max !== "1") ? "Can't build yet — short on resources or the queue is busy." : (d.max === "1" ? "Max level reached." : "");
+      if (d.pageurl) { enter.href = d.pageurl; enter.style.display = ""; enter.textContent = "Enter " + d.name + " →"; }
+      else { enter.style.display = "none"; }
+    };
+    document.querySelectorAll(".vplot, .vfield").forEach(p => p.addEventListener("click", () => sel(p)));
+    const first = document.querySelector(".vplot--keep") || document.querySelector(".vplot");
+    if (first) sel(first);
+  })();
+
   for (const el of document.querySelectorAll(".countdown")) {
     const deadline = Number(el.dataset.deadline);
+    let timer; // declared before tick() so a deadline already in the past can clear it without a TDZ error
     const tick = () => {
       let s = Math.max(0, Math.round((deadline - Date.now()) / 1000));
       const h = Math.floor(s / 3600); s -= h * 3600;
@@ -289,7 +241,7 @@
       if (deadline - Date.now() <= 0) { clearInterval(timer); setTimeout(() => location.reload(), 1500); }
     };
     tick();
-    const timer = setInterval(tick, 1000);
+    timer = setInterval(tick, 1000);
   }
 </script>
 {% endblock %}
