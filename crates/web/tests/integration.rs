@@ -5067,6 +5067,56 @@ async fn academy_affordability_uses_the_selected_worlds_speed(pool: sqlx::PgPool
         slow.contains("insufficient resources"),
         "at 1× the same units are unaffordable — proving the speed is what flips the gate"
     );
+    // 071: a gated (unaffordable) academy unit still shows its research cost — the cost is display-only,
+    // independent of the orderable gate.
+    assert!(
+        slow.contains("unit__cost"),
+        "071: a gated academy unit still shows its research cost"
+    );
+}
+
+/// 071: a favicon is declared (so the browser stops 404ing on `/favicon.ico`), and the login/register
+/// inputs carry their `autocomplete` attributes. (The asset itself is served by `ServeDir` from disk —
+/// not asserted here because the test CWD differs from the runtime CWD; the link declaration is the bug fix.)
+#[sqlx::test(migrations = "../../migrations")]
+async fn favicon_declared_and_autocomplete_present(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let c = client();
+    let login = c
+        .get(format!("{base}/login"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        login.contains("rel=\"icon\"") && login.contains("/static/favicon.svg"),
+        "a favicon is declared on the page"
+    );
+    assert!(
+        login.contains("autocomplete=\"username\"")
+            && login.contains("autocomplete=\"current-password\""),
+        "login inputs carry autocomplete hints"
+    );
+    // 071: a missing building/unit art file falls back to a transparent 200 (so optional art no longer
+    // 404s into the console), while a genuinely missing non-art static file still 404s.
+    let art = c
+        .get(format!("{base}/static/buildings/does-not-exist.webp"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        art.status().as_u16(),
+        200,
+        "missing art falls back to a blank 200"
+    );
+    let css = c
+        .get(format!("{base}/static/does-not-exist.css"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(css.status().as_u16(), 404, "non-art 404s are preserved");
 }
 
 /// 050 AC1/AC2: the registry resolves each world's `rule_preset` (049) to a bundle and serves it through
