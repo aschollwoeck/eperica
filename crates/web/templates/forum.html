@@ -1,34 +1,42 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Alliance forum</h1>
-  <p class="muted"><a href="/w/{{ world }}/alliance">← Back to the alliance</a></p>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Alliance</div>
+    <h1 class="phead__title">Forum</h1>
+    <p class="phead__sub">Threads and announcements for your alliance.</p>
+    <a class="phead__back" href="/w/{{ world }}/alliance">← Alliance</a>
+  </section>
 
-  <h2>Threads</h2>
-  {% if threads.is_empty() %}
-  <p class="muted">No threads yet. Start one below.</p>
-  {% else %}
-  <ul class="conversations">
-    {% for t in threads %}
-    <li>
-      <a href="/w/{{ world }}/alliance/forum/{{ t.id }}">
-        {% if t.announcement %}<span class="badge">Announcement</span>{% endif %}
-        <strong>{{ t.title }}</strong>
-        <span class="muted preview">by {{ t.author }} · {{ t.post_count }} post(s)</span>
-      </a>
-    </li>
-    {% endfor %}
-  </ul>
-  {% endif %}
-
-  <h2>Start a thread</h2>
-  <form method="post" action="/w/{{ world }}/alliance/forum/new" class="send">
-    <input type="text" name="title" placeholder="Thread title" maxlength="120" autocomplete="off" required>
-    <textarea name="body" rows="3" placeholder="First post…" maxlength="2000" required></textarea>
-    {% if can_announce %}
-    <label><input type="checkbox" name="announcement" value="1"> Announcement (locked — no replies)</label>
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Threads</h2><span class="bld-cols__rule"></span><span class="sub">{{ threads.len() }}</span></div>
+    {% if threads.is_empty() %}
+    <p class="muted">No threads yet. Start one below.</p>
+    {% else %}
+    <ul class="conversations">
+      {% for t in threads %}
+      <li>
+        <a href="/w/{{ world }}/alliance/forum/{{ t.id }}">
+          {% if t.announcement %}<span class="badge">Announcement</span> {% endif %}<strong>{{ t.title }}</strong>
+          <span class="preview">by {{ t.author }} · {{ t.post_count }} post(s)</span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
     {% endif %}
-    <button type="submit">Post</button>
-  </form>
-</section>
+  </div>
+
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Start a thread</h2><span class="bld-cols__rule"></span></div>
+    <form method="post" action="/w/{{ world }}/alliance/forum/new" class="send">
+      <input type="text" name="title" placeholder="Thread title" maxlength="120" autocomplete="off" required>
+      <textarea name="body" rows="3" placeholder="First post…" maxlength="2000" required></textarea>
+      {% if can_announce %}
+      <label><input type="checkbox" name="announcement" value="1"> Announcement (locked — no replies)</label>
+      {% endif %}
+      <p><button class="btn btn--primary" type="submit">Post</button></p>
+    </form>
+  </div>
+</div>
 {% endblock %}

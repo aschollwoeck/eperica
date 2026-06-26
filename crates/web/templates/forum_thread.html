@@ -1,14 +1,16 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>{{ title }}{% if locked %} <span class="badge">Announcement</span>{% endif %}</h1>
-  <p class="muted"><a href="/w/{{ world }}/alliance/forum">← All threads</a></p>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Alliance forum{% if locked %} · <span class="badge">Announcement</span>{% endif %}</div>
+    <h1 class="phead__title">{{ title }}</h1>
+    <a class="phead__back" href="/w/{{ world }}/alliance/forum">← All threads</a>
+  </section>
 
   <ul class="messages">
     {% for p in posts %}
-    <li class="theirs">
-      <span class="muted sender">{{ p.author }}:</span> {{ p.body }}
-    </li>
+    <li class="theirs"><span class="sender">{{ p.author }}</span>{{ p.body }}</li>
     {% endfor %}
   </ul>
 
@@ -17,8 +19,8 @@
   {% else %}
   <form method="post" action="/w/{{ world }}/alliance/forum/{{ thread_id }}/reply" class="send">
     <textarea name="body" rows="3" placeholder="Reply…" maxlength="2000" required></textarea>
-    <button type="submit">Reply</button>
+    <p><button class="btn btn--primary" type="submit">Reply</button></p>
   </form>
   {% endif %}
-</section>
+</div>
 {% endblock %}
