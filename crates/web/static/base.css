@@ -809,3 +809,14 @@ a { color: var(--c-gold); }
 .send label { font-size: .88rem; color: var(--c-ink-muted); }
 .send--inline { flex-direction: row; align-items: center; }
 .send--inline input[type=text] { flex: 1; }
+
+/* ============================================================================
+   078 — account/meta pages: small/danger buttons, checkboxes, inline forms.
+   ============================================================================ */
+.btn--small { padding: 4px 9px; font-size: .78rem; }
+.btn--danger { background: var(--c-danger); color: #fff; border: 1px solid color-mix(in srgb, var(--c-danger) 65%, #000); }
+.btn--danger:hover { background: color-mix(in srgb, var(--c-danger) 86%, #fff); }
+.checkbox { display: flex; align-items: center; gap: 9px; padding: 7px 0; color: var(--c-ink); font-size: .95rem; }
+.checkbox input { flex: none; }
+.inline, .inline-form { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0; vertical-align: middle; }
+.inline-form { gap: 12px; }

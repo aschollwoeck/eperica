@@ -1,60 +1,65 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Worlds</h1>
-  <p class="muted">Each world is a separate game with its own map, speed and standings. Switch between the
-    worlds you play, or join a new one.</p>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Lobby</div>
+    <h1 class="phead__title">Worlds</h1>
+    <p class="phead__sub">Each world is a separate game with its own map, speed and standings. Switch between the worlds you play, or join a new one.</p>
+  </section>
 
-  <h2>Your worlds</h2>
-  {% if joined.is_empty() %}
-  <p class="muted">You have not joined any world yet.</p>
-  {% else %}
-  <table class="table">
-    <thead><tr><th>World</th><th class="num">Speed</th><th class="num">Size</th><th>Tribe</th><th></th></tr></thead>
-    <tbody>
-      {% for w in joined %}
-      <tr>
-        <td>
-          <strong>{{ w.name }}</strong>{% if w.is_home %} <span class="badge">Home</span>{% endif %}
-          {% if w.is_current %} <span class="badge">★ Current</span>{% endif %}
-        </td>
-        <td class="num">{{ w.speed }}×</td>
-        <td class="num">{{ w.radius }}</td>
-        <td>{{ w.tribe }}</td>
-        <td>
-          <a class="btn" href="/w/{{ w.id }}/village">Enter</a>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Your worlds</h2><span class="bld-cols__rule"></span><span class="sub">{{ joined.len() }}</span></div>
+    {% if joined.is_empty() %}
+    <p class="muted">You have not joined any world yet.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th>World</th><th class="num">Speed</th><th class="num">Size</th><th>Tribe</th><th></th></tr></thead>
+      <tbody>
+        {% for w in joined %}
+        <tr>
+          <td>
+            <strong>{{ w.name }}</strong>{% if w.is_home %} <span class="badge">Home</span>{% endif %}
+            {% if w.is_current %} <span class="badge">★ Current</span>{% endif %}
+          </td>
+          <td class="num">{{ w.speed }}×</td>
+          <td class="num">{{ w.radius }}</td>
+          <td>{{ w.tribe }}</td>
+          <td><a class="btn btn--primary" href="/w/{{ w.id }}/village">Enter</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
 
-  <h2>Join a world</h2>
-  {% if joinable.is_empty() %}
-  <p class="muted">No other worlds are open to join right now.</p>
-  {% else %}
-  <table class="table">
-    <thead><tr><th>World</th><th class="num">Speed</th><th class="num">Size</th><th>Tribe</th><th></th></tr></thead>
-    <tbody>
-      {% for w in joinable %}
-      <tr>
-        <td><strong>{{ w.name }}</strong></td>
-        <td class="num">{{ w.speed }}×</td>
-        <td class="num">{{ w.radius }}</td>
-        <td colspan="2">
-          <form method="post" action="/worlds/join" class="inline-form">
-            <input type="hidden" name="world" value="{{ w.id }}">
-            <label class="choice__option"><input type="radio" name="tribe" value="romans" required> Romans</label>
-            <label class="choice__option"><input type="radio" name="tribe" value="teutons" required> Teutons</label>
-            <label class="choice__option"><input type="radio" name="tribe" value="gauls" required> Gauls</label>
-            <button class="btn btn--primary" type="submit">Join</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
-</section>
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Join a world</h2><span class="bld-cols__rule"></span></div>
+    {% if joinable.is_empty() %}
+    <p class="muted">No other worlds are open to join right now.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th>World</th><th class="num">Speed</th><th class="num">Size</th><th>Tribe</th><th></th></tr></thead>
+      <tbody>
+        {% for w in joinable %}
+        <tr>
+          <td><strong>{{ w.name }}</strong></td>
+          <td class="num">{{ w.speed }}×</td>
+          <td class="num">{{ w.radius }}</td>
+          <td colspan="2">
+            <form method="post" action="/worlds/join" class="inline-form">
+              <input type="hidden" name="world" value="{{ w.id }}">
+              <label class="choice__option"><input type="radio" name="tribe" value="romans" required> Romans</label>
+              <label class="choice__option"><input type="radio" name="tribe" value="teutons" required> Teutons</label>
+              <label class="choice__option"><input type="radio" name="tribe" value="gauls" required> Gauls</label>
+              <button class="btn btn--primary" type="submit">Join</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
 {% endblock %}
