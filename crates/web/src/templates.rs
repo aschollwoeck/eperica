@@ -88,6 +88,7 @@ mod tests {
                 warehouse: 800,
                 granary: 800,
             },
+            population: 42,
             active: Vec::new(),
             has_academy: false,
             has_smithy: false,
@@ -189,7 +190,7 @@ pub struct BuildRow {
     pub can_order: bool,
     /// What the next level grants (e.g. "Production 30 → 42/h · +2 pop"); empty at max level.
     pub effect: String,
-    /// If this slot is under construction, its completion time (Unix-ms) for the plan's progress + countdown
+    /// If this slot is under construction, its completion time (Unix-ms) for the plan's on-plot countdown
     /// (069); `None` otherwise.
     pub building_ms: Option<i64>,
 }
@@ -700,6 +701,8 @@ pub struct VillageTemplate {
     pub y: i32,
     /// The shared resource ribbon (069).
     pub ribbon: ResourceRibbon,
+    /// Total village population (field + building population), shown in the command header (069).
+    pub population: i64,
     /// The active build orders — at most one per lane (two for Romans, 004 AC13).
     pub active: Vec<ActiveView>,
     /// Whether the village has an Academy (shows the link).

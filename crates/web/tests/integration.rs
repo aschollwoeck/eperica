@@ -1870,6 +1870,9 @@ async fn build_order_flow(pool: sqlx::PgPool) {
         .unwrap();
     assert!(after.contains("Build queue")); // 069: active builds in the war-room rail
     assert!(after.contains("data-deadline"));
+    // 069: the under-construction slot is marked on the plan with its own on-plot countdown (here a
+    // resource field, so the field plot carries the marker).
+    assert!(after.contains("vfield--build"));
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -7058,6 +7061,10 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
     assert!(
         body.contains("vcmd") && body.contains("Village plan"),
         "command header + plan"
+    );
+    assert!(
+        body.contains("Population"),
+        "the command header shows village population"
     );
     assert!(
         body.contains("vplot--main_building") && body.contains("vplot--barracks"),

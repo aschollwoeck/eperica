@@ -1381,6 +1381,11 @@ pub async fn village(
         x: village.coordinate.x,
         y: village.coordinate.y,
         ribbon,
+        population: eperica_domain::economy::population(
+            &village.fields,
+            &village.buildings,
+            &ctx.rules.economy,
+        ),
         active: active_view,
         has_academy: village
             .buildings

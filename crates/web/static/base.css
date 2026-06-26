@@ -608,8 +608,8 @@ a { color: var(--c-gold); }
 .vplot--empty .vplot__lvl { background: #0c1116; color: var(--c-ink-muted); border-color: var(--c-border); }
 .vplot--sel { border-color: var(--c-gold); box-shadow: 0 0 0 1px var(--c-gold), 0 0 22px -6px var(--c-gold); }
 .vplot--build .vplot__lvl { background: radial-gradient(circle at 38% 32%, #7a6336, #3a2c12); color: var(--c-ink); }
-.vplot__arc { position: absolute; left: 6px; right: 6px; bottom: 6px; height: 4px; border-radius: 2px; background: #080b0e; overflow: hidden; box-shadow: inset 0 0 0 1px #1c242d; }
-.vplot__arc i { display: block; height: 100%; background: linear-gradient(90deg, #6a4a22, var(--c-ember, #C8762E)); }
+/* an under-construction plot shows the live build countdown (no faked % progress — there is no start time) */
+.vplot__cd { position: absolute; left: 3px; right: 3px; bottom: 3px; font-family: ui-monospace, monospace; font-size: .56rem; line-height: 1.55; text-align: center; color: var(--c-ember, #C8762E); background: #0b0f13; border: 1px solid color-mix(in srgb, var(--c-ember, #C8762E) 40%, var(--c-border)); border-radius: 3px; }
 
 /* building positions inside the rampart (kind-keyed) */
 .vplot--main_building { --x: 50%; --y: 47%; }
@@ -690,3 +690,7 @@ a { color: var(--c-gold); }
 
 /* 069 — a disabled action (e.g. the inspector's Upgrade when the build is gated) reads as inert. */
 .btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+
+/* a field under construction (069): ember edge + the live build countdown in its detail line */
+.vfield--build { border-color: color-mix(in srgb, var(--c-ember, #C8762E) 55%, var(--c-border)); box-shadow: inset 0 1px 0 rgba(255,255,255,.03), 0 0 18px -10px var(--c-ember, #C8762E); }
+.vfield--build .vfield__r { color: var(--c-ember, #C8762E); }

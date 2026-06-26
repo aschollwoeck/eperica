@@ -32,6 +32,7 @@
       <div class="vcmd__sub">
         <span class="vchip">{{ x }} | {{ y }}</span>
         <span>Tribe: {{ tribe }}</span>
+        <span>Population <b>{{ population }}</b></span>
         <span>Villages <b>{{ slots_used }} / {{ slots_allowed }}</b></span>
         {% if !artifacts.is_empty() %}<span>· 🏺 {{ artifacts.len() }} artifact(s)</span>{% endif %}
         {% if let Some(notice) = protection %}<span style="color:var(--c-success)">· 🛡 {{ notice }}</span>{% endif %}
@@ -94,6 +95,7 @@
             <svg><use href="#i-{{ b.kind }}"/></svg>
             <span class="vplot__n">{{ b.label }}</span>
             <span class="vplot__lvl">{% if b.level == 0 %}+{% else %}{{ b.level }}{% endif %}</span>
+            {% if let Some(ms) = b.building_ms %}<span class="vplot__cd countdown" data-deadline="{{ ms }}">…</span>{% endif %}
           </button>
           {% endfor %}
         </div>
@@ -121,13 +123,13 @@
         <div class="bld-cols__head"><h2>Resource fields</h2><span class="bld-cols__rule"></span><span class="sub">{{ fields.len() }} fields</span></div>
         <div class="vfields__grid">
           {% for f in fields %}
-          <button type="button" class="vfield vfield--{{ f.res }}{% if f.can_order %} vfield--up{% endif %}"
+          <button type="button" class="vfield vfield--{{ f.res }}{% if f.building_ms.is_some() %} vfield--build{% else if f.can_order %} vfield--up{% endif %}"
             data-name="{{ f.label }}" data-lvl="{{ f.level }}" data-target="{{ f.level + 1 }}" data-eff="{{ f.effect }}"
             data-table="field" data-slot="{{ f.slot }}" data-kind="" data-icon="i-{{ f.res }}"
             data-cw="{{ f.cost_wood }}" data-cc="{{ f.cost_clay }}" data-ci="{{ f.cost_iron }}" data-cr="{{ f.cost_crop }}"
             data-can="{% if f.can_order %}1{% else %}0{% endif %}" data-max="{% if f.at_max %}1{% else %}0{% endif %}">
             <span class="vfield__dot"><svg><use href="#i-{{ f.res }}"/></svg></span>
-            <span class="vfield__main"><span class="vfield__n">{{ f.label }}</span><span class="vfield__r">{% if !f.effect.is_empty() %}{{ f.effect }}{% else %}max{% endif %}</span></span>
+            <span class="vfield__main"><span class="vfield__n">{{ f.label }}</span><span class="vfield__r">{% if let Some(ms) = f.building_ms %}building · <span class="countdown" data-deadline="{{ ms }}">…</span>{% else if !f.effect.is_empty() %}{{ f.effect }}{% else %}max{% endif %}</span></span>
             <span class="vfield__lvl">{{ f.level }}</span>
           </button>
           {% endfor %}
@@ -210,9 +212,10 @@
       name.textContent = d.name;
       lvl.textContent = d.max === "1" ? ("Level " + d.lvl + " · max") : (d.lvl === "0" ? "Not built" : ("Level " + d.lvl + " → " + d.target));
       eff.textContent = d.eff || "";
-      cost.innerHTML = d.can === "1"
-        ? '<b class="w">' + d.cw + '</b><b class="c">' + d.cc + '</b><b class="i">' + d.ci + '</b><b class="r">' + d.cr + '</b>'
-        : "";
+      // Always show the next cost (unless at max) — a gated build still shows what it would cost.
+      cost.innerHTML = d.max === "1"
+        ? ""
+        : '<b class="w">' + d.cw + '</b><b class="c">' + d.cc + '</b><b class="i">' + d.ci + '</b><b class="r">' + d.cr + '</b>';
       fTable.value = d.table; fSlot.value = d.slot; fKind.value = d.kind || "";
       btn.disabled = d.can !== "1";
       btn.textContent = d.lvl === "0" ? "Build" : ("Upgrade to " + d.target);
