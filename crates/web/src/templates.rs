@@ -193,6 +193,9 @@ pub struct BuildRow {
     /// If this slot is under construction, its completion time (Unix-ms) for the plan's on-plot countdown
     /// (069); `None` otherwise.
     pub building_ms: Option<i64>,
+    /// When the slot can't be ordered (and isn't at max), the explicit reason — a busy queue lane or the
+    /// exact resource shortfall (072); empty when orderable or at max.
+    pub gate: String,
 }
 
 /// An active build/research/upgrade order, for display + countdown.

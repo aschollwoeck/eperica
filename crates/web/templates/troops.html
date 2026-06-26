@@ -52,6 +52,7 @@
                   data-secs="{{ u.time_secs }}" data-up="{{ u.upkeep }}">
               <input type="hidden" name="unit" value="{{ u.id }}">
               <input type="number" name="count" value="1" min="1" max="9999" required>
+              <button class="btn btn--secondary train-max" type="button" title="Train as many as you can afford">Max</button>
               <button class="btn btn--primary" type="submit">Train</button>
               <span class="batch-total"></span>
             </form>
@@ -106,6 +107,24 @@
         : "";
     };
     input.addEventListener("input", upd); upd();
+    // 072: "Max" fills in the largest count the current resources allow (read from the live ribbon). The
+    // server re-checks affordability; the live value is a lower bound on what the server will have by submit.
+    const maxBtn = form.querySelector(".train-max");
+    if (maxBtn) maxBtn.addEventListener("click", () => {
+      const have = {};
+      for (const g of document.querySelectorAll(".res-ribbon .gauge")) {
+        const m = g.className.match(/gauge--(\w+)/);
+        const now = g.querySelector(".gauge__now");
+        if (m && now) have[m[1]] = parseInt(now.textContent, 10) || 0;
+      }
+      const costs = { wood: +d.w, clay: +d.c, iron: +d.i, crop: +d.cr };
+      let max = Infinity;
+      for (const [res, cost] of Object.entries(costs)) {
+        if (cost > 0) max = Math.min(max, Math.floor((have[res] || 0) / cost));
+      }
+      input.value = Number.isFinite(max) ? Math.max(0, Math.min(9999, max)) : 0;
+      upd();
+    });
   }
   for (const el of document.querySelectorAll(".countdown")) {
     const deadline = Number(el.dataset.deadline);
