@@ -1088,6 +1088,7 @@ async fn admin_console_gates_and_manages_roles(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(body.contains("World &amp; server"), "overview shown");
+    assert!(body.contains("phead") && body.contains("statgrid")); // 080: redesigned admin console
     assert!(body.contains("Accounts (active)"), "account count shown");
     assert!(body.contains(&target_name), "lists other accounts");
     // AC4: the derived counts are the real DB aggregates, not just present labels.
@@ -1099,12 +1100,13 @@ async fn admin_console_gates_and_manages_roles(pool: sqlx::PgPool) {
         .fetch_one(&pool)
         .await
         .unwrap();
+    // 080: the active-account + village counts now render in stat cards (the real DB aggregates).
     assert!(
-        body.contains(&format!("<td class=\"num\">{active}</td>")),
+        body.contains(&format!("statcard__v\">{active}</div>")),
         "active-account count {active} rendered"
     );
     assert!(
-        body.contains(&format!("<td class=\"num\">{villages}</td>")),
+        body.contains(&format!("statcard__v\">{villages}</div>")),
         "village count {villages} rendered"
     );
 
