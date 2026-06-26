@@ -1,87 +1,82 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>{{ name }}
-    {% if online %}<span class="presence presence--online" title="Online">● online</span>
-    {% else %}<span class="presence presence--away" title="{{ presence_label }}">○ {{ presence_label }}</span>{% endif %}
-  </h1>
-  <p class="muted"><a href="/w/{{ world }}/leaderboard">← Leaderboards</a>
-    · <a href="/w/{{ world }}/messages/with/{{ subject_id }}">Message</a></p>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Player
+      {% if online %}· <span class="presence presence--online" title="Online">● online</span>
+      {% else %}· <span class="presence presence--away" title="{{ presence_label }}">○ {{ presence_label }}</span>{% endif %}
+    </div>
+    <h1 class="phead__title">{{ name }}</h1>
+    {% if !bio.is_empty() %}<p class="bio-read">{{ bio }}</p>{% endif %}
+    <a class="phead__back" href="/w/{{ world }}/leaderboard">← Leaderboards</a>
+    · <a class="phead__back" href="/w/{{ world }}/messages/with/{{ subject_id }}">Message</a>
+  </section>
 
-  {% if !bio.is_empty() %}
-  <p class="bio">{{ bio }}</p>
-  {% endif %}
+  <div class="statgrid">
+    <div class="statcard"><div class="statcard__k">Population</div><div class="statcard__v">{{ population }}</div></div>
+    <div class="statcard"><div class="statcard__k">Attack points</div><div class="statcard__v">{{ attack_points }}</div></div>
+    <div class="statcard"><div class="statcard__k">Defence points</div><div class="statcard__v">{{ defense_points }}</div></div>
+    <div class="statcard"><div class="statcard__k">Resources looted</div><div class="statcard__v">{{ loot_total }}</div></div>
+  </div>
 
-  <ul class="stats">
-    <li>Population: <strong>{{ population }}</strong></li>
-    <li>Attack points: <strong>{{ attack_points }}</strong></li>
-    <li>Defense points: <strong>{{ defense_points }}</strong></li>
-    <li>Resources looted: <strong>{{ loot_total }}</strong></li>
-  </ul>
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Villages</h2><span class="bld-cols__rule"></span><span class="sub">{{ villages.len() }}</span></div>
+    {% if villages.is_empty() %}<p class="muted">No villages.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th>Coordinates</th><th class="num">Population</th></tr></thead>
+      <tbody>{% for v in villages %}<tr><td>({{ v.x }}|{{ v.y }})</td><td class="num">{{ v.population }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+  </div>
 
-  <h2>Villages</h2>
-  {% if villages.is_empty() %}
-  <p class="muted">No villages.</p>
-  {% else %}
-  <table class="table">
-    <thead><tr><th>Coordinates</th><th>Population</th></tr></thead>
-    <tbody>
-      {% for v in villages %}
-      <tr><td>({{ v.x }}|{{ v.y }})</td><td>{{ v.population }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Medals</h2><span class="bld-cols__rule"></span></div>
+    {% if medals.is_empty() %}<p class="muted">No medals yet.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th>Medal</th><th>Rank</th><th>Week</th></tr></thead>
+      <tbody>{% for m in medals %}<tr><td>{{ m.category }}</td><td>#{{ m.rank }}</td><td class="muted">{{ m.period }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+  </div>
 
-  <h2>Medals</h2>
-  {% if medals.is_empty() %}
-  <p class="muted">No medals yet.</p>
-  {% else %}
-  <table class="table">
-    <thead><tr><th>Medal</th><th>Rank</th><th>Week</th></tr></thead>
-    <tbody>
-      {% for m in medals %}
-      <tr><td>{{ m.category }}</td><td>#{{ m.rank }}</td><td>{{ m.period }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Achievements</h2><span class="bld-cols__rule"></span></div>
+    {% if achievements.is_empty() %}<p class="muted">No achievements yet.</p>
+    {% else %}<ul class="donelist">{% for a in achievements %}<li>{{ a.label }}</li>{% endfor %}</ul>{% endif %}
+  </div>
 
-  <h2>Achievements</h2>
-  {% if achievements.is_empty() %}
-  <p class="muted">No achievements yet.</p>
-  {% else %}
-  <ul class="stats">
-    {% for a in achievements %}<li>{{ a.label }}</li>{% endfor %}
-  </ul>
-  {% endif %}
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Population over time</h2><span class="bld-cols__rule"></span></div>
+    {% if history.is_empty() %}<p class="muted">No history yet — population is snapshotted at each weekly settlement.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th>Week</th><th class="num">Population</th></tr></thead>
+      <tbody>{% for p in history %}<tr><td>{{ p.period }}</td><td class="num">{{ p.population }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+  </div>
 
-  <h2>Population over time</h2>
-  {% if history.is_empty() %}
-  <p class="muted">No history yet — population is snapshotted at each weekly settlement.</p>
-  {% else %}
-  <table class="table">
-    <thead><tr><th>Week</th><th>Population</th></tr></thead>
-    <tbody>
-      {% for p in history %}
-      <tr><td>{{ p.period }}</td><td>{{ p.population }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
-
-  <h2>Report this account</h2>
-  <p class="muted">Seeing rule-breaking? Report it for a moderator to review.</p>
-  <form method="post" action="/report" class="inline">
-    <input type="hidden" name="subject" value="{{ subject_id }}">
-    <select name="reason">
-      <option value="pushing">Pushing / multi-account</option>
-      <option value="botting">Botting</option>
-      <option value="abuse">Abuse</option>
-      <option value="other">Other</option>
-    </select>
-    <input type="text" name="note" placeholder="optional detail">
-    <button type="submit">Report</button>
-  </form>
-</section>
+  <div class="psec">
+    <div class="bld-card">
+      <div class="bld-card__h"><h3>Report this account</h3></div>
+      <div class="bld-card__b">
+        <p class="bld-tip">Seeing rule-breaking? Report it for a moderator to review.</p>
+        <form method="post" action="/report" class="filters">
+          <input type="hidden" name="subject" value="{{ subject_id }}">
+          <select name="reason">
+            <option value="pushing">Pushing / multi-account</option>
+            <option value="botting">Botting</option>
+            <option value="abuse">Abuse</option>
+            <option value="other">Other</option>
+          </select>
+          <input type="text" name="note" placeholder="optional detail">
+          <button class="btn btn--secondary" type="submit">Report</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}

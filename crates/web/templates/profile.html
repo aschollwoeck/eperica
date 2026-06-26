@@ -1,14 +1,23 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Your profile</h1>
-  <p class="muted"><a href="/worlds">← Worlds</a></p>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Account</div>
+    <h1 class="phead__title">Your profile</h1>
+    <p class="phead__sub">How other players see you across the worlds you play.</p>
+    <a class="phead__back" href="/worlds">← Worlds</a>
+  </section>
 
-  <h2>Bio</h2>
-  <p class="muted">Shown on your public profile. Plain text, up to 500 characters.</p>
-  <form method="post" action="/profile/bio" class="bio">
-    <textarea name="bio" rows="4" maxlength="500" placeholder="Tell other players about yourself…">{{ bio }}</textarea>
-    <button type="submit">Save</button>
-  </form>
-</section>
+  <div class="bld-card">
+    <div class="bld-card__h"><h3>Bio</h3></div>
+    <div class="bld-card__b">
+      <p class="bld-tip">Shown on your public profile. Plain text, up to 500 characters.</p>
+      <form method="post" action="/profile/bio" class="bioform">
+        <textarea name="bio" rows="4" maxlength="500" placeholder="Tell other players about yourself…">{{ bio }}</textarea>
+        <p><button class="btn btn--primary" type="submit">Save</button></p>
+      </form>
+    </div>
+  </div>
+</div>
 {% endblock %}

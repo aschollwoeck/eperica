@@ -3636,6 +3636,8 @@ async fn leaderboard_and_stats_are_public(pool: sqlx::PgPool) {
     assert_eq!(res.status().as_u16(), 200);
     let body = res.text().await.unwrap();
     assert!(body.contains("Leaderboards"));
+    // 076: the redesigned leaderboard — page header + the category tabs.
+    assert!(body.contains("phead") && body.contains("class=\"tabs\""));
     assert!(
         body.contains(&player),
         "the population board lists the player"
@@ -3666,6 +3668,8 @@ async fn leaderboard_and_stats_are_public(pool: sqlx::PgPool) {
     let stats_body = stats.text().await.unwrap();
     assert!(stats_body.contains(&player));
     assert!(stats_body.contains("Population"));
+    // 076: the redesigned player-stats page — page header + the stat-card grid.
+    assert!(stats_body.contains("phead") && stats_body.contains("statgrid"));
     // A malformed id is a clean 404, not a 500.
     let bad = visitor
         .get(format!("{base}/w/{home}/stats/player/not-a-number"))
@@ -3970,8 +3974,9 @@ async fn quests_page_shows_progress_and_requires_login(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(
-        body.contains("✓ Upgrade a resource field to level 2."),
-        "the satisfied quest now appears completed"
+        // 076: completed quests render in the `.donelist` (the ✓ is now a CSS marker, not inline text).
+        body.contains("donelist") && body.contains("Upgrade a resource field to level 2."),
+        "the satisfied quest now appears in the completed list"
     );
     assert!(
         body.contains("Build a Warehouse to store more resources."),
