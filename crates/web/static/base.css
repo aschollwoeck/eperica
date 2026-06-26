@@ -748,3 +748,36 @@ a { color: var(--c-gold); }
 .cas__n { font-variant-numeric: tabular-nums; color: var(--c-ink); text-align: right; min-width: 3ch; }
 .cas__lost { font-variant-numeric: tabular-nums; color: var(--c-danger); text-align: right; min-width: 3ch; }
 @media (max-width: 640px) { .repsides { grid-template-columns: 1fr; } }
+
+/* ============================================================================
+   076 — stats & content pages: stat-card grid, leaderboard tabs/filters, quests.
+   (Reuses .phead/.page from 075, .bld-cols__head section heads, and .table.)
+   ============================================================================ */
+.statgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 2px 0 6px; }
+.statcard { padding: 13px 16px; border: 1px solid var(--c-border); border-radius: var(--radius-md); background: var(--c-panel); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .03); }
+.statcard__k { font-family: ui-monospace, monospace; font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; color: var(--c-ink-muted); }
+.statcard__v { font-family: var(--c-serif, Georgia, serif); font-size: 1.5rem; color: var(--c-ink); margin-top: 3px; font-variant-numeric: tabular-nums; }
+
+/* leaderboard tabs + filters */
+.tabs { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 14px; border-bottom: 1px solid var(--c-border); }
+.tab { padding: 8px 14px; font-size: .9rem; color: var(--c-ink-muted); text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tab:hover { color: var(--c-ink); }
+.tab--active { color: var(--c-gold); border-bottom-color: var(--c-gold); }
+.filters { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-bottom: 16px; font-size: .88rem; color: var(--c-ink-muted); }
+.filters select { background: var(--c-bg); border: 1px solid var(--c-border); color: var(--c-ink); border-radius: var(--radius-sm); padding: 6px 9px; font: inherit; margin-left: 6px; }
+
+/* a content section header below a .phead (reuses .bld-cols__head styling via this alias) */
+.psec { margin-top: 22px; }
+.psec:first-of-type { margin-top: 4px; }
+
+/* quests */
+.questcard { padding: 16px 18px; border: 1px solid color-mix(in srgb, var(--c-gold) 40%, var(--c-border)); border-left: 3px solid var(--c-gold); border-radius: var(--radius-md); background: linear-gradient(180deg, color-mix(in srgb, var(--c-gold) 8%, var(--c-panel)), var(--c-panel)); }
+.questcard__t { font-family: var(--c-serif, Georgia, serif); font-size: 1.15rem; color: var(--c-ink); }
+.questcard__r { margin-top: 6px; color: var(--c-gold); font-size: .9rem; font-family: ui-monospace, monospace; }
+.donelist { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.donelist li { color: var(--c-ink-muted); font-size: .92rem; }
+.donelist li::before { content: "✓ "; color: var(--c-success); }
+
+/* a styled bio textarea form + the public bio readout */
+.bioform textarea { width: 100%; background: var(--c-bg); border: 1px solid var(--c-border); color: var(--c-ink); border-radius: var(--radius-sm); padding: 10px 12px; font: inherit; resize: vertical; }
+.bio-read { color: var(--c-ink); font-style: italic; border-left: 3px solid var(--c-border); padding-left: 12px; margin: 4px 0 0; }

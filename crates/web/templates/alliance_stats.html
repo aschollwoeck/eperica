@@ -1,45 +1,48 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>{{ name }} <span class="muted">[{{ tag }}]</span></h1>
-  <p class="muted"><a href="/w/{{ world }}/leaderboard?cat=alliances">← Leaderboards</a></p>
-  <ul class="stats">
-    <li>Aggregate population: <strong>{{ population }}</strong></li>
-    <li>Aggregate attack points: <strong>{{ attack_points }}</strong></li>
-    <li>Aggregate defense points: <strong>{{ defense_points }}</strong></li>
-  </ul>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Alliance · [{{ tag }}]</div>
+    <h1 class="phead__title">{{ name }}</h1>
+    <a class="phead__back" href="/w/{{ world }}/leaderboard?cat=alliances">← Leaderboards</a>
+  </section>
 
-  <h2>Members</h2>
-  {% if members.is_empty() %}
-  <p class="muted">No members.</p>
-  {% else %}
-  <table class="table">
-    <thead><tr><th>Member</th><th>Population</th><th>Attack</th><th>Defense</th></tr></thead>
-    <tbody>
-      {% for m in members %}
-      <tr>
-        <td><a href="{{ m.href }}">{{ m.name }}</a></td>
-        <td>{{ m.population }}</td>
-        <td>{{ m.attack_points }}</td>
-        <td>{{ m.defense_points }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
+  <div class="statgrid">
+    <div class="statcard"><div class="statcard__k">Aggregate population</div><div class="statcard__v">{{ population }}</div></div>
+    <div class="statcard"><div class="statcard__k">Aggregate attack</div><div class="statcard__v">{{ attack_points }}</div></div>
+    <div class="statcard"><div class="statcard__k">Aggregate defence</div><div class="statcard__v">{{ defense_points }}</div></div>
+  </div>
 
-  <h2>Medals</h2>
-  {% if medals.is_empty() %}
-  <p class="muted">No medals yet.</p>
-  {% else %}
-  <table class="table">
-    <thead><tr><th>Medal</th><th>Rank</th><th>Week</th></tr></thead>
-    <tbody>
-      {% for m in medals %}
-      <tr><td>{{ m.category }}</td><td>#{{ m.rank }}</td><td>{{ m.period }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
-</section>
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Members</h2><span class="bld-cols__rule"></span><span class="sub">{{ members.len() }}</span></div>
+    {% if members.is_empty() %}<p class="muted">No members.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th>Member</th><th class="num">Population</th><th class="num">Attack</th><th class="num">Defence</th></tr></thead>
+      <tbody>
+        {% for m in members %}
+        <tr>
+          <td><a href="{{ m.href }}">{{ m.name }}</a></td>
+          <td class="num">{{ m.population }}</td>
+          <td class="num">{{ m.attack_points }}</td>
+          <td class="num">{{ m.defense_points }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Medals</h2><span class="bld-cols__rule"></span></div>
+    {% if medals.is_empty() %}<p class="muted">No medals yet.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th>Medal</th><th>Rank</th><th>Week</th></tr></thead>
+      <tbody>{% for m in medals %}<tr><td>{{ m.category }}</td><td>#{{ m.rank }}</td><td class="muted">{{ m.period }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
 {% endblock %}

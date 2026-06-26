@@ -1,27 +1,31 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Quests</h1>
-  <p class="muted"><a href="/w/{{ world }}/village/{{ village_id }}">← Village</a></p>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Onboarding</div>
+    <h1 class="phead__title">Quests</h1>
+    <p class="phead__sub">A guided path through the first steps of the game — each grants a reward.</p>
+    <a class="phead__back" href="/w/{{ world }}/village/{{ village_id }}">← Village</a>
+  </section>
 
-  <h2>Current quest</h2>
-  {% match current %}
-  {% when Some with (q) %}
-  <div class="card">
-    <p><strong>{{ q.description }}</strong></p>
-    <p class="muted">Reward: {{ q.reward }}</p>
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Current quest</h2><span class="bld-cols__rule"></span></div>
+    {% match current %}
+    {% when Some with (q) %}
+    <div class="questcard">
+      <div class="questcard__t">{{ q.description }}</div>
+      <div class="questcard__r">Reward: {{ q.reward }}</div>
+    </div>
+    {% when None %}
+    <p class="muted">All quests complete — you've finished the onboarding chain. Well played!</p>
+    {% endmatch %}
   </div>
-  {% when None %}
-  <p class="muted">All quests complete — you've finished the onboarding chain. Well played!</p>
-  {% endmatch %}
 
-  <h2>Completed</h2>
-  {% if completed.is_empty() %}
-  <p class="muted">No quests completed yet.</p>
-  {% else %}
-  <ul class="stats">
-    {% for q in completed %}<li>✓ {{ q.description }}</li>{% endfor %}
-  </ul>
-  {% endif %}
-</section>
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Completed</h2><span class="bld-cols__rule"></span><span class="sub">{{ completed.len() }}</span></div>
+    {% if completed.is_empty() %}<p class="muted">No quests completed yet.</p>
+    {% else %}<ul class="donelist">{% for q in completed %}<li>{{ q.description }}</li>{% endfor %}</ul>{% endif %}
+  </div>
+</div>
 {% endblock %}

@@ -1,8 +1,13 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Leaderboards</h1>
-  <p class="muted"><a href="/w/{{ world }}/village">← Back to the village</a></p>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Rankings</div>
+    <h1 class="phead__title">Leaderboards</h1>
+    <p class="phead__sub">Who leads the world — by population, attack, defence, and more.</p>
+    <a class="phead__back" href="/w/{{ world }}/village">← Village</a>
+  </section>
 
   <nav class="tabs">
     {% for c in categories %}
@@ -34,7 +39,7 @@
   </form>
 
   {% if rows.is_empty() %}
-  <p class="muted">No entries yet.</p>
+  <section class="panel"><p class="muted">No entries yet.</p></section>
   {% else %}
   <table class="table">
     <thead>
@@ -42,7 +47,7 @@
         <th>#</th>
         <th>Name</th>
         {% if is_alliance %}<th>Tag</th>{% endif %}
-        <th>{{ value_label }}</th>
+        <th class="num">{{ value_label }}</th>
       </tr>
     </thead>
     <tbody>
@@ -56,11 +61,11 @@
           {% endif %}
         </td>
         {% if is_alliance %}<td class="muted">{{ r.tag }}</td>{% endif %}
-        <td>{{ r.value }}</td>
+        <td class="num">{{ r.value }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
   {% endif %}
-</section>
+</div>
 {% endblock %}
