@@ -7056,6 +7056,11 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
         body.contains("res-ribbon") && body.contains("data-amt="),
         "resource ribbon is present"
     );
+    // 070: the live-counter estimate is wired — each gauge carries its rate + a ticking number element.
+    assert!(
+        body.contains("data-rate=") && body.contains("gauge__now"),
+        "the live resource counter is wired (rate + ticking number)"
+    );
     // 069: the command-table redesign — command header, the fortress plan with building plots, the
     // resource-fields grid, and the click-to-inspect panel that drives the build form.
     assert!(

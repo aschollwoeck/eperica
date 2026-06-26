@@ -1,14 +1,38 @@
-{# Shared resource ribbon (067) — included by every in-village building page. Reads the `ribbon`
-   ResourceRibbon field from the including template's context. #}
+{# Shared resource ribbon (067) — included by every in-village building page + the village page. Reads the
+   `ribbon` ResourceRibbon field from the including template's context. 070: the numbers tick live (a pure
+   client-side estimate from the rate; never read back — the server stays authoritative, P4). #}
 <section class="res-ribbon">
-  <div class="gauge gauge--wood" data-amt="{{ ribbon.wood }}" data-cap="{{ ribbon.warehouse }}"><div class="gauge__top"><span class="gauge__name">Wood</span><span class="gauge__rate">+{{ ribbon.wood_rate }}/h</span></div><div class="gauge__amt">{{ ribbon.wood }}<small> / {{ ribbon.warehouse }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
-  <div class="gauge gauge--clay" data-amt="{{ ribbon.clay }}" data-cap="{{ ribbon.warehouse }}"><div class="gauge__top"><span class="gauge__name">Clay</span><span class="gauge__rate">+{{ ribbon.clay_rate }}/h</span></div><div class="gauge__amt">{{ ribbon.clay }}<small> / {{ ribbon.warehouse }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
-  <div class="gauge gauge--iron" data-amt="{{ ribbon.iron }}" data-cap="{{ ribbon.warehouse }}"><div class="gauge__top"><span class="gauge__name">Iron</span><span class="gauge__rate">+{{ ribbon.iron_rate }}/h</span></div><div class="gauge__amt">{{ ribbon.iron }}<small> / {{ ribbon.warehouse }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
-  <div class="gauge gauge--crop" data-amt="{{ ribbon.crop }}" data-cap="{{ ribbon.granary }}"><div class="gauge__top"><span class="gauge__name">Crop</span><span class="gauge__rate{% if ribbon.crop_rate < 0 %} gauge__rate--neg{% endif %}">{% if ribbon.crop_rate < 0 %}{{ ribbon.crop_rate }}{% else %}+{{ ribbon.crop_rate }}{% endif %}/h</span></div><div class="gauge__amt">{{ ribbon.crop }}<small> / {{ ribbon.granary }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
+  <div class="gauge gauge--wood" data-amt="{{ ribbon.wood }}" data-cap="{{ ribbon.warehouse }}" data-rate="{{ ribbon.wood_rate }}"><div class="gauge__top"><span class="gauge__name">Wood</span><span class="gauge__rate">+{{ ribbon.wood_rate }}/h</span></div><div class="gauge__amt"><span class="gauge__now">{{ ribbon.wood }}</span><small> / {{ ribbon.warehouse }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
+  <div class="gauge gauge--clay" data-amt="{{ ribbon.clay }}" data-cap="{{ ribbon.warehouse }}" data-rate="{{ ribbon.clay_rate }}"><div class="gauge__top"><span class="gauge__name">Clay</span><span class="gauge__rate">+{{ ribbon.clay_rate }}/h</span></div><div class="gauge__amt"><span class="gauge__now">{{ ribbon.clay }}</span><small> / {{ ribbon.warehouse }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
+  <div class="gauge gauge--iron" data-amt="{{ ribbon.iron }}" data-cap="{{ ribbon.warehouse }}" data-rate="{{ ribbon.iron_rate }}"><div class="gauge__top"><span class="gauge__name">Iron</span><span class="gauge__rate">+{{ ribbon.iron_rate }}/h</span></div><div class="gauge__amt"><span class="gauge__now">{{ ribbon.iron }}</span><small> / {{ ribbon.warehouse }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
+  <div class="gauge gauge--crop" data-amt="{{ ribbon.crop }}" data-cap="{{ ribbon.granary }}" data-rate="{{ ribbon.crop_rate }}"><div class="gauge__top"><span class="gauge__name">Crop</span><span class="gauge__rate{% if ribbon.crop_rate < 0 %} gauge__rate--neg{% endif %}">{% if ribbon.crop_rate < 0 %}{{ ribbon.crop_rate }}{% else %}+{{ ribbon.crop_rate }}{% endif %}/h</span></div><div class="gauge__amt"><span class="gauge__now">{{ ribbon.crop }}</span><small> / {{ ribbon.granary }}</small></div><div class="gauge__track"><i class="gauge__fill"></i></div></div>
 </section>
 <script>
-  for (const g of document.querySelectorAll(".gauge")) {
-    const amt = +g.dataset.amt, cap = +g.dataset.cap, f = g.querySelector(".gauge__fill");
-    if (cap > 0 && f) f.style.width = Math.max(0, Math.min(100, (amt / cap) * 100)).toFixed(1) + "%";
-  }
+  // 070: live resource counter — a purely cosmetic estimate. From the server's snapshot (data-amt) we add
+  // rate × hours-since-load each tick, clamp to the storage cap, and let crop fall (and floor at 0) when its
+  // net rate is negative. The server is never told; a reload re-syncs to the authoritative amounts (P4).
+  (function () {
+    const gauges = [...document.querySelectorAll(".res-ribbon .gauge")].map((g) => ({
+      base: +g.dataset.amt || 0,
+      cap: +g.dataset.cap || 0,
+      rate: +g.dataset.rate || 0,
+      now: g.querySelector(".gauge__now"),
+      fill: g.querySelector(".gauge__fill"),
+    }));
+    const t0 = Date.now();
+    const render = () => {
+      const hours = (Date.now() - t0) / 3600000;
+      for (const g of gauges) {
+        let v = g.base + g.rate * hours;
+        if (g.cap > 0 && v > g.cap) v = g.cap;
+        if (v < 0) v = 0;
+        if (g.now) g.now.textContent = String(Math.floor(v));
+        if (g.cap > 0 && g.fill) {
+          g.fill.style.width = Math.max(0, Math.min(100, (v / g.cap) * 100)).toFixed(1) + "%";
+        }
+      }
+    };
+    render();
+    setInterval(render, 1000);
+  })();
 </script>
