@@ -682,6 +682,8 @@ async fn training_flow_and_garrison(pool: sqlx::PgPool) {
     assert!(body.contains("bld-hero") && body.contains("res-ribbon"));
     assert!(body.contains("roster--train") && body.contains("unit__thumb"));
     assert!(body.contains("/static/units/gauls_phalanx.webp"));
+    // 072: a "Max" button prefills the largest affordable count.
+    assert!(body.contains("train-max") && body.contains(">Max<"));
 
     // 005 AC2/AC9: order a batch; PRG back to the page, which shows the queue + countdown.
     let res = c
@@ -5143,6 +5145,54 @@ async fn favicon_declared_and_autocomplete_present(pool: sqlx::PgPool) {
     assert!(
         styleguide.contains("rel=\"icon\""),
         "the standalone styleguide also declares the favicon"
+    );
+}
+
+/// 072: the village plan names *why* a slot can't be built — with no resources, every buildable slot shows
+/// the explicit shortfall, not the old generic "short on resources or the queue is busy" hint.
+#[sqlx::test(migrations = "../../migrations")]
+async fn village_plan_names_the_build_gate(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let c = client();
+    let user = unique("gate");
+    let email = format!("{user}@example.com");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    // Drain the village so every buildable slot is unaffordable (and accrual is reset to ~0).
+    sqlx::query(
+        "UPDATE village_resources SET wood = 0, clay = 0, iron = 0, crop = 0, updated_at = now() \
+         WHERE village_id IN (SELECT id FROM villages WHERE owner_id = \
+         (SELECT id FROM users WHERE username = $1))",
+    )
+    .bind(&user)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let vid = village_uuid(&pool, &user).await;
+    let body = c
+        .get(format!("{base}/w/{home}/village/{vid}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains("data-gate=\"Need "),
+        "an unaffordable slot names the resource shortfall"
+    );
+    assert!(
+        !body.contains("short on resources or the queue is busy"),
+        "the old generic gate message is gone"
     );
 }
 

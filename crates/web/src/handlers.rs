@@ -1075,13 +1075,34 @@ pub async fn village(
      -> BuildRow {
         let cost = build_rules.cost(target, level);
         let at_max = cost.is_none();
-        let can_order = !lane_busy(target) && cost.is_some_and(|c| can_afford(amounts, c));
+        let busy = lane_busy(target);
+        let affordable = cost.is_some_and(|c| can_afford(amounts, c));
+        let can_order = !busy && affordable;
         let c = cost.unwrap_or(ResourceAmounts {
             wood: 0,
             clay: 0,
             iron: 0,
             crop: 0,
         });
+        // 072: the explicit reason a non-max slot can't be ordered — a busy lane outranks affordability
+        // (you can't build while the lane is occupied even if you can pay), else the exact shortfall.
+        let gate = if at_max || can_order {
+            String::new()
+        } else if busy {
+            "A construction is already underway here — wait for it to finish.".to_owned()
+        } else {
+            let short: Vec<String> = [
+                ("wood", c.wood - amounts.wood),
+                ("clay", c.clay - amounts.clay),
+                ("iron", c.iron - amounts.iron),
+                ("crop", c.crop - amounts.crop),
+            ]
+            .into_iter()
+            .filter(|(_, missing)| *missing > 0)
+            .map(|(name, missing)| format!("{missing} more {name}"))
+            .collect();
+            format!("Need {}.", short.join(", "))
+        };
         // If this exact slot is under construction, surface its finish time for the plan (069).
         let building_ms = active
             .iter()
@@ -1104,6 +1125,7 @@ pub async fn village(
             // Blank at max (no next level to describe).
             effect: if at_max { String::new() } else { effect },
             building_ms,
+            gate,
         }
     };
 
@@ -1133,6 +1155,7 @@ pub async fn village(
                 row.at_max = true;
                 row.can_order = false;
                 row.effect = String::new();
+                row.gate = String::new();
             }
             row
         })

@@ -90,7 +90,7 @@
             data-name="{{ b.label }}" data-lvl="{{ b.level }}" data-target="{{ b.level + 1 }}" data-eff="{{ b.effect }}"
             data-table="building" data-slot="{{ b.slot }}" data-kind="{{ b.kind }}"
             data-cw="{{ b.cost_wood }}" data-cc="{{ b.cost_clay }}" data-ci="{{ b.cost_iron }}" data-cr="{{ b.cost_crop }}"
-            data-can="{% if b.can_order %}1{% else %}0{% endif %}" data-max="{% if b.at_max %}1{% else %}0{% endif %}"
+            data-can="{% if b.can_order %}1{% else %}0{% endif %}" data-max="{% if b.at_max %}1{% else %}0{% endif %}" data-gate="{{ b.gate }}"
             {% if b.page != "" %}data-pageurl="/w/{{ world }}/village/{{ village_id }}/{{ b.page }}"{% endif %}>
             <svg><use href="#i-{{ b.kind }}"/></svg>
             <span class="vplot__n">{{ b.label }}</span>
@@ -127,7 +127,7 @@
             data-name="{{ f.label }}" data-lvl="{{ f.level }}" data-target="{{ f.level + 1 }}" data-eff="{{ f.effect }}"
             data-table="field" data-slot="{{ f.slot }}" data-kind="" data-icon="i-{{ f.res }}"
             data-cw="{{ f.cost_wood }}" data-cc="{{ f.cost_clay }}" data-ci="{{ f.cost_iron }}" data-cr="{{ f.cost_crop }}"
-            data-can="{% if f.can_order %}1{% else %}0{% endif %}" data-max="{% if f.at_max %}1{% else %}0{% endif %}">
+            data-can="{% if f.can_order %}1{% else %}0{% endif %}" data-max="{% if f.at_max %}1{% else %}0{% endif %}" data-gate="{{ f.gate }}">
             <span class="vfield__dot"><svg><use href="#i-{{ f.res }}"/></svg></span>
             <span class="vfield__main"><span class="vfield__n">{{ f.label }}</span><span class="vfield__r">{% if let Some(ms) = f.building_ms %}building · <span class="countdown" data-deadline="{{ ms }}">…</span>{% else if !f.effect.is_empty() %}{{ f.effect }}{% else %}max{% endif %}</span></span>
             <span class="vfield__lvl">{{ f.level }}</span>
@@ -220,7 +220,7 @@
       btn.disabled = d.can !== "1";
       btn.textContent = d.lvl === "0" ? "Build" : ("Upgrade to " + d.target);
       btn.style.display = d.max === "1" ? "none" : "";
-      gate.textContent = (d.can !== "1" && d.max !== "1") ? "Can't build yet — short on resources or the queue is busy." : (d.max === "1" ? "Max level reached." : "");
+      gate.textContent = d.max === "1" ? "Max level reached." : (d.can !== "1" ? (d.gate || "Can't build yet.") : "");
       if (d.pageurl) { enter.href = d.pageurl; enter.style.display = ""; enter.textContent = "Enter " + d.name + " →"; }
       else { enter.style.display = "none"; }
     };
