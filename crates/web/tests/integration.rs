@@ -2454,6 +2454,8 @@ async fn combat_raid_and_reports_flow(pool: sqlx::PgPool) {
         .unwrap();
     assert!(atk_reports.contains(&format!("Raid on {defender} ({dx}|{dy})")));
     assert!(atk_reports.contains("Victory"));
+    // 075: the redesigned reports list — page header + report cards.
+    assert!(atk_reports.contains("phead") && atk_reports.contains("repcard"));
 
     let def_reports = cd
         .get(format!("{base}/w/{home}/reports"))
@@ -2483,6 +2485,8 @@ async fn combat_raid_and_reports_flow(pool: sqlx::PgPool) {
     assert!(detail.contains("Swordsman"));
     assert!(detail.contains("Luck"));
     assert!(detail.contains("Morale"));
+    // 075: the redesigned battle report — page header + the two combatant panels.
+    assert!(detail.contains("phead") && detail.contains("repsides"));
 
     // Visitors cannot read reports (roles table, P4).
     let anon = client()
@@ -2620,6 +2624,7 @@ async fn scout_mission_and_intel_report_flow(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(detail.contains("Resources"));
+    assert!(detail.contains("phead")); // 075: the redesigned scout report page header
 
     // AC8: an undetected target (no counter-espionage) sees no report at all.
     let _ = t_village;

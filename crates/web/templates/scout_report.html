@@ -1,41 +1,33 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Scouting report</h1>
-  <p class="muted"><a href="/w/{{ world }}/reports">← All reports</a></p>
-  <p><strong>{{ headline }}</strong> — {{ summary }}</p>
-</section>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Scouting report</div>
+    <h1 class="phead__title">{{ headline }}</h1>
+    <p class="phead__sub">{{ summary }}</p>
+    <a class="phead__back" href="/w/{{ world }}/reports">← All reports</a>
+  </section>
 
-{% if is_scouter %}
-<section class="panel">
-  <h2>{{ target_type }}</h2>
-  {% match intel_kind %}
-  {% when "resources" %}
-  <table class="table">
-    <thead><tr><th>Resource</th><th class="num">Stored</th></tr></thead>
-    <tbody>
-      {% for r in resources %}
-      <tr><td>{{ r.name }}</td><td class="num">{{ r.amount }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% when "defenses" %}
-  <p class="muted">Wall level {{ wall_level }}</p>
-  {% if troops.is_empty() %}
-  <p class="muted">No troops stationed.</p>
-  {% else %}
-  <table class="table">
-    <thead><tr><th>Unit</th><th class="num">Stationed</th></tr></thead>
-    <tbody>
-      {% for u in troops %}
-      <tr><td>{{ u.name }}</td><td class="num">{{ u.count }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  {% if is_scouter %}
+  <div class="bld-card">
+    <div class="bld-card__h"><h3>{{ target_type }}</h3></div>
+    <div class="bld-card__b">
+      {% match intel_kind %}
+      {% when "resources" %}
+        {% for r in resources %}<div class="statline"><span>{{ r.name }}</span><b>{{ r.amount }}</b></div>{% endfor %}
+      {% when "defenses" %}
+        <div class="statline"><span>Wall level</span><b>{{ wall_level }}</b></div>
+        {% if troops.is_empty() %}
+        <p class="bld-tip">No troops stationed.</p>
+        {% else %}
+        {% for u in troops %}<div class="statline"><span>{{ u.name }}</span><b>{{ u.count }}</b></div>{% endfor %}
+        {% endif %}
+      {% when _ %}
+        <p class="bld-tip">No intel returned — the mission was lost.</p>
+      {% endmatch %}
+    </div>
+  </div>
   {% endif %}
-  {% when _ %}
-  <p class="muted">No intel returned — the mission was lost.</p>
-  {% endmatch %}
-</section>
-{% endif %}
+</div>
 {% endblock %}
