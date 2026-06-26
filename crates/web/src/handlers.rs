@@ -1089,7 +1089,8 @@ pub async fn village(
         let gate = if at_max || can_order {
             String::new()
         } else if busy {
-            "A construction is already underway here — wait for it to finish.".to_owned()
+            // `lane_busy` is lane-wide (the build queue, not this slot), so don't say "here".
+            "A construction is already underway — wait for it to finish.".to_owned()
         } else {
             let short: Vec<String> = [
                 ("wood", c.wood - amounts.wood),
