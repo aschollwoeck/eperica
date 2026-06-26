@@ -1,209 +1,215 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Alliance</h1>
-  <p class="muted"><a href="/w/{{ world }}/village">← Back to the village</a></p>
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">{% if in_alliance %}Your alliance · [{{ tag }}]{% else %}Alliance{% endif %}</div>
+    <h1 class="phead__title">{% if in_alliance %}{{ name }}{% else %}Alliance{% endif %}</h1>
+    {% if in_alliance %}<p class="phead__sub">Your role: <b>{{ my_role }}</b> · <a href="/w/{{ world }}/alliance/forum">Forum →</a></p>
+    {% else %}<p class="phead__sub">Band together for shared defence, diplomacy and a forum — found or join one via an Embassy.</p>{% endif %}
+    <a class="phead__back" href="/w/{{ world }}/village">← Village</a>
+  </section>
 
   {% if !in_alliance %}
-  <p class="muted">You are not in an alliance. Build an <strong>Embassy</strong> (level {{ join_level }} to
-    join, level {{ found_level }} to found). Your highest Embassy: level {{ embassy_level }}.</p>
+  <section class="panel">
+    <p>You are not in an alliance. Build an <strong>Embassy</strong> (level {{ join_level }} to join, level {{ found_level }} to found). Your highest Embassy: level {{ embassy_level }}.</p>
+  </section>
 
   {% if can_found %}
-  <h2>Found an alliance</h2>
-  <form method="post" action="/w/{{ world }}/alliance/found" class="form">
-    <label>Name <input type="text" name="name" required maxlength="32"></label>
-    <label>Tag <input type="text" name="tag" required maxlength="8" style="width:6em"></label>
-    <button class="btn btn--primary" type="submit">Found</button>
-  </form>
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Found an alliance</h2><span class="bld-cols__rule"></span></div>
+    <form method="post" action="/w/{{ world }}/alliance/found" class="form">
+      <label>Name <input type="text" name="name" required maxlength="32"></label>
+      <label>Tag <input type="text" name="tag" required maxlength="8" style="width:6em"></label>
+      <p><button class="btn btn--primary" type="submit">Found</button></p>
+    </form>
+  </div>
   {% endif %}
 
-  <h2>Invitations</h2>
-  {% if pending.is_empty() %}
-  <p class="muted">No pending invitations.</p>
-  {% else %}
-  <table class="table">
-    <thead><tr><th>Alliance</th><th></th></tr></thead>
-    <tbody>
-      {% for inv in pending %}
-      <tr>
-        <td>{{ inv.name }} [{{ inv.tag }}]</td>
-        <td>
-          <form method="post" action="/w/{{ world }}/alliance/respond" style="display:inline">
-            <input type="hidden" name="alliance" value="{{ inv.alliance_id }}">
-            <input type="hidden" name="accept" value="true">
-            <button class="btn btn--primary" type="submit">Accept</button>
-          </form>
-          <form method="post" action="/w/{{ world }}/alliance/respond" style="display:inline">
-            <input type="hidden" name="alliance" value="{{ inv.alliance_id }}">
-            <input type="hidden" name="accept" value="false">
-            <button class="btn" type="submit">Decline</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Invitations</h2><span class="bld-cols__rule"></span></div>
+    {% if pending.is_empty() %}
+    <p class="muted">No pending invitations.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th>Alliance</th><th></th></tr></thead>
+      <tbody>
+        {% for inv in pending %}
+        <tr>
+          <td>{{ inv.name }} [{{ inv.tag }}]</td>
+          <td>
+            <form method="post" action="/w/{{ world }}/alliance/respond" class="inline">
+              <input type="hidden" name="alliance" value="{{ inv.alliance_id }}"><input type="hidden" name="accept" value="true">
+              <button class="btn btn--small btn--primary" type="submit">Accept</button>
+            </form>
+            <form method="post" action="/w/{{ world }}/alliance/respond" class="inline">
+              <input type="hidden" name="alliance" value="{{ inv.alliance_id }}"><input type="hidden" name="accept" value="false">
+              <button class="btn btn--small" type="submit">Decline</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
 
   {% else %}
-  <h2>{{ name }} <span class="muted">[{{ tag }}]</span></h2>
-  <p class="muted">Your role: {{ my_role }} · <a href="/w/{{ world }}/alliance/forum">Forum</a></p>
 
   {% if can_invite %}
-  <h3>Invite a player</h3>
-  <form method="post" action="/w/{{ world }}/alliance/invite" class="form">
-    <label>Player <input type="text" name="username" required></label>
-    <button class="btn btn--primary" type="submit">Invite</button>
-  </form>
-  {% if !outgoing_invites.is_empty() %}
-  <p class="muted">Pending invites:
-    {% for o in outgoing_invites %}
-    <span>{{ o.invitee_name }}
-      <form method="post" action="/w/{{ world }}/alliance/revoke" style="display:inline">
-        <input type="hidden" name="username" value="{{ o.invitee_name }}">
-        <button class="btn btn--small" type="submit">revoke</button>
-      </form></span>
-    {% endfor %}
-  </p>
-  {% endif %}
-  {% endif %}
-
-  <h3>Members</h3>
-  <table class="table">
-    <thead><tr><th>Member</th><th>Role</th><th>Rights</th><th></th></tr></thead>
-    <tbody>
-      {% for m in roster %}
-      <tr>
-        <td>{{ m.name }}{% if m.is_self %} <span class="muted">(you)</span>{% endif %}</td>
-        <td>{{ m.role }}</td>
-        <td class="muted">{{ m.rights }}</td>
-        <td>
-          {% if can_expel && !m.is_self %}
-          <form method="post" action="/w/{{ world }}/alliance/expel" style="display:inline">
-            <input type="hidden" name="target" value="{{ m.player_id }}">
-            <button class="btn btn--small" type="submit">expel</button>
-          </form>
-          {% endif %}
-          {% if is_founder && !m.is_self %}
-          <form method="post" action="/w/{{ world }}/alliance/transfer" style="display:inline"
-                onsubmit="return confirm('Hand over the alliance to {{ m.name }}?')">
-            <input type="hidden" name="target" value="{{ m.player_id }}">
-            <button class="btn btn--small" type="submit">make founder</button>
-          </form>
-          {% endif %}
-          {% if can_manage && !m.is_self %}
-          <form method="post" action="/w/{{ world }}/alliance/role" style="display:inline">
-            <input type="hidden" name="target" value="{{ m.player_id }}">
-            <select name="role">
-              <option value="leader">Leader</option>
-              <option value="member">Member</option>
-            </select>
-            <label><input type="checkbox" name="invite" value="true"> invite</label>
-            <label><input type="checkbox" name="expel" value="true"> expel</label>
-            <label><input type="checkbox" name="diplomacy" value="true"> diplomacy</label>
-            <label><input type="checkbox" name="announce" value="true"> announce</label>
-            <label><input type="checkbox" name="manage_roles" value="true"> manage</label>
-            <button class="btn btn--small" type="submit">set</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Invite a player</h2><span class="bld-cols__rule"></span></div>
+    <form method="post" action="/w/{{ world }}/alliance/invite" class="form">
+      <label>Player <input type="text" name="username" required></label>
+      <p><button class="btn btn--primary" type="submit">Invite</button></p>
+    </form>
+    {% if !outgoing_invites.is_empty() %}
+    <p class="muted">Pending invites:
+      {% for o in outgoing_invites %}
+      <span class="inline">{{ o.invitee_name }}
+        <form method="post" action="/w/{{ world }}/alliance/revoke" class="inline">
+          <input type="hidden" name="username" value="{{ o.invitee_name }}">
+          <button class="btn btn--small" type="submit">revoke</button>
+        </form></span>
       {% endfor %}
-    </tbody>
-  </table>
-
-  <h3>Diplomacy</h3>
-  {% if can_diplomacy %}
-  <form method="post" action="/w/{{ world }}/alliance/diplomacy" class="form">
-    <label>Alliance id <input type="text" name="other" required></label>
-    <select name="command">
-      <option value="declare_war">Declare war</option>
-      <option value="propose_confederation">Propose confederation</option>
-      <option value="accept_confederation">Accept confederation</option>
-      <option value="cancel">Cancel (neutral)</option>
-    </select>
-    <button class="btn" type="submit">Set</button>
-  </form>
+    </p>
+    {% endif %}
+  </div>
   {% endif %}
-  {% if diplomacy.is_empty() %}
-  <p class="muted">No diplomatic relations.</p>
-  {% else %}
-  <table class="table">
-    <thead><tr><th>Alliance</th><th>Stance</th>{% if can_diplomacy %}<th></th>{% endif %}</tr></thead>
-    <tbody>
-      {% for d in diplomacy %}
-      <tr>
-        <td>{{ d.other }}</td>
-        <td>{{ d.label }}</td>
-        {% if can_diplomacy %}
-        <td>
-          {% if d.can_accept %}
-          <form method="post" action="/w/{{ world }}/alliance/diplomacy" style="display:inline">
-            <input type="hidden" name="other" value="{{ d.other_id }}">
-            <input type="hidden" name="command" value="accept_confederation">
-            <button class="btn btn--small btn--primary" type="submit">accept</button>
-          </form>
+
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Members</h2><span class="bld-cols__rule"></span><span class="sub">{{ roster.len() }}</span></div>
+    <table class="table">
+      <thead><tr><th>Member</th><th>Role</th><th>Rights</th><th></th></tr></thead>
+      <tbody>
+        {% for m in roster %}
+        <tr>
+          <td>{{ m.name }}{% if m.is_self %} <span class="muted">(you)</span>{% endif %}</td>
+          <td>{{ m.role }}</td>
+          <td class="muted">{{ m.rights }}</td>
+          <td>
+            {% if can_expel && !m.is_self %}
+            <form method="post" action="/w/{{ world }}/alliance/expel" class="inline">
+              <input type="hidden" name="target" value="{{ m.player_id }}">
+              <button class="btn btn--small" type="submit">expel</button>
+            </form>
+            {% endif %}
+            {% if is_founder && !m.is_self %}
+            <form method="post" action="/w/{{ world }}/alliance/transfer" class="inline"
+                  onsubmit="return confirm('Hand over the alliance to {{ m.name }}?')">
+              <input type="hidden" name="target" value="{{ m.player_id }}">
+              <button class="btn btn--small" type="submit">make founder</button>
+            </form>
+            {% endif %}
+            {% if can_manage && !m.is_self %}
+            <form method="post" action="/w/{{ world }}/alliance/role" class="inline">
+              <input type="hidden" name="target" value="{{ m.player_id }}">
+              <select name="role">
+                <option value="leader">Leader</option>
+                <option value="member">Member</option>
+              </select>
+              <label><input type="checkbox" name="invite" value="true"> invite</label>
+              <label><input type="checkbox" name="expel" value="true"> expel</label>
+              <label><input type="checkbox" name="diplomacy" value="true"> diplomacy</label>
+              <label><input type="checkbox" name="announce" value="true"> announce</label>
+              <label><input type="checkbox" name="manage_roles" value="true"> manage</label>
+              <button class="btn btn--small" type="submit">set</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Diplomacy</h2><span class="bld-cols__rule"></span></div>
+    {% if can_diplomacy %}
+    <form method="post" action="/w/{{ world }}/alliance/diplomacy" class="inline-form" style="margin-bottom:12px">
+      <label>Alliance id <input type="text" name="other" required></label>
+      <select name="command">
+        <option value="declare_war">Declare war</option>
+        <option value="propose_confederation">Propose confederation</option>
+        <option value="accept_confederation">Accept confederation</option>
+        <option value="cancel">Cancel (neutral)</option>
+      </select>
+      <button class="btn btn--secondary" type="submit">Set</button>
+    </form>
+    {% endif %}
+    {% if diplomacy.is_empty() %}
+    <p class="muted">No diplomatic relations.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th>Alliance</th><th>Stance</th>{% if can_diplomacy %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+        {% for d in diplomacy %}
+        <tr>
+          <td>{{ d.other }}</td>
+          <td>{{ d.label }}</td>
+          {% if can_diplomacy %}
+          <td>
+            {% if d.can_accept %}
+            <form method="post" action="/w/{{ world }}/alliance/diplomacy" class="inline">
+              <input type="hidden" name="other" value="{{ d.other_id }}"><input type="hidden" name="command" value="accept_confederation">
+              <button class="btn btn--small btn--primary" type="submit">accept</button>
+            </form>
+            {% endif %}
+            <form method="post" action="/w/{{ world }}/alliance/diplomacy" class="inline">
+              <input type="hidden" name="other" value="{{ d.other_id }}"><input type="hidden" name="command" value="cancel">
+              <button class="btn btn--small" type="submit">cancel</button>
+            </form>
+          </td>
           {% endif %}
-          <form method="post" action="/w/{{ world }}/alliance/diplomacy" style="display:inline">
-            <input type="hidden" name="other" value="{{ d.other_id }}">
-            <input type="hidden" name="command" value="cancel">
-            <button class="btn btn--small" type="submit">cancel</button>
-          </form>
-        </td>
-        {% endif %}
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
 
-  <h3>Incoming attacks (shared defence)</h3>
-  {% if incoming.is_empty() %}
-  <p class="muted">No incoming attacks on allied villages.</p>
-  {% else %}
-  <table class="table">
-    <thead><tr><th>Target</th><th>Lands</th></tr></thead>
-    <tbody>
-      {% for i in incoming %}
-      <tr>
-        <td>({{ i.x }}|{{ i.y }})</td>
-        <td><span class="when" data-ms="{{ i.arrive_ms }}">…</span></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Incoming attacks</h2><span class="bld-cols__rule"></span><span class="sub">shared defence</span></div>
+    {% if incoming.is_empty() %}
+    <p class="muted">No incoming attacks on allied villages.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th>Target</th><th>Lands</th></tr></thead>
+      <tbody>
+        {% for i in incoming %}<tr><td>({{ i.x }}|{{ i.y }})</td><td><span class="when" data-ms="{{ i.arrive_ms }}">…</span></td></tr>{% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
 
-  <h3>Allied villages</h3>
-  {% if allied_villages.is_empty() %}
-  <p class="muted">None.</p>
-  {% else %}
-  <table class="table">
-    <thead><tr><th>Owner</th><th>Village</th></tr></thead>
-    <tbody>
-      {% for v in allied_villages %}
-      <tr>
-        <td>{{ v.owner }}</td>
-        <td><a href="/w/{{ world }}/map?x={{ v.x }}&y={{ v.y }}">({{ v.x }}|{{ v.y }})</a></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Allied villages</h2><span class="bld-cols__rule"></span></div>
+    {% if allied_villages.is_empty() %}
+    <p class="muted">None.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th>Owner</th><th>Village</th></tr></thead>
+      <tbody>
+        {% for v in allied_villages %}<tr><td>{{ v.owner }}</td><td><a href="/w/{{ world }}/map?x={{ v.x }}&y={{ v.y }}">({{ v.x }}|{{ v.y }})</a></td></tr>{% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
 
-  <h3>Leave / disband</h3>
-  {% if is_founder %}
-  <form method="post" action="/w/{{ world }}/alliance/disband"
-        onsubmit="return confirm('Disband {{ name }}? This cannot be undone.')">
-    <button class="btn btn--danger" type="submit">Disband alliance</button>
-  </form>
-  {% else %}
-  <form method="post" action="/w/{{ world }}/alliance/leave">
-    <button class="btn" type="submit">Leave alliance</button>
-  </form>
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Leave / disband</h2><span class="bld-cols__rule"></span></div>
+    {% if is_founder %}
+    <form method="post" action="/w/{{ world }}/alliance/disband" onsubmit="return confirm('Disband {{ name }}? This cannot be undone.')">
+      <button class="btn btn--danger" type="submit">Disband alliance</button>
+    </form>
+    {% else %}
+    <form method="post" action="/w/{{ world }}/alliance/leave">
+      <button class="btn btn--secondary" type="submit">Leave alliance</button>
+    </form>
+    {% endif %}
+  </div>
   {% endif %}
-  {% endif %}
-</section>
+</div>
 <script>
   for (const el of document.querySelectorAll(".when")) {
     const d = new Date(Number(el.dataset.ms));
