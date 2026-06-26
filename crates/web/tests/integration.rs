@@ -7076,6 +7076,7 @@ async fn account_sitting_takeover_restrictions_and_audit(pool: sqlx::PgPool) {
         "the owner's audit log shows the sitter's action"
     );
     assert!(log.contains(&sitter_name), "the audit names the sitter");
+    assert!(log.contains("phead")); // 078: the redesigned account-sitting page header
 
     // Stop sitting → back to the sitter's own account.
     js.post(format!("{base}/sitting/stop"))
