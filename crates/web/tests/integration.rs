@@ -5543,6 +5543,7 @@ async fn dm_conversation_flow(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(list.contains(&alice), "alice's thread is listed for bob");
+    assert!(list.contains("phead") && list.contains("conversations")); // 077: redesigned inbox
 
     // Bob opens the thread (key uses Alice's uuid) → sees the message; unread clears.
     let convo = cb
@@ -5554,6 +5555,7 @@ async fn dm_conversation_flow(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(convo.contains("hello bob"), "bob sees the message");
+    assert!(convo.contains("phead") && convo.contains("class=\"messages")); // 077: redesigned chat
     let unread2 = cb
         .get(format!("{base}/messages/unread"))
         .send()
@@ -6128,6 +6130,7 @@ async fn notifications_feed_bell_and_privacy(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(feed.contains("New message"), "the feed shows the alert");
+    assert!(feed.contains("phead")); // 077: the redesigned notifications page header
     assert_eq!(
         bob_unread(&cb).await.trim(),
         "0",
@@ -6662,7 +6665,9 @@ async fn alliance_forum_flow_and_access(pool: sqlx::PgPool) {
         .send()
         .await
         .unwrap();
-    assert!(list.text().await.unwrap().contains("Muster"));
+    let forum_body = list.text().await.unwrap();
+    assert!(forum_body.contains("Muster"));
+    assert!(forum_body.contains("phead") && forum_body.contains("conversations")); // 077: redesigned forum
     let reply = cb
         .post(format!("{base}/w/{home}/alliance/forum/{thread_id}/reply"))
         .form(&[("body", "Confirmed")])
@@ -6685,6 +6690,7 @@ async fn alliance_forum_flow_and_access(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(thread.contains("Be online at 20:00") && thread.contains("Confirmed"));
+    assert!(thread.contains("class=\"messages")); // 077: redesigned forum thread (post bubbles)
 
     // Carol (no alliance) is refused the forum.
     let carol = cc

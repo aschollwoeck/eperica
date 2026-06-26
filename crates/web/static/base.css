@@ -325,10 +325,11 @@ a { color: var(--c-gold); }
   text-align: center;
 }
 
-/* 026: notifications feed — unread rows stand out until viewed. */
-.notifications { list-style: none; padding: 0; }
-.notifications li { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--c-border); }
-.notifications li.unread { background: var(--c-panel-alt); font-weight: 600; }
+/* 026/077: notifications feed — cards; unread rows carry a gold accent until viewed. */
+.notifications { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.notifications li { padding: 12px 15px; border: 1px solid var(--c-border); border-left: 3px solid transparent; border-radius: var(--radius-md); background: var(--c-panel); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .03); }
+.notifications li a { display: block; text-decoration: none; color: var(--c-ink); }
+.notifications li.unread { border-left-color: var(--c-gold); background: color-mix(in srgb, var(--c-gold) 7%, var(--c-panel)); }
 
 /* 025: presence indicator — a small online/away marker next to a player's name. */
 .presence { font-size: 0.85rem; margin-left: var(--space-2); white-space: nowrap; }
@@ -781,3 +782,30 @@ a { color: var(--c-gold); }
 /* a styled bio textarea form + the public bio readout */
 .bioform textarea { width: 100%; background: var(--c-bg); border: 1px solid var(--c-border); color: var(--c-ink); border-radius: var(--radius-sm); padding: 10px 12px; font: inherit; resize: vertical; }
 .bio-read { color: var(--c-ink); font-style: italic; border-left: 3px solid var(--c-border); padding-left: 12px; margin: 4px 0 0; }
+
+/* ============================================================================
+   077 — communication pages: conversation/thread lists, chat bubbles, send form.
+   ============================================================================ */
+.preview { display: block; color: var(--c-ink-muted); font-size: .85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px; }
+
+/* conversation inbox + forum thread list — clickable cards */
+.conversations { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.conversations li { border: 1px solid var(--c-border); border-radius: var(--radius-md); background: var(--c-panel); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .03); }
+.conversations li:hover { border-color: var(--c-gold); }
+.conversations li a { display: block; padding: 12px 15px; text-decoration: none; color: var(--c-ink); }
+.conversations strong { font-family: var(--c-serif, Georgia, serif); font-weight: 400; font-size: 1.04rem; color: var(--c-ink); }
+
+/* chat / thread messages — bubbles (mine ember & right, theirs left) */
+.messages { list-style: none; padding: 0; margin: 0 0 16px; display: flex; flex-direction: column; gap: 8px; }
+.messages li { max-width: 80%; padding: 9px 13px; border: 1px solid var(--c-border); border-radius: 11px; background: var(--c-panel); font-size: .95rem; color: var(--c-ink); }
+.messages li.mine { align-self: flex-end; background: color-mix(in srgb, var(--c-ember, #C8762E) 15%, var(--c-panel)); border-color: color-mix(in srgb, var(--c-ember, #C8762E) 38%, var(--c-border)); }
+.messages li.theirs { align-self: flex-start; }
+.sender { display: block; font-size: .7rem; color: var(--c-ink-muted); margin-bottom: 2px; }
+
+/* send form — stacked (forum) by default, inline (chat) with the modifier */
+.send { display: flex; flex-direction: column; gap: 9px; }
+.send input[type=text], .send textarea { width: 100%; background: var(--c-bg); border: 1px solid var(--c-border); color: var(--c-ink); border-radius: var(--radius-sm); padding: 9px 12px; font: inherit; resize: vertical; }
+.send input:focus-visible, .send textarea:focus-visible { outline: 2px solid var(--c-gold); outline-offset: 1px; }
+.send label { font-size: .88rem; color: var(--c-ink-muted); }
+.send--inline { flex-direction: row; align-items: center; }
+.send--inline input[type=text] { flex: 1; }
