@@ -79,6 +79,30 @@ fn resource_label(kind: ResourceKind) -> &'static str {
     }
 }
 
+/// Lowercase resource slug for the village-plan field plot colour (069).
+fn resource_slug(kind: ResourceKind) -> &'static str {
+    match kind {
+        ResourceKind::Wood => "wood",
+        ResourceKind::Clay => "clay",
+        ResourceKind::Iron => "iron",
+        ResourceKind::Crop => "crop",
+    }
+}
+
+/// The building's own-page leaf for the village-plan inspector "Enter" link (069); empty if it has no page.
+fn building_page(kind: BuildingKind) -> &'static str {
+    match kind {
+        BuildingKind::Academy => "academy",
+        BuildingKind::Smithy => "smithy",
+        BuildingKind::Barracks => "barracks",
+        BuildingKind::Stable => "stable",
+        BuildingKind::Workshop => "workshop",
+        BuildingKind::RallyPoint => "rally",
+        BuildingKind::Marketplace => "market",
+        _ => "",
+    }
+}
+
 fn tribe_label(tribe: Option<Tribe>) -> &'static str {
     match tribe {
         Some(Tribe::Romans) => "Romans",
@@ -896,8 +920,7 @@ pub async fn village(
 
     let village = economy.village;
     let amounts = economy.economy.amounts;
-    let rates = economy.economy.rates;
-    let caps = economy.economy.capacities;
+    let ribbon = resource_ribbon(&economy.economy);
 
     // The garrison panel + total upkeep (005 AC6/AC9); names resolved via the tribe's roster.
     let roster = village.tribe.map_or(&[][..], |t| ctx.rules.units.roster(t));
@@ -1043,6 +1066,8 @@ pub async fn village(
     let make_row = |table: &'static str,
                     slot: u8,
                     kind: &'static str,
+                    res: &'static str,
+                    page: &'static str,
                     label: String,
                     level: u8,
                     target: BuildTarget,
@@ -1057,10 +1082,17 @@ pub async fn village(
             iron: 0,
             crop: 0,
         });
+        // If this exact slot is under construction, surface its finish time for the plan (069).
+        let building_ms = active
+            .iter()
+            .find(|a| a.target == target)
+            .map(|a| a.complete_at.0);
         BuildRow {
             table,
             slot,
             kind,
+            res,
+            page,
             label,
             level,
             cost_wood: c.wood,
@@ -1071,6 +1103,7 @@ pub async fn village(
             can_order,
             // Blank at max (no next level to describe).
             effect: if at_max { String::new() } else { effect },
+            building_ms,
         }
     };
 
@@ -1086,6 +1119,8 @@ pub async fn village(
             let mut row = make_row(
                 "field",
                 slot,
+                "",
+                resource_slug(f.kind),
                 "",
                 format!("{} field #{slot}", resource_label(f.kind)),
                 f.level,
@@ -1134,6 +1169,8 @@ pub async fn village(
             "building",
             slot,
             building_kind_id(kind),
+            "",
+            building_page(kind),
             building_label(kind).to_owned(),
             level,
             BuildTarget::Building { slot, kind },
@@ -1343,16 +1380,7 @@ pub async fn village(
         tribe: tribe_label(village.tribe),
         x: village.coordinate.x,
         y: village.coordinate.y,
-        wood: amounts.wood,
-        clay: amounts.clay,
-        iron: amounts.iron,
-        crop: amounts.crop,
-        wood_rate: rates.wood,
-        clay_rate: rates.clay,
-        iron_rate: rates.iron,
-        crop_rate: rates.crop_net,
-        warehouse: caps.warehouse,
-        granary: caps.granary,
+        ribbon,
         active: active_view,
         has_academy: village
             .buildings

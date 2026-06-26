@@ -76,16 +76,18 @@ mod tests {
             tribe: "Gauls",
             x: 0,
             y: 0,
-            wood: 1,
-            clay: 1,
-            iron: 1,
-            crop: 1,
-            wood_rate: 1,
-            clay_rate: 1,
-            iron_rate: 1,
-            crop_rate,
-            warehouse: 800,
-            granary: 800,
+            ribbon: ResourceRibbon {
+                wood: 1,
+                clay: 1,
+                iron: 1,
+                crop: 1,
+                wood_rate: 1,
+                clay_rate: 1,
+                iron_rate: 1,
+                crop_rate,
+                warehouse: 800,
+                granary: 800,
+            },
             active: Vec::new(),
             has_academy: false,
             has_smithy: false,
@@ -113,31 +115,50 @@ mod tests {
     }
 
     // 065: a building page emits the village's tribe-specific plate (`<tribe>_<slug>.webp`) layered over the
-    // neutral plate; an empty tribe slug emits no tribe layer (the neutral plate is the sole fallback).
+    // neutral plate; an empty tribe slug emits no tribe layer (the neutral plate is the sole fallback). The
+    // Academy stands in for the building pages (the village page itself now uses the 069 fortress plan, not
+    // the building-bg mechanism).
+    fn academy_tpl(tribe_slug: &'static str) -> AcademyTemplate {
+        AcademyTemplate {
+            world: "w".into(),
+            tribe_slug,
+            village_id: "v".into(),
+            village_label: "(0|0)".into(),
+            ribbon: ResourceRibbon {
+                wood: 0,
+                clay: 0,
+                iron: 0,
+                crop: 0,
+                wood_rate: 0,
+                clay_rate: 0,
+                iron_rate: 0,
+                crop_rate: 0,
+                warehouse: 0,
+                granary: 0,
+            },
+            has_academy: true,
+            rows: Vec::new(),
+            active: None,
+        }
+    }
+
     #[test]
     fn building_bg_layers_the_tribe_plate_when_tribe_is_known() {
-        let html = village(5).render().unwrap(); // tribe_slug = "gauls"
-        assert!(html.contains("--building-img: url('/static/buildings/main_building.webp')"));
+        let html = academy_tpl("gauls").render().unwrap();
+        assert!(html.contains("--building-img: url('/static/buildings/academy.webp')"));
         assert!(
-            html.contains(
-                "--building-img-tribe: url('/static/buildings/gauls_main_building.webp')"
-            ),
+            html.contains("--building-img-tribe: url('/static/buildings/gauls_academy.webp')"),
             "the tribe plate is layered for a known tribe"
         );
     }
 
     #[test]
     fn building_bg_omits_the_tribe_plate_when_tribe_is_unknown() {
-        let html = VillageTemplate {
-            tribe_slug: "",
-            ..village(5)
-        }
-        .render()
-        .unwrap();
-        assert!(html.contains("--building-img: url('/static/buildings/main_building.webp')"));
+        let html = academy_tpl("").render().unwrap();
+        assert!(html.contains("--building-img: url('/static/buildings/academy.webp')"));
         assert!(
             !html.contains("--building-img-tribe"),
-            "no tribe layer (nor a stray `_main_building.webp`) when the tribe is unknown"
+            "no tribe layer (nor a stray `_academy.webp`) when the tribe is unknown"
         );
     }
 }
@@ -150,6 +171,10 @@ pub struct BuildRow {
     pub slot: u8,
     /// Building kind id for the POST `kind` value (empty for fields).
     pub kind: &'static str,
+    /// Resource slug for a field plot (`wood`/`clay`/`iron`/`crop`); empty for buildings (069 plan colour).
+    pub res: &'static str,
+    /// The building's own-page leaf for the inspector "Enter" link (e.g. `academy`); empty if none (069).
+    pub page: &'static str,
     /// Display label.
     pub label: String,
     /// Current level (0 = not built, for constructable buildings).
@@ -164,6 +189,9 @@ pub struct BuildRow {
     pub can_order: bool,
     /// What the next level grants (e.g. "Production 30 → 42/h · +2 pop"); empty at max level.
     pub effect: String,
+    /// If this slot is under construction, its completion time (Unix-ms) for the plan's progress + countdown
+    /// (069); `None` otherwise.
+    pub building_ms: Option<i64>,
 }
 
 /// An active build/research/upgrade order, for display + countdown.
@@ -670,19 +698,8 @@ pub struct VillageTemplate {
     pub x: i32,
     /// Village y coordinate.
     pub y: i32,
-    /// Current stored amounts.
-    pub wood: i64,
-    pub clay: i64,
-    pub iron: i64,
-    pub crop: i64,
-    /// Hourly production (crop is net of upkeep, may be negative).
-    pub wood_rate: i64,
-    pub clay_rate: i64,
-    pub iron_rate: i64,
-    pub crop_rate: i64,
-    /// Storage capacities.
-    pub warehouse: i64,
-    pub granary: i64,
+    /// The shared resource ribbon (069).
+    pub ribbon: ResourceRibbon,
     /// The active build orders — at most one per lane (two for Romans, 004 AC13).
     pub active: Vec<ActiveView>,
     /// Whether the village has an Academy (shows the link).

@@ -706,10 +706,14 @@ async fn training_flow_and_garrison(pool: sqlx::PgPool) {
     // 005 AC6/AC9: a garrison shows on the village page and lowers the net crop rate by exactly
     // its upkeep.
     fn crop_rate(body: &str) -> i64 {
-        let crop = &body[body.find("res--crop").expect("crop line")..];
-        let open = crop.find('(').expect("rate parens");
+        // 069: the net crop rate is the crop gauge's hourly rate in the resource ribbon, e.g.
+        // `<span class="gauge__rate ...">-5/h</span>` (or `+10/h`).
+        let crop = &body[body.find("gauge--crop").expect("crop gauge")..];
+        let rate = crop.find("gauge__rate").expect("rate span");
+        let open = crop[rate..].find('>').expect("rate tag") + rate + 1;
         let end = crop[open..].find("/h").expect("rate unit") + open;
-        crop[open + 1..end]
+        crop[open..end]
+            .trim()
             .trim_start_matches('+')
             .parse()
             .expect("rate number")
@@ -1864,7 +1868,7 @@ async fn build_order_flow(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
-    assert!(after.contains("Under construction"));
+    assert!(after.contains("Build queue")); // 069: active builds in the war-room rail
     assert!(after.contains("data-deadline"));
 }
 
@@ -3067,7 +3071,7 @@ async fn settling_culture_panel_switcher_and_capital_flow(pool: sqlx::PgPool) {
         .unwrap();
     assert!(body.contains("Culture points:"), "culture panel shown");
     assert!(body.contains("1 / 1"), "slots used/allowed shown");
-    assert!(body.contains("next village at"), "next CP threshold shown");
+    assert!(body.contains("Next village at"), "next CP threshold shown");
 
     // Seed a free slot: a Residence (grants capacity) + enough pooled CP, and the settler group in
     // the garrison. (Building these via the UI would take game-hours; the flow under test is the
@@ -3197,8 +3201,8 @@ async fn settling_culture_panel_switcher_and_capital_flow(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(
-        switched.contains(&format!("Location ({}, {})", target.x, target.y)),
-        "switching shows the founded village's own page"
+        switched.contains(&format!("{} | {}", target.x, target.y)),
+        "switching shows the founded village's own page (its coordinate chip)"
     );
 
     // AC9/AC10/AC11: the capital is badged on the village page and distinguished on the map. (The
@@ -7044,10 +7048,28 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
         body.contains("Expansion slots "),
         "the Residence shows expansion slots"
     );
-    // The resource bars are wired (fill + ETA computed client-side from these attributes).
+    // 069: the shared resource ribbon's gauges are wired (fill computed client-side from these attrs).
     assert!(
-        body.contains("resbar") && body.contains("data-amt="),
-        "resource bars are present"
+        body.contains("res-ribbon") && body.contains("data-amt="),
+        "resource ribbon is present"
+    );
+    // 069: the command-table redesign — command header, the fortress plan with building plots, the
+    // resource-fields grid, and the click-to-inspect panel that drives the build form.
+    assert!(
+        body.contains("vcmd") && body.contains("Village plan"),
+        "command header + plan"
+    );
+    assert!(
+        body.contains("vplot--main_building") && body.contains("vplot--barracks"),
+        "buildings are plotted in the plan by kind"
+    );
+    assert!(
+        body.contains("vfields") && body.contains("vfield--crop"),
+        "the 18 resource fields render as a colour-coded grid"
+    );
+    assert!(
+        body.contains("vinspect") && body.contains("data-eff="),
+        "the inspector + per-plot upgrade data are wired"
     );
 }
 
