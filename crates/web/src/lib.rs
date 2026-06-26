@@ -413,6 +413,7 @@ pub fn router(state: AppState) -> Router {
             presence_touch,
         ))
         .layer(axum::middleware::from_fn(static_cache_control))
+        .layer(axum::middleware::from_fn(art_blank_on_missing))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -427,6 +428,37 @@ async fn static_cache_control(req: Request, next: Next) -> Response {
         axum::http::header::CACHE_CONTROL,
         axum::http::HeaderValue::from_static("no-cache"),
     );
+    res
+}
+
+/// 071: building/unit art is optional (065/066 use a CSS graceful fallback for missing plates/portraits).
+/// A missing file still 404s and clutters the browser console, so for those two art directories only we
+/// turn a 404 into a 200 transparent 1×1 SVG — silencing the console while keeping the same blank visual.
+/// Real 404s elsewhere (a missing CSS/JS, a bad route) are untouched, and present art keeps its 200/304.
+async fn art_blank_on_missing(req: Request, next: Next) -> Response {
+    const BLANK_SVG: &str =
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"></svg>";
+    let path = req.uri().path();
+    let is_art = path.starts_with("/static/buildings/") || path.starts_with("/static/units/");
+    let res = next.run(req).await;
+    if is_art && res.status() == StatusCode::NOT_FOUND {
+        return (
+            [
+                (
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::HeaderValue::from_static("image/svg+xml"),
+                ),
+                // Match the app-wide revalidation policy so a later-added real plate isn't shadowed
+                // by a heuristically-cached placeholder.
+                (
+                    axum::http::header::CACHE_CONTROL,
+                    axum::http::HeaderValue::from_static("no-cache"),
+                ),
+            ],
+            BLANK_SVG,
+        )
+            .into_response();
+    }
     res
 }
 
