@@ -37,25 +37,26 @@
         {% for u in rows %}
         <article class="unit{% if u.forging %} unit--forging{% else if u.can_order %} unit--ready{% endif %}">
           <span class="unit__thumb" style="background-image:url('/static/units/{{ u.portrait }}.webp')" aria-hidden="true"></span>
-          <div>
-            <div class="unit__name">{{ u.name }}</div>
-            <div class="unit__role">{{ u.role }}</div>
-          </div>
-          <div class="forge">
-            {% if u.forging %}<div class="forge__lvl">forging <b>+{{ u.level }} → +{{ u.target }}</b></div>
-            {% else %}<div class="forge__lvl"><b>+{{ u.level }}</b>{% if !u.effect.is_empty() %} · to +{{ u.target }}{% endif %}</div>{% endif %}
+          <div class="unit__info">
+            <div class="unit__name">{{ u.name }} <span class="unit__role--inline">· {{ u.role }}</span></div>
+            <div class="unit__stats">
+              {% if u.forging %}<span>Forging <b>+{{ u.level }} → +{{ u.target }}</b></span>
+              {% else %}<span>Level <b>+{{ u.level }}</b>{% if !u.effect.is_empty() %} → +{{ u.target }}{% endif %}</span>{% endif %}
+            </div>
             <div class="pips">{% for p in u.pips %}<i class="{% if p %}on{% endif %}"></i>{% endfor %}</div>
+            <div class="unit__eff">{% if u.effect.is_empty() %}<span class="muted">Forged to its limit.</span>{% else %}{{ u.effect }}{% endif %}</div>
           </div>
-          <div class="unit__eff">
-            {% if u.effect.is_empty() %}<span class="muted">Forged to its limit.</span>{% else %}{{ u.effect }}{% endif %}
-            {% if u.can_order %}<div class="unit__cost"><b class="w">{{ u.cost_wood }}</b><b class="c">{{ u.cost_clay }}</b><b class="i">{{ u.cost_iron }}</b><b class="r">{{ u.cost_crop }}</b></div>{% endif %}
+          <div class="unit__price">
+            {% if u.can_order %}
+            <div class="unit__cost"><b class="w">{{ u.cost_wood }}</b><b class="c">{{ u.cost_clay }}</b><b class="i">{{ u.cost_iron }}</b><b class="r">{{ u.cost_crop }}</b></div>
+            <div class="unit__time">forge {{ u.time }}</div>
+            {% endif %}
           </div>
           <div class="unit__act">
             {% if u.forging %}
               {% if let Some(a) = active %}<div class="unit__time">completes <span class="countdown num" data-deadline="{{ a.complete_ms }}">…</span></div>{% endif %}
               <span class="unit__gate">at the anvil</span>
             {% else if u.can_order %}
-              <div class="unit__time">forge time {{ u.time }}</div>
               <form method="post" action="/w/{{ world }}/village/{{ village_id }}/smithy/upgrade">
                 <input type="hidden" name="unit" value="{{ u.id }}">
                 <button class="btn btn--primary" type="submit">Forge +{{ u.target }}</button>

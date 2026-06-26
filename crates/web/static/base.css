@@ -436,21 +436,24 @@ a { color: var(--c-gold); }
 
 /* forge armoury roster */
 .roster { display: flex; flex-direction: column; gap: 10px; }
+/* 073: one consistent roster row for research / training / forging — thumb · info · price · action. */
 .unit {
-  position: relative; display: grid; grid-template-columns: 56px 1.4fr 132px 1.2fr auto; align-items: center;
-  gap: 16px; padding: 11px 14px 11px 13px; border: 1px solid var(--c-border); border-radius: var(--radius-md);
+  position: relative; display: grid; grid-template-columns: 56px minmax(0, 1fr) auto auto; align-items: center;
+  gap: 6px 16px; padding: 11px 14px 11px 13px; border: 1px solid var(--c-border); border-radius: var(--radius-md);
   background: var(--c-panel); box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
 }
+/* the price column — the resource cost + time, always here on every roster page (AC2). */
+.unit__price { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; min-width: 122px; }
+.unit__price:empty { min-width: 0; }
+.unit__price .unit__cost { margin-top: 0; justify-content: flex-end; }
+.unit__price .unit__time { margin: 0; }
 .unit__thumb { width: 56px; height: 56px; border-radius: var(--radius-sm); border: 1px solid var(--c-border); background: #0d1217 center top / cover; }
 .unit__name { font-family: var(--c-serif, Georgia, serif); font-size: 1.06rem; color: var(--c-ink); }
-.unit__role { font-size: .78rem; color: var(--c-ink-muted); }
-.forge { display: flex; flex-direction: column; gap: 5px; }
-.forge__lvl { font-family: ui-monospace, monospace; font-size: .9rem; color: var(--c-gold); }
-.forge__lvl b { font-size: 1.02rem; }
-.pips { display: flex; gap: 3px; }
+/* Smithy forge level track (073: lives in the identity column, width-capped so it doesn't stretch). */
+.pips { display: flex; gap: 3px; width: min(190px, 100%); margin-top: 5px; }
 .pips i { flex: 1; height: 5px; border-radius: 1px; background: #0c1117; box-shadow: inset 0 0 0 1px #232b34; }
 .pips i.on { background: linear-gradient(90deg, #8a6a2f, var(--c-gold)); box-shadow: none; }
-.unit__eff { font-size: .86rem; color: var(--c-ink); }
+.unit__eff { font-size: .82rem; color: var(--c-ink); margin-top: 4px; }
 .unit__eff .up { color: var(--c-success); }
 .unit__cost { font-family: ui-monospace, monospace; font-size: .78rem; color: var(--c-ink); display: flex; flex-wrap: wrap; gap: 9px; margin-top: 3px; }
 .unit__cost b { display: inline-flex; align-items: center; gap: 4px; font-weight: 400; }
@@ -490,15 +493,14 @@ a { color: var(--c-gold); }
   .res-ribbon { grid-template-columns: repeat(2, 1fr); }
   .bld-title { font-size: 1.7rem; }
   .bld-hero { min-height: 270px; }
-  .roster--research .unit, .roster--train .unit, .unit { grid-template-columns: 48px 1fr; }
-  .unit > .forge, .unit > .unit__eff, .unit > .unit__info, .unit > .unit__act { grid-column: 2; text-align: left; }
+  .unit { grid-template-columns: 48px 1fr; }
+  .unit > .unit__info, .unit > .unit__price, .unit > .unit__act { grid-column: 2; text-align: left; }
+  .unit__price { align-items: flex-start; }
+  .unit__price .unit__cost { justify-content: flex-start; }
   .train-form { justify-content: flex-start; }
 }
 
-/* 067 — research / training roster variants: a 3-column row (thumb · info · action).
-   Reuses the 066 .unit / .unit--ready / .bld-* chrome. */
-.roster--research .unit,
-.roster--train .unit { grid-template-columns: 56px 1fr minmax(178px, auto); }
+/* 067/073 — roster identity column (name + role + stats), shared by all roster pages. */
 .unit__info { min-width: 0; }
 .unit__role--inline { color: var(--c-ink-muted); font-weight: 400; font-size: .85rem; }
 .unit__stats { font-family: ui-monospace, monospace; font-size: .78rem; color: var(--c-ink-muted); margin-top: 3px; display: flex; flex-wrap: wrap; gap: 3px 12px; }

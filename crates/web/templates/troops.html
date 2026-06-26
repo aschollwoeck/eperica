@@ -42,8 +42,11 @@
           <span class="unit__thumb" style="background-image:url('/static/units/{{ u.portrait }}.webp')" aria-hidden="true"></span>
           <div class="unit__info">
             <div class="unit__name">{{ u.name }}</div>
-            <div class="unit__stats"><span>Att <b>{{ u.attack }}</b></span><span>Def <b>{{ u.def_inf }}/{{ u.def_cav }}</b></span><span>Upkeep <b>{{ u.upkeep }}</b></span><span>{{ u.time }} each</span></div>
+            <div class="unit__stats"><span>Att <b>{{ u.attack }}</b></span><span>Def <b>{{ u.def_inf }}/{{ u.def_cav }}</b></span><span>Upkeep <b>{{ u.upkeep }}</b></span></div>
+          </div>
+          <div class="unit__price">
             <div class="unit__cost"><b class="w">{{ u.cost_wood }}</b><b class="c">{{ u.cost_clay }}</b><b class="i">{{ u.cost_iron }}</b><b class="r">{{ u.cost_crop }}</b> <span class="muted">each</span></div>
+            <div class="unit__time">{{ u.time }} each</div>
           </div>
           <div class="unit__act">
             {% if u.can_order %}
