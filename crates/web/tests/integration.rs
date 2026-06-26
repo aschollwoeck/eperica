@@ -3521,6 +3521,8 @@ async fn alliance_found_invite_accept_flow(pool: sqlx::PgPool) {
         .unwrap();
     assert!(page.contains(&aname), "founder sees the alliance");
     assert!(page.contains("Founder"), "founder role shown");
+    // 079: the redesigned alliance page — header + section blocks (members/diplomacy/…).
+    assert!(page.contains("phead") && page.contains("psec"));
 
     // Invite the member by name; the member accepts (the alliance id from the pending invite).
     cf.post(format!("{base}/w/{home}/alliance/invite"))
