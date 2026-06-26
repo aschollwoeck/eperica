@@ -443,10 +443,18 @@ async fn art_blank_on_missing(req: Request, next: Next) -> Response {
     let res = next.run(req).await;
     if is_art && res.status() == StatusCode::NOT_FOUND {
         return (
-            [(
-                axum::http::header::CONTENT_TYPE,
-                axum::http::HeaderValue::from_static("image/svg+xml"),
-            )],
+            [
+                (
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::HeaderValue::from_static("image/svg+xml"),
+                ),
+                // Match the app-wide revalidation policy so a later-added real plate isn't shadowed
+                // by a heuristically-cached placeholder.
+                (
+                    axum::http::header::CACHE_CONTROL,
+                    axum::http::HeaderValue::from_static("no-cache"),
+                ),
+            ],
             BLANK_SVG,
         )
             .into_response();

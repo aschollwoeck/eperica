@@ -5117,6 +5117,33 @@ async fn favicon_declared_and_autocomplete_present(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert_eq!(css.status().as_u16(), 404, "non-art 404s are preserved");
+    // The register form carries its own autocomplete hints, and the standalone styleguide (own <head>)
+    // also declares the favicon.
+    let register = c
+        .get(format!("{base}/register"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        register.contains("autocomplete=\"new-password\"")
+            && register.contains("autocomplete=\"email\""),
+        "register inputs carry autocomplete hints"
+    );
+    let styleguide = c
+        .get(format!("{base}/styleguide"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        styleguide.contains("rel=\"icon\""),
+        "the standalone styleguide also declares the favicon"
+    );
 }
 
 /// 050 AC1/AC2: the registry resolves each world's `rule_preset` (049) to a bundle and serves it through
