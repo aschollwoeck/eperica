@@ -4383,6 +4383,12 @@ async fn wonder_race_page_shows_progress(pool: sqlx::PgPool) {
         .unwrap();
     assert!(body.contains("Racers"), "the alliance is listed");
     assert!(body.contains("5 / 100"), "its Wonder progress shows");
+    // 068: the redesigned Wonder page — hero band + a progress leaderboard (bar toward the cap).
+    assert!(body.contains("bld-hero"), "068 hero band");
+    assert!(
+        body.contains("wonder-board") && body.contains("wonder-row__track"),
+        "068 progress leaderboard with a level bar"
+    );
 }
 
 /// 021 AC6/AC9: once won, the Wonder page shows the winner banner.
@@ -4431,6 +4437,8 @@ async fn wonder_winner_banner_shows_when_won(pool: sqlx::PgPool) {
         "the winner banner shows"
     );
     assert!(body.contains("Champions"), "the winning alliance is named");
+    // 068: the victory banner is the foregrounded win state on the redesigned page.
+    assert!(body.contains("wonder-victory"), "068 victory banner");
 }
 
 /// 022 AC5: a sanctioned (banned) logged-in player's mutating actions are rejected, but reads still work.
