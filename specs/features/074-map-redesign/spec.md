@@ -18,9 +18,9 @@ stay hidden until scouted), the same per-tile action links; only the layout and 
   Natar terrain colours, ★ for villages, the player's own village + capital highlighted, occupied oases and
   inactive (farmable) villages marked — preserving every existing `map-grid__cell--*` state.
 - **AC3 — Tile inspector.** Clicking a tile shows its full label (coordinate, owner/alliance, presence,
-  distance) and the actions it affords: **Send troops** (the Rally-Point link the tile already carries, for an
-  enemy village / oasis) and **Center here** (recenter the map on that tile). Plain/own tiles just show the
-  label.
+  distance) and the actions it affords: **Center here** (recenter the map on that tile) is offered for any
+  tile, and **Send troops** (the Rally-Point link the tile already carries) only for an actionable tile (an
+  enemy village / oasis). A plain or own-village tile shows the label + Center here, with no Send action.
 - **AC4 — Behaviour preserved.** The recenter links + Go form, the per-tile rally links, the fog-of-war
   (nothing new revealed), and the legend all work exactly as before — a reskin, not a rule change.
 
