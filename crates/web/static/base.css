@@ -497,7 +497,9 @@ a { color: var(--c-gold); }
    individually (display: contents drops the .vquick box so each link is a namerow flex item) */
 .vcmd__namerow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 8px; }
 .vcmd__namerow .vquick { display: contents; }
-.vquick { display: flex; flex-wrap: wrap; gap: 8px; }
+/* margin-top spaces the map header's link row from its subtitle; on the village it's inert
+   (display: contents discards the .vquick box), so the namerow gap governs there instead. */
+.vquick { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .vquick a { display: inline-flex; align-items: center; gap: 6px; font-family: ui-monospace, monospace; font-size: .76rem; color: var(--c-ink); border: 1px solid var(--c-border); border-radius: 2px; padding: 5px 11px; background: #0d1217; }
 .vquick a:hover { border-color: var(--c-gold); color: #fff; }
 .vswitch { margin-top: 12px; font-size: .9rem; color: var(--c-ink-muted); }
