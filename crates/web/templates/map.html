@@ -167,7 +167,14 @@
     vp.addEventListener("pointercancel", end);
     // a drag shouldn't also fire a tile click
     vp.addEventListener("click", (e) => { if (moved) { e.stopPropagation(); e.preventDefault(); } }, true);
-    window.addEventListener("resize", place);
+    // re-centre live on resize, and (debounced) re-fetch a region sized to the new viewport so a wider
+    // window fills with more columns without needing a drag first.
+    let resizeT;
+    window.addEventListener("resize", () => {
+      place();
+      clearTimeout(resizeT);
+      resizeT = setTimeout(() => fetchRegion(cx, cy, 0, 0), 200);
+    });
 
     // first fetch: a region sized to the actual viewport (broader on wide screens), replacing the server grid.
     fetchRegion(cx, cy, 0, 0);
