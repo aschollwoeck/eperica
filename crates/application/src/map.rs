@@ -16,21 +16,26 @@ pub struct MapCell {
     pub marker: Option<VillageMarker>,
 }
 
-/// A square viewport of the map, north (high `y`) at the top, each row west→east.
+/// A rectangular viewport of the map, north (high `y`) at the top, each row west→east.
 #[derive(Debug, Clone)]
 pub struct Viewport {
     /// The center coordinate the view is built around.
     pub center: Coordinate,
-    /// `2·half + 1` rows of `2·half + 1` cells.
+    /// `2·half_y + 1` rows of `2·half_x + 1` cells.
     pub rows: Vec<Vec<MapCell>>,
 }
 
-/// The canonical coordinates a viewport of `half`-cell radius around `center` covers (deduped) —
-/// the caller fetches markers for exactly these (006 AC7).
-pub fn viewport_coords(center: Coordinate, half: i32, radius: u32) -> Vec<Coordinate> {
+/// The canonical coordinates a `half_x`×`half_y` viewport around `center` covers (deduped) — the caller
+/// fetches markers for exactly these (006 AC7). 093: rectangular so wide screens can show more columns.
+pub fn viewport_coords_rect(
+    center: Coordinate,
+    half_x: i32,
+    half_y: i32,
+    radius: u32,
+) -> Vec<Coordinate> {
     let mut coords = Vec::new();
-    for dy in -half..=half {
-        for dx in -half..=half {
+    for dy in -half_y..=half_y {
+        for dx in -half_x..=half_x {
             let c = Coordinate::new(center.x.saturating_add(dx), center.y.saturating_add(dy))
                 .wrapped(radius);
             if !coords.contains(&c) {
@@ -41,19 +46,25 @@ pub fn viewport_coords(center: Coordinate, half: i32, radius: u32) -> Vec<Coordi
     coords
 }
 
-/// Build the viewport grid: each cell's terrain from `map`, with any matching marker overlaid.
-pub fn map_viewport(
+/// The coordinates a square `half`-cell viewport covers — the rectangular case with equal extents.
+pub fn viewport_coords(center: Coordinate, half: i32, radius: u32) -> Vec<Coordinate> {
+    viewport_coords_rect(center, half, half, radius)
+}
+
+/// Build a rectangular viewport grid: each cell's terrain from `map`, with any matching marker overlaid.
+pub fn map_viewport_rect(
     map: &WorldMap,
     center: Coordinate,
-    half: i32,
+    half_x: i32,
+    half_y: i32,
     markers: &[VillageMarker],
 ) -> Viewport {
     let radius = map.radius();
-    let mut rows = Vec::with_capacity((2 * half + 1).max(0) as usize);
+    let mut rows = Vec::with_capacity((2 * half_y + 1).max(0) as usize);
     // North (higher y) at the top.
-    for dy in (-half..=half).rev() {
-        let mut row = Vec::with_capacity((2 * half + 1).max(0) as usize);
-        for dx in -half..=half {
+    for dy in (-half_y..=half_y).rev() {
+        let mut row = Vec::with_capacity((2 * half_x + 1).max(0) as usize);
+        for dx in -half_x..=half_x {
             let coord = Coordinate::new(center.x.saturating_add(dx), center.y.saturating_add(dy))
                 .wrapped(radius);
             // `tile_at` is `Some` for any in-bounds coordinate, which the wrap guarantees.
@@ -71,6 +82,16 @@ pub fn map_viewport(
         center: center.wrapped(radius),
         rows,
     }
+}
+
+/// Build a square `half`-cell viewport — the rectangular case with equal extents.
+pub fn map_viewport(
+    map: &WorldMap,
+    center: Coordinate,
+    half: i32,
+    markers: &[VillageMarker],
+) -> Viewport {
+    map_viewport_rect(map, center, half, half, markers)
 }
 
 #[cfg(test)]
@@ -109,6 +130,21 @@ mod tests {
         assert_eq!(v.rows[4][4].coordinate, Coordinate::new(3, -2));
         // Top-left is NW of center; north is higher y.
         assert_eq!(v.rows[0][0].coordinate, Coordinate::new(-1, 2));
+    }
+
+    #[test]
+    fn rect_viewport_is_wider_than_tall_and_centered() {
+        // 093: a 7-wide × 5-tall window (half_x = 3, half_y = 2) around the centre.
+        let v = map_viewport_rect(&map(50), Coordinate::new(3, -2), 3, 2, &[]);
+        assert_eq!(v.rows.len(), 5); // 2·half_y + 1
+        assert!(v.rows.iter().all(|r| r.len() == 7)); // 2·half_x + 1
+        assert_eq!(v.rows[2][3].coordinate, Coordinate::new(3, -2)); // centre = middle cell
+        assert_eq!(v.rows[0][0].coordinate, Coordinate::new(0, 0)); // NW corner: x−3, y+2
+        // viewport_coords_rect covers the same 7×5 = 35 distinct tiles (no wrap at this radius).
+        assert_eq!(
+            viewport_coords_rect(Coordinate::new(3, -2), 3, 2, 50).len(),
+            35
+        );
     }
 
     #[test]

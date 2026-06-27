@@ -6,17 +6,13 @@
     <div class="vcmd__id">
       <div class="vcmd__eyebrow">World map · radius {{ radius }}</div>
       <h1 class="vcmd__name">The Known World</h1>
-      <div class="vcmd__sub"><span class="vchip">{{ center_x }} | {{ center_y }}</span> <span>centre of view</span></div>
+      <div class="vcmd__sub"><span class="vchip">{{ center_x }} | {{ center_y }}</span> <span>· drag to explore</span></div>
       <div class="vquick">
         <a href="/w/{{ world }}/village">← Village</a>
         <a href="/w/{{ world }}/reports">✉ Reports</a>
       </div>
     </div>
     <div class="map-nav">
-      <a class="btn btn--secondary" href="/w/{{ world }}/map?x={{ center_x }}&amp;y={{ north_y }}">↑ N</a>
-      <a class="btn btn--secondary" href="/w/{{ world }}/map?x={{ west_x }}&amp;y={{ center_y }}">← W</a>
-      <a class="btn btn--secondary" href="/w/{{ world }}/map?x={{ east_x }}&amp;y={{ center_y }}">E →</a>
-      <a class="btn btn--secondary" href="/w/{{ world }}/map?x={{ center_x }}&amp;y={{ south_y }}">↓ S</a>
       <form method="get" action="/w/{{ world }}/map">
         x <input type="number" name="x" value="{{ center_x }}" required>
         y <input type="number" name="y" value="{{ center_y }}" required>
@@ -25,17 +21,15 @@
     </div>
   </section>
 
-  {# 091: the map sits where the village map does (left); the clicked-tile inspector is in the right aside. #}
+  {# 091/093: the map sits where the village map does (left); the clicked-tile inspector is in the right aside.
+     093: the grid is a draggable viewport — hold and drag to pan; tiles stream from /map/tiles as you move. #}
   <div class="vcols">
     <div>
-      <div class="mgrid">
-        {% for row in rows %}
-        <div class="mrow">
-          {% for cell in row %}
-          <button type="button" class="mtile {{ cell.cell_class }}" data-label="{{ cell.label }}" data-x="{{ cell.x }}" data-y="{{ cell.y }}"{% match cell.href %}{% when Some with (h) %} data-href="{{ h }}"{% when None %}{% endmatch %}>{{ cell.glyph }}</button>
-          {% endfor %}
+      <div class="mviewport" id="mviewport">
+        <div class="mlayer" id="mlayer" style="grid-template-columns: repeat({{ cols }}, var(--mt));">
+          {% for row in rows %}{% for cell in row %}<button type="button" class="mtile {{ cell.cell_class }}" data-label="{{ cell.label }}" data-x="{{ cell.x }}" data-y="{{ cell.y }}"{% match cell.href %}{% when Some with (h) %} data-href="{{ h }}"{% when None %}{% endmatch %}>{{ cell.glyph }}</button>{% endfor %}{% endfor %}
         </div>
-        {% endfor %}
+        <div class="mviewport__hint">✥ drag to move</div>
       </div>
 
       <div class="mlegend">
@@ -63,26 +57,120 @@
 </div>
 
 <script>
-  // 074/091: tile inspector — click a tile to fill the aside card with its label + the actions it affords.
+  // 093: Google-Maps-style draggable world map. The server renders an initial grid (no-JS fallback); this
+  // takes over — drag to pan via a CSS transform, and stream tiles from /map/tiles, re-centring on a buffered
+  // fetch as the pan carries the view a few tiles so it never runs out of terrain.
   (function () {
-    const label = document.getElementById("minspect-label");
-    const coord = document.getElementById("minspect-coord");
-    const go = document.getElementById("minspect-go");
-    const center = document.getElementById("minspect-center");
-    if (!label) return;
-    let sel = null;
-    for (const t of document.querySelectorAll(".mtile")) {
-      t.addEventListener("click", () => {
-        if (sel) sel.classList.remove("mtile--sel");
-        sel = t; t.classList.add("mtile--sel");
-        const d = t.dataset;
-        label.textContent = d.label;
-        coord.textContent = "(" + d.x + " | " + d.y + ")";
-        if (d.href) { go.href = d.href; go.style.display = ""; } else { go.style.display = "none"; }
-        center.href = "/w/{{ world }}/map?x=" + d.x + "&y=" + d.y;
-        center.style.display = "";
-      });
-    }
+    const vp = document.getElementById("mviewport");
+    const layer = document.getElementById("mlayer");
+    if (!vp || !layer) return;
+    const world = "{{ world }}";
+    const TILE = 36;     // px per tile (matches --mt)
+    const BUFFER = 5;    // extra tiles fetched beyond the visible window on each side
+
+    let cx = {{ center_x }}, cy = {{ center_y }};  // world coord at the layer's centre tile
+    let cols = {{ cols }}, rows = 0;
+    let panX = 0, panY = 0;       // drag offset (px) from the centred position
+    let seq = 0;                  // guards against out-of-order fetch responses
+
+    const insLabel = document.getElementById("minspect-label");
+    const insCoord = document.getElementById("minspect-coord");
+    const insGo = document.getElementById("minspect-go");
+    const insCenter = document.getElementById("minspect-center");
+    let selEl = null;
+    const select = (el, d) => {
+      if (selEl) selEl.classList.remove("mtile--sel");
+      selEl = el; el.classList.add("mtile--sel");
+      insLabel.textContent = d.label;
+      insCoord.textContent = "(" + d.x + " | " + d.y + ")";
+      if (d.href) { insGo.href = d.href; insGo.style.display = ""; } else { insGo.style.display = "none"; }
+      insCenter.href = "/w/" + world + "/map?x=" + d.x + "&y=" + d.y;
+      insCenter.style.display = "";
+    };
+    const bind = (b) => b.addEventListener("click", () =>
+      select(b, { x: b.dataset.x, y: b.dataset.y, label: b.dataset.label, href: b.dataset.href }));
+    // wire the server-rendered tiles until the first fetch swaps them out
+    layer.querySelectorAll(".mtile").forEach(bind);
+
+    // place the layer so its centre tile sits at the viewport centre, plus the current drag.
+    const place = () => {
+      const midX = Math.floor(cols / 2), midY = Math.floor(rows / 2);
+      const baseX = vp.clientWidth / 2 - (midX * TILE + TILE / 2);
+      const baseY = vp.clientHeight / 2 - (midY * TILE + TILE / 2);
+      layer.style.transform = "translate(" + (baseX + panX) + "px," + (baseY + panY) + "px)";
+    };
+
+    const render = (data) => {
+      cx = data.center_x; cy = data.center_y; cols = data.cols; rows = data.rows.length;
+      layer.style.gridTemplateColumns = "repeat(" + cols + ", " + TILE + "px)";
+      const frag = document.createDocumentFragment();
+      for (const row of data.rows) for (const cell of row) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "mtile " + cell.cell_class;
+        b.textContent = cell.glyph;
+        b.dataset.x = cell.x; b.dataset.y = cell.y; b.dataset.label = cell.label;
+        if (cell.href) b.dataset.href = cell.href;
+        bind(b);
+        frag.appendChild(b);
+      }
+      layer.replaceChildren(frag);
+      place();
+    };
+
+    let pending = false;
+    const fetchRegion = async (ncx, ncy, residX, residY) => {
+      const hx = Math.ceil(Math.ceil(vp.clientWidth / TILE) / 2) + BUFFER;
+      const hy = Math.ceil(Math.ceil(vp.clientHeight / TILE) / 2) + BUFFER;
+      const my = ++seq;
+      pending = true;
+      try {
+        const r = await fetch("/w/" + world + "/map/tiles?cx=" + ncx + "&cy=" + ncy + "&hx=" + hx + "&hy=" + hy);
+        if (!r.ok || my !== seq) return;
+        const data = await r.json();
+        if (my !== seq) return;
+        panX = residX; panY = residY;
+        render(data);
+      } catch (e) { /* keep the current grid if a fetch fails */ }
+      finally { if (my === seq) pending = false; }
+    };
+
+    // when the drag has carried the view ~BUFFER tiles from the fetched centre, fetch a fresh region.
+    const maybeRecenter = () => {
+      if (pending) return;
+      const dCol = Math.round(-panX / TILE), dRow = Math.round(-panY / TILE);
+      if (Math.abs(dCol) >= BUFFER - 1 || Math.abs(dRow) >= BUFFER - 1) {
+        fetchRegion(cx + dCol, cy - dRow, panX + dCol * TILE, panY + dRow * TILE);
+      }
+    };
+
+    let dragging = false, lastX = 0, lastY = 0, moved = false;
+    vp.addEventListener("pointerdown", (e) => {
+      dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY;
+      try { vp.setPointerCapture(e.pointerId); } catch (_) {}
+      vp.classList.add("mviewport--drag");
+    });
+    vp.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - lastX, dy = e.clientY - lastY;
+      if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
+      lastX = e.clientX; lastY = e.clientY;
+      panX += dx; panY += dy;
+      place(); maybeRecenter();
+    });
+    const end = (e) => {
+      if (!dragging) return;
+      dragging = false; vp.classList.remove("mviewport--drag");
+      try { vp.releasePointerCapture(e.pointerId); } catch (_) {}
+    };
+    vp.addEventListener("pointerup", end);
+    vp.addEventListener("pointercancel", end);
+    // a drag shouldn't also fire a tile click
+    vp.addEventListener("click", (e) => { if (moved) { e.stopPropagation(); e.preventDefault(); } }, true);
+    window.addEventListener("resize", place);
+
+    // first fetch: a region sized to the actual viewport (broader on wide screens), replacing the server grid.
+    fetchRegion(cx, cy, 0, 0);
   })();
 </script>
 {% endblock %}

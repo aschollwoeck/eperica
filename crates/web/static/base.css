@@ -205,22 +205,15 @@ a { color: var(--c-gold); }
 .map-nav { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .map-nav form { display: flex; gap: 6px; align-items: center; margin: 0; }
 .map-nav input { width: 4.5em; background: var(--c-bg); border: 1px solid var(--c-border); color: var(--c-ink); border-radius: var(--radius-sm); padding: 6px 8px; font: inherit; }
-/* 092: cap the tile to the height left on screen so the whole 13×13 grid fits without scrolling. The
-   subtracted ~400px is the chrome above (topbar + command header) + the legend/padding below; /13 is the
-   row count (2·MAP_HALF+1). `min-width`/flex still lets tiles shrink to fit a narrow (mobile) column, where
-   width — not height — is the binding constraint. */
-.mgrid { --mt: clamp(22px, calc((100svh - 400px) / 13), 56px);
-  display: flex; flex-direction: column; gap: 2px; padding: 10px; border: 1px solid var(--c-border); border-radius: var(--radius-md); background: linear-gradient(180deg, #10151b, #0c1116); overflow-x: auto; }
-/* desktop (two-column): the tiles are a fixed height-capped size and the panel hugs the grid, so it isn't a
-   wide empty box around a small map. On a phone the grid stays full-width and the tiles flex-shrink to fit
-   the column (above) instead of scrolling. */
-@media (min-width: 981px) {
-  .mgrid { width: fit-content; max-width: 100%; margin-inline: auto; }
-  .mtile { flex: 0 0 var(--mt); width: var(--mt); }
-}
-/* 091: tiles are smaller (capped) and the rows centre within the map column. */
-.mrow { display: flex; gap: 2px; justify-content: center; }
-.mtile { flex: 1 1 20px; min-width: 18px; max-width: var(--mt); aspect-ratio: 1; display: grid; place-items: center; border: 1px solid #1b232c; border-radius: 2px; background: #0e141a; color: var(--c-ink-muted); font-size: .68rem; line-height: 1; cursor: pointer; padding: 0; font-family: inherit; outline: 1px solid transparent; }
+/* 093: the map is a draggable viewport (a clip window) over a transformable tile layer. The layer fills
+   the screen the page leaves it; dragging pans it and tiles stream in from /map/tiles. */
+.mviewport { position: relative; overflow: hidden; height: clamp(380px, calc(100svh - 300px), 760px);
+  border: 1px solid var(--c-border); border-radius: var(--radius-md); background: linear-gradient(180deg, #10151b, #0c1116);
+  cursor: grab; touch-action: none; user-select: none; }
+.mviewport--drag { cursor: grabbing; }
+.mviewport__hint { position: absolute; right: 10px; bottom: 10px; z-index: 4; pointer-events: none; font-family: ui-monospace, monospace; font-size: .68rem; letter-spacing: .08em; color: var(--c-ink-muted); background: color-mix(in srgb, var(--c-bg) 70%, transparent); border: 1px solid var(--c-border); border-radius: 3px; padding: 3px 8px; }
+.mlayer { --mt: 36px; position: absolute; top: 0; left: 0; display: grid; grid-auto-rows: var(--mt); gap: 2px; will-change: transform; }
+.mtile { width: var(--mt); height: var(--mt); display: grid; place-items: center; border: 1px solid #1b232c; border-radius: 2px; background: #0e141a; color: var(--c-ink-muted); font-size: .74rem; line-height: 1; cursor: inherit; padding: 0; font-family: inherit; outline: 1px solid transparent; }
 .mtile:hover, .mtile:focus-visible { outline-color: var(--c-gold); position: relative; z-index: 2; }
 .mtile--sel { outline: 2px solid var(--c-gold); position: relative; z-index: 3; }
 .map-grid__cell--valley { background: color-mix(in srgb, var(--c-lumber) 15%, #0e141a); }

@@ -271,6 +271,8 @@ fn world_router() -> Router<AppState> {
             get(handlers::field_detail),
         )
         .route("/map", get(handlers::map))
+        // 093: JSON tiles for the draggable map, streamed as the player pans.
+        .route("/map/tiles", get(handlers::map_tiles))
         .route("/village/{village}/academy", get(handlers::academy))
         .route(
             "/village/{village}/academy/research",
