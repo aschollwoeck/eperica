@@ -6,84 +6,134 @@
   <title>Eperica — Component gallery</title>
   <link rel="icon" href="/static/favicon.svg">
   <link rel="stylesheet" href="/static/base.css">
-  <link rel="stylesheet" href="/static/theme-ash.css">
+  <link rel="stylesheet" href="/static/theme-steel.css">
 </head>
-<body>
+<body class="bld-page">
   <header class="topbar"><a class="topbar__brand" href="/styleguide">Eperica</a></header>
-  <main class="container gallery">
-    <p class="muted">Living component gallery — the canonical "Ash &amp; Rust" theme
-      (see specs/ui-style-guide.md).</p>
-
-    <section class="hero panel">
-      <h1>Eperica</h1>
-      <p>Forge a village, raise an army, and outlast your rivals in a grim medieval world.</p>
-      <div class="actions" style="justify-content:center">
-        <a class="btn btn--primary" href="#">Create account</a>
-        <a class="btn btn--secondary" href="#">Log in</a>
-      </div>
+  <div class="page">
+    <section class="phead">
+      <div class="phead__eyebrow">Design system</div>
+      <h1 class="phead__title">Component gallery</h1>
+      <p class="phead__sub">The forged-steel chrome (theme-steel) and the shared components used across every page — a living reference + smoke test.</p>
     </section>
 
-    <section class="panel">
-      <h2>Palette</h2>
-      <div class="swatch-row">
-        <div class="swatch" style="background:var(--c-bg)">bg</div>
-        <div class="swatch" style="background:var(--c-panel)">panel</div>
-        <div class="swatch" style="background:var(--c-panel-alt)">panel2</div>
-        <div class="swatch" style="background:var(--c-accent)">accent</div>
-        <div class="swatch" style="background:var(--c-gold);color:#000">gold</div>
-        <div class="swatch" style="background:var(--c-danger)">danger</div>
-        <div class="swatch" style="background:var(--c-success)">success</div>
-        <div class="swatch" style="background:var(--c-warning)">warning</div>
+    <div class="psec">
+      <div class="bld-cols__head"><h2>Palette</h2><span class="bld-cols__rule"></span></div>
+      <div class="statgrid">
+        <div class="statcard"><div class="statcard__k">bg</div><div class="statcard__v" style="font-size:1rem">var(--c-bg)</div><div style="height:22px;border-radius:3px;margin-top:6px;background:var(--c-bg);border:1px solid var(--c-border)"></div></div>
+        <div class="statcard"><div class="statcard__k">panel</div><div class="statcard__v" style="font-size:1rem">--c-panel</div><div style="height:22px;border-radius:3px;margin-top:6px;background:var(--c-panel);border:1px solid var(--c-border)"></div></div>
+        <div class="statcard"><div class="statcard__k">accent (blued steel)</div><div class="statcard__v" style="font-size:1rem">--c-accent</div><div style="height:22px;border-radius:3px;margin-top:6px;background:var(--c-accent)"></div></div>
+        <div class="statcard"><div class="statcard__k">gold</div><div class="statcard__v" style="font-size:1rem">--c-gold</div><div style="height:22px;border-radius:3px;margin-top:6px;background:var(--c-gold)"></div></div>
+        <div class="statcard"><div class="statcard__k">danger / success / warning</div><div style="height:22px;border-radius:3px;margin-top:6px;display:flex;gap:4px"><i style="flex:1;background:var(--c-danger);border-radius:2px"></i><i style="flex:1;background:var(--c-success);border-radius:2px"></i><i style="flex:1;background:var(--c-warning);border-radius:2px"></i></div></div>
+        <div class="statcard"><div class="statcard__k">resources W/C/I/Cr</div><div style="height:22px;border-radius:3px;margin-top:6px;display:flex;gap:4px"><i style="flex:1;background:var(--c-lumber);border-radius:2px"></i><i style="flex:1;background:var(--c-clay);border-radius:2px"></i><i style="flex:1;background:var(--c-iron-res);border-radius:2px"></i><i style="flex:1;background:var(--c-crop);border-radius:2px"></i></div></div>
       </div>
-    </section>
+    </div>
 
-    <section class="panel">
-      <h2>Buttons &amp; badges</h2>
-      <div class="actions">
-        <button class="btn btn--primary">Primary action</button>
+    <div class="psec">
+      <div class="bld-cols__head"><h2>Buttons &amp; badges</h2><span class="bld-cols__rule"></span></div>
+      <div class="map-controls">
+        <button class="btn btn--primary">Primary</button>
         <button class="btn btn--secondary">Secondary</button>
-        <span class="badge">Top Attacker</span>
+        <button class="btn btn--small btn--secondary">Small</button>
+        <button class="btn btn--danger">Danger</button>
+        <button class="btn btn--primary" disabled>Disabled</button>
+        <span class="badge">Badge</span>
       </div>
-    </section>
+    </div>
 
-    <section class="panel">
-      <h2>Resources</h2>
-      <ul class="resource-list">
-        <li class="res res--wood">Wood 420</li>
-        <li class="res res--clay">Clay 380</li>
-        <li class="res res--iron">Iron 295</li>
-        <li class="res res--crop">Crop 510</li>
+    <div class="psec">
+      <div class="bld-cols__head"><h2>Cards &amp; stat lines</h2><span class="bld-cols__rule"></span></div>
+      <div class="bld-card" style="max-width:340px">
+        <div class="bld-card__h"><h3>On the drill yard</h3><span class="meta">idle</span></div>
+        <div class="bld-card__b">
+          <div class="statline"><span>Trainable units</span><b>4</b></div>
+          <div class="statline"><span>Loyalty</span><b>100 / 100</b></div>
+          <p class="bld-tip">A card with a header, stat-lines and a tip — the rail/aside pattern.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="psec">
+      <div class="bld-cols__head"><h2>Resource ribbon</h2><span class="bld-cols__rule"></span></div>
+      <section class="res-ribbon">
+        <div class="gauge gauge--wood"><div class="gauge__top"><span class="gauge__name">Wood</span><span class="gauge__rate">+120/h</span></div><div class="gauge__amt"><span class="gauge__now">640</span><small> / 800</small></div><div class="gauge__track"><i class="gauge__fill" style="width:80%"></i></div></div>
+        <div class="gauge gauge--clay"><div class="gauge__top"><span class="gauge__name">Clay</span><span class="gauge__rate">+95/h</span></div><div class="gauge__amt"><span class="gauge__now">410</span><small> / 800</small></div><div class="gauge__track"><i class="gauge__fill" style="width:51%"></i></div></div>
+        <div class="gauge gauge--iron"><div class="gauge__top"><span class="gauge__name">Iron</span><span class="gauge__rate">+80/h</span></div><div class="gauge__amt"><span class="gauge__now">300</span><small> / 800</small></div><div class="gauge__track"><i class="gauge__fill" style="width:37%"></i></div></div>
+        <div class="gauge gauge--crop"><div class="gauge__top"><span class="gauge__name">Crop</span><span class="gauge__rate gauge__rate--neg">-12/h</span></div><div class="gauge__amt"><span class="gauge__now">220</span><small> / 800</small></div><div class="gauge__track"><i class="gauge__fill" style="width:27%"></i></div></div>
+      </section>
+    </div>
+
+    <div class="psec">
+      <div class="bld-cols__head"><h2>Roster row</h2><span class="bld-cols__rule"></span></div>
+      <div class="roster">
+        <article class="unit unit--ready">
+          <span class="unit__thumb"></span>
+          <div class="unit__info">
+            <div class="unit__name">Legionnaire <span class="unit__role--inline">· Infantry</span></div>
+            <div class="unit__stats"><span>Att <b>40</b></span><span>Def <b>35/50</b></span><span>Upkeep <b>1</b></span></div>
+          </div>
+          <div class="unit__price">
+            <div class="unit__cost"><b class="w">120</b><b class="c">100</b><b class="i">150</b><b class="r">30</b></div>
+            <div class="unit__time">0:09:20</div>
+          </div>
+          <div class="unit__act"><button class="btn btn--primary">Train</button></div>
+        </article>
+      </div>
+    </div>
+
+    <div class="psec">
+      <div class="bld-cols__head"><h2>Tabs &amp; report cards</h2><span class="bld-cols__rule"></span></div>
+      <nav class="tabs">
+        <a class="tab tab--active" href="#">Population</a>
+        <a class="tab" href="#">Top attackers</a>
+        <a class="tab" href="#">Alliances</a>
+      </nav>
+      <div class="replist">
+        <a class="repcard" href="#"><div class="repcard__main"><div class="repcard__head">Raid on Oakhold (12|−4)</div><div class="repcard__out">Victory — looted 1,240 wood</div></div><span class="repcard__when">2h ago</span><span class="repcard__arrow">→</span></a>
+      </div>
+    </div>
+
+    <div class="psec">
+      <div class="bld-cols__head"><h2>Conversations &amp; chat</h2><span class="bld-cols__rule"></span></div>
+      <ul class="conversations" style="margin-bottom:14px">
+        <li><a href="#"><strong>Bryn Ironhand</strong> <span class="presence presence--online" title="Online">●</span> <span class="badge">2</span><span class="preview">are you defending tonight?</span></a></li>
       </ul>
-    </section>
+      <ul class="messages">
+        <li class="theirs"><span class="sender">Bryn</span>incoming on your capital — sending reinforcements</li>
+        <li class="mine"><span class="sender">You</span>thanks, wall's at 12, should hold</li>
+      </ul>
+    </div>
 
-    <section class="panel">
-      <h2>Alerts</h2>
+    <div class="psec">
+      <div class="bld-cols__head"><h2>Alerts</h2><span class="bld-cols__rule"></span></div>
       <p class="alert alert--danger">Your village is under attack — arrival in 4:12!</p>
-      <p class="alert alert--success">Your defense held; the raiders were routed.</p>
+      <p class="alert alert--success">Your defence held; the raiders were routed.</p>
       <p class="alert alert--warning">Crop production is negative — your troops will starve.</p>
-    </section>
+    </div>
 
-    <section class="panel">
-      <h2>Form</h2>
-      <form class="form" onsubmit="return false">
+    <div class="psec">
+      <div class="bld-cols__head"><h2>Form &amp; table</h2><span class="bld-cols__rule"></span></div>
+      <form class="form" onsubmit="return false" style="margin-bottom:16px;max-width:360px">
         <div class="field"><label for="u">Username</label><input id="u" value="aldric"></div>
-        <div class="field"><label for="p">Password</label><input id="p" type="password" value="secret123"></div>
-        <button class="btn btn--primary" type="submit">Register</button>
+        <label class="checkbox"><input type="checkbox" checked> Notify me of incoming attacks</label>
+        <p><button class="btn btn--primary" type="submit">Save</button></p>
       </form>
-    </section>
-
-    <section class="panel">
-      <h2>Leaderboard</h2>
       <table class="table">
-        <thead><tr><th>Rank</th><th>Player</th><th class="num">Population</th></tr></thead>
+        <thead><tr><th>#</th><th>Player</th><th class="num">Population</th></tr></thead>
         <tbody>
-          <tr><td>1</td><td>Aldric the Bold</td><td class="num">1,204</td></tr>
-          <tr><td>2</td><td>Bryn Ironhand</td><td class="num">980</td></tr>
-          <tr><td>3</td><td>Cael of the Vale</td><td class="num">742</td></tr>
+          <tr><td class="muted">1</td><td>Aldric the Bold</td><td class="num">1,204</td></tr>
+          <tr><td class="muted">2</td><td>Bryn Ironhand</td><td class="num">980</td></tr>
         </tbody>
       </table>
-    </section>
-  </main>
-  <footer class="footer">Eperica — component gallery</footer>
+    </div>
+
+    <div class="psec">
+      <div class="bld-cols__head"><h2>Wonder race</h2><span class="bld-cols__rule"></span></div>
+      <div class="wonder-board">
+        <div class="wonder-row wonder-row--lead"><span class="wonder-row__rank">1</span><div class="wonder-row__main"><div class="wonder-row__name">Iron Pact <span class="wonder-row__tag">[IRP]</span></div><div class="wonder-row__track"><i style="width:67%"></i></div></div><span class="wonder-row__lvl">67 / 100</span></div>
+        <div class="wonder-row"><span class="wonder-row__rank">2</span><div class="wonder-row__main"><div class="wonder-row__name">Free Companies <span class="wonder-row__tag">[FC]</span></div><div class="wonder-row__track"><i style="width:41%"></i></div></div><span class="wonder-row__lvl">41 / 100</span></div>
+      </div>
+    </div>
+  </div>
 </body>
 </html>
