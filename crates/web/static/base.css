@@ -820,3 +820,20 @@ a { color: var(--c-gold); }
 .checkbox input { flex: none; }
 .inline, .inline-form { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0; vertical-align: middle; }
 .inline-form { gap: 12px; }
+
+/* ============================================================================
+   081 — auth pages: a centered, branded sign-in / register card.
+   ============================================================================ */
+.auth { min-height: calc(100vh - 230px); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; }
+.auth__brand { display: inline-flex; align-items: center; gap: 10px; margin-bottom: 20px; color: var(--c-gold); text-decoration: none; font-family: var(--c-serif, Georgia, serif); font-size: 1.35rem; letter-spacing: .12em; text-transform: uppercase; }
+.auth__brand svg { width: 28px; height: 28px; color: var(--c-accent); }
+.auth-card { position: relative; width: 100%; max-width: 420px; padding: 26px 28px; overflow: hidden;
+  border: 1px solid var(--c-border); border-radius: var(--radius-md);
+  background: linear-gradient(180deg, var(--c-panel-alt), var(--c-panel));
+  box-shadow: 0 18px 50px -22px #000, inset 0 1px 0 rgba(255, 255, 255, .04); }
+.auth-card::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: linear-gradient(90deg, transparent, var(--c-gold), transparent); opacity: .5; }
+.auth-card--wide { max-width: 560px; }
+.auth-card__title { font-family: var(--c-serif, Georgia, serif); font-size: 1.5rem; color: var(--c-ink); margin: 0 0 4px; }
+.auth-card__sub { color: var(--c-ink-muted); font-size: .92rem; margin: 0 0 18px; }
+.auth-card__sub b { color: var(--c-ink); }
+.auth-card__alt { margin: 18px 0 0; text-align: center; font-size: .9rem; }

@@ -391,6 +391,8 @@ async fn register_offers_tribes_and_village_shows_choice(pool: sqlx::PgPool) {
     for tribe in ["Romans", "Teutons", "Gauls"] {
         assert!(form.contains(tribe), "register page missing {tribe}");
     }
+    // 081: the register page is the redesigned branded auth card.
+    assert!(form.contains("auth-card") && form.contains("auth__brand"));
     assert!(form.contains("name=\"tribe\""));
 
     // 004 AC1/AC15: registering as Teutons shows that tribe on the village page.
@@ -5138,6 +5140,7 @@ async fn favicon_declared_and_autocomplete_present(pool: sqlx::PgPool) {
             && login.contains("autocomplete=\"current-password\""),
         "login inputs carry autocomplete hints"
     );
+    assert!(login.contains("auth-card")); // 081: the redesigned branded auth card
     // 071: a missing building/unit art file falls back to a transparent 200 (so optional art no longer
     // 404s into the console), while a genuinely missing non-art static file still 404s.
     let art = c

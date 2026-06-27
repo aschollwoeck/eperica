@@ -1,43 +1,48 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Create account</h1>
-  {% if let Some(name) = world_name %}<p class="muted">Enlisting in <strong>{{ name }}</strong> — you'll march straight in.</p>{% endif %}
-  {% if let Some(message) = error %}<p class="alert alert--danger">{{ message }}</p>{% endif %}
-  <form method="post" action="/register" class="form">
-    {% if let Some(w) = world %}<input type="hidden" name="world" value="{{ w }}">{% endif %}
-    <div class="field">
-      <label for="username">Username</label>
-      <input id="username" name="username" autocomplete="username" required autofocus>
-    </div>
-    <div class="field">
-      <label for="email">Email</label>
-      <input id="email" name="email" type="email" autocomplete="email" required>
-    </div>
-    <div class="field">
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8">
-    </div>
-    <fieldset class="choice">
-      <legend>Tribe — chosen once, for keeps</legend>
-      <label class="choice__option">
-        <input type="radio" name="tribe" value="romans" required>
-        <span class="choice__title">Romans</span>
-        <span class="choice__desc">Balanced, expensive all-rounders; build a resource field and a center building at the same time.</span>
-      </label>
-      <label class="choice__option">
-        <input type="radio" name="tribe" value="teutons" required>
-        <span class="choice__title">Teutons</span>
-        <span class="choice__desc">Cheap, fast-trained troops; the best early raiders.</span>
-      </label>
-      <label class="choice__option">
-        <input type="radio" name="tribe" value="gauls" required>
-        <span class="choice__title">Gauls</span>
-        <span class="choice__desc">Defensive specialists with the fastest cavalry. Recommended for beginners.</span>
-      </label>
-    </fieldset>
-    <button class="btn btn--primary" type="submit">Register</button>
-  </form>
-  <p><a href="/login">Already have an account? Log in</a></p>
-</section>
+<div class="auth">
+  {% include "_brand.html" %}
+  <section class="auth-card auth-card--wide">
+    <h1 class="auth-card__title">Create account</h1>
+    {% if let Some(name) = world_name %}<p class="auth-card__sub">Enlisting in <b>{{ name }}</b> — you'll march straight in.</p>
+    {% else %}<p class="auth-card__sub">Stake your first village and start raiding tonight.</p>{% endif %}
+    {% if let Some(message) = error %}<p class="alert alert--danger">{{ message }}</p>{% endif %}
+    <form method="post" action="/register" class="form">
+      {% if let Some(w) = world %}<input type="hidden" name="world" value="{{ w }}">{% endif %}
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" required autofocus>
+      </div>
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="email" required>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8">
+      </div>
+      <fieldset class="choice">
+        <legend>Tribe — chosen once, for keeps</legend>
+        <label class="choice__option">
+          <input type="radio" name="tribe" value="romans" required>
+          <span class="choice__title">Romans</span>
+          <span class="choice__desc">Balanced, expensive all-rounders; build a resource field and a center building at the same time.</span>
+        </label>
+        <label class="choice__option">
+          <input type="radio" name="tribe" value="teutons" required>
+          <span class="choice__title">Teutons</span>
+          <span class="choice__desc">Cheap, fast-trained troops; the best early raiders.</span>
+        </label>
+        <label class="choice__option">
+          <input type="radio" name="tribe" value="gauls" required>
+          <span class="choice__title">Gauls</span>
+          <span class="choice__desc">Defensive specialists with the fastest cavalry. Recommended for beginners.</span>
+        </label>
+      </fieldset>
+      <button class="btn btn--primary btn--wide" type="submit">Register</button>
+    </form>
+    <p class="auth-card__alt"><a href="/login">Already have an account? Log in →</a></p>
+  </section>
+</div>
 {% endblock %}
