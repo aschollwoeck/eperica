@@ -110,7 +110,6 @@ a { color: var(--c-gold); }
 
 .container { max-width: 880px; margin: var(--space-6) auto; padding: 0 var(--space-4); }
 
-
 /* Site footer — brand + link columns + a legal bar; global (every page). */
 .site-footer { border-top: 1px solid var(--c-border); background: var(--c-panel-alt); color: var(--c-ink-muted); margin-top: var(--space-7); }
 .site-footer__inner {
@@ -252,7 +251,6 @@ a { color: var(--c-gold); }
 .badge[hidden] { display: none; }
 /* Inline nav icons (bell, …) sized + vertically centred next to their label. */
 .topbar__nav .nav-icon { vertical-align: -3px; }
-
 
 /* 030: account-sitting banner — a persistent bar while operating another player's account. */
 .banner {
