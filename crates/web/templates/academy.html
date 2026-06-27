@@ -74,13 +74,7 @@
           {% endif %}
         </div>
       </div>
-      <div class="bld-card">
-        <div class="bld-card__h"><h3>The Academy</h3></div>
-        <div class="bld-card__b">
-          <div class="statline"><span>Units in the roster</span><b>{{ rows.len() }}</b></div>
-          <p class="bld-tip">Research widens what this village can field. Cost and requirements rise with the unit's strength.</p>
-        </div>
-      </div>
+      {% include "_upgrade.html" %}
     </aside>
   </div>
   {% endif %}

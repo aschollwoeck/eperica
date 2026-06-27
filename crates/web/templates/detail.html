@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
+{% block content %}
+{% include "_icons.html" %}
+
+<section class="bld-hero">
+  <div class="bld-hero__inner">
+    <span class="bld-crest"><svg viewBox="0 0 24 24"><use href="#{{ icon }}"/></svg></span>
+    <div class="bld-hid">
+      <div class="bld-eyebrow">{{ eyebrow }} · {{ village_label }}</div>
+      <h1 class="bld-title">{{ title }}{% if upgrade.level > 0 %} <span class="bld-lvl">Level {{ upgrade.level }}</span>{% endif %}</h1>
+      <p class="bld-sub">{{ blurb }}</p>
+    </div>
+    <a class="bld-back" href="/w/{{ world }}/village/{{ village_id }}">← Village</a>
+  </div>
+</section>
+
+<div class="bld-body">
+  {% include "_ribbon.html" %}
+
+  <div class="bld-cols">
+    <div>
+      <div class="bld-cols__head"><h2>About</h2><span class="bld-cols__rule"></span></div>
+      <section class="panel">
+        <p>{{ blurb }}</p>
+        <p class="muted">Order the next level from the panel on the right; construction runs in the village's
+          build queue and the level rises when it completes.</p>
+      </section>
+    </div>
+
+    <aside class="bld-aside">
+      {% include "_upgrade.html" %}
+    </aside>
+  </div>
+</div>
+
+<script>
+  for (const el of document.querySelectorAll(".countdown")) {
+    const deadline = Number(el.dataset.deadline);
+    let timer;
+    const tick = () => {
+      let s = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+      const h = Math.floor(s / 3600); s -= h * 3600;
+      const m = Math.floor(s / 60); s -= m * 60;
+      const pad = (n) => String(n).padStart(2, "0");
+      el.textContent = `${h}:${pad(m)}:${pad(s)}`;
+      if (deadline - Date.now() <= 0) { clearInterval(timer); setTimeout(() => location.reload(), 1500); }
+    };
+    tick();
+    timer = setInterval(tick, 1000);
+  }
+</script>
+{% endblock %}

@@ -17,14 +17,21 @@
 
 <div class="bld-body">
   {% if !has_marketplace %}
-  <section class="panel">
-    <p>Your village has no <strong>Marketplace</strong> yet — build one from the village page to trade.</p>
-    <p><a href="/w/{{ world }}/village/{{ village_id }}">← Back to the village</a></p>
-  </section>
+  <div class="bld-cols">
+    <div>
+      <section class="panel">
+        <p>Your village has no <strong>Marketplace</strong> yet — build one here to trade.</p>
+        <p><a href="/w/{{ world }}/village/{{ village_id }}">← Back to the village</a></p>
+      </section>
+    </div>
+    <aside class="bld-aside">{% include "_upgrade.html" %}</aside>
+  </div>
   {% else %}
 
   {% include "_ribbon.html" %}
 
+  <div class="bld-cols">
+    <div>
   <section class="panel bld-form">
     <div class="bld-merchants">
       <span>Merchants <b>{{ free }}</b> free of {{ total }}</span>
@@ -88,6 +95,9 @@
     </script>
     {% endif %}
   </section>
+    </div>
+    <aside class="bld-aside">{% include "_upgrade.html" %}</aside>
+  </div>
   {% endif %}
 </div>
 {% endblock %}

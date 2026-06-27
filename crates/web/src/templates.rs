@@ -119,6 +119,27 @@ mod tests {
     // neutral plate; an empty tribe slug emits no tribe layer (the neutral plate is the sole fallback). The
     // Academy stands in for the building pages (the village page itself now uses the 069 fortress plan, not
     // the building-bg mechanism).
+    fn dummy_upgrade() -> BuildRow {
+        BuildRow {
+            table: "building",
+            slot: 0,
+            kind: "academy",
+            res: "",
+            page: "academy",
+            label: "Academy".into(),
+            level: 3,
+            cost_wood: 100,
+            cost_clay: 100,
+            cost_iron: 100,
+            cost_crop: 50,
+            at_max: false,
+            can_order: true,
+            effect: "Units in the roster".into(),
+            building_ms: None,
+            gate: String::new(),
+        }
+    }
+
     fn academy_tpl(tribe_slug: &'static str) -> AcademyTemplate {
         AcademyTemplate {
             world: "w".into(),
@@ -140,6 +161,7 @@ mod tests {
             has_academy: true,
             rows: Vec::new(),
             active: None,
+            upgrade: dummy_upgrade(),
         }
     }
 
@@ -281,6 +303,8 @@ pub struct AcademyTemplate {
     pub rows: Vec<AcademyRow>,
     /// The research in progress, if any.
     pub active: Option<QueueView>,
+    /// The Academy's own build/upgrade panel (087), shown in the aside.
+    pub upgrade: BuildRow,
 }
 
 /// One researched unit type in the Smithy view (004 AC15).
@@ -339,6 +363,8 @@ pub struct SmithyTemplate {
     pub active: Option<QueueView>,
     /// The portrait slug of the unit at the anvil (066), for the aside; `None` when idle.
     pub active_portrait: Option<String>,
+    /// The Smithy's own build/upgrade panel (087), shown in the aside.
+    pub upgrade: BuildRow,
 }
 
 /// One trainable unit row in a troop-building view (005 AC9).
@@ -392,6 +418,8 @@ pub struct TroopsTemplate {
     pub rows: Vec<TrainRow>,
     /// The running batch, if any.
     pub active: Option<QueueView>,
+    /// This training building's own build/upgrade panel (087), shown in the aside.
+    pub upgrade: BuildRow,
 }
 
 /// One garrison line on the village page (005 AC9).
@@ -485,6 +513,8 @@ pub struct RallyTemplate {
     pub origin_y: i32,
     pub radius: i32,
     pub speed_mult: f64,
+    /// The Rally Point's own build/upgrade panel (087), shown in the aside.
+    pub upgrade: BuildRow,
 }
 
 /// An in-flight movement line on the village page (007 AC7).
@@ -639,6 +669,36 @@ pub struct MarketTemplate {
     pub origin_y: i32,
     pub radius: i32,
     pub speed_mult: f64,
+    /// The Marketplace's own build/upgrade panel (087), shown in the aside.
+    pub upgrade: BuildRow,
+}
+
+/// The generic per-building / per-field detail page (087): a hero, a one-line description, the resource
+/// ribbon, and the working upgrade panel. Serves the buildings that lack a dedicated functional page and
+/// every resource field, so the village plan can be a pure overview that links here.
+#[derive(Template)]
+#[template(path = "detail.html")]
+pub struct DetailTemplate {
+    /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
+    pub world: String,
+    /// The village's tribe slug for the tribe-specific background plate (065); empty ⇒ neutral plate.
+    pub tribe_slug: &'static str,
+    /// The village this page acts on (carried into the upgrade form + back link).
+    pub village_id: String,
+    /// The acting village's coordinate label, shown in the hero eyebrow.
+    pub village_label: String,
+    /// The shared resource ribbon (067).
+    pub ribbon: ResourceRibbon,
+    /// Hero eyebrow: "Building" or "Resource field".
+    pub eyebrow: &'static str,
+    /// Page title (the building name, or "Wood field #3").
+    pub title: String,
+    /// One-line description of what this building/field does.
+    pub blurb: String,
+    /// SVG symbol id for the hero crest (e.g. `i-warehouse` or `i-wood`).
+    pub icon: String,
+    /// The build/upgrade panel data.
+    pub upgrade: BuildRow,
 }
 
 /// An in-flight shipment line on the village page (008 AC6).

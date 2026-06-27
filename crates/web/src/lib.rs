@@ -261,6 +261,15 @@ fn world_router() -> Router<AppState> {
         .route("/village", get(handlers::village_index))
         .route("/village/{village}", get(handlers::village))
         .route("/village/{village}/build", post(handlers::build_submit))
+        // 087: per-building / per-field detail pages with the upgrade panel — the village plan links here.
+        .route(
+            "/village/{village}/building/{kind}",
+            get(handlers::building_detail),
+        )
+        .route(
+            "/village/{village}/field/{slot}",
+            get(handlers::field_detail),
+        )
         .route("/map", get(handlers::map))
         .route("/village/{village}/academy", get(handlers::academy))
         .route(
