@@ -78,19 +78,18 @@
     const insGo = document.getElementById("minspect-go");
     const insCenter = document.getElementById("minspect-center");
     let selEl = null;
-    const select = (el, d) => {
+    // fill the inspector aside for a tile (read from its data-*). Selection happens on a tap (pointerup
+    // without a drag) — not a native click, which pointer capture would otherwise redirect off the tile.
+    const select = (b) => {
+      const d = b.dataset;
       if (selEl) selEl.classList.remove("mtile--sel");
-      selEl = el; el.classList.add("mtile--sel");
+      selEl = b; b.classList.add("mtile--sel");
       insLabel.textContent = d.label;
       insCoord.textContent = "(" + d.x + " | " + d.y + ")";
       if (d.href) { insGo.href = d.href; insGo.style.display = ""; } else { insGo.style.display = "none"; }
       insCenter.href = "/w/" + world + "/map?x=" + d.x + "&y=" + d.y;
       insCenter.style.display = "";
     };
-    const bind = (b) => b.addEventListener("click", () =>
-      select(b, { x: b.dataset.x, y: b.dataset.y, label: b.dataset.label, href: b.dataset.href }));
-    // wire the server-rendered tiles until the first fetch swaps them out
-    layer.querySelectorAll(".mtile").forEach(bind);
 
     // place the layer so its centre tile sits at the viewport centre, plus the current drag.
     const place = () => {
@@ -111,7 +110,6 @@
         b.textContent = cell.glyph;
         b.dataset.x = cell.x; b.dataset.y = cell.y; b.dataset.label = cell.label;
         if (cell.href) b.dataset.href = cell.href;
-        bind(b);
         frag.appendChild(b);
       }
       layer.replaceChildren(frag);
@@ -162,11 +160,16 @@
       if (!dragging) return;
       dragging = false; vp.classList.remove("mviewport--drag");
       try { vp.releasePointerCapture(e.pointerId); } catch (_) {}
+      // a tap (no drag) selects the tile under the pointer — pointer capture means the native click can't
+      // be relied on, so hit-test here instead.
+      if (!moved) {
+        const el = document.elementFromPoint(e.clientX, e.clientY);
+        const tile = el && el.closest && el.closest(".mtile");
+        if (tile) select(tile);
+      }
     };
     vp.addEventListener("pointerup", end);
     vp.addEventListener("pointercancel", end);
-    // a drag shouldn't also fire a tile click
-    vp.addEventListener("click", (e) => { if (moved) { e.stopPropagation(); e.preventDefault(); } }, true);
     // re-centre live on resize, and (debounced) re-fetch a region sized to the new viewport so a wider
     // window fills with more columns without needing a drag first.
     let resizeT;
