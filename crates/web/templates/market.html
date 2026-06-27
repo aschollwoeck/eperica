@@ -44,8 +44,8 @@
       <div class="field">
         <label>Target tile</label>
         <span class="map-controls">
-          x <input type="number" name="x" required style="width:5em">
-          y <input type="number" name="y" required style="width:5em">
+          x <input type="number" name="x" required style="width:5em" {% match target_x %}{% when Some with (x) %}value="{{ x }}"{% when None %}{% endmatch %}>
+          y <input type="number" name="y" required style="width:5em" {% match target_y %}{% when Some with (y) %}value="{{ y }}"{% when None %}{% endmatch %}>
         </span>
       </div>
       <table class="table">

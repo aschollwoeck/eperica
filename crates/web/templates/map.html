@@ -20,7 +20,7 @@
     <div>
       <div class="mviewport" id="mviewport">
         <div class="mlayer" id="mlayer" style="grid-template-columns: repeat({{ cols }}, var(--mt));">
-          {% for row in rows %}{% for cell in row %}<button type="button" class="mtile {{ cell.cell_class }}" data-label="{{ cell.label }}" data-x="{{ cell.x }}" data-y="{{ cell.y }}"{% match cell.href %}{% when Some with (h) %} data-href="{{ h }}"{% when None %}{% endmatch %}>{{ cell.glyph }}</button>{% endfor %}{% endfor %}
+          {% for row in rows %}{% for cell in row %}<button type="button" class="mtile {{ cell.cell_class }}" data-label="{{ cell.label }}" data-x="{{ cell.x }}" data-y="{{ cell.y }}"{% match cell.href %}{% when Some with (h) %} data-href="{{ h }}"{% when None %}{% endmatch %}{% match cell.market_href %}{% when Some with (m) %} data-market="{{ m }}"{% when None %}{% endmatch %}>{{ cell.glyph }}</button>{% endfor %}{% endfor %}
         </div>
         <div class="mviewport__hint">✥ drag to move</div>
       </div>
@@ -50,6 +50,7 @@
           <p class="minspect__label" id="minspect-label"><span class="muted">Click a tile on the map to inspect it.</span></p>
           <div class="minspect__act">
             <a id="minspect-go" class="btn btn--primary btn--wide" style="display:none">Send troops →</a>
+            <a id="minspect-merchant" class="btn btn--secondary btn--wide" style="display:none">Send merchant →</a>
             <a id="minspect-center" class="btn btn--secondary btn--wide" style="display:none">Centre here</a>
           </div>
         </div>
@@ -79,6 +80,7 @@
     const insLabel = document.getElementById("minspect-label");
     const insCoord = document.getElementById("minspect-coord");
     const insGo = document.getElementById("minspect-go");
+    const insMerchant = document.getElementById("minspect-merchant");
     const insCenter = document.getElementById("minspect-center");
     const jumpX = document.getElementById("mjump-x"), jumpY = document.getElementById("mjump-y");
     let selEl = null, selX = 0, selY = 0;
@@ -92,6 +94,8 @@
       insLabel.textContent = d.label;
       insCoord.textContent = "(" + d.x + " | " + d.y + ")";
       if (d.href) { insGo.href = d.href; insGo.style.display = ""; } else { insGo.style.display = "none"; }
+      // 096: a village tile can also be shipped resources from the Marketplace.
+      if (d.market) { insMerchant.href = d.market; insMerchant.style.display = ""; } else { insMerchant.style.display = "none"; }
       insCenter.href = "/w/" + world + "/map?x=" + d.x + "&y=" + d.y;
       insCenter.style.display = "";
     };
@@ -117,6 +121,7 @@
         b.textContent = cell.glyph;
         b.dataset.x = cell.x; b.dataset.y = cell.y; b.dataset.label = cell.label;
         if (cell.href) b.dataset.href = cell.href;
+        if (cell.market_href) b.dataset.market = cell.market_href;
         frag.appendChild(b);
       }
       layer.replaceChildren(frag);

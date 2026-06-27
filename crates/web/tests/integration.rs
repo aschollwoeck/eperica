@@ -1616,6 +1616,35 @@ async fn map_tiles_endpoint_serves_a_rectangular_region(pool: sqlx::PgPool) {
     );
     assert!(cell["x"].is_number() && cell["y"].is_number());
 
+    // 096: any village tile also exposes a "Send merchant" target (the Marketplace pre-filled with the
+    // tile); an oasis does not (you can only ship resources to a village).
+    let rows = v["rows"].as_array().unwrap();
+    let village = rows
+        .iter()
+        .flat_map(|r| r.as_array().unwrap())
+        .find(|c| c["cell_class"].as_str().unwrap().contains("--village"));
+    assert!(
+        village.expect("the registering player's village is in view")["market_href"]
+            .as_str()
+            .is_some_and(|m| m.contains("/market?x=")),
+    );
+    if let Some(oc) = rows.iter().flat_map(|r| r.as_array().unwrap()).find(|c| {
+        let cl = c["cell_class"].as_str().unwrap();
+        cl.contains("--oasis") && !cl.contains("--village")
+    }) {
+        assert!(oc["market_href"].is_null());
+    }
+    // Plain terrain (neither village nor oasis) never carries a merchant target — asserted unconditionally.
+    let terrain = rows
+        .iter()
+        .flat_map(|r| r.as_array().unwrap())
+        .find(|c| {
+            let cl = c["cell_class"].as_str().unwrap();
+            !cl.contains("--village") && !cl.contains("--oasis")
+        })
+        .expect("a plain-terrain tile is in view");
+    assert!(terrain["market_href"].is_null());
+
     // P11: oversized half-extents are clamped (hx ≤ 18, hy ≤ 14).
     let big: serde_json::Value = serde_json::from_str(
         &c.get(format!("{base}/w/{home}/map/tiles?cx=0&cy=0&hx=999&hy=999"))
@@ -2416,6 +2445,16 @@ async fn marketplace_send_and_deliver_flow(pool: sqlx::PgPool) {
         market.contains("ship-preview") && market.contains("ship-amt"),
         "market has the live shipment preview"
     );
+    // 096: a map "Send merchant" link (?x&y) pre-fills the target tile in the send form.
+    let prefilled = cs
+        .get(format!("{base}/w/{home}/village/{vid}/market?x=7&y=-9"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(prefilled.contains("value=\"7\"") && prefilled.contains("value=\"-9\""));
 
     // AC1/AC6: send 300 wood to the target's tile; PRG back to the village.
     let res = cs
