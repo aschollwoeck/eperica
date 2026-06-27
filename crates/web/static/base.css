@@ -43,7 +43,7 @@ h1, h2, h3 {
 }
 
 a { color: var(--c-gold); }
-.res, .num { font-variant-numeric: tabular-nums; }
+.num { font-variant-numeric: tabular-nums; }
 
 .topbar {
   position: sticky; top: 0; z-index: 20;
@@ -110,39 +110,6 @@ a { color: var(--c-gold); }
 
 .container { max-width: 880px; margin: var(--space-6) auto; padding: 0 var(--space-4); }
 
-/* Building-page background — a darkened building plate behind the page. Layer order (top→bottom):
-   scrim gradient · the building image · the theme base colour. The image sits UNDER the scrim, so when
-   `/static/buildings/<slug>.webp` is missing the image layer renders nothing and the scrim + base colour
-   show through unchanged — a graceful fallback with no broken-image artifacts. The page also keeps the
-   global vignette/grain overlays on top. Panels go slightly translucent so the plate reads behind content. */
-.has-building-bg {
-  background:
-    linear-gradient(to bottom,
-      color-mix(in srgb, var(--c-bg) 42%, transparent) 0%,
-      color-mix(in srgb, var(--c-bg) 80%, transparent) 58%,
-      var(--c-bg) 100%),
-    /* 065: the village's tribe-specific plate sits on top; if absent it 404s to transparent and the
-       neutral plate below shows through — a pure-CSS graceful fallback (no broken-image artifact). */
-    var(--building-img-tribe, none) center top / cover no-repeat fixed,
-    var(--building-img, none) center top / cover no-repeat fixed,
-    var(--c-bg);
-}
-.has-building-bg .panel { background: color-mix(in srgb, var(--c-panel) 88%, transparent); }
-
-/* Unit roster thumbnail (063) — `/static/units/<tribe>_<id>.webp` under `--unit-img`; when the art
-   is absent the image simply fails to load and the dark placeholder tile shows (no broken-image icon). */
-.unit-cell { display: inline-flex; align-items: center; gap: 9px; }
-.unit-thumb {
-  width: 36px; height: 36px; flex: none;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--c-border);
-  background-color: color-mix(in srgb, var(--c-panel-alt) 78%, black);
-  background-image: var(--unit-img, none);
-  background-size: cover;
-  background-position: center top;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, black 28%, transparent);
-}
-
 /* Site footer — brand + link columns + a legal bar; global (every page). */
 .site-footer { border-top: 1px solid var(--c-border); background: var(--c-panel-alt); color: var(--c-ink-muted); margin-top: var(--space-7); }
 .site-footer__inner {
@@ -182,7 +149,6 @@ a { color: var(--c-gold); }
   padding: var(--space-5);
 }
 .muted { color: var(--c-ink-muted); }
-.actions { margin-top: var(--space-4); display: flex; gap: var(--space-3); flex-wrap: wrap; }
 
 .btn {
   display: inline-block;
@@ -270,22 +236,6 @@ a { color: var(--c-gold); }
 .alert--success { color: var(--c-success); border-color: var(--c-success); background: color-mix(in srgb, var(--c-success) 14%, transparent); }
 .alert--warning { color: var(--c-warning); border-color: var(--c-warning); background: color-mix(in srgb, var(--c-warning) 14%, transparent); }
 
-.resource-list { list-style: none; padding: 0; display: flex; gap: var(--space-3); flex-wrap: wrap; }
-.res {
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--c-border);
-  background: var(--c-panel-alt);
-}
-.res--wood { color: var(--c-lumber); }
-.res--clay { color: var(--c-clay); }
-.res--iron { color: var(--c-iron-res); }
-.res--crop { color: var(--c-crop); }
-
 .badge {
   display: inline-block;
   padding: 2px 10px;
@@ -301,20 +251,6 @@ a { color: var(--c-gold); }
 .badge[hidden] { display: none; }
 /* Inline nav icons (bell, …) sized + vertically centred next to their label. */
 .topbar__nav .nav-icon { vertical-align: -3px; }
-
-/* 032: resource bars — a fill track under each resource line. Stacks the resources full-width. */
-.resource-list { flex-direction: column; gap: var(--space-2); }
-.resbar { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
-.resbar__track {
-  height: 8px; border-radius: 999px; overflow: hidden;
-  background: color-mix(in srgb, var(--c-ink-muted) 25%, transparent);
-}
-.resbar__fill { display: block; height: 100%; width: 0; background: var(--c-gold); transition: width 0.3s; }
-.resbar__fill--warn { background: var(--c-warning); }
-.res--wood .resbar__fill { background: var(--c-lumber); }
-.res--clay .resbar__fill { background: var(--c-clay); }
-.res--iron .resbar__fill { background: var(--c-iron-res); }
-.res--crop .resbar__fill { background: var(--c-crop); }
 
 /* 030: account-sitting banner — a persistent bar while operating another player's account. */
 .banner {
@@ -342,35 +278,6 @@ a { color: var(--c-gold); }
 .table th { color: var(--c-ink-muted); }
 .table tbody tr:nth-child(odd) { background: var(--c-panel-alt); }
 .table .num { text-align: right; }
-
-.hero { text-align: center; padding: var(--space-7) var(--space-4); }
-.hero h1 { font-size: 2.6rem; margin: 0 0 var(--space-3); color: var(--c-ink); }
-.hero p { color: var(--c-ink-muted); font-size: 1.1rem; max-width: 46ch; margin: 0 auto var(--space-5); }
-
-.gallery { display: grid; gap: var(--space-5); }
-.swatch-row { display: flex; gap: var(--space-2); flex-wrap: wrap; }
-.swatch {
-  width: 72px;
-  height: 52px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--c-border);
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  font-size: 0.65rem;
-  color: #fff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
-  padding-bottom: 3px;
-}
-.theme-switch { display: flex; gap: var(--space-2); flex-wrap: wrap; }
-.theme-switch a {
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-sm);
-  text-decoration: none;
-  color: var(--c-ink);
-}
-.theme-switch a.active { background: var(--c-accent); color: var(--c-accent-ink); border-color: var(--c-accent); }
 
 /* ============================================================================
    066 — Building-page pattern (Smithy first): hero band + resource ribbon +
