@@ -15,10 +15,11 @@
     <span>Wall <b>{{ wall_before }} → {{ wall_after }}</b></span>
   </div>
 
-  {% if scouted_note.is_some() || loot.is_some() || razed.is_some() || loyalty.is_some() %}
+  {% if scouted_note.is_some() || loot.is_some() || oasis_note.is_some() || razed.is_some() || loyalty.is_some() %}
   <div class="repnotes">
     {% match scouted_note %}{% when Some with (note) %}<div class="repnote">⚠ {{ note }}</div>{% when None %}{% endmatch %}
     {% match loot %}{% when Some with (l) %}<div class="repnote">💰 <strong>Loot:</strong> {{ l }}</div>{% when None %}{% endmatch %}
+    {% match oasis_note %}{% when Some with (n) %}<div class="repnote">📦 {{ n }}</div>{% when None %}{% endmatch %}
     {% match razed %}{% when Some with (r) %}<div class="repnote">🔥 <strong>Building razed:</strong> {{ r }}</div>{% when None %}{% endmatch %}
     {% match loyalty %}{% when Some with (l) %}<div class="repnote{% if conquered %} repnote--win{% endif %}"><strong>Loyalty:</strong> {{ l }}{% if conquered %} — <strong>Village captured!</strong>{% endif %}</div>{% when None %}{% endmatch %}
   </div>

@@ -4839,6 +4839,12 @@ pub async fn report_detail(
             l.wood, l.clay, l.iron, l.crop
         )
     });
+    // 098: an oasis holds no resources to plunder (012) — tell the winning raider why nothing came home,
+    // so a zero-loot oasis report doesn't read as a bug.
+    let oasis_note =
+        (report.kind == MovementKind::OasisAttack && i_attacked && report.attacker_won).then(
+            || "Oases hold no resources to plunder — your troops returned empty-handed.".to_owned(),
+        );
     let razed = report
         .razed
         .map(|d| format!("{} {} → {}", building_label(d.kind), d.before, d.after));
@@ -4866,6 +4872,7 @@ pub async fn report_detail(
         defender_rows: force_rows(unit_rules, &report.defender_forces, &report.defender_losses),
         scouted_note,
         loot,
+        oasis_note,
         razed,
         loyalty,
         conquered: report.conquered,

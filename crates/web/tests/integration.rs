@@ -3162,6 +3162,28 @@ async fn oasis_attack_occupy_and_bonus_flow(pool: sqlx::PgPool) {
     .await
     .unwrap();
 
+    // 098: the won oasis raid produced a report that tells the attacker no loot came back (an oasis holds
+    // no resources to plunder, 012) — so a zero-loot report doesn't read as a bug.
+    let report_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM battle_reports WHERE kind = 'oasis_attack' AND attacker_village = $1",
+    )
+    .bind(vid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let report = c
+        .get(format!("{base}/w/{home}/reports/{}", report_id.as_u128()))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        report.contains("Oases hold no resources"),
+        "the oasis report explains the empty haul"
+    );
+
     // AC12: the village page shows the held oasis + its bonus.
     let village = c
         .get(format!("{base}/w/{home}/village/{vid}"))
