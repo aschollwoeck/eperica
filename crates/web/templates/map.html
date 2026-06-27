@@ -160,16 +160,25 @@
       if (!dragging) return;
       dragging = false; vp.classList.remove("mviewport--drag");
       try { vp.releasePointerCapture(e.pointerId); } catch (_) {}
+    };
+    vp.addEventListener("pointerup", (e) => {
+      const wasTap = dragging && !moved;
+      end(e);
       // a tap (no drag) selects the tile under the pointer — pointer capture means the native click can't
-      // be relied on, so hit-test here instead.
-      if (!moved) {
+      // be relied on for the pointer path, so hit-test here instead.
+      if (wasTap) {
         const el = document.elementFromPoint(e.clientX, e.clientY);
         const tile = el && el.closest && el.closest(".mtile");
         if (tile) select(tile);
       }
-    };
-    vp.addEventListener("pointerup", end);
+    });
     vp.addEventListener("pointercancel", end);
+    // Keyboard a11y: a tile is a focusable <button>, so Enter/Space fires a native click that bubbles to the
+    // layer (it's NOT pointer-driven, so capture doesn't redirect it). Delegate that to the same select.
+    layer.addEventListener("click", (e) => {
+      const tile = e.target.closest && e.target.closest(".mtile");
+      if (tile) select(tile);
+    });
     // re-centre live on resize, and (debounced) re-fetch a region sized to the new viewport so a wider
     // window fills with more columns without needing a drag first.
     let resizeT;
