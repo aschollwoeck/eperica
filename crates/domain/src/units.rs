@@ -365,6 +365,24 @@ fn training_building_present(required: BuildingKind, buildings: &[BuildingSlot])
             && building_levels_met(&[(BuildingKind::Palace, 1)], buildings))
 }
 
+/// The level of the building that trains a `trained_in` unit in this village — driving the training speed
+/// (005 AC4). A **Palace** stands in for a **Residence** (013), so a Residence-trained unit uses the
+/// Palace's level when no Residence is built. Zero when neither is present.
+pub fn training_building_level(trained_in: BuildingKind, buildings: &[BuildingSlot]) -> u8 {
+    let level_of = |k: BuildingKind| {
+        buildings
+            .iter()
+            .find(|b| b.kind == k)
+            .map_or(0, |b| b.level)
+    };
+    let direct = level_of(trained_in);
+    if direct == 0 && trained_in == BuildingKind::Residence {
+        level_of(BuildingKind::Palace)
+    } else {
+        direct
+    }
+}
+
 /// Why a training batch is denied (beyond affordability and queue occupancy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrainDenied {
@@ -742,6 +760,32 @@ mod tests {
         assert_eq!(
             can_train(&settler, true, 1, &slots(&[(BuildingKind::Barracks, 1)])),
             Err(TrainDenied::BuildingMissing)
+        );
+    }
+
+    // 099: the effective training-building level — a Palace stands in for a Residence (013), so a
+    // Residence-trained unit trains at the Palace's level, not level 0, when no Residence is built.
+    #[test]
+    fn training_building_level_lets_a_palace_stand_in_for_a_residence() {
+        let res = BuildingKind::Residence;
+        // A direct Residence drives its own level.
+        assert_eq!(training_building_level(res, &slots(&[(res, 8)])), 8);
+        // No Residence, but a Palace → the Palace's level.
+        assert_eq!(
+            training_building_level(res, &slots(&[(BuildingKind::Palace, 5)])),
+            5
+        );
+        // A Residence wins over a Palace when both exist.
+        assert_eq!(
+            training_building_level(res, &slots(&[(res, 3), (BuildingKind::Palace, 9)])),
+            3
+        );
+        // Neither present → 0.
+        assert_eq!(training_building_level(res, &slots(&[])), 0);
+        // A non-expansion unit never gets the Palace fallback.
+        assert_eq!(
+            training_building_level(BuildingKind::Stable, &slots(&[(BuildingKind::Palace, 9)])),
+            0
         );
     }
 
