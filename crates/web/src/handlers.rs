@@ -1551,8 +1551,9 @@ fn protection_notice(
     ))
 }
 
-/// The viewport half-extent: the map view shows a `(2·HALF + 1)`-square grid.
-const MAP_HALF: i32 = 4;
+/// The viewport half-extent: the map view shows a `(2·HALF + 1)`-square grid. 091: a 13×13 window so the
+/// (smaller) tiles fill the map column and more of the world is visible at a glance.
+const MAP_HALF: i32 = 6;
 
 /// Optional map-view center (defaults to the player's village). On the Rally Point, `village` also
 /// selects which of the player's villages the troops are sent from (013 AC11).
