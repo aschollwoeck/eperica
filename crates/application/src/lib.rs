@@ -72,7 +72,9 @@ pub use forum::{
     ForumError, POST_LIMIT, THREAD_LIMIT, list_forum, open_thread, reply, start_thread,
 };
 pub use lifecycle::{end_protection_if_established, process_due_lifecycle};
-pub use map::{MapCell, Viewport, map_viewport, viewport_coords};
+pub use map::{
+    MapCell, Viewport, map_viewport, map_viewport_rect, viewport_coords, viewport_coords_rect,
+};
 pub use medals::process_due_medal_settlement;
 pub use movement::{MovementError, order_reinforcement, order_return, process_due_movements};
 pub use notification::{

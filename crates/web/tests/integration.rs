@@ -1537,11 +1537,14 @@ async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
-    // 074/091: the redesigned map — a styled tile grid with the click-to-inspect panel now in the right
-    // aside (the two-column layout the village uses), not a bar below the grid.
-    assert!(body.contains("mgrid") && body.contains("class=\"mtile"));
+    // 074/091/093: the redesigned map — a draggable tile viewport with the click-to-inspect panel in the
+    // right aside (the two-column layout the village uses). The server still renders the initial grid into
+    // the draggable layer (no-JS fallback) — assert that markup is present.
+    assert!(
+        body.contains("mviewport") && body.contains("mlayer") && body.contains("class=\"mtile")
+    );
     assert!(body.contains("vcols") && body.contains("vrail") && body.contains("minspect"));
-    assert!(body.contains("centre of view")); // the command header's centre label
+    assert!(body.contains("drag to explore")); // the command header hints the new interaction
     assert!(body.contains("map-grid__cell--village"));
     assert!(body.contains("map-grid__cell--self")); // the viewer's own village is highlighted
     assert!(body.contains(&user)); // owner name on the marker (public, GDD §7.3)
@@ -1569,6 +1572,69 @@ async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
         anon.headers().get(LOCATION).unwrap().to_str().unwrap(),
         "/login"
     );
+}
+
+/// 093: the draggable map streams tiles from a JSON endpoint — a rectangular region around (cx,cy), with the
+/// half-extents clamped (P11) and Player-only access (P4).
+#[sqlx::test(migrations = "../../migrations")]
+async fn map_tiles_endpoint_serves_a_rectangular_region(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let user = unique("tiles");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", "tiles@e.com"),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // An 11-wide × 7-tall region (hx=5, hy=3) around (0|0) — wider than tall.
+    let r = c
+        .get(format!("{base}/w/{home}/map/tiles?cx=0&cy=0&hx=5&hy=3"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let v: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(v["cols"], 11); // 2·hx + 1
+    assert_eq!(v["rows"].as_array().unwrap().len(), 7); // 2·hy + 1
+    assert_eq!(v["rows"][0].as_array().unwrap().len(), 11);
+    // each cell carries the render fields the client needs.
+    let cell = &v["rows"][3][5];
+    assert!(
+        cell["cell_class"]
+            .as_str()
+            .unwrap()
+            .contains("map-grid__cell")
+    );
+    assert!(cell["x"].is_number() && cell["y"].is_number());
+
+    // P11: oversized half-extents are clamped (hx ≤ 18, hy ≤ 14).
+    let big: serde_json::Value = serde_json::from_str(
+        &c.get(format!("{base}/w/{home}/map/tiles?cx=0&cy=0&hx=999&hy=999"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(big["cols"], 37); // 2·18 + 1
+    assert_eq!(big["rows"].as_array().unwrap().len(), 29); // 2·14 + 1
+
+    // P4: a visitor cannot read the tiles (auth is checked before the handler).
+    let anon = client()
+        .get(format!("{base}/w/{home}/map/tiles?cx=0&cy=0&hx=5&hy=3"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(anon.status().as_u16(), 303);
 }
 
 #[sqlx::test(migrations = "../../migrations")]

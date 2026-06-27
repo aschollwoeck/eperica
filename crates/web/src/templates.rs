@@ -432,7 +432,9 @@ pub struct GarrisonRow {
     pub upkeep: i64,
 }
 
-/// One rendered cell of the map view (006 AC7).
+/// One rendered cell of the map view (006 AC7). `Serialize` so the `/map/tiles` JSON endpoint (093) streams
+/// these to the draggable client.
+#[derive(serde::Serialize)]
 pub struct MapCellView {
     /// The full BEM class list (terrain + optional village/self modifiers).
     pub cell_class: String,
@@ -458,12 +460,10 @@ pub struct MapTemplate {
     pub center_y: i32,
     /// Map radius, for display.
     pub radius: i32,
-    /// Recenter targets (one axis shifted by a full screen).
-    pub north_y: i32,
-    pub south_y: i32,
-    pub east_x: i32,
-    pub west_x: i32,
-    /// The grid: rows north→south, each west→east.
+    /// Column count of the initial grid (093) — sets the layer's `grid-template-columns`.
+    pub cols: i32,
+    /// The initial grid (093): rows north→south, each west→east. The draggable client re-fetches via
+    /// `/map/tiles`; this server-rendered grid is the no-JS / first-paint fallback.
     pub rows: Vec<Vec<MapCellView>>,
 }
 

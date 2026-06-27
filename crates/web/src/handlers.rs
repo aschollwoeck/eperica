@@ -37,15 +37,15 @@ use eperica_application::{
     MedalSubjectKind, ModerationError, ModerationRepository, MovementRepository, OasisRepository,
     PlayerHit, QuestRepository, RegisterCommand, RegisterError, RepoError, ScoutIntel,
     ScoutReportView, ScoutRepository, TradeRepository, TrainingRepository, UnitOrderKind,
-    UnitRepository, Window, WonderRepository, account_signals, admin_overview,
+    UnitRepository, Viewport, Window, WonderRepository, account_signals, admin_overview,
     alliance_conflict_leaderboard, alliance_population_leaderboard, alliance_statistics,
     alliance_view, authenticate, authorize_sit, climbers_leaderboard, conflict_leaderboard,
     conversation_list, create_world as admin_create_world_uc, disband_alliance, dm_key,
     dm_pair_key, edit_bio, end_protection_if_established, evaluate_achievements, evaluate_quests,
     expel_member, file_report, found_alliance, grant_sitter, invite_player, leave_alliance,
     list_accounts as admin_list_accounts, list_forum, list_notifications_for_account, list_sitters,
-    list_sitting_for, list_worlds as admin_list_worlds, load_culture, load_economy, map_viewport,
-    mark_notifications_read_for_account, notif_key, notification_settings,
+    list_sitting_for, list_worlds as admin_list_worlds, load_culture, load_economy,
+    map_viewport_rect, mark_notifications_read_for_account, notif_key, notification_settings,
     notification_unread_for_account, open_chat, open_dm, open_thread, order_attack, order_build,
     order_oasis_attack, order_oasis_recall, order_oasis_reinforce, order_reinforcement,
     order_research, order_return, order_scout, order_settle, order_smithy_upgrade, order_trade,
@@ -54,7 +54,7 @@ use eperica_application::{
     respond_invite, review_queue, revoke_invite, revoke_sitter, sanction_account, search,
     search_accounts as admin_search_accounts, send_chat, send_dm, set_diplomacy, set_member_role,
     set_notification_pref, set_role as admin_set_role_uc, sitter_log, start_thread,
-    transfer_founder, unread_badge, view_profile, viewport_coords,
+    transfer_founder, unread_badge, view_profile, viewport_coords_rect,
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, ChatChannel,
@@ -1551,9 +1551,13 @@ fn protection_notice(
     ))
 }
 
-/// The viewport half-extent: the map view shows a `(2·HALF + 1)`-square grid. 091: a 13×13 window so the
-/// (smaller) tiles fill the map column and more of the world is visible at a glance.
-const MAP_HALF: i32 = 6;
+/// The initial server-rendered map window (093) — a wide `(2·HALF_X+1)×(2·HALF_Y+1)` grid for first paint /
+/// no-JS; the draggable client then re-fetches a region sized to the viewport via `/map/tiles`.
+const MAP_HALF_X: i32 = 9;
+const MAP_HALF_Y: i32 = 6;
+/// The per-request cap on the half-extents the JSON tile endpoint will serve (bounds payload + work, P11).
+const MAP_HALF_X_MAX: i32 = 18;
+const MAP_HALF_Y_MAX: i32 = 14;
 
 /// Optional map-view center (defaults to the player's village). On the Rally Point, `village` also
 /// selects which of the player's villages the troops are sent from (013 AC11).
@@ -1561,6 +1565,15 @@ const MAP_HALF: i32 = 6;
 pub struct MapQuery {
     x: Option<i32>,
     y: Option<i32>,
+}
+
+/// 093: the draggable client's tile request — a rectangular region (`hx`×`hy` half-extents) around (`cx`,`cy`).
+#[derive(Deserialize)]
+pub struct MapTilesQuery {
+    cx: i32,
+    cy: i32,
+    hx: i32,
+    hy: i32,
 }
 
 fn oasis_label(b: OasisBonus) -> String {
@@ -1631,7 +1644,7 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
             .map_or(Coordinate::new(0, 0), |v| v.coordinate),
     };
 
-    let coords = viewport_coords(center, MAP_HALF, radius);
+    let coords = viewport_coords_rect(center, MAP_HALF_X, MAP_HALF_Y, radius);
     let markers = match ctx.accounts.villages_at(&coords).await {
         Ok(m) => m,
         Err(e) => {
@@ -1639,7 +1652,7 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
             return server_error();
         }
     };
-    let viewport = map_viewport(ctx.map.as_ref(), center, MAP_HALF, &markers);
+    let viewport = map_viewport_rect(ctx.map.as_ref(), center, MAP_HALF_X, MAP_HALF_Y, &markers);
 
     // Which oases in view are occupied, and by whom (012 AC12).
     let oasis_owners: std::collections::HashMap<Coordinate, String> =
@@ -1653,7 +1666,46 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
 
     // 033: distances on the map are measured from the player's home (capital, else first village).
     let origin = capital_coord.or_else(|| villages.first().map(|v| v.coordinate));
-    let rows: Vec<Vec<MapCellView>> = viewport
+    let rows = map_cells(
+        ctx.world_id,
+        ctx.map.as_ref(),
+        ctx.rules.lifecycle.inactive_after_secs,
+        ctx.rules.lifecycle.presence_online_secs,
+        &viewport,
+        &oasis_owners,
+        &user.username,
+        capital_coord,
+        origin,
+        acting_vid.as_deref(),
+    );
+
+    page(&MapTemplate {
+        world: world_id_str(ctx.world_id),
+        center_x: center.x,
+        center_y: center.y,
+        radius: i32::try_from(radius).unwrap_or(i32::MAX),
+        cols: 2 * MAP_HALF_X + 1,
+        rows,
+    })
+}
+
+/// Turn a viewport + the in-view oasis owners into render-ready cells (006/012/019/025/033): terrain class,
+/// village markers (self/capital/inactive, alliance tag + presence), the rally `href` for a sendable tile,
+/// and the toroidal distance-from-home suffix. Shared by the map page and the `/map/tiles` JSON endpoint (093).
+#[allow(clippy::too_many_arguments)]
+fn map_cells(
+    world: WorldId,
+    map: &eperica_domain::WorldMap,
+    inactive_after_secs: i64,
+    presence_online_secs: i64,
+    viewport: &Viewport,
+    oasis_owners: &std::collections::HashMap<Coordinate, String>,
+    username: &str,
+    capital_coord: Option<Coordinate>,
+    origin: Option<Coordinate>,
+    acting_vid: Option<&str>,
+) -> Vec<Vec<MapCellView>> {
+    viewport
         .rows
         .iter()
         .map(|row| {
@@ -1667,7 +1719,7 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
                     let mut href = None;
                     if let Some(marker) = &cell.marker {
                         class.push_str(" map-grid__cell--village");
-                        if marker.owner_name == user.username {
+                        if marker.owner_name == username {
                             class.push_str(" map-grid__cell--self");
                         }
                         let is_capital = Some(coord) == capital_coord;
@@ -1676,11 +1728,8 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
                         }
                         glyph = "★";
                         // 019 AC6: an inactive owner's village is farmable — grey it and flag it.
-                        let inactive = is_inactive(
-                            marker.owner_last_activity,
-                            now(),
-                            ctx.rules.lifecycle.inactive_after_secs,
-                        );
+                        let inactive =
+                            is_inactive(marker.owner_last_activity, now(), inactive_after_secs);
                         if inactive {
                             class.push_str(" map-grid__cell--inactive");
                         }
@@ -1691,11 +1740,8 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
                             .map(|t| format!(" [{t}]"))
                             .unwrap_or_default();
                         // 025: the owner's presence, surfaced in the marker label.
-                        let (online, presence_label) = presence_view(
-                            marker.owner_last_activity,
-                            now(),
-                            ctx.rules.lifecycle.presence_online_secs,
-                        );
+                        let (online, presence_label) =
+                            presence_view(marker.owner_last_activity, now(), presence_online_secs);
                         let presence = if online {
                             " · online".to_owned()
                         } else {
@@ -1713,10 +1759,10 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
                             coord.y
                         );
                         // A send shortcut to another player's village (you can't target your own).
-                        if marker.owner_name != user.username {
-                            href = acting_vid.as_ref().map(|vid| {
+                        if marker.owner_name != username {
+                            href = acting_vid.map(|vid| {
                                 village_path(
-                                    ctx.world_id,
+                                    world,
                                     vid,
                                     &format!("/rally?x={}&y={}", coord.x, coord.y),
                                 )
@@ -1727,7 +1773,7 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
                         // reinforce your own); its owner (if any) is shown in the label.
                         if let Some(owner) = oasis_owners.get(&coord) {
                             class.push_str(" map-grid__cell--occupied");
-                            if owner == &user.username {
+                            if owner == username {
                                 class.push_str(" map-grid__cell--self");
                             }
                             label =
@@ -1736,17 +1782,13 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
                             label =
                                 format!("{base_label} — wild animals ({}|{})", coord.x, coord.y);
                         }
-                        href = acting_vid.as_ref().map(|vid| {
-                            village_path(
-                                ctx.world_id,
-                                vid,
-                                &format!("/rally?x={}&y={}", coord.x, coord.y),
-                            )
+                        href = acting_vid.map(|vid| {
+                            village_path(world, vid, &format!("/rally?x={}&y={}", coord.x, coord.y))
                         });
                     }
                     // Distance from home (toroidal, rounded) — helps judge travel time at a glance.
                     if let Some(o) = origin {
-                        let d = ctx.map.distance(o, coord);
+                        let d = map.distance(o, coord);
                         if d >= 0.5 {
                             label.push_str(&format!(" · {} fields away", d.round() as i64));
                         }
@@ -1762,28 +1804,77 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
                 })
                 .collect()
         })
-        .collect();
+        .collect()
+}
 
-    let span = 2 * MAP_HALF + 1;
-    page(&MapTemplate {
-        world: world_id_str(ctx.world_id),
-        center_x: center.x,
-        center_y: center.y,
-        radius: i32::try_from(radius).unwrap_or(i32::MAX),
-        north_y: Coordinate::new(center.x, center.y.saturating_add(span))
-            .wrapped(radius)
-            .y,
-        south_y: Coordinate::new(center.x, center.y.saturating_sub(span))
-            .wrapped(radius)
-            .y,
-        east_x: Coordinate::new(center.x.saturating_add(span), center.y)
-            .wrapped(radius)
-            .x,
-        west_x: Coordinate::new(center.x.saturating_sub(span), center.y)
-            .wrapped(radius)
-            .x,
-        rows,
-    })
+/// 093: JSON tiles for a rectangular region around (`cx`,`cy`) — the draggable map streams these as it pans
+/// (Player only — Visitor redirected, P4). The half-extents are clamped so one request stays bounded (P11).
+pub async fn map_tiles(ctx: GameContext, Query(q): Query<MapTilesQuery>) -> Response {
+    let player = ctx.player;
+    let user = match ctx.accounts.find_user_by_id(ctx.account).await {
+        Ok(Some(u)) => u,
+        Ok(None) => return Redirect::to("/login").into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "lookup user failed");
+            return server_error();
+        }
+    };
+    let villages = match ctx.accounts.villages_of(player).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "villages lookup failed");
+            return server_error();
+        }
+    };
+    let capital_coord = villages.iter().find(|v| v.is_capital).map(|v| v.coordinate);
+    let acting_vid = villages
+        .iter()
+        .find(|v| v.is_capital)
+        .or_else(|| villages.first())
+        .map(|v| village_seg(v.id));
+    let origin = capital_coord.or_else(|| villages.first().map(|v| v.coordinate));
+    let radius = ctx.map.radius();
+    let center = Coordinate::new(q.cx, q.cy).wrapped(radius);
+    let hx = q.hx.clamp(0, MAP_HALF_X_MAX);
+    let hy = q.hy.clamp(0, MAP_HALF_Y_MAX);
+
+    let coords = viewport_coords_rect(center, hx, hy, radius);
+    let markers = match ctx.accounts.villages_at(&coords).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!(error = %e, "map markers lookup failed");
+            return server_error();
+        }
+    };
+    let oasis_owners: std::collections::HashMap<Coordinate, String> =
+        match ctx.accounts.oasis_owners_at(&coords).await {
+            Ok(o) => o.into_iter().collect(),
+            Err(e) => {
+                tracing::error!(error = %e, "oasis owners lookup failed");
+                return server_error();
+            }
+        };
+    let viewport = map_viewport_rect(ctx.map.as_ref(), center, hx, hy, &markers);
+    let rows = map_cells(
+        ctx.world_id,
+        ctx.map.as_ref(),
+        ctx.rules.lifecycle.inactive_after_secs,
+        ctx.rules.lifecycle.presence_online_secs,
+        &viewport,
+        &oasis_owners,
+        &user.username,
+        capital_coord,
+        origin,
+        acting_vid.as_deref(),
+    );
+    axum::Json(serde_json::json!({
+        "center_x": center.x,
+        "center_y": center.y,
+        "radius": i32::try_from(radius).unwrap_or(i32::MAX),
+        "cols": 2 * hx + 1,
+        "rows": rows,
+    }))
+    .into_response()
 }
 
 /// Build-order form fields.
