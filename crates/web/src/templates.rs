@@ -487,6 +487,9 @@ pub struct RallyUnitRow {
     pub attack: u32,
     pub def_inf: u32,
     pub def_cav: u32,
+    /// 097: this unit is a scout / a catapult — drives which order-specific fields the form reveals.
+    pub is_scout: bool,
+    pub is_catapult: bool,
 }
 
 #[derive(Template)]

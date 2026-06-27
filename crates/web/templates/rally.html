@@ -25,12 +25,34 @@
   {% else %}
   <section class="panel bld-form">
     <form method="post" action="/w/{{ world }}/village/{{ village_id }}/rally/send" class="form">
+      {# 097: the unit selection leads — the JS reads it to reveal the order-specific fields below. #}
+      <div class="field">
+        <label>Troops to send</label>
+        <table class="table">
+          <thead><tr><th>Unit</th><th class="num">In garrison</th><th>Send</th></tr></thead>
+          <tbody>
+            {% for u in units %}
+            <tr>
+              <td>{{ u.name }}</td>
+              <td class="num">{{ u.available }}</td>
+              <td><span class="rally-send">
+                <input type="number" name="count_{{ u.id }}" value="0" min="0" max="{{ u.available }}" style="width:5em"
+                       class="rally-count" data-speed="{{ u.speed }}" data-carry="{{ u.carry }}"
+                       data-att="{{ u.attack }}" data-di="{{ u.def_inf }}" data-dc="{{ u.def_cav }}"
+                       data-scout="{{ u.is_scout }}" data-catapult="{{ u.is_catapult }}">
+                <button type="button" class="btn btn--small rally-max" data-max="{{ u.available }}">max</button>
+              </span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
       <div class="field">
         <label>Order</label>
-        <select name="mode">
-          <option value="reinforce">Reinforce (defend an ally)</option>
+        <select name="mode" id="rally-mode">
+          <option value="raid" selected>Raid (fight to plunder)</option>
           <option value="attack">Attack (fight to destroy)</option>
-          <option value="raid">Raid (fight to plunder)</option>
+          <option value="reinforce">Reinforce (defend an ally)</option>
           <option value="scout">Scout (spy — scouts only)</option>
           {% if can_settle %}<option value="settle">Settle (found a new village)</option>{% endif %}
         </select>
@@ -46,7 +68,8 @@
         {% if target_is_oasis %}<span class="muted">This tile is an <strong>oasis</strong>: choose
           <em>attack</em> to clear &amp; occupy it, or <em>reinforce</em> to garrison one you hold.</span>{% endif %}
       </div>
-      <div class="field">
+      {# 097: shown only when scouts are in the army (or a scout order); visible by default without JS. #}
+      <div class="field" id="rally-field-scout">
         <label>Spy on</label>
         <select name="scout_target">
           <option value="defenses">Defenses (troops &amp; wall)</option>
@@ -55,7 +78,8 @@
         <span class="muted">Used only when scouting, or when an attack includes scouts. A
           <em>scout</em> mission sends scouts only — non-scout counts are ignored.</span>
       </div>
-      <div class="field">
+      {# 097: shown only when catapults are in the army; visible by default without JS. #}
+      <div class="field" id="rally-field-catapult">
         <label>Catapult target</label>
         <select name="catapult_target">
           <option value="">(random building)</option>
@@ -73,20 +97,6 @@
         <span class="muted">Which building your catapults aim at (when an attack includes catapults).
           The Wall and Rally Point can't be hit.</span>
       </div>
-      <table class="table">
-        <thead><tr><th>Unit</th><th class="num">In garrison</th><th>Send</th></tr></thead>
-        <tbody>
-          {% for u in units %}
-          <tr>
-            <td>{{ u.name }}</td>
-            <td class="num">{{ u.available }}</td>
-            <td><input type="number" name="count_{{ u.id }}" value="0" min="0" max="{{ u.available }}" style="width:5em"
-                       class="rally-count" data-speed="{{ u.speed }}" data-carry="{{ u.carry }}"
-                       data-att="{{ u.attack }}" data-di="{{ u.def_inf }}" data-dc="{{ u.def_cav }}"></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
       <p id="rally-preview" class="muted"></p>
       <button class="btn btn--primary" type="submit">Send</button>
       <a class="btn btn--secondary" href="/w/{{ world }}/reports">Reports →</a>
@@ -136,9 +146,36 @@
       }
       out.textContent = s;
     };
-    for (const el of counts) el.addEventListener("input", upd);
+    // 097: reveal the order-specific fields from the army composition (or a scout order). They render
+    // visible, so the form still works without JS — the JS only *hides* the inapplicable ones.
+    const modeEl = document.getElementById("rally-mode");
+    const scoutField = document.getElementById("rally-field-scout");
+    const catField = document.getElementById("rally-field-catapult");
+    const toggleFields = () => {
+      let hasScout = !!(modeEl && modeEl.value === "scout"), hasCat = false;
+      for (const el of counts) {
+        if ((parseInt(el.value, 10) || 0) <= 0) continue;
+        if (el.dataset.scout === "true") hasScout = true;
+        if (el.dataset.catapult === "true") hasCat = true;
+      }
+      // inline display (not the `hidden` attr, which `.field`'s own `display` would override); clearing it
+      // falls back to the stylesheet, so a no-JS page keeps both fields visible.
+      if (scoutField) scoutField.style.display = hasScout ? "" : "none";
+      if (catField) catField.style.display = hasCat ? "" : "none";
+    };
+    const onChange = () => { upd(); toggleFields(); };
+    for (const el of counts) el.addEventListener("input", onChange);
     for (const el of [xEl, yEl]) if (el) el.addEventListener("input", upd);
+    if (modeEl) modeEl.addEventListener("change", toggleFields);
+    // 097: a "max" button per unit fills its count to the garrison size.
+    for (const btn of document.querySelectorAll(".rally-max")) {
+      btn.addEventListener("click", () => {
+        const input = btn.parentElement.querySelector(".rally-count");
+        if (input) { input.value = btn.dataset.max; input.dispatchEvent(new Event("input", { bubbles: true })); }
+      });
+    }
     upd();
+    toggleFields();
   })();
 </script>
 {% endblock %}
