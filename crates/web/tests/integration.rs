@@ -7456,6 +7456,23 @@ async fn capped_noncapital_field_shows_no_effect(pool: sqlx::PgPool) {
         !body.contains("Production "),
         "a capped non-capital field shows no stale production effect"
     );
+    // 087: the field's own page applies the same cap override — no upgrade form, no stale effect.
+    let fp = c
+        .get(format!("{base}/w/{home}/village/{vid}/field/0"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        fp.contains("max"),
+        "the capped field page shows the max state"
+    );
+    assert!(
+        !fp.contains("Production ") && !fp.contains("name=\"table\""),
+        "the capped field page offers no upgrade form and no stale effect"
+    );
 }
 
 /// 033: the map shows each tile's distance from home and a send shortcut to another player's village.
