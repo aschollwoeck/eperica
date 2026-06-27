@@ -287,21 +287,30 @@ a { color: var(--c-gold); }
 /* Hero band — the building's establishing art with the title overlaid. The art comes from the
    --building-img / --building-img-tribe vars (063/065); the tribe plate layers on top and 404s to the
    neutral plate, which 404s to the dark gradient (graceful, no broken-image). */
+/* 090: the building art is a page-wide backdrop behind the whole content (not just a top band), so the
+   cards sit over it and start higher (less scrolling). Fixed → it stays behind the page as it scrolls and
+   reaches the footer; it fades to the page colour lower down so content stays readable. Only the building
+   pages set --building-img, so on other .bld-page views it is an inert dark wash over --c-bg. */
+.bld-page main::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(9, 12, 16, .26) 0%, rgba(9, 12, 16, .4) 32%, rgba(9, 12, 16, .8) 64%, var(--c-bg) 90%),
+    var(--building-img-tribe, none) center top / cover no-repeat,
+    var(--building-img, none) center top / cover no-repeat,
+    transparent;
+}
+/* The hero is now just the title band over that backdrop — short, with a bottom scrim so the title reads. */
 .bld-hero {
   position: relative;
-  min-height: 320px;
+  min-height: 190px;
   display: flex;
   align-items: flex-end;
   overflow: hidden;
-  background:
-    linear-gradient(180deg, rgba(9,12,16,.5) 0%, rgba(9,12,16,.05) 26%, rgba(9,12,16,.74) 82%, var(--c-bg) 100%),
-    var(--building-img-tribe, none) center 42% / cover no-repeat,
-    var(--building-img, none) center 42% / cover no-repeat,
-    var(--c-panel);
+  background: linear-gradient(180deg, transparent 34%, rgba(9, 12, 16, .58) 100%);
 }
 .bld-hero::after { /* darken the lower-left so the title reads */
   content: ""; position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(90deg, rgba(9,12,16,.78) 0%, rgba(9,12,16,.12) 52%, transparent 78%);
+  background: linear-gradient(90deg, rgba(9, 12, 16, .62) 0%, rgba(9, 12, 16, .08) 50%, transparent 76%);
 }
 .bld-hero__inner {
   position: relative; z-index: 1; width: 100%; max-width: 1180px; margin: 0 auto;
@@ -411,7 +420,7 @@ a { color: var(--c-gold); }
 @media (max-width: 680px) {
   .res-ribbon { grid-template-columns: repeat(2, 1fr); }
   .bld-title { font-size: 1.7rem; }
-  .bld-hero { min-height: 270px; }
+  .bld-hero { min-height: 150px; }
   .unit { grid-template-columns: 48px 1fr; }
   .unit > .unit__info, .unit > .unit__price, .unit > .unit__act { grid-column: 2; text-align: left; }
   .unit__price { align-items: flex-start; }
