@@ -1,19 +1,27 @@
 {% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Log in</h1>
-  {% if let Some(message) = error %}<p class="alert alert--danger">{{ message }}</p>{% endif %}
-  <form method="post" action="/login" class="form">
-    <div class="field">
-      <label for="username">Username</label>
-      <input id="username" name="username" autocomplete="username" required autofocus>
-    </div>
-    <div class="field">
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required>
-    </div>
-    <button class="btn btn--primary" type="submit">Log in</button>
-  </form>
-  <p><a href="/register">Need an account? Register</a></p>
-</section>
+<div class="auth">
+  <a class="auth__brand" href="/">
+    <svg viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="4" fill="#11161C"/><path d="M12 3.5l6.5 2.2v5c0 4-2.7 7.2-6.5 8.8-3.8-1.6-6.5-4.8-6.5-8.8v-5z" fill="none" stroke="#A6864B" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 8v6M9 11h6" stroke="#517EA3" stroke-width="1.6" stroke-linecap="round"/></svg>
+    Eperica
+  </a>
+  <section class="auth-card">
+    <h1 class="auth-card__title">Log in</h1>
+    <p class="auth-card__sub">Welcome back, commander.</p>
+    {% if let Some(message) = error %}<p class="alert alert--danger">{{ message }}</p>{% endif %}
+    <form method="post" action="/login" class="form">
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" required autofocus>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn btn--primary btn--wide" type="submit">Log in</button>
+    </form>
+    <p class="auth-card__alt"><a href="/register">Need an account? Create one →</a></p>
+  </section>
+</div>
 {% endblock %}
