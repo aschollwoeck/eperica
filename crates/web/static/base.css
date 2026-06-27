@@ -224,6 +224,7 @@ a { color: var(--c-gold); }
 .minspect__label { margin: 0 0 12px; color: var(--c-ink); font-size: .92rem; }
 .minspect__label .muted { color: var(--c-ink-muted); }
 .minspect__act { display: flex; flex-direction: column; gap: 8px; }
+.minspect__act .btn { margin-top: 0; } /* the column gap spaces the actions; drop .btn--wide's own margin */
 .mlegend { display: flex; flex-wrap: wrap; gap: 14px 18px; margin-top: 12px; font-size: .82rem; color: var(--c-ink-muted); }
 .mlegend span i { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; border: 1px solid #1b232c; }
 .lg-valley { background: color-mix(in srgb, var(--c-lumber) 15%, #0e141a); }
