@@ -1545,6 +1545,8 @@ async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
     );
     assert!(body.contains("vcols") && body.contains("vrail") && body.contains("minspect"));
     assert!(body.contains("drag to explore")); // the command header hints the new interaction
+    // 095: the jump-to-coordinate form + the recentre-on-home control live in the map card.
+    assert!(body.contains("id=\"mjump\"") && body.contains("Recentre on home"));
     assert!(body.contains("map-grid__cell--village"));
     assert!(body.contains("map-grid__cell--self")); // the viewer's own village is highlighted
     assert!(body.contains(&user)); // owner name on the marker (public, GDD §7.3)
