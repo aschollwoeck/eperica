@@ -2374,6 +2374,124 @@ async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
     assert_eq!(anon.status().as_u16(), 303);
 }
 
+/// 099: settlers train at the Residence — and a Palace stands in for it (013). The village links to the
+/// expansion page, the page exposes the settler, training starts a batch keyed to `residence` (the DB
+/// constraint the 0049 migration had to widen), and a Palace serves the same page.
+#[sqlx::test(migrations = "../../migrations")]
+async fn residence_trains_settlers_and_a_palace_stands_in(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let user = unique("settle");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", format!("{user}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let vid = uuid::Uuid::parse_str(&village_uuid(&pool, &user).await).unwrap();
+
+    // Seed a Residence + storage (so the settler's cost fits), mark the settler researched, and top up.
+    for (slot, kind, level) in [
+        (2_i16, "warehouse", 20_i16),
+        (3, "granary", 20),
+        (19, "residence", 10),
+    ] {
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) VALUES ($1,$2,$3,$4) \
+             ON CONFLICT (village_id, slot) DO UPDATE SET building_type = EXCLUDED.building_type, level = EXCLUDED.level",
+        )
+        .bind(vid).bind(slot).bind(kind).bind(level)
+        .execute(&pool).await.unwrap();
+    }
+    sqlx::query("INSERT INTO village_research (village_id, unit_id) VALUES ($1,'settler') ON CONFLICT DO NOTHING")
+        .bind(vid).execute(&pool).await.unwrap();
+    sqlx::query("UPDATE village_resources SET wood=20000,clay=20000,iron=20000,crop=20000,updated_at=now() WHERE village_id=$1")
+        .bind(vid).execute(&pool).await.unwrap();
+
+    // The village page links to the Residence training page (the gap the player reported).
+    let village = c
+        .get(format!("{base}/w/{home}/village/{vid}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        village.contains(&format!("/village/{vid}/residence")),
+        "the village links to the Residence training page"
+    );
+
+    // The Residence page offers the settler with a train form.
+    let res = c
+        .get(format!("{base}/w/{home}/village/{vid}/residence"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(res.contains("Residence") && !res.contains("requires a"));
+    assert!(
+        res.contains("Settler") && res.contains("name=\"unit\" value=\"settler\""),
+        "the settler is trainable at the Residence"
+    );
+
+    // Training a settler starts a batch keyed to `residence` (0049 widened the CHECK constraint).
+    let r = c
+        .post(format!("{base}/w/{home}/village/{vid}/train"))
+        .form(&[("unit", "settler"), ("count", "1")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    assert!(
+        r.headers()
+            .get(LOCATION)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .ends_with("/residence"),
+        "training a settler returns to the Residence page (099 redirect fix)"
+    );
+    let (building, count): (String, i32) = sqlx::query_as(
+        "SELECT building, count_total FROM training_orders WHERE village_id=$1 AND unit_id='settler'",
+    )
+    .bind(vid).fetch_one(&pool).await.unwrap();
+    assert_eq!(building, "residence", "the batch is keyed to the Residence");
+    assert_eq!(count, 1);
+
+    // A Palace stands in for a Residence (013): swap the building; the same page serves it, labelled Palace.
+    sqlx::query(
+        "UPDATE village_buildings SET building_type='palace' WHERE village_id=$1 AND slot=19",
+    )
+    .bind(vid)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let palace = c
+        .get(format!("{base}/w/{home}/village/{vid}/residence"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        palace.contains("Palace") && !palace.contains("requires a"),
+        "a Palace serves the expansion page (no missing-building notice)"
+    );
+    assert!(
+        palace.contains("Settler"),
+        "the settler is in the Palace's roster"
+    );
+}
+
 /// 008 AC6: build a Marketplace, send a resource shipment to another village, and see it in transit;
 /// the System delivers it (crediting the target). Also: no-Marketplace explains; visitor → login.
 #[sqlx::test(migrations = "../../migrations")]

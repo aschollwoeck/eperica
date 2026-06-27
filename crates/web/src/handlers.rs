@@ -1169,20 +1169,28 @@ pub async fn village(
     let total_upkeep = garrison_upkeep(&economy.garrison, roster);
     // (label, leaf) for each built training building; the template renders
     // `/w/{world}/village/{village}/{leaf}` (064).
-    let troop_links: Vec<(&'static str, &'static str)> = [
+    let has_built = |kind| {
+        village
+            .buildings
+            .iter()
+            .any(|b| b.kind == kind && b.level > 0)
+    };
+    let mut troop_links: Vec<(&'static str, &'static str)> = [
         (BuildingKind::Barracks, "Barracks", "barracks"),
         (BuildingKind::Stable, "Stable", "stable"),
         (BuildingKind::Workshop, "Workshop", "workshop"),
     ]
     .into_iter()
-    .filter(|(kind, _, _)| {
-        village
-            .buildings
-            .iter()
-            .any(|b| b.kind == *kind && b.level > 0)
-    })
+    .filter(|(kind, _, _)| has_built(*kind))
     .map(|(_, label, leaf)| (label, leaf))
     .collect();
+    // 099: settlers/administrators train at the Residence — or a Palace standing in for it (013). Link to
+    // the expansion page under whichever the village has.
+    if has_built(BuildingKind::Residence) {
+        troop_links.push(("Residence", "residence"));
+    } else if has_built(BuildingKind::Palace) {
+        troop_links.push(("Palace", "residence"));
+    }
 
     let active = match ctx.accounts.active_builds(village.id).await {
         Ok(a) => a,
@@ -2534,6 +2542,15 @@ pub async fn troops_workshop(
     troops(ctx, village, BuildingKind::Workshop).await
 }
 
+/// 099: the expansion-unit training page (settlers/administrators). Keyed to the Residence; a Palace
+/// substitutes for it (013), so this one page serves whichever the village has.
+pub async fn troops_residence(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+) -> Response {
+    troops(ctx, village, BuildingKind::Residence).await
+}
+
 /// A troop building's training view: researched units it trains, the running batch (005 AC9;
 /// Player only, P4). The `{village}` rides in the path (064); the building is fixed by the caller.
 async fn troops(ctx: GameContext, village: String, building: BuildingKind) -> Response {
@@ -2557,7 +2574,18 @@ async fn troops(ctx: GameContext, village: String, building: BuildingKind) -> Re
         }
     };
     let unit_rules: &UnitRules = &ctx.rules.units;
-    let building_level = building_level(&village, building);
+    // 099: the expansion page is keyed to the Residence (the roster filter + the batch the domain stores
+    // settlers under), but a Palace substitutes for a Residence (013) — display whichever the village has,
+    // and drive the training speed from its level.
+    let display_building = if building == BuildingKind::Residence
+        && building_level(&village, BuildingKind::Residence) == 0
+        && building_level(&village, BuildingKind::Palace) > 0
+    {
+        BuildingKind::Palace
+    } else {
+        building
+    };
+    let building_level = building_level(&village, display_building);
     let batch = active.iter().find(|t| t.building == building);
     let active_view = batch.map(|t| QueueView {
         label: format!(
@@ -2623,7 +2651,7 @@ async fn troops(ctx: GameContext, village: String, building: BuildingKind) -> Re
         village.tribe,
         economy.amounts,
         &build_active,
-        building,
+        display_building,
         building_level,
     );
     page(&TroopsTemplate {
@@ -2632,7 +2660,7 @@ async fn troops(ctx: GameContext, village: String, building: BuildingKind) -> Re
         village_id: village_seg(village.id),
         village_label: format!("({}|{})", village.coordinate.x, village.coordinate.y),
         ribbon: resource_ribbon(&economy),
-        building: building_label(building),
+        building: building_label(display_building),
         building_level,
         has_building: building_level > 0,
         rows,
@@ -2685,6 +2713,8 @@ pub async fn train_submit(
         Some(BuildingKind::Barracks) => "/barracks",
         Some(BuildingKind::Stable) => "/stable",
         Some(BuildingKind::Workshop) => "/workshop",
+        // 099: settlers/administrators (trained_in == Residence) land back on the expansion page.
+        Some(BuildingKind::Residence) => "/residence",
         _ => "",
     };
     with_flash(

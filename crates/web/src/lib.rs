@@ -294,6 +294,11 @@ fn world_router() -> Router<AppState> {
             "/village/{village}/workshop",
             get(handlers::troops_workshop),
         )
+        // 099: the expansion page (settlers/administrators) — Residence, or a Palace standing in for it.
+        .route(
+            "/village/{village}/residence",
+            get(handlers::troops_residence),
+        )
         .route("/village/{village}/train", post(handlers::train_submit))
         .route("/village/{village}/rally", get(handlers::rally))
         .route("/village/{village}/rally/send", post(handlers::rally_send))

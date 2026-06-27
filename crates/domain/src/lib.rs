@@ -105,7 +105,7 @@ pub use units::{
     MAX_TRAINING_BATCH, MAX_UNIT_LEVEL, ROSTER_SIZE, ResearchDenied, ResearchSpec, SiegeKind,
     SmithyRules, TrainDenied, TrainingRules, UnitCounts, UnitId, UnitRole, UnitRules, UnitSpec,
     UpgradeDenied, batch_cost, can_research, can_train, can_upgrade, depletion_secs,
-    garrison_upkeep, per_unit_time_secs, scaled_time_secs, starve,
+    garrison_upkeep, per_unit_time_secs, scaled_time_secs, starve, training_building_level,
 };
 pub use village::{
     BuildingSlot, PlayerId, RESOURCE_FIELD_COUNT, ResourceField, StartingVillage, Tribe, Village,

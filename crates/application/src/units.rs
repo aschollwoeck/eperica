@@ -414,11 +414,10 @@ where
         return Err(TrainError::Insufficient);
     }
     let settled = debit(amounts, cost);
-    let building_level = village
-        .buildings
-        .iter()
-        .find(|b| b.kind == spec.trained_in)
-        .map_or(0, |b| b.level);
+    // 099: a Palace substitutes for a Residence (013), so a Residence-trained settler uses the Palace's
+    // level when no Residence is built — not level 0.
+    let building_level =
+        eperica_domain::training_building_level(spec.trained_in, &village.buildings);
     // 020 AC6: a Trainer artifact (carried on the training village's read) speeds training.
     let base_per_unit =
         per_unit_time_secs(spec.train_secs, building_level, &unit_rules.training, speed);
