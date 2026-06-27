@@ -509,7 +509,7 @@ a { color: var(--c-gold); }
 .vplan__legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
 .lg-up { background: var(--c-ember, #C8762E); box-shadow: 0 0 7px -1px var(--c-ember, #C8762E); }
 .lg-bld { background: #6a4a22; border: 1px solid var(--c-ember, #C8762E); }
-.vcanvas { position: relative; height: 520px;
+.vcanvas { position: relative; height: 460px;
   background-image: radial-gradient(60% 55% at 50% 46%, rgba(40,52,64,.4), transparent 70%),
     linear-gradient(#19222b 1px, transparent 1px), linear-gradient(90deg, #19222b 1px, transparent 1px);
   background-size: 100% 100%, 34px 34px, 34px 34px; background-position: center; }
@@ -571,16 +571,17 @@ a { color: var(--c-gold); }
 
 /* resource fields grid */
 .vfields { margin-top: 20px; }
-.vfields__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
-.vfield { position: relative; display: flex; align-items: center; gap: 10px; padding: 11px 13px; border: 1px solid var(--c-border); border-radius: 6px; cursor: pointer; transition: .12s; text-align: left; width: 100%; font: inherit;
+.vfields__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(136px, 1fr)); gap: 8px; }
+.vfield { position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 10px; min-width: 0; border: 1px solid var(--c-border); border-radius: 6px; cursor: pointer; transition: .12s; text-align: left; width: 100%; font: inherit;
   background: linear-gradient(180deg, var(--c-panel-alt), var(--c-panel)); box-shadow: inset 0 1px 0 rgba(255,255,255,.03); color: var(--c-ink); }
 .vfield:hover, .vfield:focus-visible { border-color: var(--c-gold); outline: none; }
 .vfield::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; border-radius: 6px 0 0 6px; background: var(--rc); }
 .vfield__dot { width: 22px; height: 22px; flex: none; border-radius: 4px; display: grid; place-items: center; color: var(--rc); border: 1px solid color-mix(in srgb, var(--rc) 35%, var(--c-border)); background: #0d1217; }
 .vfield__dot svg { width: 14px; height: 14px; }
 .vfield__main { min-width: 0; flex: 1; }
-.vfield__n { font-size: .84rem; color: var(--c-ink); }
-.vfield__r { font-family: ui-monospace, monospace; font-size: .72rem; color: var(--c-ink-muted); }
+.vfield__n, .vfield__r { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vfield__n { font-size: .82rem; color: var(--c-ink); }
+.vfield__r { font-family: ui-monospace, monospace; font-size: .7rem; color: var(--c-ink-muted); }
 .vfield__lvl { font-family: ui-monospace, monospace; font-weight: 700; font-size: 1rem; color: var(--c-gold); }
 .vfield--up { border-color: color-mix(in srgb, var(--c-ember, #C8762E) 50%, var(--c-border)); box-shadow: inset 0 1px 0 rgba(255,255,255,.03), 0 0 18px -10px var(--c-ember, #C8762E); }
 .vfield--sel { border-color: var(--c-gold); box-shadow: 0 0 0 1px var(--c-gold); }

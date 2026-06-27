@@ -7191,6 +7191,12 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
+    // 085: the village page uses the full-width chrome (not the narrow default container),
+    // so the fields/plan have room and the page scrolls less.
+    assert!(
+        body.contains("class=\"bld-page\""),
+        "village uses the full-width layout"
+    );
     // A resource field shows its next-level production.
     assert!(
         body.contains("Production "),
