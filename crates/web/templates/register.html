@@ -2,10 +2,7 @@
 {% block body_class %}bld-page{% endblock %}
 {% block content %}
 <div class="auth">
-  <a class="auth__brand" href="/">
-    <svg viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="4" fill="#11161C"/><path d="M12 3.5l6.5 2.2v5c0 4-2.7 7.2-6.5 8.8-3.8-1.6-6.5-4.8-6.5-8.8v-5z" fill="none" stroke="#A6864B" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 8v6M9 11h6" stroke="#517EA3" stroke-width="1.6" stroke-linecap="round"/></svg>
-    Eperica
-  </a>
+  {% include "_brand.html" %}
   <section class="auth-card auth-card--wide">
     <h1 class="auth-card__title">Create account</h1>
     {% if let Some(name) = world_name %}<p class="auth-card__sub">Enlisting in <b>{{ name }}</b> — you'll march straight in.</p>
