@@ -1679,10 +1679,14 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
         acting_vid.as_deref(),
     );
 
+    // 095: the player's home (capital, else first village) — the map's "recentre on home" target.
+    let home = origin.unwrap_or(center);
     page(&MapTemplate {
         world: world_id_str(ctx.world_id),
         center_x: center.x,
         center_y: center.y,
+        home_x: home.x,
+        home_y: home.y,
         radius: i32::try_from(radius).unwrap_or(i32::MAX),
         cols: 2 * MAP_HALF_X + 1,
         rows,

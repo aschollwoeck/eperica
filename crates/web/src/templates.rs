@@ -458,6 +458,9 @@ pub struct MapTemplate {
     /// The center coordinate the view is built around.
     pub center_x: i32,
     pub center_y: i32,
+    /// The player's home coordinate (095) — the "recentre on home" target.
+    pub home_x: i32,
+    pub home_y: i32,
     /// Map radius, for display.
     pub radius: i32,
     /// Column count of the initial grid (093) — sets the layer's `grid-template-columns`.
