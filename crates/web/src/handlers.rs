@@ -2779,6 +2779,10 @@ pub async fn rally(
                 } else {
                     0
                 },
+                // 097: drive the form's reveal of the "Spy on" / "Catapult target" fields.
+                is_scout: spec.is_some_and(|s| s.role == UnitRole::Scout),
+                is_catapult: spec
+                    .is_some_and(|s| s.siege_kind == Some(eperica_domain::SiegeKind::Catapult)),
             }
         })
         .collect();

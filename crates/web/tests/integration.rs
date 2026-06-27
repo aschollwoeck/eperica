@@ -2233,6 +2233,24 @@ async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
         rally.contains("rally-preview"),
         "rally has the live preview element"
     );
+    // 097: the unit selection leads the form (so the JS can read the army to reveal fields), each unit has a
+    // "max" button + scout/catapult flags, the order defaults to Raid, and the order-specific fields render
+    // (visible without JS; the JS hides the inapplicable ones).
+    assert!(
+        rally.contains("rally-max")
+            && rally.contains("data-scout=")
+            && rally.contains("data-catapult="),
+        "rally units carry max buttons + scout/catapult flags"
+    );
+    assert!(rally.contains("value=\"raid\" selected"));
+    assert!(
+        rally.contains("id=\"rally-field-scout\"") && rally.contains("id=\"rally-field-catapult\""),
+        "the order-specific fields are present (visible by default for no-JS)"
+    );
+    assert!(
+        rally.find("Troops to send").unwrap() < rally.find("rally-mode").unwrap(),
+        "the troop selection comes before the Order field"
+    );
 
     // AC1/AC7: send 4 Phalanx to the target's tile; PRG back to the village.
     let res = cs

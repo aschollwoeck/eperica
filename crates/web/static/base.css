@@ -759,6 +759,8 @@ a { color: var(--c-gold); }
    078 — account/meta pages: small/danger buttons, checkboxes, inline forms.
    ============================================================================ */
 .btn--small { padding: 4px 9px; font-size: .78rem; }
+/* 097: the Rally Point's per-unit count input + its "max" button sit on one line. */
+.rally-send { display: inline-flex; align-items: center; gap: 6px; }
 .btn--danger { background: var(--c-danger); color: #fff; border: 1px solid color-mix(in srgb, var(--c-danger) 65%, #000); }
 .btn--danger:hover { background: color-mix(in srgb, var(--c-danger) 86%, #fff); }
 .checkbox { display: flex; align-items: center; gap: 9px; padding: 7px 0; color: var(--c-ink); font-size: .95rem; }
