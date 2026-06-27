@@ -29,7 +29,20 @@
   <section class="vcmd vcmd--head">
     <div class="vcmd__id">
       <div class="vcmd__eyebrow">Under your command · {{ tribe }}</div>
-      <h1 class="vcmd__name">{{ username }}'s village{% if is_capital %} <span class="vcmd__star" title="Capital">★</span>{% endif %}</h1>
+      <div class="vcmd__namerow">
+        <h1 class="vcmd__name">{{ username }}'s village{% if is_capital %} <span class="vcmd__star" title="Capital">★</span>{% endif %}</h1>
+        <div class="vquick">
+          <a href="/w/{{ world }}/map?x={{ x }}&amp;y={{ y }}">⌖ Map</a>
+          <a href="/w/{{ world }}/village/{{ village_id }}/rally">⚔ Rally</a>
+          <a href="/w/{{ world }}/village/{{ village_id }}/market">⚖ Market</a>
+          {% if has_academy %}<a href="/w/{{ world }}/village/{{ village_id }}/academy">📜 Academy</a>{% endif %}
+          {% if has_smithy %}<a href="/w/{{ world }}/village/{{ village_id }}/smithy">⚒ Smithy</a>{% endif %}
+          {% for link in troop_links %}<a href="/w/{{ world }}/village/{{ village_id }}/{{ link.1 }}">▤ {{ link.0 }}</a>{% endfor %}
+          <a href="/w/{{ world }}/reports">✉ Reports</a>
+          <a href="/w/{{ world }}/quests">✦ Quests</a>
+          <a href="/w/{{ world }}/alliance">⚑ Alliance</a>
+        </div>
+      </div>
       <div class="vcmd__sub">
         <span class="vchip">{{ x }} | {{ y }}</span>
         <span>Tribe: {{ tribe }}</span>
@@ -38,17 +51,6 @@
         {% if !artifacts.is_empty() %}<span>· 🏺 {{ artifacts.len() }} artifact(s)</span>{% endif %}
         {% if let Some(notice) = protection %}<span style="color:var(--c-success)">· 🛡 {{ notice }}</span>{% endif %}
         {% if ribbon.crop_rate <= 0 %}<span style="color:var(--c-danger)">· ⚠ Crop starving</span>{% endif %}
-      </div>
-      <div class="vquick">
-        <a href="/w/{{ world }}/map?x={{ x }}&amp;y={{ y }}">⌖ Map</a>
-        <a href="/w/{{ world }}/village/{{ village_id }}/rally">⚔ Rally</a>
-        <a href="/w/{{ world }}/village/{{ village_id }}/market">⚖ Market</a>
-        {% if has_academy %}<a href="/w/{{ world }}/village/{{ village_id }}/academy">📜 Academy</a>{% endif %}
-        {% if has_smithy %}<a href="/w/{{ world }}/village/{{ village_id }}/smithy">⚒ Smithy</a>{% endif %}
-        {% for link in troop_links %}<a href="/w/{{ world }}/village/{{ village_id }}/{{ link.1 }}">▤ {{ link.0 }}</a>{% endfor %}
-        <a href="/w/{{ world }}/reports">✉ Reports</a>
-        <a href="/w/{{ world }}/quests">✦ Quests</a>
-        <a href="/w/{{ world }}/alliance">⚑ Alliance</a>
       </div>
       {% if villages.len() > 1 %}
       <div class="vswitch">Your villages:
