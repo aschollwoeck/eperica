@@ -1537,9 +1537,10 @@ async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
-    // 074: the redesigned map — a styled tile grid + the click-to-inspect panel (replaces the old table).
+    // 074/091: the redesigned map — a styled tile grid with the click-to-inspect panel now in the right
+    // aside (the two-column layout the village uses), not a bar below the grid.
     assert!(body.contains("mgrid") && body.contains("class=\"mtile"));
-    assert!(body.contains("minspect")); // the tile inspector
+    assert!(body.contains("vcols") && body.contains("vrail") && body.contains("minspect"));
     assert!(body.contains("centre of view")); // the command header's centre label
     assert!(body.contains("map-grid__cell--village"));
     assert!(body.contains("map-grid__cell--self")); // the viewer's own village is highlighted
