@@ -477,16 +477,17 @@ a { color: var(--c-gold); }
    below on narrow screens. */
 .vcmd--head { flex-wrap: nowrap; }
 .vcmd--head .vcmd__id { flex: 1; }
+/* nowrap means a long unbreakable username must wrap rather than be clipped */
+.vcmd--head .vcmd__name { overflow-wrap: anywhere; }
 .vcmd::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: linear-gradient(var(--c-gold), transparent 72%); opacity: .65; }
 .vcmd__id { min-width: 0; }
-.vcmd__dials { flex: none; }
 .vcmd__eyebrow { font-family: ui-monospace, monospace; font-size: .7rem; letter-spacing: .2em; text-transform: uppercase; color: var(--c-ink-muted); }
 .vcmd__name { font-family: var(--c-serif, Georgia, serif); font-size: 2rem; color: var(--c-ink); margin: 1px 0 0; display: flex; align-items: center; gap: 11px; line-height: 1.05; }
 .vcmd__star { color: var(--c-gold); font-size: 1.1rem; }
 .vcmd__sub { margin-top: 6px; color: var(--c-ink-muted); font-size: .92rem; display: flex; flex-wrap: wrap; gap: 5px 13px; align-items: center; }
 .vcmd__sub b { color: var(--c-ink); font-family: ui-monospace, monospace; }
 .vchip { font-family: ui-monospace, monospace; font-size: .76rem; letter-spacing: .04em; color: var(--c-gold); border: 1px solid color-mix(in srgb, var(--c-gold) 40%, var(--c-border)); border-radius: 2px; padding: 2px 8px; background: #0d1217; }
-.vcmd__dials { margin-left: auto; display: flex; gap: 20px; }
+.vcmd__dials { flex: none; margin-left: auto; display: flex; gap: 20px; }
 .vdial { text-align: center; }
 .vdial__ring { --p: 100; width: 60px; height: 60px; border-radius: 50%; display: grid; place-items: center;
   background: radial-gradient(closest-side, var(--c-panel) 70%, transparent 71%), conic-gradient(var(--c-gold) calc(var(--p) * 1%), #202830 0); }
