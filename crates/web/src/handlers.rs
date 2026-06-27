@@ -1721,11 +1721,20 @@ fn map_cells(
                     let mut glyph = glyph;
                     let mut label = format!("{base_label} ({}|{})", coord.x, coord.y);
                     let mut href = None;
+                    let mut market_href = None;
                     if let Some(marker) = &cell.marker {
                         class.push_str(" map-grid__cell--village");
                         if marker.owner_name == username {
                             class.push_str(" map-grid__cell--self");
                         }
+                        // 095: any village can be shipped resources from the acting village's Marketplace.
+                        market_href = acting_vid.map(|vid| {
+                            village_path(
+                                world,
+                                vid,
+                                &format!("/market?x={}&y={}", coord.x, coord.y),
+                            )
+                        });
                         let is_capital = Some(coord) == capital_coord;
                         if is_capital {
                             class.push_str(" map-grid__cell--capital");
@@ -1802,6 +1811,7 @@ fn map_cells(
                         glyph,
                         label,
                         href,
+                        market_href,
                         x: coord.x,
                         y: coord.y,
                     }
@@ -3085,7 +3095,11 @@ pub async fn oasis_recall(
 
 /// The Marketplace: the merchant pool (free/total + capacity) and a send-resources form (008 AC6;
 /// Player only, P4).
-pub async fn market(ctx: GameContext, Path((_world, village)): Path<(String, String)>) -> Response {
+pub async fn market(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+    Query(q): Query<MapQuery>,
+) -> Response {
     let player = ctx.player;
     let (village, economy) = match village_view_data(&ctx, selected_village(Some(&village))).await {
         Ok(v) => v,
@@ -3120,6 +3134,8 @@ pub async fn market(ctx: GameContext, Path((_world, village)): Path<(String, Str
             origin_y: 0,
             radius: 0,
             speed_mult: ctx.speed.multiplier(),
+            target_x: q.x,
+            target_y: q.y,
             upgrade: building_upgrade_row(
                 &ctx.rules,
                 village.tribe,
@@ -3154,6 +3170,8 @@ pub async fn market(ctx: GameContext, Path((_world, village)): Path<(String, Str
         origin_y: village.coordinate.y,
         radius: i32::try_from(ctx.radius).unwrap_or(i32::MAX),
         speed_mult: ctx.speed.multiplier(),
+        target_x: q.x,
+        target_y: q.y,
         upgrade: building_upgrade_row(
             &ctx.rules,
             village.tribe,
