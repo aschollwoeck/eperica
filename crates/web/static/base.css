@@ -528,7 +528,7 @@ a { color: var(--c-gold); }
 .tower { position: absolute; width: 15px; height: 15px; transform: translate(-50%,-50%); border: 1.5px solid color-mix(in srgb, var(--c-gold) 55%, #3a4450); background: #0d1318; border-radius: 3px; }
 .gate { position: absolute; left: 50%; bottom: -1px; transform: translateX(-50%); width: 44px; height: 13px; border: 1.5px solid color-mix(in srgb, var(--c-gold) 55%, #3a4450); border-bottom: 0; border-radius: 6px 6px 0 0; background: #0c1116; }
 
-/* a plot (building inside the plan, or a field in the grid below) */
+/* a building plot inside the walled village centre (088) */
 .vplot { position: absolute; left: var(--x); top: var(--y); transform: translate(-50%,-50%);
   width: 70px; height: 70px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   border: 1px solid var(--c-border); border-radius: 6px; padding: 6px; cursor: pointer; text-align: center; transition: .12s;
@@ -544,7 +544,6 @@ a { color: var(--c-gold); }
 .vplot--up svg { color: color-mix(in srgb, var(--c-ember, #C8762E) 65%, var(--c-ink)); }
 .vplot--empty { border-style: dashed; color: var(--c-ink-muted); }
 .vplot--empty .vplot__lvl { background: #0c1116; color: var(--c-ink-muted); border-color: var(--c-border); }
-.vplot--sel { border-color: var(--c-gold); box-shadow: 0 0 0 1px var(--c-gold), 0 0 22px -6px var(--c-gold); }
 .vplot--build .vplot__lvl { background: radial-gradient(circle at 38% 32%, #7a6336, #3a2c12); color: var(--c-ink); }
 /* an under-construction plot shows the live build countdown (no faked % progress — there is no start time) */
 .vplot__cd { position: absolute; left: 3px; right: 3px; bottom: 3px; font-family: ui-monospace, monospace; font-size: .56rem; line-height: 1.55; text-align: center; color: var(--c-ember, #C8762E); background: #0b0f13; border: 1px solid color-mix(in srgb, var(--c-ember, #C8762E) 40%, var(--c-border)); border-radius: 3px; }
@@ -567,17 +566,6 @@ a { color: var(--c-gold); }
 .vplot--academy      { --x: 43%; --y: 82%; }
 .vplot--stable       { --x: 57%; --y: 82%; }
 .vplot--workshop     { --x: 70%; --y: 79%; }
-
-/* inspector */
-.vinspect { display: flex; align-items: center; gap: 16px; padding: 10px 16px; border-top: 1px solid var(--c-border); background: #0d1217; min-height: 60px; }
-.vinspect__ico { width: 46px; height: 46px; flex: none; display: grid; place-items: center; border: 1px solid color-mix(in srgb, var(--c-ember, #C8762E) 45%, var(--c-border)); border-radius: 6px; background: var(--c-panel); color: var(--c-ember, #C8762E); }
-.vinspect__ico svg { width: 26px; height: 26px; }
-.vinspect__main { min-width: 0; flex: 1; }
-.vinspect__name { font-family: var(--c-serif, Georgia, serif); font-size: 1.1rem; color: var(--c-ink); display: flex; align-items: center; gap: 9px; }
-.vinspect__lvl { font-family: ui-monospace, monospace; font-size: .72rem; color: var(--c-gold); border: 1px solid var(--c-border); border-radius: 2px; padding: 1px 7px; }
-.vinspect__eff { font-size: .85rem; color: var(--c-ink-muted); }
-.vinspect__act { display: flex; align-items: center; gap: 14px; flex: none; }
-.vinspect__hint { color: var(--c-ink-muted); font-style: italic; font-size: .9rem; }
 
 /* 088: the 18 resource fields ring the village as icon tiles, positioned around the perimeter */
 .vfield-ring { position: absolute; inset: 0; }
@@ -616,7 +604,6 @@ a { color: var(--c-gold); }
 .vrail .feed__row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid #1b232c; }
 .vrail .feed__row:first-child { border-top: 0; }
 .feed__ico { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--c-ink-muted); }
-.feed__ico--atk { background: var(--c-danger); box-shadow: 0 0 8px -1px var(--c-danger); }
 .feed__ico--def { background: var(--c-success); } .feed__ico--build { background: var(--c-ember, #C8762E); }
 .feed__main { min-width: 0; flex: 1; }
 .feed__t { font-size: .86rem; color: var(--c-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
