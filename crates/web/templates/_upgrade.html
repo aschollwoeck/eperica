@@ -1,0 +1,32 @@
+{# Shared build/upgrade panel (087): renders an `upgrade: BuildRow` as a card with the working build form
+   (POST …/build), the next-level effect + cost, and the explicit gate/countdown. Included by every building
+   page's aside and the generic detail page. The enclosing template provides `world` + `village_id`. #}
+<div class="bld-card">
+  <div class="bld-card__h">
+    <h3>{% if upgrade.level == 0 %}Construction{% else %}Upgrade{% endif %}</h3>
+    <span class="meta">{% if upgrade.level == 0 %}not built{% else %}Lvl {{ upgrade.level }}{% endif %}</span>
+  </div>
+  <div class="bld-card__b">
+    {% if upgrade.at_max %}
+    <div class="statline"><span>Level</span><b>{{ upgrade.level }} · max</b></div>
+    <p class="bld-tip">Fully developed — there is no higher level.</p>
+    {% else %}
+    <div class="statline"><span>Level</span><b>{% if upgrade.level == 0 %}Not built → 1{% else %}{{ upgrade.level }} → {{ upgrade.level + 1 }}{% endif %}</b></div>
+    {% if !upgrade.effect.is_empty() %}<div class="statline"><span>Next level</span><b>{{ upgrade.effect }}</b></div>{% endif %}
+    <div class="statline"><span>Cost</span><span class="unit__cost"><b class="w">{{ upgrade.cost_wood }}</b><b class="c">{{ upgrade.cost_clay }}</b><b class="i">{{ upgrade.cost_iron }}</b><b class="r">{{ upgrade.cost_crop }}</b></span></div>
+    {% if let Some(ms) = upgrade.building_ms %}
+    <p class="bld-tip">Under construction — completes <span class="countdown num" data-deadline="{{ ms }}">…</span>.</p>
+    {% else %}
+    <form method="post" action="/w/{{ world }}/village/{{ village_id }}/build">
+      <input type="hidden" name="table" value="{{ upgrade.table }}">
+      <input type="hidden" name="slot" value="{{ upgrade.slot }}">
+      <input type="hidden" name="kind" value="{{ upgrade.kind }}">
+      {# return to the page this panel is on: a built building's functional page, else the generic detail page #}
+      <input type="hidden" name="back" value="{% if upgrade.table == "field" %}/field/{{ upgrade.slot }}{% else if upgrade.page != "" && upgrade.level > 0 %}/{{ upgrade.page }}{% else %}/building/{{ upgrade.kind }}{% endif %}">
+      <button class="btn btn--primary btn--wide" type="submit"{% if !upgrade.can_order %} disabled{% endif %}>{% if upgrade.level == 0 %}Build{% else %}Upgrade to {{ upgrade.level + 1 }}{% endif %}</button>
+    </form>
+    {% if !upgrade.gate.is_empty() %}<p class="bld-tip">{{ upgrade.gate }}</p>{% endif %}
+    {% endif %}
+    {% endif %}
+  </div>
+</div>

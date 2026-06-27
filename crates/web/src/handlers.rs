@@ -9,19 +9,19 @@ use crate::templates::{
     AcademyRow, AcademyTemplate, AchievementRowView, ActiveView, AdminAccountRow, AdminTemplate,
     AdminWorldRow, AllianceStatsTemplate, AllianceTemplate, AlliedVillageView, ArtifactRowView,
     AuditRow, BuildRow, ChatLineView, CompletedQuestView, ConversationRow, ConversationTemplate,
-    CurrentQuestView, DiploRowView, ForceRow, ForumPostRow, ForumTemplate, ForumThreadRow,
-    ForumThreadTemplate, GarrisonRow, HistoryPointView, ImpressumTemplate, IncomingView,
-    IndexTemplate, JoinableWorldRow, JoinedWorldRow, LandingWorldRow, LeaderboardRowView,
-    LeaderboardTemplate, LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MedalRowView,
-    MemberStatRow, MessagesTemplate, ModAccountTemplate, ModQueueTemplate, ModReportRow,
-    MovementRow, NotificationRowView, NotificationsTemplate, OasisRow, OutgoingInviteView,
-    PendingInviteView, PlayerStatsTemplate, PrivacyTemplate, ProfileTemplate, QuestsTemplate,
-    QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow,
-    ReportTemplate, ReportsTemplate, ResourceRibbon, RosterRowView, ScoutReportTemplate,
-    ScoutResourceRow, SearchHitRow, SearchTemplate, SettingsTemplate, SettingsToggleRow,
-    ShipmentRow, SitterRow, SittingTemplate, SmithyRow, SmithyTemplate, StyleGuideTemplate,
-    TermsTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate,
-    WonderStandingView, WonderTemplate, WorldsTemplate,
+    CurrentQuestView, DetailTemplate, DiploRowView, ForceRow, ForumPostRow, ForumTemplate,
+    ForumThreadRow, ForumThreadTemplate, GarrisonRow, HistoryPointView, ImpressumTemplate,
+    IncomingView, IndexTemplate, JoinableWorldRow, JoinedWorldRow, LandingWorldRow,
+    LeaderboardRowView, LeaderboardTemplate, LoginTemplate, MapCellView, MapTemplate,
+    MarketTemplate, MedalRowView, MemberStatRow, MessagesTemplate, ModAccountTemplate,
+    ModQueueTemplate, ModReportRow, MovementRow, NotificationRowView, NotificationsTemplate,
+    OasisRow, OutgoingInviteView, PendingInviteView, PlayerStatsTemplate, PrivacyTemplate,
+    ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate,
+    ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, ResourceRibbon, RosterRowView,
+    ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate, SettingsTemplate,
+    SettingsToggleRow, ShipmentRow, SitterRow, SittingTemplate, SmithyRow, SmithyTemplate,
+    StyleGuideTemplate, TermsTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
+    VillageTemplate, WonderStandingView, WonderTemplate, WorldsTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -30,19 +30,19 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 use eperica_application::{
-    AccountRepository, AchievementRepository, AdminError, AdminRepository, AllianceLeaderboardRow,
-    AllianceRepository, ArtifactRepository, BattleReportView, BoardScope, BuildRepository,
-    CombatRepository, CommsError, ConflictMetric, ConquestRepository, DiplomacyCommand,
-    ElevatedRole, ForumError, LeaderboardRow, LoginError, MedalRepository, MedalSubjectKind,
-    ModerationError, ModerationRepository, MovementRepository, OasisRepository, PlayerHit,
-    QuestRepository, RegisterCommand, RegisterError, RepoError, ScoutIntel, ScoutReportView,
-    ScoutRepository, TradeRepository, TrainingRepository, UnitOrderKind, UnitRepository, Window,
-    WonderRepository, account_signals, admin_overview, alliance_conflict_leaderboard,
-    alliance_population_leaderboard, alliance_statistics, alliance_view, authenticate,
-    authorize_sit, climbers_leaderboard, conflict_leaderboard, conversation_list,
-    create_world as admin_create_world_uc, disband_alliance, dm_key, dm_pair_key, edit_bio,
-    end_protection_if_established, evaluate_achievements, evaluate_quests, expel_member,
-    file_report, found_alliance, grant_sitter, invite_player, leave_alliance,
+    AccountRepository, AchievementRepository, ActiveBuild, AdminError, AdminRepository,
+    AllianceLeaderboardRow, AllianceRepository, ArtifactRepository, BattleReportView, BoardScope,
+    BuildRepository, CombatRepository, CommsError, ConflictMetric, ConquestRepository,
+    DiplomacyCommand, ElevatedRole, ForumError, LeaderboardRow, LoginError, MedalRepository,
+    MedalSubjectKind, ModerationError, ModerationRepository, MovementRepository, OasisRepository,
+    PlayerHit, QuestRepository, RegisterCommand, RegisterError, RepoError, ScoutIntel,
+    ScoutReportView, ScoutRepository, TradeRepository, TrainingRepository, UnitOrderKind,
+    UnitRepository, Window, WonderRepository, account_signals, admin_overview,
+    alliance_conflict_leaderboard, alliance_population_leaderboard, alliance_statistics,
+    alliance_view, authenticate, authorize_sit, climbers_leaderboard, conflict_leaderboard,
+    conversation_list, create_world as admin_create_world_uc, disband_alliance, dm_key,
+    dm_pair_key, edit_bio, end_protection_if_established, evaluate_achievements, evaluate_quests,
+    expel_member, file_report, found_alliance, grant_sitter, invite_player, leave_alliance,
     list_accounts as admin_list_accounts, list_forum, list_notifications_for_account, list_sitters,
     list_sitting_for, list_worlds as admin_list_worlds, load_culture, load_economy, map_viewport,
     mark_notifications_read_for_account, notif_key, notification_settings,
@@ -58,8 +58,8 @@ use eperica_application::{
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, ChatChannel,
-    Coordinate, DiplomacyStance, DiplomacyStatus, Economy, MedalCategory, MovementKind, OasisBonus,
-    PlayerId, Presence, Quadrant, QuestReward, QueueLane, ReportReason, ResearchDenied,
+    Coordinate, DiplomacyStance, DiplomacyStatus, Economy, GameSpeed, MedalCategory, MovementKind,
+    OasisBonus, PlayerId, Presence, Quadrant, QuestReward, QueueLane, ReportReason, ResearchDenied,
     ResourceAmounts, ResourceKind, RightSet, SanctionKind, ScoutTarget, TileKind, Timestamp,
     TradeKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, VillageId, WorldId,
     can_access_channel, can_afford, can_research, can_upgrade, current_quest, expansion_slots,
@@ -67,7 +67,7 @@ use eperica_domain::{
     scaled_time_secs,
 };
 use eperica_infrastructure::now;
-use eperica_infrastructure::{DEFAULT_PRESET, KNOWN_PRESETS, known_preset};
+use eperica_infrastructure::{DEFAULT_PRESET, KNOWN_PRESETS, WorldRules, known_preset};
 use serde::Deserialize;
 
 fn resource_label(kind: ResourceKind) -> &'static str {
@@ -133,6 +133,35 @@ fn building_label(kind: BuildingKind) -> &'static str {
         BuildingKind::Palace => "Palace",
         BuildingKind::Treasury => "Treasury",
         BuildingKind::Wonder => "Wonder of the World",
+    }
+}
+
+/// A one-line description of what a building does, for the generic building page (087).
+fn building_blurb(kind: BuildingKind) -> &'static str {
+    match kind {
+        BuildingKind::MainBuilding => {
+            "The heart of the village — higher levels speed every construction."
+        }
+        BuildingKind::RallyPoint => "Musters your army; required to send and return troops.",
+        BuildingKind::Warehouse => "Stores wood, clay and iron — each level raises the cap.",
+        BuildingKind::Granary => "Stores crop — each level raises the cap.",
+        BuildingKind::Marketplace => {
+            "Enables trade; its level sets how many merchants you command."
+        }
+        BuildingKind::Embassy => "Diplomacy — level 1 to join an alliance, level 3 to found one.",
+        BuildingKind::Wall => "Rings the village in defence; reduced by rams in a siege.",
+        BuildingKind::Barracks => "Trains infantry.",
+        BuildingKind::Academy => "Researches new unit types so they can be trained.",
+        BuildingKind::Smithy => "Forges your troops' weapons and armour to greater strength.",
+        BuildingKind::Stable => "Trains cavalry.",
+        BuildingKind::Workshop => "Builds siege engines — rams and catapults.",
+        BuildingKind::Residence => "Trains settlers and administrators; gates expansion.",
+        BuildingKind::Cranny => "Hides a share of your resources from looters.",
+        BuildingKind::Outpost => "Garrisons captured oases; its level sets how many you may hold.",
+        BuildingKind::TownHall => "Produces culture points, which gate founding new villages.",
+        BuildingKind::Palace => "Designates your capital and trains settlers/administrators.",
+        BuildingKind::Treasury => "Houses a captured artifact, whose power aids your empire.",
+        BuildingKind::Wonder => "The Wonder of the World — raise it to 100 to win the round.",
     }
 }
 
@@ -811,6 +840,207 @@ pub async fn village_index(ctx: GameContext) -> Response {
     }
 }
 
+/// The effect a field's *next* level grants (031), scaled by world speed to match displayed rates.
+fn field_effect(rules: &WorldRules, speed: GameSpeed, kind: ResourceKind, level: u8) -> String {
+    let econ = &rules.economy;
+    let cur = econ.field_production_per_hour(kind, level, speed);
+    let next = econ.field_production_per_hour(kind, level + 1, speed);
+    let dpop = econ.field_population(level + 1) - econ.field_population(level);
+    let mut s = format!("Production {cur} → {next}/h");
+    if dpop != 0 {
+        s.push_str(&format!(" · +{dpop} pop"));
+    }
+    s
+}
+
+/// The effect a building's *next* level grants (031) — pure rule reads across the economy / combat /
+/// trade / culture / build bundles; the tribe selects the (tribe-flavoured) Wall profile.
+fn building_effect(
+    rules: &WorldRules,
+    tribe: Option<Tribe>,
+    kind: BuildingKind,
+    level: u8,
+) -> String {
+    let (econ, build_rules, combat, merchants, culture) = (
+        &rules.economy,
+        &rules.build,
+        &rules.combat,
+        &rules.merchant,
+        &rules.culture,
+    );
+    let next = level + 1;
+    let special = match kind {
+        BuildingKind::Warehouse => Some(format!(
+            "Storage {} → {}",
+            econ.warehouse_capacity(level),
+            econ.warehouse_capacity(next)
+        )),
+        BuildingKind::Granary => Some(format!(
+            "Crop storage {} → {}",
+            econ.granary_capacity(level),
+            econ.granary_capacity(next)
+        )),
+        BuildingKind::Outpost => Some(format!(
+            "Holds {} → {} oases",
+            econ.outpost_capacity(level),
+            econ.outpost_capacity(next)
+        )),
+        BuildingKind::Wall => tribe.map(|t| {
+            // One decimal: tribe wall bonuses differ by half-percent steps (e.g. Gaul 2.5 % vs
+            // Teuton 2.0 %), which a whole-percent display would collapse.
+            format!(
+                "Wall defence {:+.1}% → {:+.1}%",
+                combat.wall_bonus(t, level) * 100.0,
+                combat.wall_bonus(t, next) * 100.0
+            )
+        }),
+        BuildingKind::Cranny => Some(format!(
+            "Hides {} → {} of each resource",
+            combat.cranny_capacity(level),
+            combat.cranny_capacity(next)
+        )),
+        BuildingKind::Marketplace => Some(format!(
+            "Merchants {} → {}",
+            merchants.merchants_total(level),
+            merchants.merchants_total(next)
+        )),
+        BuildingKind::TownHall => Some(format!(
+            "Culture +{} → +{}/h",
+            culture.town_hall_cp(level),
+            culture.town_hall_cp(next)
+        )),
+        BuildingKind::Residence | BuildingKind::Palace => Some(format!(
+            "Expansion slots {} → {}",
+            expansion_slots(&[level], culture),
+            expansion_slots(&[next], culture)
+        )),
+        BuildingKind::MainBuilding => Some(format!(
+            "Build speed ×{:.2} → ×{:.2}",
+            build_rules.main_building_factor(level),
+            build_rules.main_building_factor(next)
+        )),
+        BuildingKind::Barracks | BuildingKind::Stable | BuildingKind::Workshop => Some(format!(
+            "Training speed ×{:.2} → ×{:.2}",
+            rules.units.training.building_factor(level),
+            rules.units.training.building_factor(next)
+        )),
+        _ => None,
+    };
+    let dpop =
+        econ.building_population_at(kind, level + 1) - econ.building_population_at(kind, level);
+    let pop = (dpop != 0).then(|| format!("+{dpop} pop"));
+    [special, pop]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// Build a `BuildRow` for one field/building target: its next-level cost, orderability, the explicit
+/// gate reason (072), and any in-flight countdown. Shared by the village plan and the per-building/field
+/// detail + functional pages so the upgrade panel is identical everywhere. `effect` is precomputed by the
+/// caller (it knows the field's `ResourceKind`); pass the field-cap/at-max override afterwards if needed.
+#[allow(clippy::too_many_arguments)]
+fn build_row(
+    rules: &WorldRules,
+    tribe: Option<Tribe>,
+    amounts: ResourceAmounts,
+    active: &[ActiveBuild],
+    table: &'static str,
+    slot: u8,
+    kind: &'static str,
+    res: &'static str,
+    page: &'static str,
+    label: String,
+    level: u8,
+    target: BuildTarget,
+    effect: String,
+) -> BuildRow {
+    let build_rules = &rules.build;
+    let lane_of = |t: BuildTarget| tribe.map_or(QueueLane::All, |tr| queue_lane(tr, t));
+    let lane = lane_of(target);
+    let busy = active.iter().any(|a| lane_of(a.target) == lane);
+    let cost = build_rules.cost(target, level);
+    let at_max = cost.is_none();
+    let affordable = cost.is_some_and(|c| can_afford(amounts, c));
+    let can_order = !busy && affordable;
+    let c = cost.unwrap_or(ResourceAmounts {
+        wood: 0,
+        clay: 0,
+        iron: 0,
+        crop: 0,
+    });
+    // 072: the explicit reason a non-max slot can't be ordered — a busy lane outranks affordability
+    // (you can't build while the lane is occupied even if you can pay), else the exact shortfall.
+    let gate = if at_max || can_order {
+        String::new()
+    } else if busy {
+        "A construction is already underway — wait for it to finish.".to_owned()
+    } else {
+        let short: Vec<String> = [
+            ("wood", c.wood - amounts.wood),
+            ("clay", c.clay - amounts.clay),
+            ("iron", c.iron - amounts.iron),
+            ("crop", c.crop - amounts.crop),
+        ]
+        .into_iter()
+        .filter(|(_, missing)| *missing > 0)
+        .map(|(name, missing)| format!("{missing} more {name}"))
+        .collect();
+        format!("Need {}.", short.join(", "))
+    };
+    let building_ms = active
+        .iter()
+        .find(|a| a.target == target)
+        .map(|a| a.complete_at.0);
+    BuildRow {
+        table,
+        slot,
+        kind,
+        res,
+        page,
+        label,
+        level,
+        cost_wood: c.wood,
+        cost_clay: c.clay,
+        cost_iron: c.iron,
+        cost_crop: c.crop,
+        at_max,
+        can_order,
+        effect: if at_max { String::new() } else { effect },
+        building_ms,
+        gate,
+    }
+}
+
+/// The upgrade-panel `BuildRow` for a building at a given level (087) — the building-specific wrapper over
+/// [`build_row`], used by every building page's aside and the generic building page.
+fn building_upgrade_row(
+    rules: &WorldRules,
+    tribe: Option<Tribe>,
+    amounts: ResourceAmounts,
+    active: &[ActiveBuild],
+    kind: BuildingKind,
+    level: u8,
+) -> BuildRow {
+    let slot = building_slot(kind);
+    build_row(
+        rules,
+        tribe,
+        amounts,
+        active,
+        "building",
+        slot,
+        building_kind_id(kind),
+        "",
+        building_page(kind),
+        building_label(kind).to_owned(),
+        level,
+        BuildTarget::Building { slot, kind },
+        building_effect(rules, tribe, kind, level),
+    )
+}
+
 /// A player's village with its live economy, switchable across all their villages (Player only —
 /// AC3/AC4/AC7, 013 AC11). The `{village}` path segment (a UUID, 064) selects which to show; the use-case
 /// re-validates ownership and falls back to the capital for a bad/foreign id (P4).
@@ -963,175 +1193,12 @@ pub async fn village(
     };
     let build_rules = &ctx.rules.build;
 
-    // A target is orderable only if its queue lane is free — Romans get a field and a building
-    // lane, other tribes one shared lane (004 AC13). Server-side re-validation happens on POST.
+    // A target is orderable only if its queue lane is free — Romans get a field and a building lane,
+    // other tribes one shared lane (004 AC13); `build_row` re-derives that per target. The capital may
+    // raise its resource fields past the normal cap (013 AC10); the cost table runs to the capital cap,
+    // so a non-capital field is gated on `field_cap`.
     let tribe = village.tribe;
-    let lane_of = |target: BuildTarget| tribe.map_or(QueueLane::All, |t| queue_lane(t, target));
-    let lane_busy = |target: BuildTarget| {
-        let lane = lane_of(target);
-        active.iter().any(|a| lane_of(a.target) == lane)
-    };
-
-    // 031: the effect of the *next* level, so a player sees what an upgrade does — not just its cost. Pure
-    // reads off the economy rules (scaled by world speed for production, to match the displayed rates).
-    let econ = &ctx.rules.economy;
     let speed = ctx.speed;
-    let field_effect = |kind: ResourceKind, level: u8| -> String {
-        let cur = econ.field_production_per_hour(kind, level, speed);
-        let next = econ.field_production_per_hour(kind, level + 1, speed);
-        let dpop = econ.field_population(level + 1) - econ.field_population(level);
-        let mut s = format!("Production {cur} → {next}/h");
-        if dpop != 0 {
-            s.push_str(&format!(" · +{dpop} pop"));
-        }
-        s
-    };
-    // Effects for buildings whose rules live outside the economy (combat / trade / culture / build /
-    // training). Read-only lookups; the village's tribe selects the (tribe-flavoured) Wall profile.
-    let combat = &ctx.rules.combat;
-    let merchants = &ctx.rules.merchant;
-    let culture = &ctx.rules.culture;
-    let training = &ctx.rules.units.training;
-    let building_effect = |kind: BuildingKind, level: u8| -> String {
-        let next = level + 1;
-        let special = match kind {
-            BuildingKind::Warehouse => Some(format!(
-                "Storage {} → {}",
-                econ.warehouse_capacity(level),
-                econ.warehouse_capacity(next)
-            )),
-            BuildingKind::Granary => Some(format!(
-                "Crop storage {} → {}",
-                econ.granary_capacity(level),
-                econ.granary_capacity(next)
-            )),
-            BuildingKind::Outpost => Some(format!(
-                "Holds {} → {} oases",
-                econ.outpost_capacity(level),
-                econ.outpost_capacity(next)
-            )),
-            BuildingKind::Wall => tribe.map(|t| {
-                // One decimal: tribe wall bonuses differ by half-percent steps (e.g. Gaul 2.5 % vs
-                // Teuton 2.0 %), which a whole-percent display would collapse.
-                format!(
-                    "Wall defence {:+.1}% → {:+.1}%",
-                    combat.wall_bonus(t, level) * 100.0,
-                    combat.wall_bonus(t, next) * 100.0
-                )
-            }),
-            BuildingKind::Cranny => Some(format!(
-                "Hides {} → {} of each resource",
-                combat.cranny_capacity(level),
-                combat.cranny_capacity(next)
-            )),
-            BuildingKind::Marketplace => Some(format!(
-                "Merchants {} → {}",
-                merchants.merchants_total(level),
-                merchants.merchants_total(next)
-            )),
-            BuildingKind::TownHall => Some(format!(
-                "Culture +{} → +{}/h",
-                culture.town_hall_cp(level),
-                culture.town_hall_cp(next)
-            )),
-            BuildingKind::Residence | BuildingKind::Palace => Some(format!(
-                "Expansion slots {} → {}",
-                expansion_slots(&[level], culture),
-                expansion_slots(&[next], culture)
-            )),
-            BuildingKind::MainBuilding => Some(format!(
-                "Build speed ×{:.2} → ×{:.2}",
-                build_rules.main_building_factor(level),
-                build_rules.main_building_factor(next)
-            )),
-            BuildingKind::Barracks | BuildingKind::Stable | BuildingKind::Workshop => {
-                Some(format!(
-                    "Training speed ×{:.2} → ×{:.2}",
-                    training.building_factor(level),
-                    training.building_factor(next)
-                ))
-            }
-            _ => None,
-        };
-        let dpop =
-            econ.building_population_at(kind, level + 1) - econ.building_population_at(kind, level);
-        let pop = (dpop != 0).then(|| format!("+{dpop} pop"));
-        [special, pop]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" · ")
-    };
-
-    let make_row = |table: &'static str,
-                    slot: u8,
-                    kind: &'static str,
-                    res: &'static str,
-                    page: &'static str,
-                    label: String,
-                    level: u8,
-                    target: BuildTarget,
-                    effect: String|
-     -> BuildRow {
-        let cost = build_rules.cost(target, level);
-        let at_max = cost.is_none();
-        let busy = lane_busy(target);
-        let affordable = cost.is_some_and(|c| can_afford(amounts, c));
-        let can_order = !busy && affordable;
-        let c = cost.unwrap_or(ResourceAmounts {
-            wood: 0,
-            clay: 0,
-            iron: 0,
-            crop: 0,
-        });
-        // 072: the explicit reason a non-max slot can't be ordered — a busy lane outranks affordability
-        // (you can't build while the lane is occupied even if you can pay), else the exact shortfall.
-        let gate = if at_max || can_order {
-            String::new()
-        } else if busy {
-            // `lane_busy` is lane-wide (the build queue, not this slot), so don't say "here".
-            "A construction is already underway — wait for it to finish.".to_owned()
-        } else {
-            let short: Vec<String> = [
-                ("wood", c.wood - amounts.wood),
-                ("clay", c.clay - amounts.clay),
-                ("iron", c.iron - amounts.iron),
-                ("crop", c.crop - amounts.crop),
-            ]
-            .into_iter()
-            .filter(|(_, missing)| *missing > 0)
-            .map(|(name, missing)| format!("{missing} more {name}"))
-            .collect();
-            format!("Need {}.", short.join(", "))
-        };
-        // If this exact slot is under construction, surface its finish time for the plan (069).
-        let building_ms = active
-            .iter()
-            .find(|a| a.target == target)
-            .map(|a| a.complete_at.0);
-        BuildRow {
-            table,
-            slot,
-            kind,
-            res,
-            page,
-            label,
-            level,
-            cost_wood: c.wood,
-            cost_clay: c.clay,
-            cost_iron: c.iron,
-            cost_crop: c.crop,
-            at_max,
-            can_order,
-            // Blank at max (no next level to describe).
-            effect: if at_max { String::new() } else { effect },
-            building_ms,
-            gate,
-        }
-    };
-
-    // The capital may raise its resource fields past the normal cap (013 AC10); a non-capital stops
-    // at the normal cap. The cost table extends to the capital cap, so gate the rows on `field_cap`.
     let field_cap = build_rules.field_max_level(village.is_capital);
     let fields = village
         .fields
@@ -1139,7 +1206,11 @@ pub async fn village(
         .enumerate()
         .map(|(i, f)| {
             let slot = u8::try_from(i).unwrap_or(0);
-            let mut row = make_row(
+            let mut row = build_row(
+                &ctx.rules,
+                tribe,
+                amounts,
+                &active,
                 "field",
                 slot,
                 "",
@@ -1148,11 +1219,10 @@ pub async fn village(
                 format!("{} field #{slot}", resource_label(f.kind)),
                 f.level,
                 BuildTarget::Field { slot },
-                field_effect(f.kind, f.level),
+                field_effect(&ctx.rules, speed, f.kind, f.level),
             );
             if f.level >= field_cap {
-                // A non-capital field caps below the cost table's end (which runs to the capital cap), so
-                // also blank the effect — there is no buildable next level here (AC1).
+                // A non-capital field caps below the cost table's end; blank the next-level data too.
                 row.at_max = true;
                 row.can_order = false;
                 row.effect = String::new();
@@ -1189,7 +1259,11 @@ pub async fn village(
             .iter()
             .find(|b| b.kind == kind)
             .map_or(0, |b| b.level);
-        make_row(
+        build_row(
+            &ctx.rules,
+            tribe,
+            amounts,
+            &active,
             "building",
             slot,
             building_kind_id(kind),
@@ -1198,7 +1272,7 @@ pub async fn village(
             building_label(kind).to_owned(),
             level,
             BuildTarget::Building { slot, kind },
-            building_effect(kind, level),
+            building_effect(&ctx.rules, tribe, kind, level),
         )
     })
     .collect();
@@ -1718,6 +1792,10 @@ pub struct BuildForm {
     slot: u8,
     #[serde(default)]
     kind: Option<String>,
+    /// 087: the village-relative leaf to return to (the page the form was on, e.g. `/smithy` or
+    /// `/building/warehouse`). Validated server-side to a safe leaf (P4); falls back to the target's page.
+    #[serde(default)]
+    back: Option<String>,
 }
 
 /// Order an upgrade/construction for the path village, then return to it (Player only, P4). The village rides
@@ -1761,7 +1839,146 @@ pub async fn build_submit(
         tracing::warn!(error = %e, "build order rejected");
         user_msg(e.to_string())
     });
-    with_flash(redirect_to_village_leaf(ctx.world_id, &village, ""), flash)
+    // 087: an upgrade is ordered from the target's own page (a building or field), so return there. Prefer
+    // the page the form was on (`back`) when it is a safe village-relative leaf; otherwise derive it from the
+    // validated target. Either way the redirect is confined to this village's own pages (P4 — no open
+    // redirect: a bad `back` is rejected, not followed).
+    let leaf = form
+        .back
+        .filter(|b| is_safe_leaf(b))
+        .unwrap_or_else(|| target_page_leaf(target));
+    with_flash(
+        redirect_to_village_leaf(ctx.world_id, &village, &leaf),
+        flash,
+    )
+}
+
+/// A `back` leaf is safe iff it is a short village-relative path: starts with `/` and contains only
+/// lowercase letters, digits, `/`, `_`, `-` (so it can only ever land on a `…/village/{id}/<leaf>` page).
+fn is_safe_leaf(leaf: &str) -> bool {
+    leaf.starts_with('/')
+        && leaf.len() <= 48
+        && leaf[1..].bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'/' | b'_' | b'-')
+        })
+}
+
+/// The village-relative leaf for a build target's own page (087): a building's dedicated functional page
+/// (e.g. `smithy`) when it has one, else the generic `building/{kind}`; a field's `field/{slot}`.
+fn target_page_leaf(target: BuildTarget) -> String {
+    match target {
+        BuildTarget::Field { slot } => format!("/field/{slot}"),
+        BuildTarget::Building { kind, .. } => {
+            let page = building_page(kind);
+            if page.is_empty() {
+                format!("/building/{}", building_kind_id(kind))
+            } else {
+                format!("/{page}")
+            }
+        }
+    }
+}
+
+/// 087: the generic per-building page — its description, the resource ribbon, and the working upgrade
+/// panel. Reached by clicking a plot on the village plan; buildings with a dedicated functional page
+/// (Smithy/Academy/…) are linked there instead, but this still renders for any kind reached directly.
+pub async fn building_detail(
+    ctx: GameContext,
+    Path((_world, village, kind_seg)): Path<(String, String, String)>,
+) -> Response {
+    let Some(kind) = parse_building_kind(Some(&kind_seg)) else {
+        return redirect_to_village_leaf(ctx.world_id, &village, "");
+    };
+    let (village, economy) = match village_view_data(&ctx, selected_village(Some(&village))).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let active = ctx
+        .accounts
+        .active_builds(village.id)
+        .await
+        .unwrap_or_default();
+    let level = building_level(&village, kind);
+    let upgrade = building_upgrade_row(
+        &ctx.rules,
+        village.tribe,
+        economy.amounts,
+        &active,
+        kind,
+        level,
+    );
+    page(&DetailTemplate {
+        world: world_id_str(ctx.world_id),
+        tribe_slug: village.tribe.map_or("", |t| t.slug()),
+        village_id: village_seg(village.id),
+        village_label: format!("({}|{})", village.coordinate.x, village.coordinate.y),
+        ribbon: resource_ribbon(&economy),
+        eyebrow: "Building",
+        title: building_label(kind).to_owned(),
+        blurb: building_blurb(kind).to_owned(),
+        icon: format!("i-{}", building_kind_id(kind)),
+        upgrade,
+    })
+}
+
+/// 087: the generic per-field page — production effect, the resource ribbon, and the working upgrade panel.
+/// Reached by clicking a field plot on the village plan.
+pub async fn field_detail(
+    ctx: GameContext,
+    Path((_world, village, slot)): Path<(String, String, u8)>,
+) -> Response {
+    let (village, economy) = match village_view_data(&ctx, selected_village(Some(&village))).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let Some(f) = village.fields.get(slot as usize) else {
+        return redirect_to_village_leaf(ctx.world_id, &village_seg(village.id), "");
+    };
+    let active = ctx
+        .accounts
+        .active_builds(village.id)
+        .await
+        .unwrap_or_default();
+    let mut upgrade = build_row(
+        &ctx.rules,
+        village.tribe,
+        economy.amounts,
+        &active,
+        "field",
+        slot,
+        "",
+        resource_slug(f.kind),
+        "",
+        format!("{} field #{slot}", resource_label(f.kind)),
+        f.level,
+        BuildTarget::Field { slot },
+        field_effect(&ctx.rules, ctx.speed, f.kind, f.level),
+    );
+    // A non-capital field caps below the cost table's end (which runs to the capital cap), 013 AC10.
+    if f.level >= ctx.rules.build.field_max_level(village.is_capital) {
+        upgrade.at_max = true;
+        upgrade.can_order = false;
+        upgrade.effect = String::new();
+        upgrade.gate = String::new();
+    }
+    let title = format!("{} field #{slot}", resource_label(f.kind));
+    let blurb = format!(
+        "Clears and works the land to raise your {} output.",
+        resource_label(f.kind).to_lowercase()
+    );
+    let icon = format!("i-{}", resource_slug(f.kind));
+    page(&DetailTemplate {
+        world: world_id_str(ctx.world_id),
+        tribe_slug: village.tribe.map_or("", |t| t.slug()),
+        village_id: village_seg(village.id),
+        village_label: format!("({}|{})", village.coordinate.x, village.coordinate.y),
+        ribbon: resource_ribbon(&economy),
+        eyebrow: "Resource field",
+        title,
+        blurb,
+        icon,
+        upgrade,
+    })
 }
 
 fn role_label(role: UnitRole) -> &'static str {
@@ -1979,6 +2196,19 @@ pub async fn academy(
         })
         .collect();
 
+    let build_active = ctx
+        .accounts
+        .active_builds(village.id)
+        .await
+        .unwrap_or_default();
+    let upgrade = building_upgrade_row(
+        &ctx.rules,
+        village.tribe,
+        amounts,
+        &build_active,
+        BuildingKind::Academy,
+        building_level(&village, BuildingKind::Academy),
+    );
     page(&AcademyTemplate {
         world: world_id_str(ctx.world_id),
         tribe_slug: village.tribe.map_or("", |t| t.slug()),
@@ -1988,6 +2218,7 @@ pub async fn academy(
         has_academy: building_level(&village, BuildingKind::Academy) > 0,
         rows,
         active,
+        upgrade,
     })
 }
 
@@ -2108,6 +2339,19 @@ pub async fn smithy(ctx: GameContext, Path((_world, village)): Path<(String, Str
         })
         .collect();
 
+    let build_active = ctx
+        .accounts
+        .active_builds(village.id)
+        .await
+        .unwrap_or_default();
+    let upgrade = building_upgrade_row(
+        &ctx.rules,
+        village.tribe,
+        amounts,
+        &build_active,
+        BuildingKind::Smithy,
+        smithy_lvl,
+    );
     page(&SmithyTemplate {
         world: world_id_str(ctx.world_id),
         tribe_slug: village.tribe.map_or("", |t| t.slug()),
@@ -2119,6 +2363,7 @@ pub async fn smithy(ctx: GameContext, Path((_world, village)): Path<(String, Str
         rows,
         active,
         active_portrait,
+        upgrade,
     })
 }
 
@@ -2262,6 +2507,19 @@ async fn troops(ctx: GameContext, village: String, building: BuildingKind) -> Re
             .collect()
     };
 
+    let build_active = ctx
+        .accounts
+        .active_builds(village.id)
+        .await
+        .unwrap_or_default();
+    let upgrade = building_upgrade_row(
+        &ctx.rules,
+        village.tribe,
+        economy.amounts,
+        &build_active,
+        building,
+        building_level,
+    );
     page(&TroopsTemplate {
         world: world_id_str(ctx.world_id),
         tribe_slug: village.tribe.map_or("", |t| t.slug()),
@@ -2273,6 +2531,7 @@ async fn troops(ctx: GameContext, village: String, building: BuildingKind) -> Re
         has_building: building_level > 0,
         rows,
         active: active_view,
+        upgrade,
     })
 }
 
@@ -2440,6 +2699,19 @@ pub async fn rally(
             return server_error();
         }
     };
+    let build_active = ctx
+        .accounts
+        .active_builds(village.id)
+        .await
+        .unwrap_or_default();
+    let upgrade = building_upgrade_row(
+        &ctx.rules,
+        village.tribe,
+        economy.amounts,
+        &build_active,
+        BuildingKind::RallyPoint,
+        building_level(&village, BuildingKind::RallyPoint),
+    );
     page(&RallyTemplate {
         world: world_id_str(ctx.world_id),
         tribe_slug: village.tribe.map_or("", |t| t.slug()),
@@ -2456,6 +2728,7 @@ pub async fn rally(
         origin_y: village.coordinate.y,
         radius: i32::try_from(ctx.radius).unwrap_or(i32::MAX),
         speed_mult: ctx.speed.multiplier(),
+        upgrade,
     })
 }
 
@@ -2730,6 +3003,11 @@ pub async fn market(ctx: GameContext, Path((_world, village)): Path<(String, Str
         return server_error();
     };
     let level = building_level(&village, BuildingKind::Marketplace);
+    let build_active = ctx
+        .accounts
+        .active_builds(village.id)
+        .await
+        .unwrap_or_default();
     if level == 0 {
         return page(&MarketTemplate {
             world: world_id_str(ctx.world_id),
@@ -2746,6 +3024,14 @@ pub async fn market(ctx: GameContext, Path((_world, village)): Path<(String, Str
             origin_y: 0,
             radius: 0,
             speed_mult: ctx.speed.multiplier(),
+            upgrade: building_upgrade_row(
+                &ctx.rules,
+                village.tribe,
+                economy.amounts,
+                &build_active,
+                BuildingKind::Marketplace,
+                level,
+            ),
         });
     }
     let committed = match ctx.accounts.committed_merchants(village.id).await {
@@ -2772,6 +3058,14 @@ pub async fn market(ctx: GameContext, Path((_world, village)): Path<(String, Str
         origin_y: village.coordinate.y,
         radius: i32::try_from(ctx.radius).unwrap_or(i32::MAX),
         speed_mult: ctx.speed.multiplier(),
+        upgrade: building_upgrade_row(
+            &ctx.rules,
+            village.tribe,
+            economy.amounts,
+            &build_active,
+            BuildingKind::Marketplace,
+            level,
+        ),
     })
 }
 

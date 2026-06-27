@@ -1862,9 +1862,21 @@ async fn build_order_flow(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(body.contains("Resource fields"));
-    assert!(body.contains("Upgrade"));
+    // 087: the plan is a pure overview — each field/building links to its own page where the upgrade lives.
+    assert!(body.contains(&format!("/village/{vid}/field/0")));
+    let field_page = c
+        .get(format!("{base}/w/{home}/village/{vid}/field/0"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    // The detail page carries the working build/upgrade panel (a form posting to …/build), not a dead link.
+    assert!(field_page.contains("Build") || field_page.contains("Upgrade"));
+    assert!(field_page.contains(&format!("/village/{vid}/build")));
 
-    // AC1: order a field upgrade (redirects back to the village).
+    // AC1: order a field upgrade (redirects back to the field's page).
     let res = c
         .post(format!("{base}/w/{home}/village/{vid}/build"))
         .form(&[("table", "field"), ("slot", "0")])
@@ -1887,6 +1899,88 @@ async fn build_order_flow(pool: sqlx::PgPool) {
     // 069: the under-construction slot is marked on the plan with its own on-plot countdown (here a
     // resource field, so the field plot carries the marker).
     assert!(after.contains("vfield--build"));
+}
+
+/// 087: every building and field has its own page carrying the working build/upgrade panel — the village
+/// plan is a pure overview that links there. The upgrade form posts to …/build and returns to that page;
+/// the dedicated functional pages (Smithy, …) gained the same panel and dropped the dead "Raise" link.
+#[sqlx::test(migrations = "../../migrations")]
+async fn building_and_field_pages_own_the_upgrade(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let (c, _id) = register_client(&base, &pool, &unique("up")).await;
+    let vid = vid_via(&c, &base, &home).await;
+
+    // The generic building page renders the upgrade form (POST …/build) for that kind, with a `back` to it.
+    let wh = c
+        .get(format!("{base}/w/{home}/village/{vid}/building/warehouse"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(wh.contains(&format!("/village/{vid}/build")));
+    assert!(wh.contains("name=\"kind\" value=\"warehouse\""));
+    assert!(wh.contains("name=\"back\" value=\"/building/warehouse\""));
+
+    // The field page renders the same panel keyed to the field slot.
+    let f = c
+        .get(format!("{base}/w/{home}/village/{vid}/field/0"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(f.contains("name=\"table\" value=\"field\""));
+    assert!(f.contains("name=\"back\" value=\"/field/0\""));
+
+    // The Smithy's functional page no longer shows the dead "Raise the Smithy" link.
+    let smithy = c
+        .get(format!("{base}/w/{home}/village/{vid}/smithy"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!smithy.contains("Raise the Smithy"));
+
+    // Ordering from a field's page returns to that page (the `back` leaf is honoured).
+    let res = c
+        .post(format!("{base}/w/{home}/village/{vid}/build"))
+        .form(&[("table", "field"), ("slot", "0"), ("back", "/field/0")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+    assert!(
+        res.headers()
+            .get(LOCATION)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .ends_with(&format!("/village/{vid}/field/0"))
+    );
+
+    // P4 — an unsafe `back` is rejected (no open redirect): it falls back to the target's own page.
+    let res2 = c
+        .post(format!("{base}/w/{home}/village/{vid}/build"))
+        .form(&[
+            ("table", "field"),
+            ("slot", "1"),
+            ("back", "https://evil.example/x"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res2.status().as_u16(), 303);
+    let loc2 = res2.headers().get(LOCATION).unwrap().to_str().unwrap();
+    assert!(
+        loc2.ends_with(&format!("/village/{vid}/field/1")) && !loc2.contains("evil"),
+        "an unsafe back is ignored; the redirect stays on this village's field page"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -5218,8 +5312,10 @@ async fn village_plan_names_the_build_gate(pool: sqlx::PgPool) {
     .await
     .unwrap();
     let vid = village_uuid(&pool, &user).await;
+    // 087: the gate now lives on each field/building's own page (the plan is a pure overview). With the
+    // village drained, a buildable slot's page names the explicit shortfall.
     let body = c
-        .get(format!("{base}/w/{home}/village/{vid}"))
+        .get(format!("{base}/w/{home}/village/{vid}/field/0"))
         .send()
         .await
         .unwrap()
@@ -5227,7 +5323,7 @@ async fn village_plan_names_the_build_gate(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(
-        body.contains("data-gate=\"Need "),
+        body.contains("Need "),
         "an unaffordable slot names the resource shortfall"
     );
     assert!(
@@ -7197,43 +7293,33 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
         body.contains("class=\"bld-page\""),
         "village uses the full-width layout"
     );
-    // A resource field shows its next-level production.
-    assert!(
-        body.contains("Production "),
-        "fields show a production effect"
-    );
-    assert!(body.contains('→'), "the effect reads current → next");
-    // The Warehouse shows its next-level storage capacity.
-    assert!(
-        body.contains("Storage "),
-        "the warehouse shows a storage effect"
-    );
-    // Buildings whose rules live outside the economy show their effects too (AC1).
-    assert!(
-        body.contains("Merchants "),
-        "the Marketplace shows merchant count"
-    );
-    assert!(
-        body.contains("Build speed ×"),
-        "the Main Building shows the build-speed factor"
-    );
-    assert!(
-        body.contains("Culture +"),
-        "the Town Hall shows culture gain"
-    );
-    assert!(
-        body.contains("Training speed ×"),
-        "training buildings show the training-speed factor"
-    );
-    assert!(
-        body.contains("Wall defence "),
-        "the Wall shows its defence bonus"
-    );
-    assert!(body.contains("Hides "), "the Cranny shows resources hidden");
-    assert!(
-        body.contains("Expansion slots "),
-        "the Residence shows expansion slots"
-    );
+    // 087: each upgrade's effect now lives on that field/building's own page (the plan links there). Every
+    // effect family — economy and the out-of-economy rules (combat/trade/culture/build/training) — renders.
+    for (leaf, needle) in [
+        ("field/0", "Production "),
+        ("building/warehouse", "Storage "),
+        ("building/marketplace", "Merchants "),
+        ("building/main_building", "Build speed ×"),
+        ("building/town_hall", "Culture +"),
+        ("building/barracks", "Training speed ×"),
+        ("building/wall", "Wall defence "),
+        ("building/cranny", "Hides "),
+        ("building/residence", "Expansion slots "),
+    ] {
+        let page = c
+            .get(format!("{base}/w/{home}/village/{vid}/{leaf}"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(
+            page.contains(needle),
+            "the {leaf} page shows its next-level effect ({needle})"
+        );
+        assert!(page.contains('→'), "the {leaf} effect reads current → next");
+    }
     // 069: the shared resource ribbon's gauges are wired (fill computed client-side from these attrs).
     assert!(
         body.contains("res-ribbon") && body.contains("data-amt="),
@@ -7244,8 +7330,9 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
         body.contains("data-rate=") && body.contains("gauge__now"),
         "the live resource counter is wired (rate + ticking number)"
     );
-    // 069: the command-table redesign — command header, the fortress plan with building plots, the
-    // resource-fields grid, and the click-to-inspect panel that drives the build form.
+    // 069/087: the command-table redesign — command header, the fortress plan with building plots, and the
+    // resource-fields grid. The plan is now a pure overview: each plot/field links to its own page (no
+    // inline inspector).
     assert!(
         body.contains("vcmd") && body.contains("Village plan"),
         "command header + plan"
@@ -7263,8 +7350,13 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
         "the 18 resource fields render as a colour-coded grid"
     );
     assert!(
-        body.contains("vinspect") && body.contains("data-eff="),
-        "the inspector + per-plot upgrade data are wired"
+        !body.contains("id=\"vinspect\""),
+        "the old inline inspector is gone (the plan links to per-building/field pages)"
+    );
+    assert!(
+        body.contains(&format!("/village/{vid}/building/main_building"))
+            && body.contains(&format!("/village/{vid}/field/0")),
+        "plots and fields link to their own pages"
     );
 }
 
@@ -7305,8 +7397,9 @@ async fn wall_effect_is_tribe_correct(pool: sqlx::PgPool) {
         .unwrap();
     let g_vid = vid_via(&g, &base, &home).await;
     let t_vid = vid_via(&t, &base, &home).await;
+    // 087: the Wall's effect lives on its own page now.
     let gb = g
-        .get(format!("{base}/w/{home}/village/{g_vid}"))
+        .get(format!("{base}/w/{home}/village/{g_vid}/building/wall"))
         .send()
         .await
         .unwrap()
@@ -7314,7 +7407,7 @@ async fn wall_effect_is_tribe_correct(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let tb = t
-        .get(format!("{base}/w/{home}/village/{t_vid}"))
+        .get(format!("{base}/w/{home}/village/{t_vid}/building/wall"))
         .send()
         .await
         .unwrap()
@@ -7362,6 +7455,23 @@ async fn capped_noncapital_field_shows_no_effect(pool: sqlx::PgPool) {
     assert!(
         !body.contains("Production "),
         "a capped non-capital field shows no stale production effect"
+    );
+    // 087: the field's own page applies the same cap override — no upgrade form, no stale effect.
+    let fp = c
+        .get(format!("{base}/w/{home}/village/{vid}/field/0"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        fp.contains("max"),
+        "the capped field page shows the max state"
+    );
+    assert!(
+        !fp.contains("Production ") && !fp.contains("name=\"table\""),
+        "the capped field page offers no upgrade form and no stale effect"
     );
 }
 

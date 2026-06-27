@@ -86,15 +86,7 @@
           {% endif %}
         </div>
       </div>
-      <div class="bld-card">
-        <div class="bld-card__h"><h3>The Forge</h3><span class="meta">Lvl {{ smithy_level }}</span></div>
-        <div class="bld-card__b">
-          <div class="statline"><span>Forge cap</span><b>+{{ smithy_level }} per unit</b></div>
-          <div class="statline"><span>Forgeable units</span><b>{{ rows.len() }}</b></div>
-          <p class="bld-tip">Each Smithy level lifts the cap and adds to a unit's attack and defence. Raise the Smithy on the village to forge further.</p>
-          <a class="btn btn--primary btn--wide" href="/w/{{ world }}/village/{{ village_id }}">Raise the Smithy →</a>
-        </div>
-      </div>
+      {% include "_upgrade.html" %}
     </aside>
   </div>
   {% endif %}

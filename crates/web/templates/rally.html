@@ -18,6 +18,8 @@
 <div class="bld-body">
   {% include "_ribbon.html" %}
 
+  <div class="bld-cols">
+    <div>
   {% if units.is_empty() %}
   <section class="panel"><p class="muted">No troops to send — train some at the Barracks, Stable, or Workshop first.</p></section>
   {% else %}
@@ -91,6 +93,11 @@
     </form>
   </section>
   {% endif %}
+    </div>
+    <aside class="bld-aside">
+      {% include "_upgrade.html" %}
+    </aside>
+  </div>
 </div>
 
 <script>

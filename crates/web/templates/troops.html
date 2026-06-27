@@ -82,14 +82,7 @@
           {% endif %}
         </div>
       </div>
-      <div class="bld-card">
-        <div class="bld-card__h"><h3>The {{ building }}</h3><span class="meta">Lvl {{ building_level }}</span></div>
-        <div class="bld-card__b">
-          <div class="statline"><span>Trainable units</span><b>{{ rows.len() }}</b></div>
-          <p class="bld-tip">Raise the {{ building }} on the village to cut training time.</p>
-          <a class="btn btn--primary btn--wide" href="/w/{{ world }}/village/{{ village_id }}">Raise the {{ building }} →</a>
-        </div>
-      </div>
+      {% include "_upgrade.html" %}
     </aside>
   </div>
   {% endif %}
