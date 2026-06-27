@@ -612,6 +612,8 @@ pub struct ReportTemplate {
     pub scouted_note: Option<String>,
     /// Resources looted, formatted (011); `None` when nothing was taken.
     pub loot: Option<String>,
+    /// 098: for the attacker of a won oasis raid — why no loot came back (oases hold no resources, 012).
+    pub oasis_note: Option<String>,
     /// The razed building, e.g. "Warehouse 3 → 1" (011); `None` when none.
     pub razed: Option<String>,
     /// The loyalty change from an administrator strike, e.g. "60 → 30" (014); `None` when none.
