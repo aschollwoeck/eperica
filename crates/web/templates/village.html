@@ -57,42 +57,44 @@
 
   <div class="vcols">
     <div>
-      <!-- fortress plan -->
+      <!-- village map: the walled village in the centre, the resource fields ringing it (088) -->
       <section class="vplan">
-        <div class="vplan__head"><h2>Village plan</h2><span class="vplan__legend"><span><i class="lg-up"></i>ready</span><span><i class="lg-bld"></i>building</span></span></div>
+        <div class="vplan__head"><h2>Village &amp; fields</h2><span class="vplan__legend"><span><i class="lg-res"></i>fields</span><span><i class="lg-up"></i>ready</span><span><i class="lg-bld"></i>building</span></span></div>
         <div class="vcanvas">
-          <span class="vcanvas__label">Within the walls</span>
-          <div class="rampart"></div>
-          <div class="tower" style="left:16%;top:9%"></div><div class="tower" style="left:84%;top:9%"></div>
-          <div class="tower" style="left:16%;top:91%"></div><div class="tower" style="left:84%;top:91%"></div>
-          <div class="gate"></div>
-          {# 087: each plot links to that building's page (its functional page, or the generic detail page),
-             where the upgrade panel lives — the plan is a pure overview. #}
-          {% for b in buildings %}
-          <a class="vplot vplot--{{ b.kind }}{% if b.kind == "main_building" %} vplot--keep{% endif %}{% if b.building_ms.is_some() %} vplot--build{% else if b.can_order %} vplot--up{% else if b.level == 0 %} vplot--empty{% endif %}"
-            href="/w/{{ world }}/village/{{ village_id }}/{% if b.page != "" && b.level > 0 %}{{ b.page }}{% else %}building/{{ b.kind }}{% endif %}"
-            title="{{ b.label }} — {% if b.level == 0 %}not built{% else %}level {{ b.level }}{% endif %}">
-            <svg><use href="#i-{{ b.kind }}"/></svg>
-            <span class="vplot__n">{{ b.label }}</span>
-            <span class="vplot__lvl">{% if b.level == 0 %}+{% else %}{{ b.level }}{% endif %}</span>
-            {% if let Some(ms) = b.building_ms %}<span class="vplot__cd countdown" data-deadline="{{ ms }}">…</span>{% endif %}
-          </a>
-          {% endfor %}
-        </div>
-      </section>
-
-      <!-- resource fields -->
-      <section class="vfields">
-        <div class="bld-cols__head"><h2>Resource fields</h2><span class="bld-cols__rule"></span><span class="sub">{{ fields.len() }} fields</span></div>
-        <div class="vfields__grid">
-          {% for f in fields %}
-          <a class="vfield vfield--{{ f.res }}{% if f.building_ms.is_some() %} vfield--build{% else if f.can_order %} vfield--up{% endif %}"
-            href="/w/{{ world }}/village/{{ village_id }}/field/{{ f.slot }}">
-            <span class="vfield__dot"><svg><use href="#i-{{ f.res }}"/></svg></span>
-            <span class="vfield__main"><span class="vfield__n">{{ f.label }}</span><span class="vfield__r">{% if let Some(ms) = f.building_ms %}building · <span class="countdown" data-deadline="{{ ms }}">…</span>{% else if !f.effect.is_empty() %}{{ f.effect }}{% else %}max{% endif %}</span></span>
-            <span class="vfield__lvl">{{ f.level }}</span>
-          </a>
-          {% endfor %}
+          <span class="vcanvas__label vcanvas__label--out">The lands</span>
+          {# 088: the 18 resource fields ring the village. Fixed order → fixed ring slot via :nth-child. #}
+          <div class="vfield-ring">
+            {% for f in fields %}
+            <a class="vfield vfield--{{ f.res }}{% if f.building_ms.is_some() %} vfield--build{% else if f.can_order %} vfield--up{% endif %}"
+              href="/w/{{ world }}/village/{{ village_id }}/field/{{ f.slot }}"
+              aria-label="{{ f.label }}, level {{ f.level }}"
+              title="{{ f.label }} — {% if let Some(_ms) = f.building_ms %}under construction{% else if f.at_max %}level {{ f.level }} · max{% else %}level {{ f.level }} → {{ f.level + 1 }}{% if !f.effect.is_empty() %} · {{ f.effect }}{% endif %}{% endif %}">
+              <svg class="vfield__ico"><use href="#i-{{ f.res }}"/></svg>
+              <span class="vfield__lvl">{{ f.level }}</span>
+              {% if let Some(ms) = f.building_ms %}<span class="vplot__cd countdown" data-deadline="{{ ms }}">…</span>{% endif %}
+            </a>
+            {% endfor %}
+          </div>
+          {# the walled village holds the buildings #}
+          <div class="vcenter">
+            <span class="vcanvas__label">Within the walls</span>
+            <div class="rampart"></div>
+            <div class="tower" style="left:0;top:0"></div><div class="tower" style="left:100%;top:0"></div>
+            <div class="tower" style="left:0;top:100%"></div><div class="tower" style="left:100%;top:100%"></div>
+            <div class="gate"></div>
+            {# 087: each plot links to that building's page (its functional page, or the generic detail page),
+               where the upgrade panel lives — the plan is a pure overview. #}
+            {% for b in buildings %}
+            <a class="vplot vplot--{{ b.kind }}{% if b.kind == "main_building" %} vplot--keep{% endif %}{% if b.building_ms.is_some() %} vplot--build{% else if b.can_order %} vplot--up{% else if b.level == 0 %} vplot--empty{% endif %}"
+              href="/w/{{ world }}/village/{{ village_id }}/{% if b.page != "" && b.level > 0 %}{{ b.page }}{% else %}building/{{ b.kind }}{% endif %}"
+              title="{{ b.label }} — {% if b.level == 0 %}not built{% else %}level {{ b.level }}{% endif %}">
+              <svg><use href="#i-{{ b.kind }}"/></svg>
+              <span class="vplot__n">{{ b.label }}</span>
+              <span class="vplot__lvl">{% if b.level == 0 %}+{% else %}{{ b.level }}{% endif %}</span>
+              {% if let Some(ms) = b.building_ms %}<span class="vplot__cd countdown" data-deadline="{{ ms }}">…</span>{% endif %}
+            </a>
+            {% endfor %}
+          </div>
         </div>
       </section>
     </div>

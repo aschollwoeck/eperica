@@ -1861,7 +1861,8 @@ async fn build_order_flow(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
-    assert!(body.contains("Resource fields"));
+    // 088: the resource fields ring the village as icon tiles.
+    assert!(body.contains("vfield-ring"));
     // 087: the plan is a pure overview — each field/building links to its own page where the upgrade lives.
     assert!(body.contains(&format!("/village/{vid}/field/0")));
     let field_page = c
@@ -7330,12 +7331,12 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
         body.contains("data-rate=") && body.contains("gauge__now"),
         "the live resource counter is wired (rate + ticking number)"
     );
-    // 069/087: the command-table redesign — command header, the fortress plan with building plots, and the
-    // resource-fields grid. The plan is now a pure overview: each plot/field links to its own page (no
-    // inline inspector).
+    // 069/087/088: the command-table redesign — command header + the village map (the walled village with
+    // building plots, ringed by the resource-field tiles). The plan is a pure overview: each plot/field links
+    // to its own page (no inline inspector).
     assert!(
-        body.contains("vcmd") && body.contains("Village plan"),
-        "command header + plan"
+        body.contains("vcmd") && body.contains("vcanvas") && body.contains("vcenter"),
+        "command header + village map"
     );
     assert!(
         body.contains("Population"),
@@ -7346,8 +7347,8 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
         "buildings are plotted in the plan by kind"
     );
     assert!(
-        body.contains("vfields") && body.contains("vfield--crop"),
-        "the 18 resource fields render as a colour-coded grid"
+        body.contains("vfield-ring") && body.contains("vfield--crop"),
+        "the 18 resource fields ring the village as colour-coded icon tiles"
     );
     assert!(
         !body.contains("id=\"vinspect\""),

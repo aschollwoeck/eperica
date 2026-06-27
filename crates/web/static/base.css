@@ -515,14 +515,18 @@ a { color: var(--c-gold); }
 .vplan__legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
 .lg-up { background: var(--c-ember, #C8762E); box-shadow: 0 0 7px -1px var(--c-ember, #C8762E); }
 .lg-bld { background: #6a4a22; border: 1px solid var(--c-ember, #C8762E); }
-.vcanvas { position: relative; height: 460px;
-  background-image: radial-gradient(60% 55% at 50% 46%, rgba(40,52,64,.4), transparent 70%),
+.lg-res { background: linear-gradient(135deg, var(--c-lumber), var(--c-crop)); }
+.vcanvas { position: relative; height: 620px;
+  background-image: radial-gradient(48% 42% at 50% 50%, rgba(40,52,64,.45), transparent 72%),
     linear-gradient(#19222b 1px, transparent 1px), linear-gradient(90deg, #19222b 1px, transparent 1px);
   background-size: 100% 100%, 34px 34px, 34px 34px; background-position: center; }
-.vcanvas__label { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); font-family: ui-monospace, monospace; font-size: .6rem; letter-spacing: .2em; text-transform: uppercase; color: #46525f; }
-.rampart { position: absolute; inset: 9% 16%; border: 1.5px solid color-mix(in srgb, var(--c-gold) 50%, #3a4450); border-radius: 8px; box-shadow: 0 0 0 5px rgba(166,134,75,.05), inset 0 0 40px rgba(0,0,0,.45); }
+/* 088: the walled village occupies the centre; the building plots' --x/--y are relative to it. */
+.vcenter { position: absolute; inset: 11% 19%; }
+.vcanvas__label { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); font-family: ui-monospace, monospace; font-size: .6rem; letter-spacing: .2em; text-transform: uppercase; color: #46525f; z-index: 2; }
+.vcanvas__label--out { top: -2px; color: #5a6775; }
+.rampart { position: absolute; inset: 0; border: 1.5px solid color-mix(in srgb, var(--c-gold) 50%, #3a4450); border-radius: 8px; box-shadow: 0 0 0 5px rgba(166,134,75,.05), inset 0 0 40px rgba(0,0,0,.45); }
 .tower { position: absolute; width: 15px; height: 15px; transform: translate(-50%,-50%); border: 1.5px solid color-mix(in srgb, var(--c-gold) 55%, #3a4450); background: #0d1318; border-radius: 3px; }
-.gate { position: absolute; left: 50%; bottom: 7%; transform: translateX(-50%); width: 44px; height: 13px; border: 1.5px solid color-mix(in srgb, var(--c-gold) 55%, #3a4450); border-bottom: 0; border-radius: 6px 6px 0 0; background: #0c1116; }
+.gate { position: absolute; left: 50%; bottom: -1px; transform: translateX(-50%); width: 44px; height: 13px; border: 1.5px solid color-mix(in srgb, var(--c-gold) 55%, #3a4450); border-bottom: 0; border-radius: 6px 6px 0 0; background: #0c1116; }
 
 /* a plot (building inside the plan, or a field in the grid below) */
 .vplot { position: absolute; left: var(--x); top: var(--y); transform: translate(-50%,-50%);
@@ -575,24 +579,37 @@ a { color: var(--c-gold); }
 .vinspect__act { display: flex; align-items: center; gap: 14px; flex: none; }
 .vinspect__hint { color: var(--c-ink-muted); font-style: italic; font-size: .9rem; }
 
-/* resource fields grid */
-.vfields { margin-top: 13px; }
-.vfields__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(136px, 1fr)); gap: 8px; }
-.vfield { position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 10px; min-width: 0; border: 1px solid var(--c-border); border-radius: 6px; cursor: pointer; transition: .12s; text-align: left; width: 100%; font: inherit;
-  background: linear-gradient(180deg, var(--c-panel-alt), var(--c-panel)); box-shadow: inset 0 1px 0 rgba(255,255,255,.03); color: var(--c-ink); }
-.vfield:hover, .vfield:focus-visible { border-color: var(--c-gold); outline: none; }
-.vfield::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; border-radius: 6px 0 0 6px; background: var(--rc); }
-.vfield__dot { width: 22px; height: 22px; flex: none; border-radius: 4px; display: grid; place-items: center; color: var(--rc); border: 1px solid color-mix(in srgb, var(--rc) 35%, var(--c-border)); background: #0d1217; }
-.vfield__dot svg { width: 14px; height: 14px; }
-.vfield__main { min-width: 0; flex: 1; }
-.vfield__n, .vfield__r { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.vfield__n { font-size: .82rem; color: var(--c-ink); }
-.vfield__r { font-family: ui-monospace, monospace; font-size: .7rem; color: var(--c-ink-muted); }
-.vfield__lvl { font-family: ui-monospace, monospace; font-weight: 700; font-size: 1rem; color: var(--c-gold); }
-.vfield--up { border-color: color-mix(in srgb, var(--c-ember, #C8762E) 50%, var(--c-border)); box-shadow: inset 0 1px 0 rgba(255,255,255,.03), 0 0 18px -10px var(--c-ember, #C8762E); }
-.vfield--sel { border-color: var(--c-gold); box-shadow: 0 0 0 1px var(--c-gold); }
+/* 088: the 18 resource fields ring the village as icon tiles, positioned around the perimeter */
+.vfield-ring { position: absolute; inset: 0; }
+.vfield { position: absolute; left: var(--fx); top: var(--fy); transform: translate(-50%, -50%);
+  width: 58px; height: 58px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  border: 1px solid color-mix(in srgb, var(--rc) 32%, var(--c-border)); border-radius: 10px; cursor: pointer; transition: .12s; text-decoration: none;
+  background: radial-gradient(120% 100% at 50% 0%, color-mix(in srgb, var(--rc) 15%, #0d1217), #0a0e12); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .03); }
+.vfield:hover, .vfield:focus-visible { border-color: var(--c-gold); transform: translate(-50%, -50%) translateY(-2px); box-shadow: 0 8px 18px -8px #000; outline: none; }
+.vfield__ico { width: 23px; height: 23px; color: var(--rc); }
+.vfield__lvl { font-family: ui-monospace, monospace; font-weight: 700; font-size: .82rem; line-height: 1; color: var(--c-ink); }
+.vfield--up { border-color: color-mix(in srgb, var(--c-ember, #C8762E) 55%, var(--c-border)); box-shadow: 0 0 18px -7px var(--c-ember, #C8762E); }
 .vfield--wood { --rc: var(--c-lumber); } .vfield--clay { --rc: var(--c-clay); }
 .vfield--iron { --rc: var(--c-iron-res); } .vfield--crop { --rc: var(--c-crop); }
+/* ring slots (fixed field order → fixed position): top edge, right edge, bottom edge, left edge */
+.vfield-ring .vfield:nth-child(1)  { --fx: 11%;   --fy: 5.5%; }
+.vfield-ring .vfield:nth-child(2)  { --fx: 30.5%; --fy: 5.5%; }
+.vfield-ring .vfield:nth-child(3)  { --fx: 50%;   --fy: 5.5%; }
+.vfield-ring .vfield:nth-child(4)  { --fx: 69.5%; --fy: 5.5%; }
+.vfield-ring .vfield:nth-child(5)  { --fx: 89%;   --fy: 5.5%; }
+.vfield-ring .vfield:nth-child(6)  { --fx: 95%;   --fy: 25%; }
+.vfield-ring .vfield:nth-child(7)  { --fx: 95%;   --fy: 42%; }
+.vfield-ring .vfield:nth-child(8)  { --fx: 95%;   --fy: 58%; }
+.vfield-ring .vfield:nth-child(9)  { --fx: 95%;   --fy: 75%; }
+.vfield-ring .vfield:nth-child(10) { --fx: 89%;   --fy: 94.5%; }
+.vfield-ring .vfield:nth-child(11) { --fx: 69.5%; --fy: 94.5%; }
+.vfield-ring .vfield:nth-child(12) { --fx: 50%;   --fy: 94.5%; }
+.vfield-ring .vfield:nth-child(13) { --fx: 30.5%; --fy: 94.5%; }
+.vfield-ring .vfield:nth-child(14) { --fx: 11%;   --fy: 94.5%; }
+.vfield-ring .vfield:nth-child(15) { --fx: 5%;    --fy: 75%; }
+.vfield-ring .vfield:nth-child(16) { --fx: 5%;    --fy: 58%; }
+.vfield-ring .vfield:nth-child(17) { --fx: 5%;    --fy: 42%; }
+.vfield-ring .vfield:nth-child(18) { --fx: 5%;    --fy: 25%; }
 
 /* war-room rail (reuses .bld-card / feed rows) */
 .vrail { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 16px; }
@@ -615,20 +632,23 @@ a { color: var(--c-gold); }
 @media (max-width: 680px) {
   .vcmd__dials { margin-left: 0; }
   .vcmd__name { font-size: 1.6rem; }
-  /* the positioned plan reflows into a simple grid (drop the absolute coordinates) */
-  .vcanvas { height: auto; padding: 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; background-image: none; }
+  /* the positioned village map reflows into stacked grids (fields, then buildings) — the ring layout
+     needs width the phone doesn't have, so drop the absolute coordinates. */
+  .vcanvas { height: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; background-image: none; }
+  .vfield-ring { position: static; display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px; }
+  .vcenter { position: static; inset: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px; }
   .rampart, .tower, .gate, .vcanvas__label { display: none; }
-  .vplot, .vplot--keep { position: static; transform: none; width: auto; height: 96px; }
-  .vplot:hover, .vplot:focus-visible { transform: none; }
-  .vinspect { flex-wrap: wrap; } .vinspect__act { width: 100%; justify-content: space-between; }
+  /* `relative` (not static) so an on-tile `.vplot__cd` countdown still anchors to its own tile. */
+  .vplot, .vplot--keep { position: relative; transform: none; width: auto; height: 92px; }
+  .vfield { position: relative; transform: none; width: auto; height: 72px; }
+  .vplot:hover, .vplot:focus-visible, .vfield:hover, .vfield:focus-visible { transform: none; }
 }
 
 /* 069 — a disabled action (e.g. the inspector's Upgrade when the build is gated) reads as inert. */
 .btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
 
 /* a field under construction (069): ember edge + the live build countdown in its detail line */
-.vfield--build { border-color: color-mix(in srgb, var(--c-ember, #C8762E) 55%, var(--c-border)); box-shadow: inset 0 1px 0 rgba(255,255,255,.03), 0 0 18px -10px var(--c-ember, #C8762E); }
-.vfield--build .vfield__r { color: var(--c-ember, #C8762E); }
+.vfield--build { border-color: color-mix(in srgb, var(--c-ember, #C8762E) 55%, var(--c-border)); box-shadow: 0 0 18px -7px var(--c-ember, #C8762E); }
 
 /* ============================================================================
    075 — content-page header (.phead) + the battle/scout reports. Reusable header
