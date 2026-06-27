@@ -1727,7 +1727,7 @@ fn map_cells(
                         if marker.owner_name == username {
                             class.push_str(" map-grid__cell--self");
                         }
-                        // 095: any village can be shipped resources from the acting village's Marketplace.
+                        // 096: any village can be shipped resources from the acting village's Marketplace.
                         market_href = acting_vid.map(|vid| {
                             village_path(
                                 world,

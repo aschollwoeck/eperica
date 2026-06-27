@@ -445,7 +445,7 @@ pub struct MapCellView {
     /// A target link for actionable tiles (an oasis → the Rally Point pre-filled with the tile);
     /// `None` for plain terrain (012 AC12).
     pub href: Option<String>,
-    /// 095: a "Send merchant" link (the Marketplace pre-filled with the tile) — `Some` for any village tile,
+    /// 096: a "Send merchant" link (the Marketplace pre-filled with the tile) — `Some` for any village tile,
     /// `None` otherwise (you can only ship resources to a village).
     pub market_href: Option<String>,
     /// The tile's coordinate, for the inspector's "center here" link + send-troops shortcut (074).
@@ -675,7 +675,7 @@ pub struct MarketTemplate {
     pub origin_y: i32,
     pub radius: i32,
     pub speed_mult: f64,
-    /// Pre-filled target tile from a map "Send merchant" link (095), if any.
+    /// Pre-filled target tile from a map "Send merchant" link (096), if any.
     pub target_x: Option<i32>,
     pub target_y: Option<i32>,
     /// The Marketplace's own build/upgrade panel (087), shown in the aside.
