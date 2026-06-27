@@ -638,8 +638,9 @@ a { color: var(--c-gold); }
   .vfield-ring { position: static; display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px; }
   .vcenter { position: static; inset: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px; }
   .rampart, .tower, .gate, .vcanvas__label { display: none; }
-  .vplot, .vplot--keep { position: static; transform: none; width: auto; height: 92px; }
-  .vfield { position: static; transform: none; width: auto; height: 72px; }
+  /* `relative` (not static) so an on-tile `.vplot__cd` countdown still anchors to its own tile. */
+  .vplot, .vplot--keep { position: relative; transform: none; width: auto; height: 92px; }
+  .vfield { position: relative; transform: none; width: auto; height: 72px; }
   .vplot:hover, .vplot:focus-visible, .vfield:hover, .vfield:focus-visible { transform: none; }
 }
 

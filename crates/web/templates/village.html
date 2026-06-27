@@ -67,6 +67,7 @@
             {% for f in fields %}
             <a class="vfield vfield--{{ f.res }}{% if f.building_ms.is_some() %} vfield--build{% else if f.can_order %} vfield--up{% endif %}"
               href="/w/{{ world }}/village/{{ village_id }}/field/{{ f.slot }}"
+              aria-label="{{ f.label }}, level {{ f.level }}"
               title="{{ f.label }} — {% if let Some(_ms) = f.building_ms %}under construction{% else if f.at_max %}level {{ f.level }} · max{% else %}level {{ f.level }} → {{ f.level + 1 }}{% if !f.effect.is_empty() %} · {{ f.effect }}{% endif %}{% endif %}">
               <svg class="vfield__ico"><use href="#i-{{ f.res }}"/></svg>
               <span class="vfield__lvl">{{ f.level }}</span>
