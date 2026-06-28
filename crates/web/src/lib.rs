@@ -270,9 +270,14 @@ fn world_router() -> Router<AppState> {
             "/village/{village}/field/{slot}",
             get(handlers::field_detail),
         )
-        .route("/map", get(handlers::map))
+        // 107: the world map is village-scoped — the `{village}` is the acting village whose Rally Point /
+        // Marketplace the "send" shortcuts use, and the "recentre on home" / distance origin.
+        .route("/village/{village}/map", get(handlers::map))
         // 093: JSON tiles for the draggable map, streamed as the player pans.
-        .route("/map/tiles", get(handlers::map_tiles))
+        .route("/village/{village}/map/tiles", get(handlers::map_tiles))
+        // 107: a bare `/map` (context-less links — search, notifications, alliance) renders the map defaulting
+        // to the capital village.
+        .route("/map", get(handlers::map_default))
         .route("/village/{village}/academy", get(handlers::academy))
         .route(
             "/village/{village}/academy/research",

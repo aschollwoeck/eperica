@@ -1530,7 +1530,7 @@ async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
     // The map (default-centered on the player's village) renders the grid, the player's own
     // village marker, and terrain labels.
     let body = c
-        .get(format!("{base}/w/{home}/map"))
+        .get(format!("{base}/w/{home}/village/{vid}/map"))
         .send()
         .await
         .unwrap()
@@ -1546,7 +1546,9 @@ async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
     assert!(body.contains("vcols") && body.contains("vrail") && body.contains("minspect"));
     assert!(body.contains("drag to explore")); // the command header hints the new interaction
     // 095: the jump-to-coordinate form + the recentre-on-home control live in the map card.
-    assert!(body.contains("id=\"mjump\"") && body.contains("Recentre on home"));
+    assert!(body.contains("id=\"mjump\"") && body.contains("Recentre on this village"));
+    // 107: the map is scoped to the village in the path — its own links carry it.
+    assert!(body.contains(&format!("/village/{vid}/map")));
     assert!(body.contains("map-grid__cell--village"));
     assert!(body.contains("map-grid__cell--self")); // the viewer's own village is highlighted
     assert!(body.contains(&user)); // owner name on the marker (public, GDD §7.3)
@@ -1554,7 +1556,7 @@ async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
 
     // Recenter to an explicit coordinate.
     let body = c
-        .get(format!("{base}/w/{home}/map?x=10&y=-7"))
+        .get(format!("{base}/w/{home}/village/{vid}/map?x=10&y=-7"))
         .send()
         .await
         .unwrap()
@@ -1594,10 +1596,13 @@ async fn map_tiles_endpoint_serves_a_rectangular_region(pool: sqlx::PgPool) {
         .send()
         .await
         .unwrap();
+    let vid = village_uuid(&pool, &user).await; // 107: the map is village-scoped
 
     // An 11-wide × 7-tall region (hx=5, hy=3) around (0|0) — wider than tall.
     let r = c
-        .get(format!("{base}/w/{home}/map/tiles?cx=0&cy=0&hx=5&hy=3"))
+        .get(format!(
+            "{base}/w/{home}/village/{vid}/map/tiles?cx=0&cy=0&hx=5&hy=3"
+        ))
         .send()
         .await
         .unwrap();
@@ -1675,13 +1680,15 @@ async fn map_tiles_endpoint_serves_a_rectangular_region(pool: sqlx::PgPool) {
 
     // P11: oversized half-extents are clamped (hx ≤ 18, hy ≤ 14).
     let big: serde_json::Value = serde_json::from_str(
-        &c.get(format!("{base}/w/{home}/map/tiles?cx=0&cy=0&hx=999&hy=999"))
-            .send()
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap(),
+        &c.get(format!(
+            "{base}/w/{home}/village/{vid}/map/tiles?cx=0&cy=0&hx=999&hy=999"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap(),
     )
     .unwrap();
     assert_eq!(big["cols"], 37); // 2·18 + 1
@@ -1689,7 +1696,9 @@ async fn map_tiles_endpoint_serves_a_rectangular_region(pool: sqlx::PgPool) {
 
     // P4: a visitor cannot read the tiles (auth is checked before the handler).
     let anon = client()
-        .get(format!("{base}/w/{home}/map/tiles?cx=0&cy=0&hx=5&hy=3"))
+        .get(format!(
+            "{base}/w/{home}/village/{vid}/map/tiles?cx=0&cy=0&hx=5&hy=3"
+        ))
         .send()
         .await
         .unwrap();
