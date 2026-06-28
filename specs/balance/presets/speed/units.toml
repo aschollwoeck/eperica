@@ -202,9 +202,6 @@ crop_upkeep = 1
 train_secs = 26900
 trained_in = "residence"
 cost = { wood = 4600, clay = 4200, iron = 5800, crop = 4400 }
-research = { time_secs = 9000, cost = { wood = 2400, clay = 2200, iron = 2600, crop = 2200 }, requirements = [
-    { building = "main_building", level = 10 },
-] }
 
 # ---------------------------------------------------------------- Teutons
 
@@ -380,9 +377,6 @@ crop_upkeep = 1
 train_secs = 31000
 trained_in = "residence"
 cost = { wood = 5800, clay = 4400, iron = 4600, crop = 5200 }
-research = { time_secs = 9000, cost = { wood = 2600, clay = 2200, iron = 2300, crop = 2500 }, requirements = [
-    { building = "main_building", level = 10 },
-] }
 
 # ---------------------------------------------------------------- Gauls
 
@@ -560,9 +554,6 @@ crop_upkeep = 1
 train_secs = 22700
 trained_in = "residence"
 cost = { wood = 4400, clay = 5600, iron = 4200, crop = 3900 }
-research = { time_secs = 9000, cost = { wood = 2300, clay = 2800, iron = 2100, crop = 2000 }, requirements = [
-    { building = "main_building", level = 10 },
-] }
 
 # ---------------------------------------------------------------- Wild animals (012)
 #

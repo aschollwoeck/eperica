@@ -91,14 +91,15 @@ pub struct UnitSpec {
     pub train_secs: i64,
     /// The building whose queue trains this unit (005).
     pub trained_in: BuildingKind,
-    /// `None` marks the tribe's tier-1 unit: researched from the start, no order needed (AC9).
+    /// `None` ⇒ no Academy research needed: the tribe's tier-1 combat unit (AC9), and the Expansion units
+    /// (settlers/administrators), which train at the Residence/Palace directly (101).
     pub research: Option<ResearchSpec>,
     /// For siege units, what they target in combat (009/011); `None` for all other roles.
     pub siege_kind: Option<SiegeKind>,
 }
 
 impl UnitSpec {
-    /// Whether this unit type needs no Academy research (the tribe's tier-1 unit).
+    /// Whether this unit type needs no Academy research (the tier-1 combat unit, or an Expansion unit, 101).
     pub fn researched_by_default(&self) -> bool {
         self.research.is_none()
     }
@@ -187,7 +188,8 @@ impl UnitRules {
     ///
     /// # Errors
     /// Returns [`DomainError::InvalidUnitRules`] unless every tribe has exactly [`ROSTER_SIZE`]
-    /// units with per-tribe-unique ids and exactly one research-free (tier-1) unit, the Smithy
+    /// units with per-tribe-unique ids and exactly one research-free (tier-1) **combat** unit (Expansion
+    /// units may also be research-free, 101), the Smithy
     /// tables are non-empty and of equal length (a mismatch would silently lower the cap), and
     /// the training factor table is non-empty.
     pub fn new(
@@ -222,9 +224,17 @@ impl UnitRules {
                     "unit ids must be unique within a tribe",
                 ));
             }
-            if roster.iter().filter(|u| u.researched_by_default()).count() != 1 {
+            // Exactly one research-free *combat* unit (the tier-1 starter, AC9). 101: Expansion units
+            // (settlers/administrators) train at the Residence/Palace without Academy research, so they may
+            // also be research-free and are not counted here.
+            if roster
+                .iter()
+                .filter(|u| u.researched_by_default() && u.role != UnitRole::Expansion)
+                .count()
+                != 1
+            {
                 return Err(DomainError::InvalidUnitRules(
-                    "each tribe must have exactly one tier-1 (research-free) unit",
+                    "each tribe must have exactly one tier-1 (research-free) combat unit",
                 ));
             }
         }
@@ -627,6 +637,32 @@ mod tests {
         assert!(UnitRules::new(rosters.clone(), lopsided, training_rules()).is_err());
 
         assert!(UnitRules::new(rosters, smithy_rules(), training_rules()).is_ok());
+    }
+
+    // 101: a research-free **Expansion** unit (settler) is valid — it isn't a second tier-1 — and it trains
+    // at the Residence/Palace with no Academy research.
+    #[test]
+    fn allows_research_free_expansion_units() {
+        let mut g = roster();
+        let mut settler = unit("settler", None); // no research
+        settler.role = UnitRole::Expansion;
+        settler.trained_in = BuildingKind::Residence;
+        g[1] = settler;
+        let rosters = HashMap::from([
+            (Tribe::Romans, roster()),
+            (Tribe::Teutons, roster()),
+            (Tribe::Gauls, g),
+        ]);
+        let rules = UnitRules::new(rosters, smithy_rules(), training_rules())
+            .expect("research-free settler is valid");
+        let spec = rules
+            .unit(Tribe::Gauls, &UnitId("settler".to_owned()))
+            .unwrap();
+        assert!(spec.researched_by_default());
+        assert_eq!(
+            can_train(spec, false, 1, &slots(&[(BuildingKind::Residence, 1)])),
+            Ok(())
+        );
     }
 
     #[test]
