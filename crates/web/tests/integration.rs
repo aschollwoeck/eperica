@@ -3716,6 +3716,19 @@ async fn settling_culture_panel_switcher_and_capital_flow(pool: sqlx::PgPool) {
         capital_map.contains(&format!("Recentre on this village ({vx} | {vy})")),
         "the capital's map recentres on the capital"
     );
+    // The bare `/map` (no village, no centre — context-less links) defaults to the capital's coordinate.
+    let bare_map = c
+        .get(format!("{base}/w/{home}/map"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        bare_map.contains(&format!("Recentre on this village ({vx} | {vy})")),
+        "the bare /map defaults to the capital"
+    );
 }
 
 /// 014 AC4/AC10/AC11: sending administrators with a winning attack against a low-loyalty enemy village
