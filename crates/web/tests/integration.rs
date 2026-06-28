@@ -2203,7 +2203,9 @@ async fn building_and_field_pages_own_the_upgrade(pool: sqlx::PgPool) {
         .unwrap();
     assert!(wh.contains(&format!("/village/{vid}/build")));
     assert!(wh.contains("name=\"kind\" value=\"warehouse\""));
-    assert!(wh.contains("name=\"back\" value=\"/building/warehouse\""));
+    // 111: the upgrade returns to the building's SLOT (a fresh warehouse maps to the canonical slot 2),
+    // not the kind-keyed page — so a multi-instance upgrade stays on the right instance.
+    assert!(wh.contains("name=\"back\" value=\"/slot/2\""));
 
     // The field page renders the same panel keyed to the field slot.
     let f = c
@@ -8153,6 +8155,79 @@ async fn demolish_is_gated_and_frees_a_slot(pool: sqlx::PgPool) {
     assert!(
         slot5.contains("Empty build spot") || slot5.contains("Build "),
         "the freed slot offers the build menu"
+    );
+}
+
+/// 111: upgrading a multi-instance building returns to **its own slot**, not the first instance of its
+/// kind. (Regression: the `back` link was `/building/{kind}`, which resolves to the first Warehouse.)
+#[sqlx::test(migrations = "../../migrations")]
+async fn upgrading_the_second_warehouse_returns_to_its_slot(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let user = unique("whback");
+    let (c, _id) = register_client(&base, &pool, &user).await;
+    let vid = village_uuid(&pool, &user).await;
+    let village_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN players p ON p.id = v.owner_id \
+         JOIN users u ON u.id = p.user_id WHERE u.username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for slot in [2_i16, 4] {
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+             VALUES ($1, $2, 'warehouse', 1)",
+        )
+        .bind(village_id)
+        .bind(slot)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    // The 2nd Warehouse's page posts its own slot and returns to its own slot — not the first instance.
+    let page = c
+        .get(format!("{base}/w/{home}/village/{vid}/slot/4"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        page.contains("name=\"slot\" value=\"4\""),
+        "the upgrade form targets this slot"
+    );
+    assert!(
+        page.contains("name=\"back\" value=\"/slot/4\""),
+        "the upgrade returns to this slot, not /building/warehouse"
+    );
+    assert!(
+        !page.contains("/building/warehouse"),
+        "no kind-keyed link that would land on the first Warehouse"
+    );
+    // The PRG redirect after the upgrade lands back on this slot.
+    let res = c
+        .post(format!("{base}/w/{home}/village/{vid}/build"))
+        .form(&[
+            ("table", "building"),
+            ("slot", "4"),
+            ("kind", "warehouse"),
+            ("back", "/slot/4"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+    let loc = res
+        .headers()
+        .get(LOCATION)
+        .and_then(|l| l.to_str().ok())
+        .unwrap_or_default();
+    assert!(
+        loc.ends_with("/slot/4"),
+        "redirect stays on the second Warehouse's slot, got {loc}"
     );
 }
 
