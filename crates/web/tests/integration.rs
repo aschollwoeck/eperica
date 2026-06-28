@@ -2248,6 +2248,9 @@ async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(rally.contains("Rally Point"));
+    // 108: the build/upgrade "Under construction" countdown ticker is global (base.html) — the Rally Point
+    // (which lacked its own copy) must carry it so its upgrade countdown ticks + reloads.
+    assert!(rally.contains("querySelectorAll(\".countdown\")"));
     assert!(rally.contains("Phalanx"));
     assert!(rally.contains("name=\"count_phalanx\""));
     // 067: the redesigned building-page chrome (hero band + resource ribbon) wraps the send form.
@@ -2619,6 +2622,8 @@ async fn marketplace_send_and_deliver_flow(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(market.contains("Marketplace"));
+    // 108: the Marketplace (which lacked its own copy) carries the global build/upgrade countdown ticker.
+    assert!(market.contains("querySelectorAll(\".countdown\")"));
     assert!(market.contains("750")); // Gaul merchant capacity
     assert!(market.contains("free of 5"));
     assert!(market.contains("name=\"amount_wood\""));
