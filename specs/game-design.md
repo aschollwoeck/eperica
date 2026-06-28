@@ -131,7 +131,8 @@ and the **village center** (building slots).
 - **Most buildings are one per village.** A few may be built **multiple times**, each on its own slot,
   with **stacking** effects: **Warehouse** and **Granary** (total capacity is the sum of each instance's
   capacity at its level) and the **Cranny** (total hidden amount is the sum). A built slot may be
-  **demolished** (Main-Building-gated) to free it (slice 110).
+  **demolished** one level at a time (Main-Building-gated), freeing the slot once it reaches level 0
+  (slices 110/113). The Main Building and the Palace are never demolished.
 - Buildings are constructed and upgraded here (§4). Most have prerequisites (other buildings at a
   given level) and a main-building-dependent build time.
 

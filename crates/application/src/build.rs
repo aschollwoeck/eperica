@@ -296,8 +296,8 @@ where
     let Some(village) = crate::economy::select_village(accounts, owner, selected).await? else {
         return Err(BuildError::NotFound);
     };
-    let kind = match building_at(&village.buildings, slot) {
-        Some(b) if b.kind.is_demolishable() => b.kind,
+    let (kind, current_level) = match building_at(&village.buildings, slot) {
+        Some(b) if b.kind.is_demolishable() => (b.kind, b.level),
         _ => return Err(BuildError::NotDemolishable),
     };
     let mb_level = building_level(&village, BuildingKind::MainBuilding);
@@ -305,8 +305,13 @@ where
         return Err(BuildError::MainBuildingTooLow);
     }
     let target = BuildTarget::Building { slot, kind };
-    // Tearing a building down isn't instant — about a level-1 build, Main-Building-scaled.
-    let base_time = build_rules.base_time_secs(target, 0).unwrap_or(60);
+    // 113: demolition is **level by level** (faithful Travian) — one order removes the current top level,
+    // taking that level's build time (Main-Building-scaled). The order targets one level down; demolishing
+    // the last level (target 0) frees the slot.
+    let target_level = current_level.saturating_sub(1);
+    let base_time = build_rules
+        .base_time_secs(target, target_level)
+        .unwrap_or(60);
     let duration = build_time_secs(base_time, mb_level, build_rules, speed);
 
     let Some((stored, updated_at)) = accounts.stored_resources(village.id).await? else {
@@ -336,7 +341,7 @@ where
         .map_or(QueueLane::All, |tribe| queue_lane(tribe, target));
     let order = NewBuildOrder {
         target,
-        target_level: 0,
+        target_level,
         complete_at: Timestamp(now.0 + duration * 1000),
         lane,
     };

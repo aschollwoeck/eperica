@@ -8075,10 +8075,10 @@ async fn demolish_is_gated_and_frees_a_slot(pool: sqlx::PgPool) {
     .fetch_one(&pool)
     .await
     .unwrap();
-    // Seed a Marketplace on a free slot.
+    // Seed a level-2 Marketplace on a free slot (so it takes two demolitions to clear, level by level).
     sqlx::query(
         "INSERT INTO village_buildings (village_id, slot, building_type, level) \
-         VALUES ($1, 5, 'marketplace', 3)",
+         VALUES ($1, 5, 'marketplace', 2)",
     )
     .bind(village_id)
     .execute(&pool)
@@ -8118,7 +8118,8 @@ async fn demolish_is_gated_and_frees_a_slot(pool: sqlx::PgPool) {
         0,
         "the Main Building can't be demolished"
     );
-    // A valid demolish enqueues a single free, target-level-0 order (a P1 due event, not instant).
+    // 113: a valid demolish enqueues ONE order reducing the building by one level (target = level-1 = 1),
+    // a P1 due event — not instant, not a whole-building clear.
     demolish("5").await.unwrap();
     let (cnt, lvl): (i64, i16) = sqlx::query_as(
         "SELECT count(*), coalesce(min(target_level), -1)::int2 FROM build_orders WHERE village_id = $1",
@@ -8129,24 +8130,38 @@ async fn demolish_is_gated_and_frees_a_slot(pool: sqlx::PgPool) {
     .unwrap();
     assert_eq!(
         (cnt, lvl),
-        (1, 0),
-        "demolish enqueues one target-level-0 order"
+        (1, 1),
+        "demolish enqueues one order that removes the top level (2 → 1)"
     );
-    // Processing the due build removes the building and frees the slot.
     let future = Timestamp(now().0 + 10_000_000_000);
-    process_due_builds(&repo, &repo, &repo, &culture_rules().unwrap(), future, 100)
-        .await
-        .unwrap();
-    let remaining: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM village_buildings WHERE village_id = $1 AND slot = 5",
-    )
-    .bind(village_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let do_due = |pool: sqlx::PgPool, repo: &PgAccountRepository| {
+        let repo = repo.clone();
+        async move {
+            process_due_builds(&repo, &repo, &repo, &culture_rules().unwrap(), future, 100)
+                .await
+                .unwrap();
+            sqlx::query_scalar::<_, Option<i16>>(
+                "SELECT level FROM village_buildings WHERE village_id = $1 AND slot = 5",
+            )
+            .bind(village_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap()
+            .flatten()
+        }
+    };
+    // Processing the first demolition drops the Marketplace one level (still present at level 1).
     assert_eq!(
-        remaining, 0,
-        "the demolished building is gone — the slot is freed"
+        do_due(pool.clone(), &repo).await,
+        Some(1),
+        "the building dropped one level — not removed"
+    );
+    // Demolishing the last level (target 0) and processing it frees the slot.
+    demolish("5").await.unwrap();
+    let remaining = do_due(pool.clone(), &repo).await;
+    assert_eq!(
+        remaining, None,
+        "demolishing the last level frees the slot (row gone)"
     );
     // The freed slot now renders the build menu (re-buildable).
     let slot5 = c
