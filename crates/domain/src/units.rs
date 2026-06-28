@@ -473,10 +473,11 @@ pub fn garrison_upkeep(garrison: &[(UnitId, u32)], roster: &[UnitSpec]) -> i64 {
 
 /// Starve a garrison down to a sustainable size (005 AC7, GDD §2.2).
 ///
-/// `net_without_troops` is the village's hourly crop balance **before** troop upkeep (fields −
-/// population; pre-speed-scaling — the sign is what matters). Units die deterministically:
-/// repeatedly one unit of the garrisoned type with the **highest `cropUpkeep`** (ties: roster
-/// order) until `net_without_troops − upkeep(remaining) ≥ 0` or no upkeep-bearing unit remains.
+/// `net_without_troops` is the village's hourly crop balance **before** troop upkeep — the
+/// speed-scaled field output minus population (114: output scales, population/upkeep are fixed, so the
+/// caller passes `crop_net + upkeep`). Units die deterministically: repeatedly one unit of the
+/// garrisoned type with the **highest `cropUpkeep`** (ties: roster order) until
+/// `net_without_troops − upkeep(remaining) ≥ 0` or no upkeep-bearing unit remains.
 ///
 /// Returns `(survivors, casualties)`; both omit zero counts.
 pub fn starve(

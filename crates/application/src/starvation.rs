@@ -5,7 +5,7 @@
 use crate::ports::{AccountRepository, RepoError, StarvationRepository};
 use eperica_domain::{
     EconomyRules, GameSpeed, Timestamp, UnitRules, VillageId, compute_economy, depletion_secs,
-    garrison_upkeep, net_crop_base, starve,
+    garrison_upkeep, starve,
 };
 
 /// Re-derive the village's depletion check from live state: cancelled when there is no garrison
@@ -179,7 +179,9 @@ where
     }
 
     // The store is dry and the net is negative: cull until sustainable (AC7).
-    let net_base = net_crop_base(&village.fields, &village.buildings, economy_rules);
+    // 114: the troops' crop budget is the speed-scaled field output minus population — i.e. the net
+    // *before* troop upkeep, which is exactly `crop_net + upkeep` (upkeep is the variable being culled).
+    let net_base = economy.rates.crop_net + upkeep;
     let (survivors, casualties) = starve(&garrison, roster, net_base);
     match starvation
         .apply_starvation(village_id, economy.amounts, updated_at, now, &survivors)
