@@ -21,8 +21,9 @@
       <input type="hidden" name="table" value="{{ upgrade.table }}">
       <input type="hidden" name="slot" value="{{ upgrade.slot }}">
       <input type="hidden" name="kind" value="{{ upgrade.kind }}">
-      {# return to the page this panel is on: a built building's functional page, else the generic detail page #}
-      <input type="hidden" name="back" value="{% if upgrade.table == "field" %}/field/{{ upgrade.slot }}{% else if upgrade.page != "" && upgrade.level > 0 %}/{{ upgrade.page }}{% else %}/building/{{ upgrade.kind }}{% endif %}">
+      {# 111: return to the page this panel is on — a built building's functional page, else **this slot's**
+         page (keyed by slot, not kind, so upgrading the 2nd Warehouse returns to it, not the first). #}
+      <input type="hidden" name="back" value="{% if upgrade.table == "field" %}/field/{{ upgrade.slot }}{% else if upgrade.page != "" && upgrade.level > 0 %}/{{ upgrade.page }}{% else %}/slot/{{ upgrade.slot }}{% endif %}">
       <button class="btn btn--primary btn--wide" type="submit"{% if !upgrade.can_order %} disabled{% endif %}{% if upgrade.cost_gated %} data-cost-wood="{{ upgrade.cost_wood }}" data-cost-clay="{{ upgrade.cost_clay }}" data-cost-iron="{{ upgrade.cost_iron }}" data-cost-crop="{{ upgrade.cost_crop }}"{% endif %}>{% if upgrade.level == 0 %}Build{% else %}Upgrade to {{ upgrade.level + 1 }}{% endif %}</button>
     </form>
     {% if !upgrade.gate.is_empty() %}<p class="bld-tip"{% if upgrade.cost_gated %} data-cost-note{% endif %}>{{ upgrade.gate }}</p>{% endif %}
