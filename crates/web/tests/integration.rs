@@ -2192,7 +2192,8 @@ async fn building_and_field_pages_own_the_upgrade(pool: sqlx::PgPool) {
     let (c, _id) = register_client(&base, &pool, &unique("up")).await;
     let vid = vid_via(&c, &base, &home).await;
 
-    // The generic building page renders the upgrade form (POST …/build) for that kind, with a `back` to it.
+    // 112: an UNBUILT building's page shows its effect/cost, but to build it you pick a free slot on the
+    // village plan — the panel links there rather than posting to a fixed slot.
     let wh = c
         .get(format!("{base}/w/{home}/village/{vid}/building/warehouse"))
         .send()
@@ -2201,11 +2202,15 @@ async fn building_and_field_pages_own_the_upgrade(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
-    assert!(wh.contains(&format!("/village/{vid}/build")));
-    assert!(wh.contains("name=\"kind\" value=\"warehouse\""));
-    // 111: the upgrade returns to the building's SLOT (a fresh warehouse maps to the canonical slot 2),
-    // not the kind-keyed page — so a multi-instance upgrade stays on the right instance.
-    assert!(wh.contains("name=\"back\" value=\"/slot/2\""));
+    assert!(wh.contains("Build it on a free slot"));
+    assert!(
+        wh.contains(&format!("href=\"/w/{home}/village/{vid}\"")),
+        "the build link points at the village plan"
+    );
+    assert!(
+        !wh.contains("name=\"kind\" value=\"warehouse\""),
+        "no fixed-slot build form for an unbuilt building"
+    );
 
     // The field page renders the same panel keyed to the field slot.
     let f = c

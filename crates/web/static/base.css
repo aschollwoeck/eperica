@@ -568,11 +568,28 @@ a { color: var(--c-gold); }
 .vplot__cd { position: absolute; left: 3px; right: 3px; bottom: 3px; font-family: ui-monospace, monospace; font-size: .56rem; line-height: 1.55; text-align: center; color: var(--c-ember, #C8762E); background: #0b0f13; border: 1px solid color-mix(in srgb, var(--c-ember, #C8762E) 40%, var(--c-border)); border-radius: 3px; }
 
 /* 110: slot-keyed positions — a fixed 5-column grid of the 22 centre slots (built or empty) */
+/* 112: tidy the slot plan — built buildings read solid + gold, empty spots invite a click, reserved
+   special slots (Rally/Wall) are emphasised, and the Main Building is the prominent keep. */
 .vplot { width: 60px; height: 60px; }
-.vplot--has svg, .vplot--reserved svg { color: var(--c-gold); }
+.vplot--has { border-color: color-mix(in srgb, var(--c-gold) 28%, var(--c-border)); }
+.vplot--has svg { color: var(--c-gold); }
+/* empty build spots: muted + dashed, but clearly clickable — hover lights the frame and the "+" */
+.vplot--empty { border-style: dashed; border-color: color-mix(in srgb, var(--c-border) 85%, transparent);
+  background: linear-gradient(180deg, rgba(255,255,255,.012), transparent); }
+.vplot--empty .vplot__n { color: #4a5663; }
+.vplot--empty:hover, .vplot--empty:focus-visible { border-color: var(--c-gold);
+  background: color-mix(in srgb, var(--c-gold) 9%, var(--c-panel)); }
+.vplot--empty:hover .vplot__plus, .vplot--empty:focus-visible .vplot__plus { color: var(--c-gold); }
+.vplot__plus { font-size: 1.6rem; font-weight: 300; color: #4a5663; line-height: 1; transition: color .12s; }
+/* reserved special slots (Rally Point / Wall): dashed gold when empty, their crest tinted gold */
 .vplot--reserved { border-color: color-mix(in srgb, var(--c-gold) 45%, var(--c-border)); border-style: dashed; }
 .vplot--reserved.vplot--has { border-style: solid; }
-.vplot__plus { font-size: 1.5rem; font-weight: 300; color: var(--c-ink-muted); line-height: 1; }
+.vplot--reserved svg { color: var(--c-gold); }
+.vplot--reserved.vplot--empty svg { color: color-mix(in srgb, var(--c-gold) 60%, #46525f); }
+/* the Main Building (slot 0) is the keep — larger + gold */
+.vplot--s0 { width: 78px; height: 78px; border-color: color-mix(in srgb, var(--c-gold) 40%, var(--c-border)); }
+.vplot--s0 svg { width: 32px; height: 32px; color: var(--c-gold); }
+.vplot--s0 .vplot__n { font-size: .66rem; color: var(--c-ink); }
 .vplot--s0  { --x: 18%; --y: 14%; } .vplot--s1  { --x: 34%; --y: 14%; } .vplot--s2  { --x: 50%; --y: 14%; }
 .vplot--s3  { --x: 66%; --y: 14%; } .vplot--s4  { --x: 82%; --y: 14%; }
 .vplot--s5  { --x: 18%; --y: 31%; } .vplot--s6  { --x: 34%; --y: 31%; } .vplot--s7  { --x: 50%; --y: 31%; }
