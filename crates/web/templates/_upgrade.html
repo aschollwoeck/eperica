@@ -16,6 +16,11 @@
     <div class="statline"><span>Cost</span><span class="unit__cost"><b class="w">{{ upgrade.cost_wood }}</b><b class="c">{{ upgrade.cost_clay }}</b><b class="i">{{ upgrade.cost_iron }}</b><b class="r">{{ upgrade.cost_crop }}</b></span></div>
     {% if let Some(ms) = upgrade.building_ms %}
     <p class="bld-tip">Under construction — completes <span class="countdown num" data-deadline="{{ ms }}">…</span>.</p>
+    {% else if upgrade.table == "building" && upgrade.level == 0 %}
+    {# 112: an unbuilt building is constructed by choosing a free centre slot on the village plan (110) —
+       not from a fixed-slot button here. (Resource fields, which are positional, keep their build form.) #}
+    <a class="btn btn--primary btn--wide" href="/w/{{ world }}/village/{{ village_id }}">Build it on a free slot →</a>
+    {% if !upgrade.gate.is_empty() %}<p class="bld-tip">{{ upgrade.gate }}</p>{% endif %}
     {% else %}
     <form method="post" action="/w/{{ world }}/village/{{ village_id }}/build">
       <input type="hidden" name="table" value="{{ upgrade.table }}">

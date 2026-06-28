@@ -104,11 +104,13 @@ impl BuildingKind {
         self.max_instances().is_none()
     }
 
-    /// Whether this kind can be **demolished** to free its slot (110, AC6). The Main Building is the
-    /// construction hub and is never demolished; everything else (including the reserved Rally Point
-    /// and Wall) can be torn down.
+    /// Whether this kind can be **demolished** to free its slot (110 AC6; 112 AC1). The Main Building is
+    /// the construction hub, and the **Palace** designates the capital (013) — demolishing it would leave
+    /// `is_capital` set with no Palace — so both are protected. Everything else (incl. the reserved Rally
+    /// Point/Wall and the Residence) can be torn down. (Relocate the capital by building a Palace
+    /// elsewhere, which reassigns it.)
     pub fn is_demolishable(self) -> bool {
-        self != BuildingKind::MainBuilding
+        !matches!(self, BuildingKind::MainBuilding | BuildingKind::Palace)
     }
 }
 
@@ -147,9 +149,11 @@ mod tests {
         }
         assert_eq!(BuildingKind::Marketplace.max_instances(), Some(1));
         assert!(!BuildingKind::Marketplace.is_multi());
-        // the Main Building is never demolished; everything else can be.
+        // 112: the Main Building and the Palace (capital designator) are never demolished; the rest are.
         assert!(!BuildingKind::MainBuilding.is_demolishable());
+        assert!(!BuildingKind::Palace.is_demolishable());
         assert!(BuildingKind::Warehouse.is_demolishable());
         assert!(BuildingKind::RallyPoint.is_demolishable());
+        assert!(BuildingKind::Residence.is_demolishable());
     }
 }
