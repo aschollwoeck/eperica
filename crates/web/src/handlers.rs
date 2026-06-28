@@ -4823,8 +4823,13 @@ pub async fn me(
     };
     let authed = effective.is_some();
     let moderator = eff_rec.as_ref().is_some_and(|u| u.is_moderator);
-    axum::Json(serde_json::json!({ "authed": authed, "moderator": moderator, "admin": admin }))
-        .into_response()
+    // 115: the account's tribe ("chosen once, for keeps") so base.html can set `data-tribe` on <body>
+    // for tribe-specific theming (e.g. the primary button's per-tribe colours).
+    let tribe = eff_rec.as_ref().map(|u| u.tribe.slug());
+    axum::Json(
+        serde_json::json!({ "authed": authed, "moderator": moderator, "admin": admin, "tribe": tribe }),
+    )
+    .into_response()
 }
 
 /// Live sitting status (030) — the owner's name when actively sitting, else empty. Drives the persistent

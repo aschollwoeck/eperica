@@ -122,6 +122,9 @@
           if (mod) mod.hidden = !(me.authed && me.moderator);
           var adm = document.getElementById("nav-admin");
           if (adm) adm.hidden = !(me.authed && me.admin);
+          // 115: tribe-aware theming — set `data-tribe` on <body> from the account's tribe so
+          // tribe-specific styles (e.g. the primary button's per-tribe colours) apply.
+          if (me.tribe) document.body.setAttribute("data-tribe", me.tribe);
         })
         .catch(function () {});
     })();
