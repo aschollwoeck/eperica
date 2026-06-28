@@ -2203,7 +2203,9 @@ async fn building_and_field_pages_own_the_upgrade(pool: sqlx::PgPool) {
         .unwrap();
     assert!(wh.contains(&format!("/village/{vid}/build")));
     assert!(wh.contains("name=\"kind\" value=\"warehouse\""));
-    assert!(wh.contains("name=\"back\" value=\"/building/warehouse\""));
+    // 111: the upgrade returns to the building's SLOT (a fresh warehouse maps to the canonical slot 2),
+    // not the kind-keyed page — so a multi-instance upgrade stays on the right instance.
+    assert!(wh.contains("name=\"back\" value=\"/slot/2\""));
 
     // The field page renders the same panel keyed to the field slot.
     let f = c
