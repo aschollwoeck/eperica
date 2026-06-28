@@ -1783,16 +1783,12 @@ fn map_cells(
                             coord.x,
                             coord.y
                         );
-                        // A send shortcut to another player's village (you can't target your own).
-                        if marker.owner_name != username {
-                            href = acting_vid.map(|vid| {
-                                village_path(
-                                    world,
-                                    vid,
-                                    &format!("/rally?x={}&y={}", coord.x, coord.y),
-                                )
-                            });
-                        }
+                        // 105: a send shortcut to the village's Rally Point — reinforce your own/an ally,
+                        // or attack/raid an enemy (the Rally Point picks the mode). Shown for every village,
+                        // including your own (reinforcing or moving troops between your villages).
+                        href = acting_vid.map(|vid| {
+                            village_path(world, vid, &format!("/rally?x={}&y={}", coord.x, coord.y))
+                        });
                     } else if matches!(cell.tile, TileKind::Oasis(_)) {
                         // An oasis links to the Rally Point pre-filled with the tile (attack, or
                         // reinforce your own); its owner (if any) is shown in the label.
