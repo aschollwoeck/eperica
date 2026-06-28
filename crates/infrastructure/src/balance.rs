@@ -1881,9 +1881,14 @@ mod tests {
         for tribe in [Tribe::Romans, Tribe::Teutons, Tribe::Gauls] {
             let roster = r.roster(tribe);
             assert_eq!(roster.len(), ROSTER_SIZE, "{tribe:?}");
-            // Exactly one tier-1 unit per tribe (researched by default, AC9).
+            // Exactly one tier-1 combat unit per tribe (researched by default, AC9). 101: Expansion units
+            // (settlers/administrators) are research-free too now, so exclude them from this count.
             assert_eq!(
-                roster.iter().filter(|u| u.researched_by_default()).count(),
+                roster
+                    .iter()
+                    .filter(|u| u.researched_by_default()
+                        && u.role != eperica_domain::UnitRole::Expansion)
+                    .count(),
                 1,
                 "{tribe:?}"
             );

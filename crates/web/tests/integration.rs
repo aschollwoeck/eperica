@@ -2395,7 +2395,8 @@ async fn residence_trains_settlers_and_a_palace_stands_in(pool: sqlx::PgPool) {
         .unwrap();
     let vid = uuid::Uuid::parse_str(&village_uuid(&pool, &user).await).unwrap();
 
-    // Seed a Residence + storage (so the settler's cost fits), mark the settler researched, and top up.
+    // Seed a Residence + storage (so the settler's cost fits) and top up. 101: settlers need NO Academy
+    // research — building the Residence/Palace is the only gate — so we deliberately do not seed research.
     for (slot, kind, level) in [
         (2_i16, "warehouse", 20_i16),
         (3, "granary", 20),
@@ -2408,8 +2409,6 @@ async fn residence_trains_settlers_and_a_palace_stands_in(pool: sqlx::PgPool) {
         .bind(vid).bind(slot).bind(kind).bind(level)
         .execute(&pool).await.unwrap();
     }
-    sqlx::query("INSERT INTO village_research (village_id, unit_id) VALUES ($1,'settler') ON CONFLICT DO NOTHING")
-        .bind(vid).execute(&pool).await.unwrap();
     sqlx::query("UPDATE village_resources SET wood=20000,clay=20000,iron=20000,crop=20000,updated_at=now() WHERE village_id=$1")
         .bind(vid).execute(&pool).await.unwrap();
 
