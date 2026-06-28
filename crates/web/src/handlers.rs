@@ -2213,11 +2213,20 @@ pub async fn slot_detail(
                 Some(rk) => vec![rk],
                 None => MENU_KINDS.to_vec(),
             };
+            // 013 AC3: a village holds at most one of {Residence, Palace}; don't offer the counterpart
+            // when one is already built (the POST would reject it as Exclusive anyway).
+            let has = |k: BuildingKind| village_d.buildings.iter().any(|b| b.kind == k);
+            let exclusivity_ok = |k: BuildingKind| match k {
+                BuildingKind::Residence => !has(BuildingKind::Palace),
+                BuildingKind::Palace => !has(BuildingKind::Residence),
+                _ => true,
+            };
             let options: Vec<BuildRow> = candidates
                 .into_iter()
                 .filter(|&k| {
                     can_place(&village_d.buildings, slot, k).is_ok()
                         && prerequisites_met(k, &village_d.buildings, &ctx.rules.build)
+                        && exclusivity_ok(k)
                 })
                 .map(|k| {
                     build_row(

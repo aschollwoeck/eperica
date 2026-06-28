@@ -5,8 +5,9 @@
 
 use axum_extra::extract::cookie::Key;
 use eperica_application::{
-    NewNotification, NotificationRepository, process_due_combat, process_due_movements,
-    process_due_oasis_combat, process_due_scouts, process_due_settles, process_due_trades,
+    NewNotification, NotificationRepository, process_due_builds, process_due_combat,
+    process_due_movements, process_due_oasis_combat, process_due_scouts, process_due_settles,
+    process_due_trades,
 };
 use eperica_domain::{
     Coordinate, GameSpeed, NotificationKind, PlayerId, TileKind, Timestamp, Tribe, WorldConfig,
@@ -8024,6 +8025,18 @@ async fn slot_build_menu_and_placement_validation(pool: sqlx::PgPool) {
         0,
         "an illegal placement creates no build order"
     );
+    // P4 (no clobber): an upgrade POST naming a *different* kind than the slot actually holds (slot 0 is
+    // the Main Building) is rejected — the client cannot kind-swap a slot. Still no order.
+    c.post(format!("{base}/w/{home}/village/{vid}/build"))
+        .form(&[("table", "building"), ("slot", "0"), ("kind", "warehouse")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        orders(pool.clone()).await,
+        0,
+        "a kind-mismatched upgrade on an occupied slot creates no build order"
+    );
     // A legal build on the free slot 3 is accepted — one pending order.
     c.post(format!("{base}/w/{home}/village/{vid}/build"))
         .form(&[("table", "building"), ("slot", "3"), ("kind", "warehouse")])
@@ -8034,6 +8047,112 @@ async fn slot_build_menu_and_placement_validation(pool: sqlx::PgPool) {
         orders(pool.clone()).await,
         1,
         "a legal placement enqueues a build order"
+    );
+}
+
+/// 110 AC6: demolition — Main-Building-gated, never the Main Building; a valid demolish enqueues a free,
+/// due-timestamped target-level-0 order that, when processed, removes the building and frees the slot.
+#[sqlx::test(migrations = "../../migrations")]
+async fn demolish_is_gated_and_frees_a_slot(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let repo = movement_repo(&pool).await;
+    let user = unique("demo");
+    let (c, _id) = register_client(&base, &pool, &user).await;
+    let vid = village_uuid(&pool, &user).await;
+    let village_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN players p ON p.id = v.owner_id \
+         JOIN users u ON u.id = p.user_id WHERE u.username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    // Seed a Marketplace on a free slot.
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         VALUES ($1, 5, 'marketplace', 3)",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let order_count = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM build_orders WHERE village_id = $1")
+            .bind(village_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    let demolish = |slot: &'static str| {
+        c.post(format!("{base}/w/{home}/village/{vid}/demolish"))
+            .form(&[("slot", slot)])
+            .send()
+    };
+
+    // Gate: the Main Building (level 1) is below the demolition level — refused, no order (P4).
+    demolish("5").await.unwrap();
+    assert_eq!(
+        order_count().await,
+        0,
+        "demolish is gated by the Main Building level"
+    );
+    sqlx::query(
+        "UPDATE village_buildings SET level = 10 WHERE village_id = $1 AND building_type = 'main_building'",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // The Main Building itself can never be demolished — no order (P4).
+    demolish("0").await.unwrap();
+    assert_eq!(
+        order_count().await,
+        0,
+        "the Main Building can't be demolished"
+    );
+    // A valid demolish enqueues a single free, target-level-0 order (a P1 due event, not instant).
+    demolish("5").await.unwrap();
+    let (cnt, lvl): (i64, i16) = sqlx::query_as(
+        "SELECT count(*), coalesce(min(target_level), -1)::int2 FROM build_orders WHERE village_id = $1",
+    )
+    .bind(village_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        (cnt, lvl),
+        (1, 0),
+        "demolish enqueues one target-level-0 order"
+    );
+    // Processing the due build removes the building and frees the slot.
+    let future = Timestamp(now().0 + 10_000_000_000);
+    process_due_builds(&repo, &repo, &repo, &culture_rules().unwrap(), future, 100)
+        .await
+        .unwrap();
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM village_buildings WHERE village_id = $1 AND slot = 5",
+    )
+    .bind(village_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        remaining, 0,
+        "the demolished building is gone — the slot is freed"
+    );
+    // The freed slot now renders the build menu (re-buildable).
+    let slot5 = c
+        .get(format!("{base}/w/{home}/village/{vid}/slot/5"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        slot5.contains("Empty build spot") || slot5.contains("Build "),
+        "the freed slot offers the build menu"
     );
 }
 

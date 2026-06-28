@@ -31,7 +31,7 @@ fn template() -> StartingVillage {
                 level: 1,
             },
             BuildingSlot {
-                slot: 0,
+                slot: 1,
                 kind: BuildingKind::RallyPoint,
                 level: 1,
             },
