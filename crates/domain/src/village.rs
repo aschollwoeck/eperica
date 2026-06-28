@@ -59,9 +59,13 @@ pub struct ResourceField {
     pub level: u8,
 }
 
-/// One center-building slot at a level.
+/// One occupied center-building slot: a building of `kind` at `level`, sitting in centre `slot`
+/// (110). Slots are `0..`[`VILLAGE_BUILDING_SLOTS`](crate::building::VILLAGE_BUILDING_SLOTS); a village
+/// holds only its occupied slots (an absent slot number is an empty build spot).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuildingSlot {
+    /// The centre slot this building occupies (110).
+    pub slot: u8,
     /// Which building occupies the slot.
     pub kind: BuildingKind,
     /// The building's level.
@@ -192,10 +196,12 @@ mod tests {
             fields,
             vec![
                 BuildingSlot {
+                    slot: 0,
                     kind: BuildingKind::MainBuilding,
                     level: 1,
                 },
                 BuildingSlot {
+                    slot: 1,
                     kind: BuildingKind::RallyPoint,
                     level: 1,
                 },

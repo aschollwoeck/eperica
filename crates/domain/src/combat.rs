@@ -4,9 +4,10 @@
 //! on both sides. Everything here is pure over numbers + injected [`CombatRules`] (P3); the
 //! application layer assembles the inputs from persisted state and applies the results.
 
+use crate::building::BuildingKind;
 use crate::economy::ResourceAmounts;
 use crate::units::{SiegeKind, UnitCounts, UnitId, UnitRole, UnitSpec};
-use crate::village::Tribe;
+use crate::village::{BuildingSlot, Tribe};
 use std::collections::HashMap;
 
 /// How a battle settles.
@@ -74,6 +75,17 @@ impl CombatRules {
         }
         let idx = (level as usize).min(self.cranny_protection_per_level.len() - 1);
         self.cranny_protection_per_level[idx]
+    }
+
+    /// The total per-resource quantity hidden from looting (110): the **sum** of every Cranny in the
+    /// village, so multiple Crannies stack. A single Cranny equals the pre-110 value; a village with
+    /// no Cranny protects nothing.
+    pub fn cranny_capacity_total(&self, buildings: &[BuildingSlot]) -> i64 {
+        buildings
+            .iter()
+            .filter(|b| b.kind == BuildingKind::Cranny)
+            .map(|b| self.cranny_capacity(b.level))
+            .sum()
     }
 
     /// The combat-strength multiplier for a unit upgraded to Smithy `level`.
@@ -430,7 +442,6 @@ pub fn loot_split(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::building::BuildingKind;
     use crate::economy::ResourceAmounts;
     use crate::units::UnitRole;
 
@@ -817,6 +828,24 @@ mod tests {
         assert_eq!(cranny_protection(2000, true, 0.5), 1000); // half bypassed
         assert_eq!(cranny_protection(0, false, 0.5), 0);
         assert_eq!(cranny_protection(2000, true, 1.0), 0); // full bypass
+    }
+
+    // 110: Cranny protection sums over every Cranny (a single Cranny == the pre-110 value).
+    #[test]
+    fn cranny_capacity_total_sums_over_crannies() {
+        let r = rules();
+        let bld = |slot, kind, level| BuildingSlot { slot, kind, level };
+        assert_eq!(r.cranny_capacity_total(&[]), 0); // no Cranny protects nothing
+        let one = vec![bld(12, BuildingKind::Cranny, 2)];
+        assert_eq!(r.cranny_capacity_total(&one), r.cranny_capacity(2));
+        let two = vec![
+            bld(12, BuildingKind::Cranny, 2),
+            bld(3, BuildingKind::Cranny, 1),
+        ];
+        assert_eq!(
+            r.cranny_capacity_total(&two),
+            r.cranny_capacity(2) + r.cranny_capacity(1)
+        );
     }
 
     // AC3/AC4: loot is bounded by capacity, floored by the Cranny, proportional, and conserved.

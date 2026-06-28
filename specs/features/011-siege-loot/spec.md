@@ -76,7 +76,8 @@ resources stolen and the building damage. This completes the faithful raiding lo
 
 - **AC4 — Cranny protection.** The target's **Cranny** shields `crannyProtection` of **each** resource
   type (a per-level capacity, balance); only the surplus above it is lootable. A village **without** a
-  Cranny shields nothing. Protection is per resource type (symmetric across the four).
+  Cranny shields nothing. Protection is per resource type (symmetric across the four). *(110: multiple
+  Crannies **sum** their protection; a single one equals this value.)*
 
 - **AC5 — Teuton bypass.** A **Teuton** attacker reduces the effective Cranny protection by a
   configured **bypass fraction** (balance), so against the same Cranny a Teuton loots strictly more

@@ -5,8 +5,9 @@
 
 use axum_extra::extract::cookie::Key;
 use eperica_application::{
-    NewNotification, NotificationRepository, process_due_combat, process_due_movements,
-    process_due_oasis_combat, process_due_scouts, process_due_settles, process_due_trades,
+    NewNotification, NotificationRepository, process_due_builds, process_due_combat,
+    process_due_movements, process_due_oasis_combat, process_due_scouts, process_due_settles,
+    process_due_trades,
 };
 use eperica_domain::{
     Coordinate, GameSpeed, NotificationKind, PlayerId, TileKind, Timestamp, Tribe, WorldConfig,
@@ -3338,7 +3339,11 @@ async fn siege_loot_and_cranny_flow(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
-    assert!(village.contains("Cranny"), "Cranny should be buildable");
+    // 110: the plan has free build spots (a Cranny is buildable on one via its menu).
+    assert!(
+        village.contains("vplot--empty"),
+        "the plan has free build spots"
+    );
 }
 
 // 012 AC12: the map shows oasis tiles with a Rally Point link; an oasis attack from the Rally Point
@@ -3410,7 +3415,12 @@ async fn oasis_attack_occupy_and_bonus_flow(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
-    assert!(village.contains("Outpost"), "Outpost should be buildable");
+    // 110: unbuilt buildings aren't named on the plan; they're built by choosing an empty slot. The plan
+    // has free build spots (an Outpost is buildable on one via its menu).
+    assert!(
+        village.contains("vplot--empty"),
+        "the plan has free build spots"
+    );
 
     // Give the village an Outpost (capacity ≥ 1) and a strong garrison.
     sqlx::query(
@@ -7880,9 +7890,10 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
         body.contains("Population"),
         "the command header shows village population"
     );
+    // 110: the plan is keyed by SLOT — built spots (the Main Building at slot 0) and empty build spots.
     assert!(
-        body.contains("vplot--main_building") && body.contains("vplot--barracks"),
-        "buildings are plotted in the plan by kind"
+        body.contains("vplot--s0") && body.contains("vplot--has") && body.contains("vplot--empty"),
+        "the plan renders fixed slots — built and empty build spots"
     );
     assert!(
         body.contains("vfield-ring") && body.contains("vfield--crop"),
@@ -7893,9 +7904,255 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
         "the old inline inspector is gone (the plan links to per-building/field pages)"
     );
     assert!(
-        body.contains(&format!("/village/{vid}/building/main_building"))
+        body.contains(&format!("/village/{vid}/slot/0"))
             && body.contains(&format!("/village/{vid}/field/0")),
-        "plots and fields link to their own pages"
+        "plots link to their slot page and fields to their own page"
+    );
+}
+
+/// The wood gauge's storage cap (`data-cap`) from a rendered village/building page.
+fn wood_cap(body: &str) -> i64 {
+    let at = body.find("gauge--wood").expect("wood gauge");
+    let tail = &body[at..];
+    let s = tail.find("data-cap=\"").expect("data-cap") + "data-cap=\"".len();
+    let e = tail[s..].find('"').expect("close quote");
+    tail[s..s + e].parse().expect("numeric cap")
+}
+
+/// 110 AC4: multiple Warehouses **stack** — total storage capacity is the sum of each instance. (Cranny
+/// and Granary use the same domain `sum`, covered by domain unit tests.)
+#[sqlx::test(migrations = "../../migrations")]
+async fn multi_warehouse_capacity_stacks(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let user = unique("whcap");
+    let (c, _id) = register_client(&base, &pool, &user).await;
+    let vid = village_uuid(&pool, &user).await;
+    let village_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN players p ON p.id = v.owner_id \
+         JOIN users u ON u.id = p.user_id WHERE u.username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let seed_wh = |slot: i16| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+                 VALUES ($1, $2, 'warehouse', 10)",
+            )
+            .bind(village_id)
+            .bind(slot)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    let cap = || async {
+        wood_cap(
+            &c.get(format!("{base}/w/{home}/village/{vid}"))
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap(),
+        )
+    };
+    // One Warehouse (level 10) on a free slot.
+    seed_wh(2).await;
+    let one = cap().await;
+    // A second Warehouse of the same level on another free slot — capacity must double (it sums).
+    seed_wh(20).await;
+    let two = cap().await;
+    assert!(one > 0, "one warehouse sets a capacity");
+    assert_eq!(two, 2 * one, "two equal Warehouses sum: {two} vs 2×{one}");
+}
+
+/// 110 AC2/AC3: an empty slot's build menu offers the buildable kinds; placement is validated server-side
+/// — a build on the reserved Rally Point slot (or any illegal slot) is rejected, creating no order.
+#[sqlx::test(migrations = "../../migrations")]
+async fn slot_build_menu_and_placement_validation(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let user = unique("slotbm");
+    let (c, _id) = register_client(&base, &pool, &user).await;
+    let vid = village_uuid(&pool, &user).await;
+    let village_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN players p ON p.id = v.owner_id \
+         JOIN users u ON u.id = p.user_id WHERE u.username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    // The build menu for a free general slot lists buildable kinds + a build form carrying that slot.
+    let menu = c
+        .get(format!("{base}/w/{home}/village/{vid}/slot/3"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(menu.contains("Warehouse"), "the menu offers the Warehouse");
+    assert!(
+        menu.contains("name=\"slot\" value=\"3\""),
+        "each build form carries the chosen slot"
+    );
+
+    let orders = |pool: sqlx::PgPool| async move {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM build_orders WHERE village_id = $1")
+            .bind(village_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    // A build on the reserved Rally Point slot (1) is rejected — no order is created (P4).
+    c.post(format!("{base}/w/{home}/village/{vid}/build"))
+        .form(&[
+            ("table", "building"),
+            ("slot", "1"),
+            ("kind", "marketplace"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        orders(pool.clone()).await,
+        0,
+        "an illegal placement creates no build order"
+    );
+    // P4 (no clobber): an upgrade POST naming a *different* kind than the slot actually holds (slot 0 is
+    // the Main Building) is rejected — the client cannot kind-swap a slot. Still no order.
+    c.post(format!("{base}/w/{home}/village/{vid}/build"))
+        .form(&[("table", "building"), ("slot", "0"), ("kind", "warehouse")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        orders(pool.clone()).await,
+        0,
+        "a kind-mismatched upgrade on an occupied slot creates no build order"
+    );
+    // A legal build on the free slot 3 is accepted — one pending order.
+    c.post(format!("{base}/w/{home}/village/{vid}/build"))
+        .form(&[("table", "building"), ("slot", "3"), ("kind", "warehouse")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        orders(pool.clone()).await,
+        1,
+        "a legal placement enqueues a build order"
+    );
+}
+
+/// 110 AC6: demolition — Main-Building-gated, never the Main Building; a valid demolish enqueues a free,
+/// due-timestamped target-level-0 order that, when processed, removes the building and frees the slot.
+#[sqlx::test(migrations = "../../migrations")]
+async fn demolish_is_gated_and_frees_a_slot(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let repo = movement_repo(&pool).await;
+    let user = unique("demo");
+    let (c, _id) = register_client(&base, &pool, &user).await;
+    let vid = village_uuid(&pool, &user).await;
+    let village_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN players p ON p.id = v.owner_id \
+         JOIN users u ON u.id = p.user_id WHERE u.username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    // Seed a Marketplace on a free slot.
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         VALUES ($1, 5, 'marketplace', 3)",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let order_count = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM build_orders WHERE village_id = $1")
+            .bind(village_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    let demolish = |slot: &'static str| {
+        c.post(format!("{base}/w/{home}/village/{vid}/demolish"))
+            .form(&[("slot", slot)])
+            .send()
+    };
+
+    // Gate: the Main Building (level 1) is below the demolition level — refused, no order (P4).
+    demolish("5").await.unwrap();
+    assert_eq!(
+        order_count().await,
+        0,
+        "demolish is gated by the Main Building level"
+    );
+    sqlx::query(
+        "UPDATE village_buildings SET level = 10 WHERE village_id = $1 AND building_type = 'main_building'",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // The Main Building itself can never be demolished — no order (P4).
+    demolish("0").await.unwrap();
+    assert_eq!(
+        order_count().await,
+        0,
+        "the Main Building can't be demolished"
+    );
+    // A valid demolish enqueues a single free, target-level-0 order (a P1 due event, not instant).
+    demolish("5").await.unwrap();
+    let (cnt, lvl): (i64, i16) = sqlx::query_as(
+        "SELECT count(*), coalesce(min(target_level), -1)::int2 FROM build_orders WHERE village_id = $1",
+    )
+    .bind(village_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        (cnt, lvl),
+        (1, 0),
+        "demolish enqueues one target-level-0 order"
+    );
+    // Processing the due build removes the building and frees the slot.
+    let future = Timestamp(now().0 + 10_000_000_000);
+    process_due_builds(&repo, &repo, &repo, &culture_rules().unwrap(), future, 100)
+        .await
+        .unwrap();
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM village_buildings WHERE village_id = $1 AND slot = 5",
+    )
+    .bind(village_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        remaining, 0,
+        "the demolished building is gone — the slot is freed"
+    );
+    // The freed slot now renders the build menu (re-buildable).
+    let slot5 = c
+        .get(format!("{base}/w/{home}/village/{vid}/slot/5"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        slot5.contains("Empty build spot") || slot5.contains("Build "),
+        "the freed slot offers the build menu"
     );
 }
 

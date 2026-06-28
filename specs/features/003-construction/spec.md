@@ -95,4 +95,7 @@ Per [roles.md](../../roles.md).
   htmx partial-swap is deferred. (P8.)
 - **Building slots are fixed per kind** (Main Building 0, Rally Point 1, Warehouse 2, Granary 3) and
   derived **server-side** from the kind — the client never supplies a building slot (P4). Dynamic
-  slots / parallel queues are later work.
+  slots / parallel queues are later work. **(Superseded by slice 110 — slot-based village buildings:**
+  the village centre is now a fixed set of 22 slots; a building's slot is **chosen by the player** for new
+  construction and **server-validated** (still P4), reserved slots hold Rally Point / Wall, and Warehouse /
+  Granary / Cranny may be built multiple times with stacked effects.**)**

@@ -125,8 +125,13 @@ and the **village center** (building slots).
   special buildings later). Higher level → higher hourly output, per the balance table.
 
 ### 3.2 Village center
-- A set of **building slots** (baseline: up to ~20 general slots plus fixed special positions for
-  the **Rally Point** and **Wall**).
+- A set of **building slots** (baseline: 20 general slots plus fixed special positions for
+  the **Rally Point** and **Wall**; the **Main Building** is present from founding). Each general slot
+  holds at most one building; the player chooses what to build on each free slot (slice 110).
+- **Most buildings are one per village.** A few may be built **multiple times**, each on its own slot,
+  with **stacking** effects: **Warehouse** and **Granary** (total capacity is the sum of each instance's
+  capacity at its level) and the **Cranny** (total hidden amount is the sum). A built slot may be
+  **demolished** (Main-Building-gated) to free it (slice 110).
 - Buildings are constructed and upgraded here (§4). Most have prerequisites (other buildings at a
   given level) and a main-building-dependent build time.
 

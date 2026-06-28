@@ -453,11 +453,13 @@ mod tests {
 
     fn village(id: u128, owner: u128, coord: Coordinate, market_level: u8) -> Village {
         let mut buildings = vec![BuildingSlot {
+            slot: 0,
             kind: BuildingKind::RallyPoint,
             level: 1,
         }];
         if market_level > 0 {
             buildings.push(BuildingSlot {
+                slot: 0,
                 kind: BuildingKind::Marketplace,
                 level: market_level,
             });

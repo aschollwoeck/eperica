@@ -801,11 +801,13 @@ mod tests {
 
     fn village(id: u128, owner: u128, coord: Coordinate, outpost: u8) -> Village {
         let mut buildings = vec![BuildingSlot {
+            slot: 0,
             kind: BuildingKind::RallyPoint,
             level: 1,
         }];
         if outpost > 0 {
             buildings.push(BuildingSlot {
+                slot: 0,
                 kind: BuildingKind::Outpost,
                 level: outpost,
             });

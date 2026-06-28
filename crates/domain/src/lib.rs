@@ -49,7 +49,10 @@ pub use artifact::{
     ArtifactDef, ArtifactEffects, ArtifactId, ArtifactKind, ArtifactScope, aggregate_effects,
     can_capture, fool_resolved, required_treasury_level,
 };
-pub use building::BuildingKind;
+pub use building::{
+    BuildingKind, DEMOLISH_MIN_MAIN_BUILDING, MAIN_BUILDING_SLOT, RALLY_POINT_SLOT,
+    VILLAGE_BUILDING_SLOTS, WALL_SLOT, reserved_kind,
+};
 pub use combat::{
     AttackMode, AttackPower, BattleInput, BattleOutcome, CombatRules, WallProfile, add_defense,
     apply_losses, attack_power, carry_capacity_total, catapult_power, cranny_protection,
@@ -57,8 +60,8 @@ pub use combat::{
 };
 pub use comms::{ChatChannel, MAX_MESSAGE, can_access_channel, valid_body};
 pub use construction::{
-    BuildRules, BuildTarget, LevelSpec, QueueLane, build_time_secs, building_levels_met,
-    can_afford, debit, prerequisites_met, queue_lane,
+    BuildRules, BuildTarget, LevelSpec, PlacementError, QueueLane, build_time_secs, building_at,
+    building_levels_met, can_afford, can_place, debit, free_slots, prerequisites_met, queue_lane,
 };
 pub use culture::{
     CultureRules, allowed_villages, cp_allows, culture_rate, expansion_slots, settle_value,

@@ -11,8 +11,8 @@ use eperica_domain::{
     LoyaltyRules, MapRules, MedalCategory, MedalRules, MerchantProfile, MerchantRules, OasisBonus,
     OasisRules, QuestCondition, QuestDef, QuestId, QuestReward, RankingRules, ResearchSpec,
     ResourceAmounts, ResourceField, ResourceKind, Reward, ScoutRules, SiegeKind, SmithyRules,
-    StartingVillage, TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec, WallProfile,
-    Weighted, WonderRules, wonder_level_spec,
+    StartingVillage, TrainingRules, Tribe, UnitId, UnitRole, UnitRules, UnitSpec,
+    VILLAGE_BUILDING_SLOTS, WallProfile, Weighted, WonderRules, reserved_kind, wonder_level_spec,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -318,10 +318,19 @@ pub(crate) fn parse_starting_village(toml_src: &str) -> Result<StartingVillage, 
         ));
     }
 
-    let mut buildings = Vec::with_capacity(dto.buildings.len());
+    let mut buildings: Vec<BuildingSlot> = Vec::with_capacity(dto.buildings.len());
     for b in &dto.buildings {
+        let kind = parse_building(&b.building)?;
+        // 110: a default building takes its reserved slot (Main Building 0, Rally Point 1); any other
+        // default would take the next free general slot.
+        let slot = kind.reserved_slot().unwrap_or_else(|| {
+            (0..VILLAGE_BUILDING_SLOTS)
+                .find(|s| reserved_kind(*s).is_none() && buildings.iter().all(|x| x.slot != *s))
+                .unwrap_or(0)
+        });
         buildings.push(BuildingSlot {
-            kind: parse_building(&b.building)?,
+            slot,
+            kind,
             level: b.level,
         });
     }

@@ -56,7 +56,7 @@ pub use alliance::{
 };
 pub use artifact::{ReleaseSpec, process_due_artifact_release};
 pub use auth::{LoginError, authenticate};
-pub use build::{BuildError, order_build, process_due_builds};
+pub use build::{BuildError, order_build, order_demolish, process_due_builds};
 pub use combat::{CombatError, order_attack, process_due_combat};
 pub use comms::{
     CommsError, conversation_list, dm_key, dm_pair_key, open_chat, open_dm, parse_dm_key,

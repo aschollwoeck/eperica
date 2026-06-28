@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
+{% block content %}
+{% include "_icons.html" %}
+
+<section class="bld-hero">
+  <div class="bld-hero__inner">
+    <span class="bld-crest"><svg viewBox="0 0 24 24"><use href="#i-main_building"/></svg></span>
+    <div class="bld-hid">
+      <div class="bld-eyebrow">Empty build spot · {{ village_label }}</div>
+      <h1 class="bld-title">Slot {{ slot }}</h1>
+      <p class="bld-sub">{% if reserved %}This reserved slot takes one specific building.{% else %}Choose a building to raise on this free slot.{% endif %}</p>
+    </div>
+    <a class="bld-back" href="/w/{{ world }}/village/{{ village_id }}">← Village</a>
+  </div>
+</section>
+
+<div class="bld-body">
+  {% include "_ribbon.html" %}
+
+  {% if options.is_empty() %}
+  <section class="panel"><p class="muted">Nothing can be built here yet — raise the required buildings first,
+    or this kind has reached its limit.</p></section>
+  {% else %}
+  <div class="bmenu">
+    {% for o in options %}
+    {# 110: each option is a build form posting the chosen slot + kind; the server re-validates (P4). #}
+    <div class="bld-card{% if o.can_order %} bld-card--ready{% endif %}">
+      <div class="bld-card__h"><h3>{{ o.label }}</h3>{% if o.at_max %}<span class="meta">max</span>{% endif %}</div>
+      <div class="bld-card__b">
+        {% if !o.effect.is_empty() %}<div class="statline"><span>Effect</span><b>{{ o.effect }}</b></div>{% endif %}
+        <div class="statline"><span>Cost</span><span class="unit__cost"><b class="w">{{ o.cost_wood }}</b><b class="c">{{ o.cost_clay }}</b><b class="i">{{ o.cost_iron }}</b><b class="r">{{ o.cost_crop }}</b></span></div>
+        <form method="post" action="/w/{{ world }}/village/{{ village_id }}/build">
+          <input type="hidden" name="table" value="building">
+          <input type="hidden" name="slot" value="{{ slot }}">
+          <input type="hidden" name="kind" value="{{ o.kind }}">
+          <input type="hidden" name="back" value="/slot/{{ slot }}">
+          <button class="btn btn--primary btn--wide" type="submit"{% if !o.can_order %} disabled{% endif %}{% if o.cost_gated %} data-cost-wood="{{ o.cost_wood }}" data-cost-clay="{{ o.cost_clay }}" data-cost-iron="{{ o.cost_iron }}" data-cost-crop="{{ o.cost_crop }}"{% endif %}>Build {{ o.label }}</button>
+        </form>
+        {% if !o.gate.is_empty() %}<p class="bld-tip"{% if o.cost_gated %} data-cost-note{% endif %}>{{ o.gate }}</p>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

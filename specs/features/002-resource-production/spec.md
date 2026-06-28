@@ -44,6 +44,8 @@ amounts) are **balance data** in `specs/balance/`, not hardcoded in logic.
 - **AC3 — Capacity cap & overflow.** A resource never exceeds its **capacity**; production beyond
   capacity is discarded (lost), not stored. (Capacity for wood/clay/iron is the warehouse cap; crop
   the granary cap; with no Warehouse/Granary built yet, a **base capacity** from balance applies.)
+  *(110: with multiple Warehouses/Granaries the cap is the **sum** of each instance's capacity; a single
+  one equals this value.)*
 
 - **AC4 — Crop upkeep / net production.** The crop rate is `cropFieldProduction − upkeep`, where
   upkeep is the village population (from field + building levels, balance data). The reported crop

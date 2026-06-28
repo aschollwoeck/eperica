@@ -608,7 +608,11 @@ mod tests {
     fn slots(pairs: &[(BuildingKind, u8)]) -> Vec<BuildingSlot> {
         pairs
             .iter()
-            .map(|&(kind, level)| BuildingSlot { kind, level })
+            .map(|&(kind, level)| BuildingSlot {
+                slot: 0,
+                kind,
+                level,
+            })
             .collect()
     }
 

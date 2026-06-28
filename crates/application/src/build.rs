@@ -2,9 +2,9 @@
 
 use crate::ports::{AccountRepository, BuildRepository, NewBuildOrder, RepoError};
 use eperica_domain::{
-    BuildRules, BuildTarget, BuildingKind, EconomyRules, GameSpeed, PlayerId, QueueLane, Timestamp,
-    UnitRules, Village, build_time_secs, can_afford, compute_economy, debit, garrison_upkeep,
-    prerequisites_met, queue_lane,
+    BuildRules, BuildTarget, BuildingKind, DEMOLISH_MIN_MAIN_BUILDING, EconomyRules, GameSpeed,
+    PlayerId, QueueLane, Timestamp, UnitRules, Village, build_time_secs, building_at, can_afford,
+    can_place, compute_economy, debit, garrison_upkeep, prerequisites_met, queue_lane,
 };
 
 /// Why ordering a build failed.
@@ -25,6 +25,16 @@ pub enum BuildError {
     /// A village may hold at most one of {Residence, Palace}; the other is already present (013 AC3).
     #[error("a Residence or Palace already occupies this village")]
     Exclusive,
+    /// 110: the building can't be placed on the chosen slot (out of range, occupied, a reserved slot,
+    /// or this unique kind is already built).
+    #[error("this building can't be placed there")]
+    Placement,
+    /// 110: this slot is empty or holds the Main Building, which can't be demolished.
+    #[error("nothing here can be demolished")]
+    NotDemolishable,
+    /// 110: demolition needs a higher Main Building level.
+    #[error("the Main Building is not high enough to demolish")]
+    MainBuildingTooLow,
     /// The village or target does not exist.
     #[error("not found")]
     NotFound,
@@ -46,11 +56,14 @@ impl From<RepoError> for BuildError {
     }
 }
 
-/// Current level of `target` in `village` (buildings identified by kind; absent ⇒ 0).
+/// Current level of `target` in `village` (110: buildings identified by **slot** — an empty slot ⇒ 0,
+/// i.e. new construction).
 fn current_level(village: &Village, target: BuildTarget) -> Option<u8> {
     match target {
         BuildTarget::Field { slot } => village.fields.get(slot as usize).map(|f| f.level),
-        BuildTarget::Building { kind, .. } => Some(building_level(village, kind)),
+        BuildTarget::Building { slot, .. } => {
+            Some(building_at(&village.buildings, slot).map_or(0, |b| b.level))
+        }
     }
 }
 
@@ -146,6 +159,17 @@ where
         return Err(BuildError::NotFound);
     };
     let current = current_level(&village, target).ok_or(BuildError::NotFound)?;
+
+    // 110: slot-centric placement (P4). A building order targets a centre slot; upgrading acts on the
+    // kind already in the slot (a request naming a different kind is rejected), while constructing on an
+    // empty slot must satisfy the placement rules (range / reserved / multiplicity).
+    if let BuildTarget::Building { slot, kind } = target {
+        match building_at(&village.buildings, slot) {
+            Some(existing) if existing.kind != kind => return Err(BuildError::Placement),
+            Some(_) => {}
+            None => can_place(&village.buildings, slot, kind).map_err(|_| BuildError::Placement)?,
+        }
+    }
 
     // The capital may raise its resource fields past the normal cap (013 AC10); buildings use the
     // ordinary table cap.
@@ -243,6 +267,95 @@ where
     Ok(())
 }
 
+/// Order **demolition** of the building in `slot` of `owner`'s village (110, AC6). When it completes the
+/// slot is freed (the row is removed). The Main Building can't be demolished, and the village's Main
+/// Building must be at least [`DEMOLISH_MIN_MAIN_BUILDING`]. No resource cost; it occupies a build-queue
+/// lane and takes about a level-1 build (so it isn't instant), then frees the slot (P1/P4).
+///
+/// # Errors
+/// See [`BuildError`].
+#[allow(clippy::too_many_arguments)]
+pub async fn order_demolish<A, B, S>(
+    accounts: &A,
+    builds: &B,
+    starvation: &S,
+    economy_rules: &EconomyRules,
+    build_rules: &BuildRules,
+    unit_rules: &UnitRules,
+    speed: GameSpeed,
+    now: Timestamp,
+    owner: PlayerId,
+    selected: Option<eperica_domain::VillageId>,
+    slot: u8,
+) -> Result<(), BuildError>
+where
+    A: AccountRepository,
+    B: BuildRepository,
+    S: crate::ports::StarvationRepository,
+{
+    let Some(village) = crate::economy::select_village(accounts, owner, selected).await? else {
+        return Err(BuildError::NotFound);
+    };
+    let kind = match building_at(&village.buildings, slot) {
+        Some(b) if b.kind.is_demolishable() => b.kind,
+        _ => return Err(BuildError::NotDemolishable),
+    };
+    let mb_level = building_level(&village, BuildingKind::MainBuilding);
+    if mb_level < DEMOLISH_MIN_MAIN_BUILDING {
+        return Err(BuildError::MainBuildingTooLow);
+    }
+    let target = BuildTarget::Building { slot, kind };
+    // Tearing a building down isn't instant — about a level-1 build, Main-Building-scaled.
+    let base_time = build_rules.base_time_secs(target, 0).unwrap_or(60);
+    let duration = build_time_secs(base_time, mb_level, build_rules, speed);
+
+    let Some((stored, updated_at)) = accounts.stored_resources(village.id).await? else {
+        return Err(BuildError::NotFound);
+    };
+    let garrison = accounts.garrison(village.id).await?;
+    let base_upkeep = village
+        .tribe
+        .map_or(0, |t| garrison_upkeep(&garrison, unit_rules.roster(t)));
+    let upkeep = (base_upkeep as f64 * village.artifact_effects.upkeep).round() as i64;
+    let elapsed = (now.0 - updated_at.0) / 1000;
+    // Demolition is free — settle the accrual to `now` without debiting any cost.
+    let settled = compute_economy(
+        stored,
+        elapsed,
+        &village.fields,
+        &village.buildings,
+        upkeep,
+        economy_rules,
+        speed,
+        village.oasis_bonus,
+        village.artifact_effects.storage,
+    )
+    .amounts;
+    let lane = village
+        .tribe
+        .map_or(QueueLane::All, |tribe| queue_lane(tribe, target));
+    let order = NewBuildOrder {
+        target,
+        target_level: 0,
+        complete_at: Timestamp(now.0 + duration * 1000),
+        lane,
+    };
+    builds
+        .start_build(village.id, settled, updated_at, now, order)
+        .await?;
+    crate::starvation::sync_starvation_check(
+        accounts,
+        starvation,
+        economy_rules,
+        unit_rules,
+        speed,
+        now,
+        village.id,
+    )
+    .await?;
+    Ok(())
+}
+
 /// Claim and apply all builds due at `now` (up to `limit`); returns the villages whose levels
 /// changed (003 AC5; population moved — 005 callers re-sync starvation checks for them).
 ///
@@ -326,6 +439,7 @@ mod tests {
             .collect();
         let buildings = if with_main_building {
             vec![BuildingSlot {
+                slot: 0,
                 kind: BuildingKind::MainBuilding,
                 level: 1,
             }]
@@ -754,6 +868,7 @@ mod tests {
         // 013 AC3: a village holding a Residence cannot also build a Palace (and vice versa).
         let mut village = make_village(0, true);
         village.buildings.push(BuildingSlot {
+            slot: 0,
             kind: BuildingKind::Residence,
             level: 1,
         });
