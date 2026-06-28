@@ -168,7 +168,11 @@ fn scale(base: i64, speed: GameSpeed) -> i64 {
 /// `troop_upkeep` is the garrison's total crop consumption per hour (005 AC6; 0 with no army).
 /// `oasis_bonus` is the summed per-resource production bonus from the oases the village holds (012,
 /// AC8): it boosts the **gross** field output of each resource (floor), before population/upkeep are
-/// subtracted from crop and before speed scaling — zero for a village holding no oasis.
+/// subtracted from crop.
+///
+/// 114: **production scales with world speed, but consumption (village population + troop upkeep) is
+/// FIXED** — `crop_net = output×speed − population − upkeep` — so a fast world's scaled output dominates
+/// the fixed upkeep and crop is abundant (faithful Travian). At speed 1× this is identical to before.
 pub fn production_rates(
     fields: &[ResourceField],
     buildings: &[BuildingSlot],
@@ -187,28 +191,13 @@ pub fn production_rates(
             .sum()
     };
     let crop_gross = boosted(base(ResourceKind::Crop), oasis_bonus.crop);
-    let crop_base = crop_gross - population(fields, buildings, rules) - troop_upkeep;
     ProductionRates {
         wood: scale(boosted(base(ResourceKind::Wood), oasis_bonus.wood), speed),
         clay: scale(boosted(base(ResourceKind::Clay), oasis_bonus.clay), speed),
         iron: scale(boosted(base(ResourceKind::Iron), oasis_bonus.iron), speed),
-        crop_net: scale(crop_base, speed),
+        // 114: scale only the field output; population + upkeep are fixed (not speed-scaled).
+        crop_net: scale(crop_gross, speed) - population(fields, buildings, rules) - troop_upkeep,
     }
-}
-
-/// The hourly crop balance **before troop upkeep and speed scaling**: crop-field output minus
-/// population. The starvation cull (005 AC7) compares this against the garrison's upkeep.
-pub fn net_crop_base(
-    fields: &[ResourceField],
-    buildings: &[BuildingSlot],
-    rules: &EconomyRules,
-) -> i64 {
-    let crop: i64 = fields
-        .iter()
-        .filter(|f| f.kind == ResourceKind::Crop)
-        .map(|f| rules.field_production(ResourceKind::Crop, f.level))
-        .sum();
-    crop - population(fields, buildings, rules)
 }
 
 /// Storage capacities (110): the **sum** over every instance of the kind, so multiple Warehouses /
@@ -413,9 +402,10 @@ mod tests {
     }
 
     #[test]
-    fn crop_net_scales_with_speed() {
-        // Both crop production and upkeep scale with speed, so net crop scales linearly (P7).
-        let fields = vec![field(ResourceKind::Crop, 0); 6]; // 60 base
+    fn crop_output_scales_with_speed_but_population_is_fixed() {
+        // 114: field output scales with world speed, but population is FIXED — so net crop is
+        // output×speed − population (it does NOT simply double; it exceeds 2× by the unscaled population).
+        let fields = vec![field(ResourceKind::Crop, 0); 6]; // 60 gross
         let buildings = vec![BuildingSlot {
             slot: 0,
             kind: BuildingKind::MainBuilding,
@@ -437,8 +427,12 @@ mod tests {
             GameSpeed::new(2.0).unwrap(),
             OasisBonus::default(),
         );
-        assert_eq!(r1.crop_net, 58);
-        assert_eq!(r2.crop_net, 2 * r1.crop_net);
+        assert_eq!(r1.crop_net, 60 - 2); // 58, unchanged at 1×
+        assert_eq!(r2.crop_net, 60 * 2 - 2); // 118: output doubled, population fixed
+        assert!(
+            r2.crop_net > 2 * r1.crop_net,
+            "fixed population makes net exceed a linear 2× (118 > 116)"
+        );
     }
 
     // --- 005 AC6: troop upkeep reduces net crop ---
@@ -462,8 +456,9 @@ mod tests {
             OasisBonus::default(),
         );
         assert_eq!(r25.crop_net, r0.crop_net - 25);
-        // Upkeep can push the net negative; it scales with speed like the rest (P7).
-        let starving = production_rates(
+        // 114: upkeep is FIXED (not speed-scaled), so at 2× the scaled output (120) covers a 100 upkeep
+        // with room to spare — fast worlds support far larger armies than 1×.
+        let fast = production_rates(
             &fields,
             &[],
             100,
@@ -471,7 +466,55 @@ mod tests {
             GameSpeed::new(2.0).unwrap(),
             OasisBonus::default(),
         );
-        assert_eq!(starving.crop_net, 2 * (60 - 100));
+        assert_eq!(fast.crop_net, 60 * 2 - 100); // 20, still positive
+    }
+
+    // --- 114 AC3: fixed upkeep ⇒ a fast world supports an army that would starve at 1× ---
+    #[test]
+    fn fast_world_supports_an_army_that_starves_at_base_speed() {
+        let fields = vec![field(ResourceKind::Crop, 0); 6]; // 60 gross
+        let at_1x = production_rates(
+            &fields,
+            &[],
+            100,
+            &rules(),
+            GameSpeed::new(1.0).unwrap(),
+            OasisBonus::default(),
+        )
+        .crop_net;
+        let at_5x = production_rates(
+            &fields,
+            &[],
+            100,
+            &rules(),
+            GameSpeed::new(5.0).unwrap(),
+            OasisBonus::default(),
+        )
+        .crop_net;
+        assert!(at_1x < 0, "the same garrison starves at 1× ({at_1x})"); // 60 − 100 = −40
+        assert!(at_5x > 0, "but thrives once output scales ({at_5x})"); // 300 − 100 = 200
+    }
+
+    // --- 114 AC2: the starvation cull's troop budget (crop_net + upkeep) is the scaled output minus
+    // population, independent of the upkeep being culled — so the cull matches the new net. ---
+    #[test]
+    fn crop_net_plus_upkeep_is_scaled_output_minus_population() {
+        let fields = vec![field(ResourceKind::Crop, 0); 6]; // 60 gross
+        let buildings = vec![BuildingSlot {
+            slot: 0,
+            kind: BuildingKind::MainBuilding,
+            level: 1,
+        }]; // pop 2
+        let upkeep = 30;
+        let r = production_rates(
+            &fields,
+            &buildings,
+            upkeep,
+            &rules(),
+            GameSpeed::new(5.0).unwrap(),
+            OasisBonus::default(),
+        );
+        assert_eq!(r.crop_net + upkeep, 60 * 5 - 2); // 298 = output(300) − population(2)
     }
 
     #[test]
