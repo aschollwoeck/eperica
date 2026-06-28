@@ -85,8 +85,7 @@ singular phrasing.
 
 ## Out of scope
 - Per-kind instance caps and "Great Warehouse/Granary" variants (free-slot-bounded only, by decision).
-- Level-by-level demolition (Travian tears down one level at a time; we clear the whole building in one
-  order — noted as an intentional simplification).
+- Level-by-level demolition — **now implemented in slice 113** (each order removes one level).
 - Changing the resource-field model, the build queue/lanes (003), or balance curve values.
 - A drag-to-rearrange village layout (slots are at fixed positions).
 

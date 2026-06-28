@@ -1326,7 +1326,8 @@ impl BuildRepository for PgAccountRepository {
                 .await
                 .map_err(backend)?;
             }
-            // 110: a demolition order completes at target level 0 — free the slot (delete the row).
+            // 110/113: demolition is level-by-level — an order reducing to a level > 0 goes through the
+            // normal upsert below (level down); the order that reaches level 0 frees the slot (delete).
             BuildTarget::Building { slot, .. } if due.target_level == 0 => {
                 sqlx::query("DELETE FROM village_buildings WHERE village_id = $1 AND slot = $2")
                     .bind(vid)

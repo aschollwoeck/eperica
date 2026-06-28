@@ -31,15 +31,16 @@
     <aside class="bld-aside">
       {% include "_upgrade.html" %}
       {% if can_demolish %}
-      {# 110: tear the building down to free its slot (Main-Building-gated). #}
+      {# 110/113: demolish one level at a time (Main-Building-gated); at level 0 the slot is freed. #}
       <div class="bld-card">
         <div class="bld-card__h"><h3>Demolish</h3></div>
         <div class="bld-card__b">
-          <p class="bld-tip">Tearing this building down frees its slot to build something else.</p>
+          <p class="bld-tip">Tears down <strong>one level</strong> at a time. At level 0 the slot is freed to
+            build something else.</p>
           <form method="post" action="/w/{{ world }}/village/{{ village_id }}/demolish"
-                onsubmit="return confirm('Demolish this building and free its slot?');">
+                onsubmit="return confirm('Demolish one level of this building?');">
             <input type="hidden" name="slot" value="{{ demolish_slot }}">
-            <button class="btn btn--danger btn--wide" type="submit">Demolish</button>
+            <button class="btn btn--danger btn--wide" type="submit">{% if upgrade.level <= 1 %}Demolish (free the slot){% else %}Demolish to level {{ upgrade.level - 1 }}{% endif %}</button>
           </form>
         </div>
       </div>

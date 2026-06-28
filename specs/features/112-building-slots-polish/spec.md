@@ -21,4 +21,4 @@ The 22-slot centre is arranged to read clearly within the fortress walls (reserv
 emphasised; empty build spots are an obvious, inviting affordance) rather than a flat grid.
 
 ## Out of scope
-- Level-by-level demolition (110 clears the whole building in one order — a deliberate simplification).
+- Level-by-level demolition — **now implemented in slice 113**.
