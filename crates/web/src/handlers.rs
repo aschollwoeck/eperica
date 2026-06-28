@@ -99,6 +99,9 @@ fn building_page(kind: BuildingKind) -> &'static str {
         BuildingKind::Workshop => "workshop",
         BuildingKind::RallyPoint => "rally",
         BuildingKind::Marketplace => "market",
+        // 102: clicking the Residence/Palace opens its training page (where settlers are trained — it also
+        // carries the upgrade panel), not the generic upgrade-only detail page. A Palace uses the same page.
+        BuildingKind::Residence | BuildingKind::Palace => "residence",
         _ => "",
     }
 }
