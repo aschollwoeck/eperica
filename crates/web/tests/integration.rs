@@ -2021,6 +2021,35 @@ async fn build_order_flow(pool: sqlx::PgPool) {
         .unwrap();
     assert_eq!(res.status().as_u16(), 303);
 
+    // 109 (safety): with that build in progress the (single, Gaul) build lane is BUSY. Even with resources
+    // topped up, another slot's button is disabled for being busy — NOT for resources — so it must NOT carry
+    // `data-cost-*` (the client must never re-enable a non-resource-gated button).
+    sqlx::query(
+        "UPDATE village_resources SET wood = 999999, clay = 999999, iron = 999999, crop = 999999, \
+         updated_at = now() WHERE village_id IN (SELECT id FROM villages WHERE owner_id = \
+         (SELECT id FROM users WHERE username = $1))",
+    )
+    .bind(&user)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let busy = c
+        .get(format!("{base}/w/{home}/village/{vid}/field/1"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        busy.contains("disabled"),
+        "a busy-lane build button is disabled"
+    );
+    assert!(
+        !busy.contains("data-cost-wood="),
+        "a button disabled for a busy lane (not resources) carries no cost attrs"
+    );
+
     // AC8: the active build is shown with a countdown deadline.
     let after = c
         .get(format!("{base}/w/{home}/village/{vid}"))
