@@ -13,6 +13,10 @@ pub const RALLY_POINT_SLOT: u8 = 1;
 /// `building_slot` values so existing villages migrate without moving any row.)
 pub const WALL_SLOT: u8 = 11;
 
+/// The Main Building level a village must reach before any building can be **demolished** (110, AC6;
+/// GDD §4.2 — the Main Building "enables demolition"). Travian-faithful (level 10).
+pub const DEMOLISH_MIN_MAIN_BUILDING: u8 = 10;
+
 /// The kind reserved to `slot`, if it is a reserved special position; `None` for a general slot.
 /// A reserved slot accepts only its kind, and that kind builds only there.
 pub fn reserved_kind(slot: u8) -> Option<BuildingKind> {

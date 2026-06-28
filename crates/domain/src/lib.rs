@@ -50,8 +50,8 @@ pub use artifact::{
     can_capture, fool_resolved, required_treasury_level,
 };
 pub use building::{
-    BuildingKind, MAIN_BUILDING_SLOT, RALLY_POINT_SLOT, VILLAGE_BUILDING_SLOTS, WALL_SLOT,
-    reserved_kind,
+    BuildingKind, DEMOLISH_MIN_MAIN_BUILDING, MAIN_BUILDING_SLOT, RALLY_POINT_SLOT,
+    VILLAGE_BUILDING_SLOTS, WALL_SLOT, reserved_kind,
 };
 pub use combat::{
     AttackMode, AttackPower, BattleInput, BattleOutcome, CombatRules, WallProfile, add_defense,
