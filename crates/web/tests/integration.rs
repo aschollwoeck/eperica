@@ -3282,8 +3282,11 @@ async fn oasis_attack_occupy_and_bonus_flow(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(
-        map_html.contains(&format!("/rally?x={}&amp;y={}", oasis.x, oasis.y)),
-        "the oasis links to the Rally Point pre-filled with its tile"
+        map_html.contains(&format!(
+            "/rally?x={}&amp;y={}&amp;mode=attack",
+            oasis.x, oasis.y
+        )),
+        "the wild oasis links to the Rally Point pre-selecting Attack (clear & occupy)"
     );
 
     // AC12: send an oasis attack from the Rally Point; PRG back to the village.
@@ -7823,10 +7826,11 @@ async fn map_shows_distance_and_send_shortcut(pool: sqlx::PgPool) {
         body.contains("fields away"),
         "tiles show distance from home"
     );
-    // The neighbour's village links to the Rally Point pre-filled with its tile (& is HTML-escaped).
+    // The neighbour's village links to the Rally Point pre-filled with its tile (& is HTML-escaped); 106:
+    // another player's village pre-selects the Raid order.
     assert!(
-        body.contains(&format!("/rally?x={bx}&amp;y={by}")),
-        "a neighbouring village has a send shortcut"
+        body.contains(&format!("/rally?x={bx}&amp;y={by}&amp;mode=raid")),
+        "a neighbouring village has a send shortcut pre-selecting Raid"
     );
     // 105: your own village IS a send target now — reinforce it, or move troops between your villages.
     assert!(
