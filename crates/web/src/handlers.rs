@@ -1621,8 +1621,24 @@ fn tile_view(tile: TileKind) -> (&'static str, &'static str, String) {
     }
 }
 
+/// The seeded world map, village-scoped — the path `{village}` is the acting village the "send" shortcuts +
+/// "recentre on home" use (107). `/village/{vid}/map` passes it; the bare `/map` passes `None` (defaults to
+/// the capital — context-less links: search, notifications, alliance).
+pub async fn map(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+    Query(q): Query<MapQuery>,
+) -> Response {
+    map_for(ctx, Some(village), q).await
+}
+
+/// The bare `/map?x&y` — the same map defaulting to the player's capital village (Player only, P4).
+pub async fn map_default(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
+    map_for(ctx, None, q).await
+}
+
 /// The seeded world map around a center (006 AC7; Player only — Visitor redirected to login, P4).
-pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
+async fn map_for(ctx: GameContext, path_village: Option<String>, q: MapQuery) -> Response {
     let player = ctx.player;
     // The header username is the human (account-level), not the world player.
     let user = match ctx.accounts.find_user_by_id(ctx.account).await {
@@ -1642,20 +1658,20 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
     };
     // The player's capital tile, distinguished on the map (013 AC9/AC11).
     let capital_coord = villages.iter().find(|v| v.is_capital).map(|v| v.coordinate);
-    // The acting village for the map's "send" shortcuts — the capital, else the first village (064): the
-    // Rally links carry it in the path (`/village/{acting}/rally?x=…`).
-    let acting_vid = villages
-        .iter()
-        .find(|v| v.is_capital)
-        .or_else(|| villages.first())
-        .map(|v| village_seg(v.id));
+    // 107: the acting village is the one in the path (the village the player came from), validated against
+    // their own villages; falls back to the capital, else the first, if absent or not theirs.
+    let selected = path_village
+        .as_deref()
+        .and_then(|v| selected_village(Some(v)))
+        .and_then(|vid| villages.iter().find(|v| v.id == vid))
+        .or_else(|| villages.iter().find(|v| v.is_capital))
+        .or_else(|| villages.first());
+    let acting_vid = selected.map(|v| village_seg(v.id));
     let radius = ctx.map.radius();
-    // Center on the query (if given) or the player's first village, wrapped into bounds.
+    // Center on the query (if given) or the acting village, wrapped into bounds.
     let center = match (q.x, q.y) {
         (Some(x), Some(y)) => Coordinate::new(x, y).wrapped(radius),
-        _ => villages
-            .first()
-            .map_or(Coordinate::new(0, 0), |v| v.coordinate),
+        _ => selected.map_or(Coordinate::new(0, 0), |v| v.coordinate),
     };
 
     let coords = viewport_coords_rect(center, MAP_HALF_X, MAP_HALF_Y, radius);
@@ -1678,8 +1694,8 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
             }
         };
 
-    // 033: distances on the map are measured from the player's home (capital, else first village).
-    let origin = capital_coord.or_else(|| villages.first().map(|v| v.coordinate));
+    // 033/107: distances are measured from the acting (selected) village — where troops are sent from.
+    let origin = selected.map(|v| v.coordinate);
     let rows = map_cells(
         ctx.world_id,
         ctx.map.as_ref(),
@@ -1693,10 +1709,12 @@ pub async fn map(ctx: GameContext, Query(q): Query<MapQuery>) -> Response {
         acting_vid.as_deref(),
     );
 
-    // 095: the player's home (capital, else first village) — the map's "recentre on home" target.
+    // 095/107: "recentre on home" targets the acting (selected) village.
     let home = origin.unwrap_or(center);
     page(&MapTemplate {
         world: world_id_str(ctx.world_id),
+        // 107: the acting village segment — the map's own links (recentre/jump/tiles) stay scoped to it.
+        village: acting_vid.clone().unwrap_or_default(),
         center_x: center.x,
         center_y: center.y,
         home_x: home.x,
@@ -1867,7 +1885,11 @@ fn map_cells(
 
 /// 093: JSON tiles for a rectangular region around (`cx`,`cy`) — the draggable map streams these as it pans
 /// (Player only — Visitor redirected, P4). The half-extents are clamped so one request stays bounded (P11).
-pub async fn map_tiles(ctx: GameContext, Query(q): Query<MapTilesQuery>) -> Response {
+pub async fn map_tiles(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+    Query(q): Query<MapTilesQuery>,
+) -> Response {
     let player = ctx.player;
     let user = match ctx.accounts.find_user_by_id(ctx.account).await {
         Ok(Some(u)) => u,
@@ -1885,12 +1907,14 @@ pub async fn map_tiles(ctx: GameContext, Query(q): Query<MapTilesQuery>) -> Resp
         }
     };
     let capital_coord = villages.iter().find(|v| v.is_capital).map(|v| v.coordinate);
-    let acting_vid = villages
-        .iter()
-        .find(|v| v.is_capital)
-        .or_else(|| villages.first())
-        .map(|v| village_seg(v.id));
-    let origin = capital_coord.or_else(|| villages.first().map(|v| v.coordinate));
+    // 107: the acting village is the path village (validated), else capital/first — so streamed tiles' send
+    // links + the distance origin match the map page.
+    let selected = selected_village(Some(&village))
+        .and_then(|vid| villages.iter().find(|v| v.id == vid))
+        .or_else(|| villages.iter().find(|v| v.is_capital))
+        .or_else(|| villages.first());
+    let acting_vid = selected.map(|v| village_seg(v.id));
+    let origin = selected.map(|v| v.coordinate);
     let radius = ctx.map.radius();
     let center = Coordinate::new(q.cx, q.cy).wrapped(radius);
     let hx = q.hx.clamp(0, MAP_HALF_X_MAX);

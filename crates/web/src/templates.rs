@@ -510,6 +510,8 @@ pub struct MapCellView {
 pub struct MapTemplate {
     /// The selected world's UUID (056) — world-coupled links read `/w/{{ world }}/…`.
     pub world: String,
+    /// 107: the acting village segment — the map's links/tile-fetch read `/village/{{ village }}/map…`.
+    pub village: String,
     /// The center coordinate the view is built around.
     pub center_x: i32,
     pub center_y: i32,

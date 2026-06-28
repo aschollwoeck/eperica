@@ -40,12 +40,12 @@
       <div class="bld-card minspect" id="minspect">
         <div class="bld-card__h"><h3>Map</h3><span class="meta" id="minspect-coord"></span></div>
         <div class="bld-card__b">
-          <form class="mjump" method="get" action="/w/{{ world }}/map" id="mjump">
+          <form class="mjump" method="get" action="/w/{{ world }}/village/{{ village }}/map" id="mjump">
             <label>x <input type="number" name="x" id="mjump-x" value="{{ center_x }}" required></label>
             <label>y <input type="number" name="y" id="mjump-y" value="{{ center_y }}" required></label>
             <button class="btn btn--small btn--primary" type="submit">Go</button>
           </form>
-          <a class="btn btn--secondary btn--wide" id="mhome" href="/w/{{ world }}/map?x={{ home_x }}&amp;y={{ home_y }}">⌖ Recentre on home ({{ home_x }} | {{ home_y }})</a>
+          <a class="btn btn--secondary btn--wide" id="mhome" href="/w/{{ world }}/village/{{ village }}/map?x={{ home_x }}&amp;y={{ home_y }}">⌖ Recentre on this village ({{ home_x }} | {{ home_y }})</a>
           <hr class="minspect__rule">
           <p class="minspect__label" id="minspect-label"><span class="muted">Click a tile on the map to inspect it.</span></p>
           <div class="minspect__act">
@@ -68,6 +68,7 @@
     const layer = document.getElementById("mlayer");
     if (!vp || !layer) return;
     const world = "{{ world }}";
+    const mapBase = "/w/" + world + "/village/" + "{{ village }}" + "/map";  // 107: village-scoped map URLs
     const TILE = 36;     // px per tile (matches --mt)
     const BUFFER = 5;    // extra tiles fetched beyond the visible window on each side
     const homeX = {{ home_x }}, homeY = {{ home_y }};  // the player's home, for "recentre on home"
@@ -97,7 +98,7 @@
       if (d.href) { insGo.href = d.href; insGo.textContent = d.settle ? "Send settlers →" : "Send troops →"; insGo.style.display = ""; } else { insGo.style.display = "none"; }
       // 096: a village tile can also be shipped resources from the Marketplace.
       if (d.market) { insMerchant.href = d.market; insMerchant.style.display = ""; } else { insMerchant.style.display = "none"; }
-      insCenter.href = "/w/" + world + "/map?x=" + d.x + "&y=" + d.y;
+      insCenter.href = mapBase + "?x=" + d.x + "&y=" + d.y;
       insCenter.style.display = "";
     };
 
@@ -137,7 +138,7 @@
       const my = ++seq;
       pending = true;
       try {
-        const r = await fetch("/w/" + world + "/map/tiles?cx=" + ncx + "&cy=" + ncy + "&hx=" + hx + "&hy=" + hy);
+        const r = await fetch(mapBase + "/tiles?cx=" + ncx + "&cy=" + ncy + "&hx=" + hx + "&hy=" + hy);
         if (!r.ok || my !== seq) return;
         const data = await r.json();
         if (my !== seq) return;

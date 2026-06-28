@@ -10,7 +10,7 @@
       <div class="vcmd__namerow">
         <h1 class="vcmd__name">{{ username }}'s village{% if is_capital %} <span class="vcmd__star" title="Capital">★</span>{% endif %}</h1>
         <div class="vquick">
-          <a href="/w/{{ world }}/map?x={{ x }}&amp;y={{ y }}">⌖ Map</a>
+          <a href="/w/{{ world }}/village/{{ village_id }}/map?x={{ x }}&amp;y={{ y }}">⌖ Map</a>
           <a href="/w/{{ world }}/village/{{ village_id }}/rally">⚔ Rally</a>
           <a href="/w/{{ world }}/village/{{ village_id }}/market">⚖ Market</a>
           {% if has_academy %}<a href="/w/{{ world }}/village/{{ village_id }}/academy">📜 Academy</a>{% endif %}
