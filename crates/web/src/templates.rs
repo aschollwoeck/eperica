@@ -497,6 +497,9 @@ pub struct MapCellView {
     /// 096: a "Send merchant" link (the Marketplace pre-filled with the tile) — `Some` for any village tile,
     /// `None` otherwise (you can only ship resources to a village).
     pub market_href: Option<String>,
+    /// 104: the tile is a free valley you can settle on — the `href` is the Rally Point for a Settle order,
+    /// so the inspector labels its send button "Send settlers" instead of "Send troops".
+    pub settle: bool,
     /// The tile's coordinate, for the inspector's "center here" link + send-troops shortcut (074).
     pub x: i32,
     pub y: i32,

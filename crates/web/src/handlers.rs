@@ -1733,6 +1733,7 @@ fn map_cells(
                     let mut label = format!("{base_label} ({}|{})", coord.x, coord.y);
                     let mut href = None;
                     let mut market_href = None;
+                    let mut settle = false;
                     if let Some(marker) = &cell.marker {
                         class.push_str(" map-grid__cell--village");
                         if marker.owner_name == username {
@@ -1809,6 +1810,14 @@ fn map_cells(
                         href = acting_vid.map(|vid| {
                             village_path(world, vid, &format!("/rally?x={}&y={}", coord.x, coord.y))
                         });
+                    } else if matches!(cell.tile, TileKind::Valley(_)) {
+                        // 104: an empty valley is a free tile you can found a new village on — link to the
+                        // Rally Point (pre-filled with the tile) where a Settle order sends settlers.
+                        settle = true;
+                        label = format!("{base_label} — free valley ({}|{})", coord.x, coord.y);
+                        href = acting_vid.map(|vid| {
+                            village_path(world, vid, &format!("/rally?x={}&y={}", coord.x, coord.y))
+                        });
                     }
                     // Distance from home (toroidal, rounded) — helps judge travel time at a glance.
                     if let Some(o) = origin {
@@ -1823,6 +1832,7 @@ fn map_cells(
                         label,
                         href,
                         market_href,
+                        settle,
                         x: coord.x,
                         y: coord.y,
                     }
