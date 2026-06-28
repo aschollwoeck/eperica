@@ -1628,6 +1628,15 @@ async fn map_tiles_endpoint_serves_a_rectangular_region(pool: sqlx::PgPool) {
             .as_str()
             .is_some_and(|m| m.contains("/market?x=")),
     );
+    // 105: a village — including the viewer's OWN (this is the registering player's village) — offers the
+    // Rally Point "Send troops" shortcut (reinforce / move troops between your villages).
+    let own = village.unwrap();
+    assert!(own["cell_class"].as_str().unwrap().contains("--self"));
+    assert!(
+        own["href"]
+            .as_str()
+            .is_some_and(|h| h.contains("/rally?x="))
+    );
     if let Some(oc) = rows.iter().flat_map(|r| r.as_array().unwrap()).find(|c| {
         let cl = c["cell_class"].as_str().unwrap();
         cl.contains("--oasis") && !cl.contains("--village")
@@ -7801,9 +7810,9 @@ async fn map_shows_distance_and_send_shortcut(pool: sqlx::PgPool) {
         body.contains(&format!("/rally?x={bx}&amp;y={by}")),
         "a neighbouring village has a send shortcut"
     );
-    // Your own village is never a send target (the home tile is the only own village in view).
+    // 105: your own village IS a send target now — reinforce it, or move troops between your villages.
     assert!(
-        !body.contains(&format!("/rally?x={ax}&amp;y={ay}")),
-        "own village is not a send target"
+        body.contains(&format!("/rally?x={ax}&amp;y={ay}")),
+        "own village offers a send shortcut (reinforce)"
     );
 }
