@@ -1644,6 +1644,17 @@ async fn map_tiles_endpoint_serves_a_rectangular_region(pool: sqlx::PgPool) {
         })
         .expect("a plain-terrain tile is in view");
     assert!(terrain["market_href"].is_null());
+    // 104: an empty valley is a settle target — `settle` is true and it carries the Rally Point href (a
+    // Settle order). A village/oasis is not a settle target.
+    let valley = rows.iter().flat_map(|r| r.as_array().unwrap()).find(|c| {
+        let cl = c["cell_class"].as_str().unwrap();
+        cl.contains("--valley") && !cl.contains("--village")
+    });
+    if let Some(v) = valley {
+        assert_eq!(v["settle"], serde_json::json!(true));
+        assert!(v["href"].as_str().is_some_and(|h| h.contains("/rally?x=")));
+    }
+    assert_eq!(village.unwrap()["settle"], serde_json::json!(false));
 
     // P11: oversized half-extents are clamped (hx ≤ 18, hy ≤ 14).
     let big: serde_json::Value = serde_json::from_str(
