@@ -2425,6 +2425,11 @@ async fn residence_trains_settlers_and_a_palace_stands_in(pool: sqlx::PgPool) {
         village.contains(&format!("/village/{vid}/residence")),
         "the village links to the Residence training page"
     );
+    // 102: clicking the built Residence opens its training page (settlers), not the upgrade-only detail page.
+    assert!(
+        !village.contains("/building/residence"),
+        "the built Residence routes to its training page, not the generic detail page"
+    );
 
     // The Residence page offers the settler with a train form.
     let res = c
