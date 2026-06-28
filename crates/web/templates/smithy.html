@@ -47,7 +47,9 @@
             <div class="unit__eff">{% if u.effect.is_empty() %}<span class="muted">Forged to its limit.</span>{% else %}{{ u.effect }}{% endif %}</div>
           </div>
           <div class="unit__price">
-            {% if u.can_order %}
+            {# 109: always show the next-forge cost while there's a level left (not just when affordable),
+               mirroring the Academy's "show until researched" — `effect` is empty only at max level. #}
+            {% if !u.effect.is_empty() %}
             <div class="unit__cost"><b class="w">{{ u.cost_wood }}</b><b class="c">{{ u.cost_clay }}</b><b class="i">{{ u.cost_iron }}</b><b class="r">{{ u.cost_crop }}</b></div>
             <div class="unit__time">forge {{ u.time }}</div>
             {% endif %}

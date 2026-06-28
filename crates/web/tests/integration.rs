@@ -666,13 +666,28 @@ async fn cost_gated_research_and_upgrade_carry_their_cost(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
+    // Scope to the roster's Research FORM — the building's own upgrade aside (_upgrade.html) also cost-gates
+    // when drained, so a page-wide check wouldn't prove the roster row itself is gated. The aside posts to
+    // …/build; only a roster row posts to …/academy/research.
+    let research_form = acad
+        .split("/academy/research")
+        .nth(1)
+        .and_then(|s| s.split("</form>").next())
+        .unwrap_or_default();
     assert!(
-        acad.contains("disabled") && acad.contains("data-cost-wood="),
-        "the unaffordable Research button is cost-gated for the client re-enable"
+        research_form.contains("disabled") && research_form.contains("data-cost-wood="),
+        "the roster Research button carries its cost (disabled) for the client re-enable"
     );
+    // the roster shortfall note is a `unit__gate` span (the aside's is a `bld-tip` p) — roster-specific.
     assert!(
-        acad.contains("data-cost-note"),
+        acad.contains("unit__gate\" data-cost-note"),
         "the research shortfall note is flagged"
+    );
+    // Negative (safety): a unit denied for a NON-resource reason (a higher-tier Gaul unit needs a higher
+    // Academy) renders a plain gate span — no cost attrs — so the client can't re-enable it.
+    assert!(
+        acad.contains("unit__gate\">requires"),
+        "a requirements-gated unit stays a plain gate span (no data-cost)"
     );
 
     // Smithy: same for a forgeable-but-unaffordable unit (tier-1 is researched by default).
@@ -684,13 +699,24 @@ async fn cost_gated_research_and_upgrade_carry_their_cost(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
+    let forge_form = smith
+        .split("/smithy/upgrade")
+        .nth(1)
+        .and_then(|s| s.split("</form>").next())
+        .unwrap_or_default();
     assert!(
-        smith.contains("disabled") && smith.contains("data-cost-wood="),
-        "the unaffordable Forge button is cost-gated for the client re-enable"
+        forge_form.contains("disabled") && forge_form.contains("data-cost-wood="),
+        "the roster Forge button carries its cost (disabled) for the client re-enable"
     );
     assert!(
-        smith.contains("data-cost-note"),
+        smith.contains("unit__gate\" data-cost-note"),
         "the forge shortfall note is flagged"
+    );
+    // 109: the forge cost is shown even when unaffordable (the roster uses a `<div class="unit__cost">`; the
+    // aside's is a `<span>`) — previously the Smithy hid the cost unless you could already afford it.
+    assert!(
+        smith.contains("<div class=\"unit__cost\""),
+        "the Smithy shows the forge cost even when it can't be afforded yet"
     );
 }
 

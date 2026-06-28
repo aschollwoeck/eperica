@@ -21,6 +21,10 @@ resource-gated button (buildings, fields, …).
   the same way. Buttons disabled for a non-resource reason (requirements unmet, queue busy, max) stay a gate
   span with no `data-cost-*`.
 
+- **AC4 — Always show the cost.** The cost is rendered whenever there's still something to buy (a forgeable
+  level / an un-researched unit), not only when affordable — the Smithy previously hid the forge cost unless
+  you could already afford it. (The Academy already showed it until researched.)
+
 ## Out of scope
 - Server-side validation (unchanged — re-checked on submit, P4). Troop *training* (Barracks/Stable/Workshop)
   is count-based — its button isn't resource-disabled at render (the per-unit cost drives the "Max" helper),

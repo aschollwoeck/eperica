@@ -12,4 +12,8 @@ Branch `feature/109-client-cost-gate`.
 - [x] **T5**: extend to the Academy (research) + Smithy (unit upgrade): a `cost_gated` row renders a disabled
   cost-bearing button + flagged note instead of a gate span. Verified live (academy button enabled in ~13s as
   resources ticked; note hid). Test `cost_gated_research_and_upgrade_carry_their_cost`.
-- [ ] **T6 — Reviewer + PR.**
+- [x] **T6**: always render the next-forge cost in the Smithy (it hid it unless affordable); show whenever a
+  forgeable level remains. Academy already showed it. Test asserts the roster cost renders when unaffordable.
+- [x] **T7**: tighten the academy/smithy test to scope assertions to the research/forge form (not the building
+  upgrade aside, which also cost-gates) + a negative requirements-gated check (reviewer MUST-FIX).
+- [ ] **T8 — Reviewer + PR.**
