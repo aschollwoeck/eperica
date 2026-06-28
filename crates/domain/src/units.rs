@@ -628,6 +628,16 @@ mod tests {
         rosters.insert(Tribe::Gauls, two_tier1);
         assert!(UnitRules::new(rosters.clone(), smithy_rules(), training_rules()).is_err()); // two tier-1
 
+        // 101: zero research-free *combat* units (the tier-1 given research) is also rejected — an Expansion
+        // unit being research-free doesn't satisfy the "one tier-1 combat unit" requirement.
+        let mut no_tier1 = roster();
+        no_tier1[0] = researchable("tier1b", vec![]);
+        let mut settler = unit("settler", None);
+        settler.role = UnitRole::Expansion;
+        no_tier1[1] = settler;
+        rosters.insert(Tribe::Gauls, no_tier1);
+        assert!(UnitRules::new(rosters.clone(), smithy_rules(), training_rules()).is_err()); // zero tier-1
+
         rosters.insert(Tribe::Gauls, roster());
         // Mismatched smithy tables would silently lower the level cap — rejected at load.
         let lopsided = SmithyRules {
