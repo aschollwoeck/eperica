@@ -605,6 +605,95 @@ async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
     assert_eq!(anon.status().as_u16(), 303);
 }
 
+/// 109: a research (Academy) / upgrade (Smithy) that is available but *only* unaffordable renders a DISABLED
+/// button carrying its cost (`data-cost-*`) plus a flagged shortfall note — the same contract the build button
+/// uses — so the resource ribbon's tick re-enables it client-side as resources accrue. (The JS itself is
+/// verified live; this pins the server-rendered markup the sweep keys off.)
+#[sqlx::test(migrations = "../../migrations")]
+async fn cost_gated_research_and_upgrade_carry_their_cost(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let user = unique("cgate");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let vid = village_uuid(&pool, &user).await;
+    let village_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    // Seed an Academy + Smithy so the roster offers research/forge actions, then drain the village so those
+    // actions are unaffordable — and unaffordable is the *only* reason they can't be ordered.
+    for (slot, kind, level) in [(5_i16, "academy", 1_i16), (6, "smithy", 3)] {
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(village_id)
+        .bind(slot)
+        .bind(kind)
+        .bind(level)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "UPDATE village_resources SET wood = 0, clay = 0, iron = 0, crop = 0, updated_at = now() \
+         WHERE village_id = $1",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Academy: a researchable-but-unaffordable unit → a disabled Research button with its cost + flagged note.
+    let acad = c
+        .get(format!("{base}/w/{home}/village/{vid}/academy"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        acad.contains("disabled") && acad.contains("data-cost-wood="),
+        "the unaffordable Research button is cost-gated for the client re-enable"
+    );
+    assert!(
+        acad.contains("data-cost-note"),
+        "the research shortfall note is flagged"
+    );
+
+    // Smithy: same for a forgeable-but-unaffordable unit (tier-1 is researched by default).
+    let smith = c
+        .get(format!("{base}/w/{home}/village/{vid}/smithy"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        smith.contains("disabled") && smith.contains("data-cost-wood="),
+        "the unaffordable Forge button is cost-gated for the client re-enable"
+    );
+    assert!(
+        smith.contains("data-cost-note"),
+        "the forge shortfall note is flagged"
+    );
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn training_flow_and_garrison(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;

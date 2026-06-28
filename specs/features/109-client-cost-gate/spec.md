@@ -16,7 +16,12 @@ resource-gated button (buildings, fields, …).
 - **AC2 — Client re-enable.** The resource ribbon's existing tick (the live counter) re-enables any
   `button[disabled][data-cost-wood]` once the live amounts cover its cost, and hides its shortfall note —
   minimal JS, no new timer (it rides the 1 s ribbon tick).
+- **AC3 — Applies to research & unit upgrades too.** The Academy (research) and Smithy (unit upgrade) render a
+  *disabled* cost-bearing button (not a gate span) when the only obstacle is resources, so they self-enable
+  the same way. Buttons disabled for a non-resource reason (requirements unmet, queue busy, max) stay a gate
+  span with no `data-cost-*`.
 
 ## Out of scope
-- Server-side validation (unchanged — re-checked on submit, P4); train/research buttons (they render a gate
-  span, not a disabled button — a future pass could opt them in by emitting `data-cost-*`).
+- Server-side validation (unchanged — re-checked on submit, P4). Troop *training* (Barracks/Stable/Workshop)
+  is count-based — its button isn't resource-disabled at render (the per-unit cost drives the "Max" helper),
+  so it's out of scope.

@@ -9,4 +9,7 @@ Branch `feature/109-client-cost-gate`.
   the cost (queried each tick, since the ribbon script runs before later DOM parses) + hides the note.
 - [x] **T4 — Verify**: live — an unaffordable upgrade button is disabled with data-cost; as wood ticks past
   the cost the button re-enables and the note hides. Test asserts the cost-gated markup.
-- [ ] **T5 — Reviewer + PR.**
+- [x] **T5**: extend to the Academy (research) + Smithy (unit upgrade): a `cost_gated` row renders a disabled
+  cost-bearing button + flagged note instead of a gate span. Verified live (academy button enabled in ~13s as
+  resources ticked; note hid). Test `cost_gated_research_and_upgrade_carry_their_cost`.
+- [ ] **T6 — Reviewer + PR.**

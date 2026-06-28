@@ -326,6 +326,9 @@ pub struct AcademyRow {
     pub researched: bool,
     /// The Research action is offered now (requirements met, affordable, queue free).
     pub can_order: bool,
+    /// 109: requirements met & queue free but unaffordable — the button renders disabled with `data-cost-*`
+    /// so the client re-enables it as resources tick up.
+    pub cost_gated: bool,
     /// Why the action is unavailable (requirements text or "insufficient resources"); empty if
     /// researched or orderable.
     pub gate: String,
@@ -380,6 +383,9 @@ pub struct SmithyRow {
     pub pips: Vec<bool>,
     /// The Upgrade action is offered now.
     pub can_order: bool,
+    /// 109: forgeable & queue free but unaffordable — the button renders disabled with `data-cost-*` so the
+    /// client re-enables it as resources tick up.
+    pub cost_gated: bool,
     /// Why the action is unavailable (cap reached, smithy level, insufficient resources); empty
     /// when orderable.
     pub gate: String,
