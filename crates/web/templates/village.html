@@ -82,16 +82,16 @@
             <div class="tower" style="left:0;top:0"></div><div class="tower" style="left:100%;top:0"></div>
             <div class="tower" style="left:0;top:100%"></div><div class="tower" style="left:100%;top:100%"></div>
             <div class="gate"></div>
-            {# 087: each plot links to that building's page (its functional page, or the generic detail page),
-               where the upgrade panel lives — the plan is a pure overview. #}
-            {% for b in buildings %}
-            <a class="vplot vplot--{{ b.kind }}{% if b.kind == "main_building" %} vplot--keep{% endif %}{% if b.building_ms.is_some() %} vplot--build{% else if b.can_order %} vplot--up{% else if b.level == 0 %} vplot--empty{% endif %}"
-              href="/w/{{ world }}/village/{{ village_id }}/{% if b.page != "" && b.level > 0 %}{{ b.page }}{% else %}building/{{ b.kind }}{% endif %}"
-              title="{{ b.label }} — {% if b.level == 0 %}not built{% else %}level {{ b.level }}{% endif %}">
-              <svg><use href="#i-{{ b.kind }}"/></svg>
-              <span class="vplot__n">{{ b.label }}</span>
-              <span class="vplot__lvl">{% if b.level == 0 %}+{% else %}{{ b.level }}{% endif %}</span>
-              {% if let Some(ms) = b.building_ms %}<span class="vplot__cd countdown" data-deadline="{{ ms }}">…</span>{% endif %}
+            {# 110: the centre is a fixed set of slots — each plot is a built building (links to its page)
+               or an empty build spot (links to the slot's build menu). Positioned by slot. #}
+            {% for p in plots %}
+            <a class="vplot vplot--s{{ p.slot }}{% if p.occupied %} vplot--has{% else %} vplot--empty{% endif %}{% if p.reserved %} vplot--reserved{% endif %}{% if p.building_ms.is_some() %} vplot--build{% endif %}"
+              href="{{ p.href }}"
+              title="{{ p.label }}{% if p.occupied %} — level {{ p.level }}{% else %} — empty spot{% endif %}">
+              {% if p.occupied || p.reserved %}<svg><use href="#i-{{ p.kind }}"/></svg>{% else %}<span class="vplot__plus">+</span>{% endif %}
+              <span class="vplot__n">{{ p.label }}</span>
+              <span class="vplot__lvl">{% if p.occupied %}{{ p.level }}{% else %}+{% endif %}</span>
+              {% if let Some(ms) = p.building_ms %}<span class="vplot__cd countdown" data-deadline="{{ ms }}">…</span>{% endif %}
             </a>
             {% endfor %}
           </div>

@@ -3338,7 +3338,11 @@ async fn siege_loot_and_cranny_flow(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
-    assert!(village.contains("Cranny"), "Cranny should be buildable");
+    // 110: the plan has free build spots (a Cranny is buildable on one via its menu).
+    assert!(
+        village.contains("vplot--empty"),
+        "the plan has free build spots"
+    );
 }
 
 // 012 AC12: the map shows oasis tiles with a Rally Point link; an oasis attack from the Rally Point
@@ -3410,7 +3414,12 @@ async fn oasis_attack_occupy_and_bonus_flow(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
-    assert!(village.contains("Outpost"), "Outpost should be buildable");
+    // 110: unbuilt buildings aren't named on the plan; they're built by choosing an empty slot. The plan
+    // has free build spots (an Outpost is buildable on one via its menu).
+    assert!(
+        village.contains("vplot--empty"),
+        "the plan has free build spots"
+    );
 
     // Give the village an Outpost (capacity ≥ 1) and a strong garrison.
     sqlx::query(
@@ -7880,9 +7889,10 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
         body.contains("Population"),
         "the command header shows village population"
     );
+    // 110: the plan is keyed by SLOT — built spots (the Main Building at slot 0) and empty build spots.
     assert!(
-        body.contains("vplot--main_building") && body.contains("vplot--barracks"),
-        "buildings are plotted in the plan by kind"
+        body.contains("vplot--s0") && body.contains("vplot--has") && body.contains("vplot--empty"),
+        "the plan renders fixed slots — built and empty build spots"
     );
     assert!(
         body.contains("vfield-ring") && body.contains("vfield--crop"),
@@ -7893,9 +7903,9 @@ async fn village_shows_next_level_effects(pool: sqlx::PgPool) {
         "the old inline inspector is gone (the plan links to per-building/field pages)"
     );
     assert!(
-        body.contains(&format!("/village/{vid}/building/main_building"))
+        body.contains(&format!("/village/{vid}/slot/0"))
             && body.contains(&format!("/village/{vid}/field/0")),
-        "plots and fields link to their own pages"
+        "plots link to their slot page and fields to their own page"
     );
 }
 

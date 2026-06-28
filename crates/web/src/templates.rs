@@ -126,7 +126,7 @@ mod tests {
             shipments: Vec::new(),
             oases: Vec::new(),
             fields: Vec::new(),
-            buildings: Vec::new(),
+            plots: Vec::new(),
             protection: None,
             artifacts: Vec::new(),
         }
@@ -780,6 +780,29 @@ pub struct DetailTemplate {
     pub icon: String,
     /// The build/upgrade panel data.
     pub upgrade: BuildRow,
+    /// 110: this slot can be demolished now (built, not the Main Building, Main Building high enough) —
+    /// the page offers a Demolish action that frees the slot.
+    pub can_demolish: bool,
+    /// 110: the centre slot the Demolish action targets.
+    pub demolish_slot: u8,
+}
+
+/// 110: the build menu for an **empty** centre slot — the kinds the player may construct there now, each
+/// with its cost and (un)affordability. A reserved slot offers only its kind.
+#[derive(Template)]
+#[template(path = "build_menu.html")]
+pub struct BuildMenuTemplate {
+    pub world: String,
+    pub tribe_slug: &'static str,
+    pub village_id: String,
+    pub village_label: String,
+    pub ribbon: ResourceRibbon,
+    /// The empty centre slot being built on.
+    pub slot: u8,
+    /// Whether this is a reserved slot (a single fixed option, e.g. the Wall).
+    pub reserved: bool,
+    /// The buildable kinds — each a build row carrying its cost, gate, and affordability.
+    pub options: Vec<BuildRow>,
 }
 
 /// An in-flight shipment line on the village page (008 AC6).
@@ -805,6 +828,28 @@ pub struct VillageSwitchRow {
     pub is_capital: bool,
     /// Whether this is the village currently shown.
     pub is_current: bool,
+}
+
+/// 110: one centre slot on the village plan — a built building or an empty build spot. Positioned by
+/// `slot` (the plan renders all `VILLAGE_BUILDING_SLOTS` of them at fixed positions).
+pub struct PlotView {
+    /// The centre slot (0..VILLAGE_BUILDING_SLOTS) — drives the fixed plan position.
+    pub slot: u8,
+    /// Building kind id for the icon (`#i-<kind>`); a reserved empty slot shows its kind's icon, a
+    /// general empty slot shows none (the "+" affordance).
+    pub kind: &'static str,
+    /// Display name: the building, the reserved kind ("Wall"), or "Empty".
+    pub label: String,
+    /// Building level; 0 when empty.
+    pub level: u8,
+    /// Whether a building occupies the slot.
+    pub occupied: bool,
+    /// Whether this is a reserved special slot (Rally Point / Wall) — styled distinctly.
+    pub reserved: bool,
+    /// Completion time (Unix-ms) when the slot is under construction; `None` otherwise.
+    pub building_ms: Option<i64>,
+    /// Where the plot links: a built functional building's page, else the slot page (upgrade/menu).
+    pub href: String,
 }
 
 #[derive(Template)]
@@ -874,8 +919,8 @@ pub struct VillageTemplate {
     pub oases: Vec<OasisRow>,
     /// Resource-field build rows.
     pub fields: Vec<BuildRow>,
-    /// Building build rows.
-    pub buildings: Vec<BuildRow>,
+    /// 110: the village centre as a fixed list of slot plots (built buildings + empty spots).
+    pub plots: Vec<PlotView>,
     /// Beginner's-protection notice (019 AC9): a human summary of the remaining window, or `None`
     /// once protection has ended.
     pub protection: Option<String>,

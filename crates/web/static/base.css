@@ -567,24 +567,21 @@ a { color: var(--c-gold); }
 /* an under-construction plot shows the live build countdown (no faked % progress — there is no start time) */
 .vplot__cd { position: absolute; left: 3px; right: 3px; bottom: 3px; font-family: ui-monospace, monospace; font-size: .56rem; line-height: 1.55; text-align: center; color: var(--c-ember, #C8762E); background: #0b0f13; border: 1px solid color-mix(in srgb, var(--c-ember, #C8762E) 40%, var(--c-border)); border-radius: 3px; }
 
-/* building positions inside the rampart (kind-keyed) */
-.vplot--main_building { --x: 50%; --y: 47%; }
-.vplot--rally_point  { --x: 50%; --y: 21%; }
-.vplot--warehouse    { --x: 31%; --y: 23%; }
-.vplot--granary      { --x: 69%; --y: 23%; }
-.vplot--embassy      { --x: 19%; --y: 38%; }
-.vplot--town_hall    { --x: 33%; --y: 39%; }
-.vplot--palace       { --x: 67%; --y: 39%; }
-.vplot--outpost      { --x: 81%; --y: 38%; }
-.vplot--marketplace  { --x: 30%; --y: 57%; }
-.vplot--smithy       { --x: 70%; --y: 57%; }
-.vplot--residence    { --x: 50%; --y: 66%; }
-.vplot--cranny       { --x: 19%; --y: 60%; }
-.vplot--wall         { --x: 81%; --y: 60%; }
-.vplot--barracks     { --x: 30%; --y: 79%; }
-.vplot--academy      { --x: 43%; --y: 82%; }
-.vplot--stable       { --x: 57%; --y: 82%; }
-.vplot--workshop     { --x: 70%; --y: 79%; }
+/* 110: slot-keyed positions — a fixed 5-column grid of the 22 centre slots (built or empty) */
+.vplot { width: 60px; height: 60px; }
+.vplot--has svg, .vplot--reserved svg { color: var(--c-gold); }
+.vplot--reserved { border-color: color-mix(in srgb, var(--c-gold) 45%, var(--c-border)); border-style: dashed; }
+.vplot--reserved.vplot--has { border-style: solid; }
+.vplot__plus { font-size: 1.5rem; font-weight: 300; color: var(--c-ink-muted); line-height: 1; }
+.vplot--s0  { --x: 18%; --y: 14%; } .vplot--s1  { --x: 34%; --y: 14%; } .vplot--s2  { --x: 50%; --y: 14%; }
+.vplot--s3  { --x: 66%; --y: 14%; } .vplot--s4  { --x: 82%; --y: 14%; }
+.vplot--s5  { --x: 18%; --y: 31%; } .vplot--s6  { --x: 34%; --y: 31%; } .vplot--s7  { --x: 50%; --y: 31%; }
+.vplot--s8  { --x: 66%; --y: 31%; } .vplot--s9  { --x: 82%; --y: 31%; }
+.vplot--s10 { --x: 18%; --y: 48%; } .vplot--s11 { --x: 34%; --y: 48%; } .vplot--s12 { --x: 50%; --y: 48%; }
+.vplot--s13 { --x: 66%; --y: 48%; } .vplot--s14 { --x: 82%; --y: 48%; }
+.vplot--s15 { --x: 18%; --y: 65%; } .vplot--s16 { --x: 34%; --y: 65%; } .vplot--s17 { --x: 50%; --y: 65%; }
+.vplot--s18 { --x: 66%; --y: 65%; } .vplot--s19 { --x: 82%; --y: 65%; }
+.vplot--s20 { --x: 42%; --y: 82%; } .vplot--s21 { --x: 58%; --y: 82%; }
 
 /* 088: the 18 resource fields ring the village as icon tiles, positioned around the perimeter */
 .vfield-ring { position: absolute; inset: 0; }

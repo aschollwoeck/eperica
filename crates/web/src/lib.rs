@@ -261,6 +261,13 @@ fn world_router() -> Router<AppState> {
         .route("/village", get(handlers::village_index))
         .route("/village/{village}", get(handlers::village))
         .route("/village/{village}/build", post(handlers::build_submit))
+        // 110: demolish a building (free its slot); the slot detail page — empty slot ⇒ build menu,
+        // built slot ⇒ upgrade + demolition.
+        .route(
+            "/village/{village}/demolish",
+            post(handlers::demolish_submit),
+        )
+        .route("/village/{village}/slot/{slot}", get(handlers::slot_detail))
         // 087: per-building / per-field detail pages with the upgrade panel — the village plan links here.
         .route(
             "/village/{village}/building/{kind}",

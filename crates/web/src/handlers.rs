@@ -8,20 +8,20 @@ use crate::state::AppState;
 use crate::templates::{
     AcademyRow, AcademyTemplate, AchievementRowView, ActiveView, AdminAccountRow, AdminTemplate,
     AdminWorldRow, AllianceStatsTemplate, AllianceTemplate, AlliedVillageView, ArtifactRowView,
-    AuditRow, BuildRow, ChatLineView, CompletedQuestView, ConversationRow, ConversationTemplate,
-    CurrentQuestView, DetailTemplate, DiploRowView, ForceRow, ForumPostRow, ForumTemplate,
-    ForumThreadRow, ForumThreadTemplate, GarrisonRow, HistoryPointView, ImpressumTemplate,
-    IncomingView, IndexTemplate, JoinableWorldRow, JoinedWorldRow, LandingWorldRow,
-    LeaderboardRowView, LeaderboardTemplate, LoginTemplate, MapCellView, MapTemplate,
-    MarketTemplate, MedalRowView, MemberStatRow, MessagesTemplate, ModAccountTemplate,
+    AuditRow, BuildMenuTemplate, BuildRow, ChatLineView, CompletedQuestView, ConversationRow,
+    ConversationTemplate, CurrentQuestView, DetailTemplate, DiploRowView, ForceRow, ForumPostRow,
+    ForumTemplate, ForumThreadRow, ForumThreadTemplate, GarrisonRow, HistoryPointView,
+    ImpressumTemplate, IncomingView, IndexTemplate, JoinableWorldRow, JoinedWorldRow,
+    LandingWorldRow, LeaderboardRowView, LeaderboardTemplate, LoginTemplate, MapCellView,
+    MapTemplate, MarketTemplate, MedalRowView, MemberStatRow, MessagesTemplate, ModAccountTemplate,
     ModQueueTemplate, ModReportRow, MovementRow, NotificationRowView, NotificationsTemplate,
-    OasisRow, OutgoingInviteView, PendingInviteView, PlayerStatsTemplate, PrivacyTemplate,
-    ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate,
-    ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, ResourceRibbon, RosterRowView,
-    ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate, SettingsTemplate,
-    SettingsToggleRow, ShipmentRow, SitterRow, SittingTemplate, SmithyRow, SmithyTemplate,
-    StyleGuideTemplate, TermsTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
-    VillageTemplate, WonderStandingView, WonderTemplate, WorldsTemplate,
+    OasisRow, OutgoingInviteView, PendingInviteView, PlayerStatsTemplate, PlotView,
+    PrivacyTemplate, ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow,
+    RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, ResourceRibbon,
+    RosterRowView, ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate,
+    SettingsTemplate, SettingsToggleRow, ShipmentRow, SitterRow, SittingTemplate, SmithyRow,
+    SmithyTemplate, StyleGuideTemplate, TermsTemplate, TrainRow, TroopsTemplate, VillageStatRow,
+    VillageSwitchRow, VillageTemplate, WonderStandingView, WonderTemplate, WorldsTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -47,24 +47,25 @@ use eperica_application::{
     list_sitting_for, list_worlds as admin_list_worlds, load_culture, load_economy,
     map_viewport_rect, mark_notifications_read_for_account, notif_key, notification_settings,
     notification_unread_for_account, open_chat, open_dm, open_thread, order_attack, order_build,
-    order_oasis_attack, order_oasis_recall, order_oasis_reinforce, order_reinforcement,
-    order_research, order_return, order_scout, order_settle, order_smithy_upgrade, order_trade,
-    order_train, order_wonder_build, parse_dm_key, player_statistics, population_history,
-    population_leaderboard, register, reinforcement_reports, reply, require_admin, resolve_report,
-    respond_invite, review_queue, revoke_invite, revoke_sitter, sanction_account, search,
-    search_accounts as admin_search_accounts, send_chat, send_dm, set_diplomacy, set_member_role,
-    set_notification_pref, set_role as admin_set_role_uc, sitter_log, start_thread,
-    transfer_founder, unread_badge, view_profile, viewport_coords_rect,
+    order_demolish, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
+    order_reinforcement, order_research, order_return, order_scout, order_settle,
+    order_smithy_upgrade, order_trade, order_train, order_wonder_build, parse_dm_key,
+    player_statistics, population_history, population_leaderboard, register, reinforcement_reports,
+    reply, require_admin, resolve_report, respond_invite, review_queue, revoke_invite,
+    revoke_sitter, sanction_account, search, search_accounts as admin_search_accounts, send_chat,
+    send_dm, set_diplomacy, set_member_role, set_notification_pref, set_role as admin_set_role_uc,
+    sitter_log, start_thread, transfer_founder, unread_badge, view_profile, viewport_coords_rect,
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, ChatChannel,
-    Coordinate, DiplomacyStance, DiplomacyStatus, Economy, GameSpeed, MedalCategory, MovementKind,
-    OasisBonus, PlayerId, Presence, Quadrant, QuestReward, QueueLane, ReportReason, ResearchDenied,
-    ResourceAmounts, ResourceKind, RightSet, SanctionKind, ScoutTarget, TileKind, Timestamp,
-    TradeKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied, Village, VillageId, WorldId,
-    can_access_channel, can_afford, can_research, can_upgrade, current_quest, expansion_slots,
-    garrison_upkeep, is_inactive, per_unit_time_secs, presence, queue_lane, regenerate_loyalty,
-    scaled_time_secs,
+    Coordinate, DEMOLISH_MIN_MAIN_BUILDING, DiplomacyStance, DiplomacyStatus, Economy, GameSpeed,
+    MedalCategory, MovementKind, OasisBonus, PlayerId, Presence, Quadrant, QuestReward, QueueLane,
+    ReportReason, ResearchDenied, ResourceAmounts, ResourceKind, RightSet, SanctionKind,
+    ScoutTarget, TileKind, Timestamp, TradeKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied,
+    VILLAGE_BUILDING_SLOTS, Village, VillageId, WorldId, building_at, can_access_channel,
+    can_afford, can_place, can_research, can_upgrade, current_quest, expansion_slots,
+    garrison_upkeep, is_inactive, per_unit_time_secs, prerequisites_met, presence, queue_lane,
+    regenerate_loyalty, reserved_kind, scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use eperica_infrastructure::{DEFAULT_PRESET, KNOWN_PRESETS, WorldRules, known_preset};
@@ -1021,15 +1022,17 @@ fn build_row(
 
 /// The upgrade-panel `BuildRow` for a building at a given level (087) — the building-specific wrapper over
 /// [`build_row`], used by every building page's aside and the generic building page.
+/// Build/upgrade row for the building of `kind` sitting in centre `slot` (110: the slot is the
+/// building's actual position, not a fixed per-kind mapping).
 fn building_upgrade_row(
     rules: &WorldRules,
     tribe: Option<Tribe>,
     amounts: ResourceAmounts,
     active: &[ActiveBuild],
+    slot: u8,
     kind: BuildingKind,
     level: u8,
 ) -> BuildRow {
-    let slot = building_slot(kind);
     build_row(
         rules,
         tribe,
@@ -1045,6 +1048,17 @@ fn building_upgrade_row(
         BuildTarget::Building { slot, kind },
         building_effect(rules, tribe, kind, level),
     )
+}
+
+/// The centre slot the (unique) building of `kind` occupies in `village`, and its level — for the
+/// functional/detail pages (110). `None` if the village has no such building (it must be built first,
+/// on a free slot, via the village plan).
+fn building_slot_and_level(village: &Village, kind: BuildingKind) -> Option<(u8, u8)> {
+    village
+        .buildings
+        .iter()
+        .find(|b| b.kind == kind)
+        .map(|b| (b.slot, b.level))
 }
 
 /// A player's village with its live economy, switchable across all their villages (Player only —
@@ -1246,50 +1260,53 @@ pub async fn village(
         })
         .collect();
 
-    let buildings = [
-        BuildingKind::MainBuilding,
-        BuildingKind::RallyPoint,
-        BuildingKind::Warehouse,
-        BuildingKind::Granary,
-        BuildingKind::Marketplace,
-        BuildingKind::Embassy,
-        BuildingKind::Wall,
-        BuildingKind::Cranny,
-        BuildingKind::Outpost,
-        BuildingKind::TownHall,
-        BuildingKind::Residence,
-        BuildingKind::Palace,
-        BuildingKind::Barracks,
-        BuildingKind::Academy,
-        BuildingKind::Smithy,
-        BuildingKind::Stable,
-        BuildingKind::Workshop,
-    ]
-    .into_iter()
-    .map(|kind| {
-        let slot = building_slot(kind);
-        let level = village
-            .buildings
-            .iter()
-            .find(|b| b.kind == kind)
-            .map_or(0, |b| b.level);
-        build_row(
-            &ctx.rules,
-            tribe,
-            amounts,
-            &active,
-            "building",
-            slot,
-            building_kind_id(kind),
-            "",
-            building_page(kind),
-            building_label(kind).to_owned(),
-            level,
-            BuildTarget::Building { slot, kind },
-            building_effect(&ctx.rules, tribe, kind, level),
-        )
-    })
-    .collect();
+    // 110: the village centre is a fixed list of slots — each holds a building or is an empty build
+    // spot. The plan renders these by slot (not by kind), so multiple Warehouses each show in their slot.
+    let world_s = world_id_str(ctx.world_id);
+    let vid_s = village_seg(village.id);
+    let plots: Vec<PlotView> = (0..VILLAGE_BUILDING_SLOTS)
+        .map(|slot| {
+            let building_ms = active
+                .iter()
+                .find(|a| matches!(a.target, BuildTarget::Building { slot: s, .. } if s == slot))
+                .map(|a| a.complete_at.0);
+            match building_at(&village.buildings, slot) {
+                Some(b) => {
+                    let kind = b.kind;
+                    let page = building_page(kind);
+                    let href = if page.is_empty() {
+                        format!("/w/{world_s}/village/{vid_s}/slot/{slot}")
+                    } else {
+                        format!("/w/{world_s}/village/{vid_s}/{page}")
+                    };
+                    PlotView {
+                        slot,
+                        kind: building_kind_id(kind),
+                        label: building_label(kind).to_owned(),
+                        level: b.level,
+                        occupied: true,
+                        reserved: reserved_kind(slot).is_some(),
+                        building_ms,
+                        href,
+                    }
+                }
+                None => {
+                    let rk = reserved_kind(slot);
+                    PlotView {
+                        slot,
+                        kind: rk.map_or("", building_kind_id),
+                        label: rk
+                            .map_or_else(|| "Empty".to_owned(), |k| building_label(k).to_owned()),
+                        level: 0,
+                        occupied: false,
+                        reserved: rk.is_some(),
+                        building_ms,
+                        href: format!("/w/{world_s}/village/{vid_s}/slot/{slot}"),
+                    }
+                }
+            }
+        })
+        .collect();
 
     let active_view = active
         .iter()
@@ -1516,7 +1533,7 @@ pub async fn village(
         shipments,
         oases,
         fields,
-        buildings,
+        plots,
         protection: protection_notice(protected_until, now()),
         artifacts,
     })
@@ -1975,6 +1992,12 @@ pub struct BuildForm {
     back: Option<String>,
 }
 
+/// 110: demolish-action form — the centre slot to tear down.
+#[derive(Deserialize)]
+pub struct DemolishForm {
+    slot: u8,
+}
+
 /// Order an upgrade/construction for the path village, then return to it (Player only, P4). The village rides
 /// in the path (064); the use-case re-validates ownership (P4).
 pub async fn build_submit(
@@ -1985,11 +2008,13 @@ pub async fn build_submit(
     let player = ctx.player;
     let target = match form.table.as_str() {
         "field" => BuildTarget::Field { slot: form.slot },
+        // 110: the client supplies the centre slot (new construction picks a free slot; an upgrade
+        // names the building's own slot). It is **validated server-side** (`order_build` → `can_place`
+        // + the slot's-kind match) — a crafted slot/kind that is occupied, reserved, foreign, or over a
+        // unique's limit is rejected, so the client never gains authority over placement (P4).
         "building" => match parse_building_kind(form.kind.as_deref()) {
-            // Slot is derived server-side from the kind — never trusted from the client (P4), so a
-            // crafted request cannot place a building in (clobber) another building's slot.
             Some(kind) => BuildTarget::Building {
-                slot: building_slot(kind),
+                slot: form.slot,
                 kind,
             },
             None => return redirect_to_village_leaf(ctx.world_id, &village, ""),
@@ -2045,10 +2070,12 @@ fn is_safe_leaf(leaf: &str) -> bool {
 fn target_page_leaf(target: BuildTarget) -> String {
     match target {
         BuildTarget::Field { slot } => format!("/field/{slot}"),
-        BuildTarget::Building { kind, .. } => {
+        // 110: a built functional building returns to its functional page; everything else returns to
+        // its slot page (which renders the upgrade panel + demolition).
+        BuildTarget::Building { slot, kind } => {
             let page = building_page(kind);
             if page.is_empty() {
-                format!("/building/{}", building_kind_id(kind))
+                format!("/slot/{slot}")
             } else {
                 format!("/{page}")
             }
@@ -2075,15 +2102,19 @@ pub async fn building_detail(
         .active_builds(village.id)
         .await
         .unwrap_or_default();
-    let level = building_level(&village, kind);
+    let (slot, level) = building_slot_and_level(&village, kind).unwrap_or((building_slot(kind), 0));
     let upgrade = building_upgrade_row(
         &ctx.rules,
         village.tribe,
         economy.amounts,
         &active,
+        slot,
         kind,
         level,
     );
+    let can_demolish = level > 0
+        && kind.is_demolishable()
+        && building_level(&village, BuildingKind::MainBuilding) >= DEMOLISH_MIN_MAIN_BUILDING;
     page(&DetailTemplate {
         world: world_id_str(ctx.world_id),
         tribe_slug: village.tribe.map_or("", |t| t.slug()),
@@ -2095,7 +2126,159 @@ pub async fn building_detail(
         blurb: building_blurb(kind).to_owned(),
         icon: format!("i-{}", building_kind_id(kind)),
         upgrade,
+        can_demolish,
+        demolish_slot: slot,
     })
+}
+
+/// 110: the kinds a player may choose to build on a free **general** slot, in plan order. Excludes the
+/// Main Building (default-built), the reserved Rally Point / Wall (offered only on their slots), and the
+/// Wonder (built only at a Natar site via the gated path).
+const MENU_KINDS: [BuildingKind; 15] = [
+    BuildingKind::Warehouse,
+    BuildingKind::Granary,
+    BuildingKind::Marketplace,
+    BuildingKind::Embassy,
+    BuildingKind::Cranny,
+    BuildingKind::Outpost,
+    BuildingKind::TownHall,
+    BuildingKind::Residence,
+    BuildingKind::Palace,
+    BuildingKind::Barracks,
+    BuildingKind::Academy,
+    BuildingKind::Smithy,
+    BuildingKind::Stable,
+    BuildingKind::Workshop,
+    BuildingKind::Treasury,
+];
+
+/// 110: the slot detail page — the single entry for a centre slot. A built slot shows the building's
+/// upgrade panel + demolition; an empty slot shows the build menu (the kinds that may go there now).
+pub async fn slot_detail(
+    ctx: GameContext,
+    Path((_world, village, slot_seg)): Path<(String, String, String)>,
+) -> Response {
+    let Ok(slot) = slot_seg.parse::<u8>() else {
+        return redirect_to_village_leaf(ctx.world_id, &village, "");
+    };
+    if slot >= VILLAGE_BUILDING_SLOTS {
+        return redirect_to_village_leaf(ctx.world_id, &village, "");
+    }
+    let (village_d, economy) = match village_view_data(&ctx, selected_village(Some(&village))).await
+    {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let active = ctx
+        .accounts
+        .active_builds(village_d.id)
+        .await
+        .unwrap_or_default();
+
+    match building_at(&village_d.buildings, slot).map(|b| (b.kind, b.level)) {
+        // Built slot → the building's own detail (upgrade + demolition), keyed by this slot.
+        Some((kind, level)) => {
+            let upgrade = building_upgrade_row(
+                &ctx.rules,
+                village_d.tribe,
+                economy.amounts,
+                &active,
+                slot,
+                kind,
+                level,
+            );
+            let can_demolish = level > 0
+                && kind.is_demolishable()
+                && building_level(&village_d, BuildingKind::MainBuilding)
+                    >= DEMOLISH_MIN_MAIN_BUILDING;
+            page(&DetailTemplate {
+                world: world_id_str(ctx.world_id),
+                tribe_slug: village_d.tribe.map_or("", |t| t.slug()),
+                village_id: village_seg(village_d.id),
+                village_label: format!("({}|{})", village_d.coordinate.x, village_d.coordinate.y),
+                ribbon: resource_ribbon(&economy),
+                eyebrow: "Building",
+                title: building_label(kind).to_owned(),
+                blurb: building_blurb(kind).to_owned(),
+                icon: format!("i-{}", building_kind_id(kind)),
+                upgrade,
+                can_demolish,
+                demolish_slot: slot,
+            })
+        }
+        // Empty slot → the build menu. A reserved slot offers only its kind; a general slot offers the
+        // buildable kinds whose placement + prerequisites are satisfied (P4 — the POST re-validates).
+        None => {
+            let candidates: Vec<BuildingKind> = match reserved_kind(slot) {
+                Some(rk) => vec![rk],
+                None => MENU_KINDS.to_vec(),
+            };
+            let options: Vec<BuildRow> = candidates
+                .into_iter()
+                .filter(|&k| {
+                    can_place(&village_d.buildings, slot, k).is_ok()
+                        && prerequisites_met(k, &village_d.buildings, &ctx.rules.build)
+                })
+                .map(|k| {
+                    build_row(
+                        &ctx.rules,
+                        village_d.tribe,
+                        economy.amounts,
+                        &active,
+                        "building",
+                        slot,
+                        building_kind_id(k),
+                        "",
+                        building_page(k),
+                        building_label(k).to_owned(),
+                        0,
+                        BuildTarget::Building { slot, kind: k },
+                        building_effect(&ctx.rules, village_d.tribe, k, 0),
+                    )
+                })
+                .collect();
+            page(&BuildMenuTemplate {
+                world: world_id_str(ctx.world_id),
+                tribe_slug: village_d.tribe.map_or("", |t| t.slug()),
+                village_id: village_seg(village_d.id),
+                village_label: format!("({}|{})", village_d.coordinate.x, village_d.coordinate.y),
+                ribbon: resource_ribbon(&economy),
+                slot,
+                reserved: reserved_kind(slot).is_some(),
+                options,
+            })
+        }
+    }
+}
+
+/// 110: the demolish action — POST a slot; `order_demolish` validates ownership, demolishability, and
+/// the Main Building gate (P4), then enqueues a free order that frees the slot when due.
+pub async fn demolish_submit(
+    ctx: GameContext,
+    Path((_world, village)): Path<(String, String)>,
+    Form(form): Form<DemolishForm>,
+) -> Response {
+    let flash = order_demolish(
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.rules.economy,
+        &ctx.rules.build,
+        &ctx.rules.units,
+        ctx.speed,
+        now(),
+        ctx.player,
+        selected_village(Some(&village)),
+        form.slot,
+    )
+    .await
+    .err()
+    .map(|e| {
+        tracing::warn!(error = %e, "demolish rejected");
+        user_msg(e.to_string())
+    });
+    // The slot is being freed — return to the village plan rather than the (soon-empty) slot page.
+    with_flash(redirect_to_village_leaf(ctx.world_id, &village, ""), flash)
 }
 
 /// 087: the generic per-field page — production effect, the resource ribbon, and the working upgrade panel.
@@ -2155,6 +2338,8 @@ pub async fn field_detail(
         blurb,
         icon,
         upgrade,
+        can_demolish: false, // resource fields are never demolished
+        demolish_slot: 0,
     })
 }
 
@@ -2382,13 +2567,16 @@ pub async fn academy(
         .active_builds(village.id)
         .await
         .unwrap_or_default();
+    let (acad_slot, acad_level) = building_slot_and_level(&village, BuildingKind::Academy)
+        .unwrap_or((building_slot(BuildingKind::Academy), 0));
     let upgrade = building_upgrade_row(
         &ctx.rules,
         village.tribe,
         amounts,
         &build_active,
+        acad_slot,
         BuildingKind::Academy,
-        building_level(&village, BuildingKind::Academy),
+        acad_level,
     );
     page(&AcademyTemplate {
         world: world_id_str(ctx.world_id),
@@ -2529,11 +2717,14 @@ pub async fn smithy(ctx: GameContext, Path((_world, village)): Path<(String, Str
         .active_builds(village.id)
         .await
         .unwrap_or_default();
+    let smithy_slot = building_slot_and_level(&village, BuildingKind::Smithy)
+        .map_or(building_slot(BuildingKind::Smithy), |(s, _)| s);
     let upgrade = building_upgrade_row(
         &ctx.rules,
         village.tribe,
         amounts,
         &build_active,
+        smithy_slot,
         BuildingKind::Smithy,
         smithy_lvl,
     );
@@ -2656,7 +2847,8 @@ async fn troops(ctx: GameContext, village: String, building: BuildingKind) -> Re
     } else {
         building
     };
-    let building_level = building_level(&village, display_building);
+    let (display_slot, building_level) = building_slot_and_level(&village, display_building)
+        .unwrap_or((building_slot(display_building), 0));
     let batch = active.iter().find(|t| t.building == building);
     let active_view = batch.map(|t| QueueView {
         label: format!(
@@ -2722,6 +2914,7 @@ async fn troops(ctx: GameContext, village: String, building: BuildingKind) -> Re
         village.tribe,
         economy.amounts,
         &build_active,
+        display_slot,
         display_building,
         building_level,
     );
@@ -2915,13 +3108,16 @@ pub async fn rally(
         .active_builds(village.id)
         .await
         .unwrap_or_default();
+    let (rally_slot, rally_level) = building_slot_and_level(&village, BuildingKind::RallyPoint)
+        .unwrap_or((building_slot(BuildingKind::RallyPoint), 0));
     let upgrade = building_upgrade_row(
         &ctx.rules,
         village.tribe,
         economy.amounts,
         &build_active,
+        rally_slot,
         BuildingKind::RallyPoint,
-        building_level(&village, BuildingKind::RallyPoint),
+        rally_level,
     );
     // 106: pre-select the order a map link asked for (Send troops → reinforce/raid/attack, Send settlers →
     // settle); default to raid. Unknown values fall back to the default.
@@ -3227,7 +3423,8 @@ pub async fn market(
         tracing::error!(?player, "village has no tribe");
         return server_error();
     };
-    let level = building_level(&village, BuildingKind::Marketplace);
+    let (market_slot, level) = building_slot_and_level(&village, BuildingKind::Marketplace)
+        .unwrap_or((building_slot(BuildingKind::Marketplace), 0));
     let build_active = ctx
         .accounts
         .active_builds(village.id)
@@ -3256,6 +3453,7 @@ pub async fn market(
                 village.tribe,
                 economy.amounts,
                 &build_active,
+                market_slot,
                 BuildingKind::Marketplace,
                 level,
             ),
@@ -3292,6 +3490,7 @@ pub async fn market(
             village.tribe,
             economy.amounts,
             &build_active,
+            market_slot,
             BuildingKind::Marketplace,
             level,
         ),
