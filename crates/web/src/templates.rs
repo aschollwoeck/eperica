@@ -56,6 +56,31 @@ pub struct StyleGuideTemplate;
 mod tests {
     use super::*;
 
+    // 100: the storage bar width is `amount/capacity` as a clamped percentage — what `_ribbon.html` renders
+    // into `style="width: …%"`. (The bug it replaced: an inline `<i>` ignored its width and never filled.)
+    #[test]
+    fn ribbon_pct_drives_the_storage_bar() {
+        let rb = |wood: i64, cap: i64| ResourceRibbon {
+            wood,
+            clay: cap / 2,
+            iron: 0,
+            crop: cap,
+            wood_rate: 0,
+            clay_rate: 0,
+            iron_rate: 0,
+            crop_rate: 0,
+            warehouse: cap,
+            granary: cap,
+        };
+        let r = rb(3000, 12000);
+        assert_eq!(r.wood_pct(), 25); // 3000 / 12000
+        assert_eq!(r.clay_pct(), 50); // half full
+        assert_eq!(r.iron_pct(), 0); // empty
+        assert_eq!(r.crop_pct(), 100); // full
+        assert_eq!(rb(99_999, 12000).wood_pct(), 100); // over cap clamps to 100
+        assert_eq!(rb(500, 0).wood_pct(), 0); // unknown cap → 0 (no divide-by-zero)
+    }
+
     fn village(crop_rate: i64) -> VillageTemplate {
         VillageTemplate {
             world: "00000000-0000-0000-0000-000000000000".to_owned(),
@@ -243,6 +268,30 @@ pub struct ResourceRibbon {
     pub crop_rate: i64,
     pub warehouse: i64,
     pub granary: i64,
+}
+
+impl ResourceRibbon {
+    /// `amt/cap` as a 0–100 percentage for the storage bar — server-rendered so the bar reflects fullness
+    /// without/before JS (the 070 live counter then keeps it moving). `0` when the cap is unknown.
+    fn pct(amt: i64, cap: i64) -> u8 {
+        if cap <= 0 {
+            0
+        } else {
+            (amt.max(0).saturating_mul(100) / cap).clamp(0, 100) as u8
+        }
+    }
+    pub fn wood_pct(&self) -> u8 {
+        Self::pct(self.wood, self.warehouse)
+    }
+    pub fn clay_pct(&self) -> u8 {
+        Self::pct(self.clay, self.warehouse)
+    }
+    pub fn iron_pct(&self) -> u8 {
+        Self::pct(self.iron, self.warehouse)
+    }
+    pub fn crop_pct(&self) -> u8 {
+        Self::pct(self.crop, self.granary)
+    }
 }
 
 /// An in-progress order on a unit page (research or upgrade), for display + countdown.
