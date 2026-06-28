@@ -23,9 +23,9 @@
       <input type="hidden" name="kind" value="{{ upgrade.kind }}">
       {# return to the page this panel is on: a built building's functional page, else the generic detail page #}
       <input type="hidden" name="back" value="{% if upgrade.table == "field" %}/field/{{ upgrade.slot }}{% else if upgrade.page != "" && upgrade.level > 0 %}/{{ upgrade.page }}{% else %}/building/{{ upgrade.kind }}{% endif %}">
-      <button class="btn btn--primary btn--wide" type="submit"{% if !upgrade.can_order %} disabled{% endif %}>{% if upgrade.level == 0 %}Build{% else %}Upgrade to {{ upgrade.level + 1 }}{% endif %}</button>
+      <button class="btn btn--primary btn--wide" type="submit"{% if !upgrade.can_order %} disabled{% endif %}{% if upgrade.cost_gated %} data-cost-wood="{{ upgrade.cost_wood }}" data-cost-clay="{{ upgrade.cost_clay }}" data-cost-iron="{{ upgrade.cost_iron }}" data-cost-crop="{{ upgrade.cost_crop }}"{% endif %}>{% if upgrade.level == 0 %}Build{% else %}Upgrade to {{ upgrade.level + 1 }}{% endif %}</button>
     </form>
-    {% if !upgrade.gate.is_empty() %}<p class="bld-tip">{{ upgrade.gate }}</p>{% endif %}
+    {% if !upgrade.gate.is_empty() %}<p class="bld-tip"{% if upgrade.cost_gated %} data-cost-note{% endif %}>{{ upgrade.gate }}</p>{% endif %}
     {% endif %}
     {% endif %}
   </div>

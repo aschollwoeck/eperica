@@ -13,24 +13,43 @@
   // net rate is negative. The server is never told; a reload re-syncs to the authoritative amounts (P4).
   (function () {
     const gauges = [...document.querySelectorAll(".res-ribbon .gauge")].map((g) => ({
+      res: (g.className.match(/gauge--(\w+)/) || [])[1],
       base: +g.dataset.amt || 0,
       cap: +g.dataset.cap || 0,
       rate: +g.dataset.rate || 0,
       now: g.querySelector(".gauge__now"),
       fill: g.querySelector(".gauge__fill"),
     }));
+    // 109: buttons disabled only because resources are short carry their cost as data-cost-* . As the live
+    // amounts (estimated below) tick up, re-enable them — a rough client-only check; the server re-validates
+    // on submit (P4). Generic: any `button[disabled][data-cost-wood]` (build, upgrade, train, …) works.
+    // Queried each tick (cheap, set is tiny) — the ribbon script runs before later DOM (the buttons) parses,
+    // and an enabled button drops out of the `[disabled]` selector on its own.
+    const afford = (have) => {
+      for (const b of document.querySelectorAll("button[disabled][data-cost-wood]")) {
+        if (have.wood >= +b.dataset.costWood && have.clay >= +b.dataset.costClay
+            && have.iron >= +b.dataset.costIron && have.crop >= +b.dataset.costCrop) {
+          b.disabled = false;
+          const note = b.closest("form")?.nextElementSibling; // the "Need … more" hint, if any
+          if (note && note.matches("[data-cost-note]")) note.hidden = true;
+        }
+      }
+    };
     const t0 = Date.now();
     const render = () => {
       const hours = (Date.now() - t0) / 3600000;
+      const have = {};
       for (const g of gauges) {
         let v = g.base + g.rate * hours;
         if (g.cap > 0 && v > g.cap) v = g.cap;
         if (v < 0) v = 0;
+        have[g.res] = v;
         if (g.now) g.now.textContent = String(Math.floor(v));
         if (g.cap > 0 && g.fill) {
           g.fill.style.width = Math.max(0, Math.min(100, (v / g.cap) * 100)).toFixed(1) + "%";
         }
       }
+      afford(have);
     };
     render();
     setInterval(render, 1000);

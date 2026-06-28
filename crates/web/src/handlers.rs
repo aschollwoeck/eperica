@@ -1010,6 +1010,9 @@ fn build_row(
         cost_crop: c.crop,
         at_max,
         can_order,
+        // 109: disabled purely because resources are short (not maxed, not a busy lane) — the client can
+        // re-enable it as resources tick up.
+        cost_gated: !busy && !at_max && !affordable,
         effect: if at_max { String::new() } else { effect },
         building_ms,
         gate,

@@ -159,6 +159,7 @@ mod tests {
             cost_crop: 50,
             at_max: false,
             can_order: true,
+            cost_gated: false,
             effect: "Units in the roster".into(),
             building_ms: None,
             gate: String::new(),
@@ -235,6 +236,9 @@ pub struct BuildRow {
     pub at_max: bool,
     /// Whether an order can be placed now (affordable, not maxed, none active).
     pub can_order: bool,
+    /// 109: disabled *only* because resources are short (not maxed, not a busy lane) — the button then
+    /// carries its cost as `data-cost-*` so the client re-enables it as resources tick up.
+    pub cost_gated: bool,
     /// What the next level grants (e.g. "Production 30 → 42/h · +2 pop"); empty at max level.
     pub effect: String,
     /// If this slot is under construction, its completion time (Unix-ms) for the plan's on-plot countdown

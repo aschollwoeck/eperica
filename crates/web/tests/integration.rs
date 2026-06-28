@@ -5715,6 +5715,16 @@ async fn village_plan_names_the_build_gate(pool: sqlx::PgPool) {
         !body.contains("short on resources or the queue is busy"),
         "the old generic gate message is gone"
     );
+    // 109: the cost-gated (disabled-only-for-resources) build button carries its cost as data-cost-*, and the
+    // shortfall note is flagged — so the client re-enables the button + hides the note as resources tick up.
+    assert!(
+        body.contains("disabled") && body.contains("data-cost-wood="),
+        "the unaffordable build button carries its cost for the client re-enable"
+    );
+    assert!(
+        body.contains("data-cost-note"),
+        "the shortfall note is flagged for the client to hide"
+    );
 }
 
 /// 050 AC1/AC2: the registry resolves each world's `rule_preset` (049) to a bundle and serves it through
