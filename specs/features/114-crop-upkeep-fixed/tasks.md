@@ -4,5 +4,5 @@
   population + upkeep; drop `net_crop_base`; update economy tests. (AC1)
 - [x] **T3** — application: the starvation cull budget = `crop_net + upkeep` (scaled output − population),
   not the old unscaled base; tests. (AC2)
-- [ ] **T4** — integration + live: high-speed village is crop-positive; under-developed still starves. (AC3)
+- [x] **T4** — integration + live: high-speed village is crop-positive; under-developed still starves. (AC3)
 - [ ] **T5** — reviewer + PR + merge + restart.

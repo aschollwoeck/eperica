@@ -495,6 +495,28 @@ mod tests {
         assert!(at_5x > 0, "but thrives once output scales ({at_5x})"); // 300 − 100 = 200
     }
 
+    // --- 114 AC2: the starvation cull's troop budget (crop_net + upkeep) is the scaled output minus
+    // population, independent of the upkeep being culled — so the cull matches the new net. ---
+    #[test]
+    fn crop_net_plus_upkeep_is_scaled_output_minus_population() {
+        let fields = vec![field(ResourceKind::Crop, 0); 6]; // 60 gross
+        let buildings = vec![BuildingSlot {
+            slot: 0,
+            kind: BuildingKind::MainBuilding,
+            level: 1,
+        }]; // pop 2
+        let upkeep = 30;
+        let r = production_rates(
+            &fields,
+            &buildings,
+            upkeep,
+            &rules(),
+            GameSpeed::new(5.0).unwrap(),
+            OasisBonus::default(),
+        );
+        assert_eq!(r.crop_net + upkeep, 60 * 5 - 2); // 298 = output(300) − population(2)
+    }
+
     #[test]
     fn crop_net_can_be_negative() {
         let fields = vec![field(ResourceKind::Crop, 0)]; // 1 x 10 = 10
