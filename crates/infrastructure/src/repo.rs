@@ -1326,6 +1326,15 @@ impl BuildRepository for PgAccountRepository {
                 .await
                 .map_err(backend)?;
             }
+            // 110: a demolition order completes at target level 0 — free the slot (delete the row).
+            BuildTarget::Building { slot, .. } if due.target_level == 0 => {
+                sqlx::query("DELETE FROM village_buildings WHERE village_id = $1 AND slot = $2")
+                    .bind(vid)
+                    .bind(i16::from(slot))
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+            }
             BuildTarget::Building { slot, kind } => {
                 sqlx::query(
                     "INSERT INTO village_buildings (village_id, slot, building_type, level) \
