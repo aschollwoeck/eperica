@@ -3676,6 +3676,46 @@ async fn settling_culture_panel_switcher_and_capital_flow(pool: sqlx::PgPool) {
         map_html.contains("(capital)"),
         "the map distinguishes the capital"
     );
+
+    // 107: the map is scoped to the village in the path. The FOUNDED (non-capital) village's map recentres
+    // on *its own* coordinate (the settle target), not the capital — proving the map acts from the selected
+    // village, not always the capital.
+    let founded_map = c
+        .get(format!("{base}/w/{home}/village/{founded_id}/map"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        founded_map.contains(&format!(
+            "Recentre on this village ({} | {})",
+            target.x, target.y
+        )),
+        "the founded village's map recentres on the founded village"
+    );
+    assert!(
+        !founded_map.contains(&format!("Recentre on this village ({vx} | {vy})")),
+        "the founded village's map does NOT recentre on the capital"
+    );
+    assert!(
+        founded_map.contains(&format!("/village/{founded_id}/map")),
+        "the map's own links carry the selected (founded) village"
+    );
+    // The capital's own map recentres on the capital — each village's map is scoped to that village.
+    let capital_map = c
+        .get(format!("{base}/w/{home}/village/{vid}/map"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        capital_map.contains(&format!("Recentre on this village ({vx} | {vy})")),
+        "the capital's map recentres on the capital"
+    );
 }
 
 /// 014 AC4/AC10/AC11: sending administrators with a winning attack against a low-loyalty enemy village
