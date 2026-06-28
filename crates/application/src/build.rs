@@ -326,6 +326,7 @@ mod tests {
             .collect();
         let buildings = if with_main_building {
             vec![BuildingSlot {
+                slot: 0,
                 kind: BuildingKind::MainBuilding,
                 level: 1,
             }]
@@ -754,6 +755,7 @@ mod tests {
         // 013 AC3: a village holding a Residence cannot also build a Palace (and vice versa).
         let mut village = make_village(0, true);
         village.buildings.push(BuildingSlot {
+            slot: 0,
             kind: BuildingKind::Residence,
             level: 1,
         });

@@ -135,13 +135,13 @@ impl PgAccountRepository {
                         .await
                         .map_err(backend)?;
                     }
-                    for (slot, b) in village.buildings.iter().enumerate() {
+                    for b in &village.buildings {
                         sqlx::query(
                             "INSERT INTO village_buildings (village_id, slot, building_type, level) \
                              VALUES ($1, $2, $3, $4)",
                         )
                         .bind(village_uuid)
-                        .bind(slot as i16)
+                        .bind(i16::from(b.slot)) // 110: the building carries its centre slot
                         .bind(building_str(b.kind))
                         .bind(i16::from(b.level))
                         .execute(&mut *sp)
@@ -684,7 +684,7 @@ impl AccountRepository for PgAccountRepository {
             }
 
             let building_rows = sqlx::query(
-                "SELECT building_type, level FROM village_buildings WHERE village_id = $1 ORDER BY slot",
+                "SELECT slot, building_type, level FROM village_buildings WHERE village_id = $1 ORDER BY slot",
             )
             .bind(vid)
             .fetch_all(&self.pool)
@@ -695,7 +695,9 @@ impl AccountRepository for PgAccountRepository {
                 let kind =
                     parse_building(&br.try_get::<String, _>("building_type").map_err(backend)?)?;
                 let level: i16 = br.try_get("level").map_err(backend)?;
+                let slot: i16 = br.try_get("slot").map_err(backend)?;
                 buildings.push(BuildingSlot {
+                    slot: u8::try_from(slot).unwrap_or(0),
                     kind,
                     level: u8::try_from(level).unwrap_or(0),
                 });
@@ -760,7 +762,7 @@ impl AccountRepository for PgAccountRepository {
         }
 
         let building_rows = sqlx::query(
-            "SELECT building_type, level FROM village_buildings WHERE village_id = $1 ORDER BY slot",
+            "SELECT slot, building_type, level FROM village_buildings WHERE village_id = $1 ORDER BY slot",
         )
         .bind(vid)
         .fetch_all(&self.pool)
@@ -770,7 +772,9 @@ impl AccountRepository for PgAccountRepository {
         for br in &building_rows {
             let kind = parse_building(&br.try_get::<String, _>("building_type").map_err(backend)?)?;
             let level: i16 = br.try_get("level").map_err(backend)?;
+            let slot: i16 = br.try_get("slot").map_err(backend)?;
             buildings.push(BuildingSlot {
+                slot: u8::try_from(slot).unwrap_or(0),
                 kind,
                 level: u8::try_from(level).unwrap_or(0),
             });
@@ -6154,17 +6158,20 @@ async fn credit_reward(
     };
     let cap_id: Uuid = row.try_get("id").map_err(backend)?;
     if has_resources {
-        let brows =
-            sqlx::query("SELECT building_type, level FROM village_buildings WHERE village_id = $1")
-                .bind(cap_id)
-                .fetch_all(&mut **tx)
-                .await
-                .map_err(backend)?;
+        let brows = sqlx::query(
+            "SELECT slot, building_type, level FROM village_buildings WHERE village_id = $1",
+        )
+        .bind(cap_id)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(backend)?;
         let mut buildings = Vec::with_capacity(brows.len());
         for br in &brows {
             let kind = parse_building(&br.try_get::<String, _>("building_type").map_err(backend)?)?;
             let level: i16 = br.try_get("level").map_err(backend)?;
+            let slot: i16 = br.try_get("slot").map_err(backend)?;
             buildings.push(BuildingSlot {
+                slot: u8::try_from(slot).unwrap_or(0),
                 kind,
                 level: u8::try_from(level).unwrap_or(0),
             });

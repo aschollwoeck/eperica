@@ -106,14 +106,17 @@ fn bench_economy(c: &mut Criterion) {
         .collect();
     let buildings = vec![
         BuildingSlot {
+            slot: 0,
             kind: BuildingKind::MainBuilding,
             level: 12,
         },
         BuildingSlot {
+            slot: 0,
             kind: BuildingKind::Warehouse,
             level: 14,
         },
         BuildingSlot {
+            slot: 0,
             kind: BuildingKind::Granary,
             level: 14,
         },

@@ -421,6 +421,7 @@ mod tests {
             tribe: Some(Tribe::Gauls),
             fields: FieldDistribution::new(4, 4, 4, 6).unwrap().fields(),
             buildings: vec![BuildingSlot {
+                slot: 0,
                 kind: BuildingKind::RallyPoint,
                 level: 1,
             }],

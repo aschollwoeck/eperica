@@ -26,10 +26,12 @@ fn template() -> StartingVillage {
         fields,
         vec![
             BuildingSlot {
+                slot: 0,
                 kind: BuildingKind::MainBuilding,
                 level: 1,
             },
             BuildingSlot {
+                slot: 0,
                 kind: BuildingKind::RallyPoint,
                 level: 1,
             },

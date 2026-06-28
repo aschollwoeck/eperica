@@ -211,25 +211,21 @@ pub fn net_crop_base(
     crop - population(fields, buildings, rules)
 }
 
-/// Storage capacities, derived from the highest Warehouse/Granary levels present (level 0 = base).
+/// Storage capacities (110): the **sum** over every instance of the kind, so multiple Warehouses /
+/// Granaries stack. With none built, the level-0 base capacity applies. A single instance equals the
+/// pre-110 value (`level_value` at that level), so existing villages are unchanged.
 pub fn capacities(buildings: &[BuildingSlot], rules: &EconomyRules) -> Capacities {
-    let level_of = |kind: BuildingKind| -> u8 {
-        buildings
-            .iter()
-            .filter(|b| b.kind == kind)
-            .map(|b| b.level)
-            .max()
-            .unwrap_or(0)
+    let sum_for = |kind: BuildingKind, curve: &[i64]| -> i64 {
+        let mut levels = buildings.iter().filter(|b| b.kind == kind).peekable();
+        if levels.peek().is_none() {
+            level_value(curve, 0)
+        } else {
+            levels.map(|b| level_value(curve, b.level)).sum()
+        }
     };
     Capacities {
-        warehouse: level_value(
-            &rules.warehouse_capacity_per_level,
-            level_of(BuildingKind::Warehouse),
-        ),
-        granary: level_value(
-            &rules.granary_capacity_per_level,
-            level_of(BuildingKind::Granary),
-        ),
+        warehouse: sum_for(BuildingKind::Warehouse, &rules.warehouse_capacity_per_level),
+        granary: sum_for(BuildingKind::Granary, &rules.granary_capacity_per_level),
     }
 }
 
@@ -337,6 +333,27 @@ mod tests {
         assert_eq!(accrue(790, 30, 3600, 800), 800); // 820 -> capped
     }
 
+    // --- 110: storage capacity sums over multiple Warehouses/Granaries (single instance unchanged) ---
+    #[test]
+    fn capacity_sums_over_multiple_storage_buildings() {
+        let r = rules();
+        let bld = |slot, kind, level| BuildingSlot { slot, kind, level };
+        // no Warehouse -> the level-0 base capacity.
+        assert_eq!(capacities(&[], &r).warehouse, r.warehouse_capacity(0));
+        // one Warehouse -> exactly its level value (== pre-110 behaviour).
+        let one = vec![bld(2, BuildingKind::Warehouse, 2)];
+        assert_eq!(capacities(&one, &r).warehouse, r.warehouse_capacity(2));
+        // two Warehouses on different slots -> the sum of each level's capacity.
+        let two = vec![
+            bld(2, BuildingKind::Warehouse, 2),
+            bld(3, BuildingKind::Warehouse, 1),
+        ];
+        assert_eq!(
+            capacities(&two, &r).warehouse,
+            r.warehouse_capacity(2) + r.warehouse_capacity(1)
+        );
+    }
+
     // --- AC4: negative crop drains, floored at zero ---
     #[test]
     fn negative_rate_drains_then_floors() {
@@ -374,10 +391,12 @@ mod tests {
         let fields = vec![field(ResourceKind::Crop, 0); 6]; // 6 x 10 = 60
         let buildings = vec![
             BuildingSlot {
+                slot: 0,
                 kind: BuildingKind::MainBuilding,
                 level: 1,
             }, // pop 2
             BuildingSlot {
+                slot: 0,
                 kind: BuildingKind::RallyPoint,
                 level: 1,
             }, // pop 1
@@ -398,6 +417,7 @@ mod tests {
         // Both crop production and upkeep scale with speed, so net crop scales linearly (P7).
         let fields = vec![field(ResourceKind::Crop, 0); 6]; // 60 base
         let buildings = vec![BuildingSlot {
+            slot: 0,
             kind: BuildingKind::MainBuilding,
             level: 1,
         }]; // pop 2
@@ -458,6 +478,7 @@ mod tests {
     fn crop_net_can_be_negative() {
         let fields = vec![field(ResourceKind::Crop, 0)]; // 1 x 10 = 10
         let buildings = vec![BuildingSlot {
+            slot: 0,
             kind: BuildingKind::MainBuilding,
             level: 2,
         }]; // pop 3
@@ -541,6 +562,7 @@ mod tests {
         // crop by the full bonus on gross (not a percentage of the already-reduced net).
         let crop = vec![field(ResourceKind::Crop, 0); 6]; // 60 gross
         let buildings = vec![BuildingSlot {
+            slot: 0,
             kind: BuildingKind::MainBuilding,
             level: 1,
         }]; // pop 2

@@ -139,7 +139,8 @@ where
         speed,
     );
     let is_teuton = attacker_tribe == Some(Tribe::Teutons);
-    let cap = combat_rules.cranny_capacity(building_level(target, BuildingKind::Cranny));
+    // 110: Cranny protection stacks over every Cranny in the village.
+    let cap = combat_rules.cranny_capacity_total(&target.buildings);
     let protected = cranny_protection(cap, is_teuton, combat_rules.cranny_bypass_teuton);
     let protection = ResourceAmounts {
         wood: protected,
@@ -944,6 +945,7 @@ mod tests {
             tribe: Some(Tribe::Gauls),
             fields: FieldDistribution::new(4, 4, 4, 6).unwrap().fields(),
             buildings: vec![BuildingSlot {
+                slot: 0,
                 kind: BuildingKind::RallyPoint,
                 level: 1,
             }],
@@ -1895,6 +1897,7 @@ mod tests {
         // carrying 20 catapults (power 200 ⇒ razes 2 levels at durability 100).
         let mut target = village(2, 2, Coordinate::new(3, 4));
         target.buildings.push(BuildingSlot {
+            slot: 0,
             kind: BuildingKind::Warehouse,
             level: 3,
         });
@@ -1967,14 +1970,17 @@ mod tests {
         assert!(pick_razed_target(&v, None, 1, 1, 500.0, &rules).is_none());
         // Add eligible buildings; an unset target picks a random eligible one, never Wall/Rally Point.
         v.buildings.push(BuildingSlot {
+            slot: 0,
             kind: BuildingKind::Warehouse,
             level: 3,
         });
         v.buildings.push(BuildingSlot {
+            slot: 0,
             kind: BuildingKind::Smithy,
             level: 2,
         });
         v.buildings.push(BuildingSlot {
+            slot: 0,
             kind: BuildingKind::Wall,
             level: 5,
         });

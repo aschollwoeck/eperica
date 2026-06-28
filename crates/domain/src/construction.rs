@@ -1,6 +1,6 @@
 //! Construction — build targets, costs, times, and prerequisites (pure rules over injected balance).
 
-use crate::building::BuildingKind;
+use crate::building::{BuildingKind, VILLAGE_BUILDING_SLOTS, reserved_kind};
 use crate::economy::ResourceAmounts;
 use crate::village::{BuildingSlot, Tribe};
 use crate::world::GameSpeed;
@@ -175,6 +175,68 @@ pub fn prerequisites_met(
     building_levels_met(rules.prerequisites(kind), buildings)
 }
 
+/// The building occupying centre `slot`, if any (110).
+pub fn building_at(buildings: &[BuildingSlot], slot: u8) -> Option<&BuildingSlot> {
+    buildings.iter().find(|b| b.slot == slot)
+}
+
+/// The empty centre slots — candidate spots for new construction (110).
+pub fn free_slots(buildings: &[BuildingSlot]) -> Vec<u8> {
+    (0..VILLAGE_BUILDING_SLOTS)
+        .filter(|s| building_at(buildings, *s).is_none())
+        .collect()
+}
+
+/// Why a kind may not be newly placed on a centre slot (110, AC2/AC3/AC4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlacementError {
+    /// The slot number is outside `0..VILLAGE_BUILDING_SLOTS`.
+    OutOfRange,
+    /// The slot already holds a building (build on an empty slot; upgrade the one in place).
+    Occupied,
+    /// The slot is reserved for a different kind (only the Rally Point may sit on its slot, etc.).
+    SlotReserved,
+    /// This kind has its own reserved slot and may not be placed elsewhere (Main Building/Rally/Wall).
+    WrongSlot,
+    /// The village already holds the maximum number of this (unique) kind.
+    MaxInstances,
+}
+
+/// Whether `kind` may be **newly built** on empty centre `slot`, given the village's current
+/// `buildings` (110, AC2/AC3/AC4). Pure slot/multiplicity validation; cross-kind exclusivity
+/// (Residence ⟷ Palace), prerequisites, and affordability are the caller's job. Upgrades never go
+/// through this — they act on the kind already in the slot.
+pub fn can_place(
+    buildings: &[BuildingSlot],
+    slot: u8,
+    kind: BuildingKind,
+) -> Result<(), PlacementError> {
+    if slot >= VILLAGE_BUILDING_SLOTS {
+        return Err(PlacementError::OutOfRange);
+    }
+    if building_at(buildings, slot).is_some() {
+        return Err(PlacementError::Occupied);
+    }
+    // A reserved slot accepts only its kind; a kind with a reserved slot goes only there.
+    if let Some(rk) = reserved_kind(slot)
+        && rk != kind
+    {
+        return Err(PlacementError::SlotReserved);
+    }
+    if let Some(rs) = kind.reserved_slot()
+        && rs != slot
+    {
+        return Err(PlacementError::WrongSlot);
+    }
+    if let Some(max) = kind.max_instances() {
+        let count = buildings.iter().filter(|b| b.kind == kind).count() as u32;
+        if count >= max {
+            return Err(PlacementError::MaxInstances);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,12 +332,85 @@ mod tests {
         let none: Vec<BuildingSlot> = vec![];
         assert!(!prerequisites_met(BuildingKind::Warehouse, &none, &r));
         let with_mb = vec![BuildingSlot {
+            slot: 0,
             kind: BuildingKind::MainBuilding,
             level: 1,
         }];
         assert!(prerequisites_met(BuildingKind::Warehouse, &with_mb, &r));
         // A field has no prerequisites.
         assert!(prerequisites_met(BuildingKind::RallyPoint, &none, &r));
+    }
+
+    // --- 110: slot placement ---
+
+    fn bld(slot: u8, kind: BuildingKind, level: u8) -> BuildingSlot {
+        BuildingSlot { slot, kind, level }
+    }
+
+    #[test]
+    fn placement_accepts_a_free_slot_and_rejects_occupied_or_out_of_range() {
+        let v = vec![
+            bld(0, BuildingKind::MainBuilding, 1),
+            bld(1, BuildingKind::RallyPoint, 1),
+        ];
+        assert_eq!(can_place(&v, 2, BuildingKind::Marketplace), Ok(()));
+        assert_eq!(
+            can_place(&v, 0, BuildingKind::Marketplace),
+            Err(PlacementError::Occupied)
+        );
+        assert_eq!(
+            can_place(&v, VILLAGE_BUILDING_SLOTS, BuildingKind::Marketplace),
+            Err(PlacementError::OutOfRange)
+        );
+    }
+
+    #[test]
+    fn reserved_slots_bind_their_kind_both_ways() {
+        use crate::building::WALL_SLOT;
+        let v = vec![bld(0, BuildingKind::MainBuilding, 1)];
+        // the Rally Point slot (1) accepts only the Rally Point...
+        assert_eq!(
+            can_place(&v, 1, BuildingKind::Marketplace),
+            Err(PlacementError::SlotReserved)
+        );
+        assert_eq!(can_place(&v, 1, BuildingKind::RallyPoint), Ok(()));
+        // ...and the Wall builds only on its reserved slot, never a general one.
+        assert_eq!(
+            can_place(&v, 2, BuildingKind::Wall),
+            Err(PlacementError::WrongSlot)
+        );
+        assert_eq!(can_place(&v, WALL_SLOT, BuildingKind::Wall), Ok(()));
+    }
+
+    #[test]
+    fn multi_instance_kinds_stack_unique_kinds_do_not() {
+        let mut v = vec![
+            bld(0, BuildingKind::MainBuilding, 1),
+            bld(2, BuildingKind::Marketplace, 1),
+        ];
+        // a second Marketplace (unique) is rejected.
+        assert_eq!(
+            can_place(&v, 3, BuildingKind::Marketplace),
+            Err(PlacementError::MaxInstances)
+        );
+        // multiple Warehouses are allowed on free slots.
+        v.push(bld(4, BuildingKind::Warehouse, 1));
+        assert_eq!(can_place(&v, 5, BuildingKind::Warehouse), Ok(()));
+        v.push(bld(5, BuildingKind::Warehouse, 1));
+        assert_eq!(can_place(&v, 6, BuildingKind::Warehouse), Ok(()));
+    }
+
+    #[test]
+    fn free_slots_lists_every_empty_centre_slot() {
+        let v = vec![
+            bld(0, BuildingKind::MainBuilding, 1),
+            bld(1, BuildingKind::RallyPoint, 1),
+            bld(5, BuildingKind::Warehouse, 1),
+        ];
+        let free = free_slots(&v);
+        assert_eq!(free.len() as u8, VILLAGE_BUILDING_SLOTS - 3);
+        assert!(!free.contains(&0) && !free.contains(&1) && !free.contains(&5));
+        assert!(free.contains(&2) && free.contains(&(VILLAGE_BUILDING_SLOTS - 1)));
     }
 
     #[test]
