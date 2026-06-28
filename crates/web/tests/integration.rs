@@ -605,6 +605,121 @@ async fn academy_and_smithy_flow(pool: sqlx::PgPool) {
     assert_eq!(anon.status().as_u16(), 303);
 }
 
+/// 109: a research (Academy) / upgrade (Smithy) that is available but *only* unaffordable renders a DISABLED
+/// button carrying its cost (`data-cost-*`) plus a flagged shortfall note — the same contract the build button
+/// uses — so the resource ribbon's tick re-enables it client-side as resources accrue. (The JS itself is
+/// verified live; this pins the server-rendered markup the sweep keys off.)
+#[sqlx::test(migrations = "../../migrations")]
+async fn cost_gated_research_and_upgrade_carry_their_cost(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let user = unique("cgate");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let vid = village_uuid(&pool, &user).await;
+    let village_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    // Seed an Academy + Smithy so the roster offers research/forge actions, then drain the village so those
+    // actions are unaffordable — and unaffordable is the *only* reason they can't be ordered.
+    for (slot, kind, level) in [(5_i16, "academy", 1_i16), (6, "smithy", 3)] {
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(village_id)
+        .bind(slot)
+        .bind(kind)
+        .bind(level)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "UPDATE village_resources SET wood = 0, clay = 0, iron = 0, crop = 0, updated_at = now() \
+         WHERE village_id = $1",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Academy: a researchable-but-unaffordable unit → a disabled Research button with its cost + flagged note.
+    let acad = c
+        .get(format!("{base}/w/{home}/village/{vid}/academy"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    // Scope to the roster's Research FORM — the building's own upgrade aside (_upgrade.html) also cost-gates
+    // when drained, so a page-wide check wouldn't prove the roster row itself is gated. The aside posts to
+    // …/build; only a roster row posts to …/academy/research.
+    let research_form = acad
+        .split("/academy/research")
+        .nth(1)
+        .and_then(|s| s.split("</form>").next())
+        .unwrap_or_default();
+    assert!(
+        research_form.contains("disabled") && research_form.contains("data-cost-wood="),
+        "the roster Research button carries its cost (disabled) for the client re-enable"
+    );
+    // the roster shortfall note is a `unit__gate` span (the aside's is a `bld-tip` p) — roster-specific.
+    assert!(
+        acad.contains("unit__gate\" data-cost-note"),
+        "the research shortfall note is flagged"
+    );
+    // Negative (safety): a unit denied for a NON-resource reason (a higher-tier Gaul unit needs a higher
+    // Academy) renders a plain gate span — no cost attrs — so the client can't re-enable it.
+    assert!(
+        acad.contains("unit__gate\">requires"),
+        "a requirements-gated unit stays a plain gate span (no data-cost)"
+    );
+
+    // Smithy: same for a forgeable-but-unaffordable unit (tier-1 is researched by default).
+    let smith = c
+        .get(format!("{base}/w/{home}/village/{vid}/smithy"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let forge_form = smith
+        .split("/smithy/upgrade")
+        .nth(1)
+        .and_then(|s| s.split("</form>").next())
+        .unwrap_or_default();
+    assert!(
+        forge_form.contains("disabled") && forge_form.contains("data-cost-wood="),
+        "the roster Forge button carries its cost (disabled) for the client re-enable"
+    );
+    assert!(
+        smith.contains("unit__gate\" data-cost-note"),
+        "the forge shortfall note is flagged"
+    );
+    // 109: the forge cost is shown even when unaffordable (the roster uses a `<div class="unit__cost">`; the
+    // aside's is a `<span>`) — previously the Smithy hid the cost unless you could already afford it.
+    assert!(
+        smith.contains("<div class=\"unit__cost\""),
+        "the Smithy shows the forge cost even when it can't be afforded yet"
+    );
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn training_flow_and_garrison(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
@@ -2020,6 +2135,35 @@ async fn build_order_flow(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert_eq!(res.status().as_u16(), 303);
+
+    // 109 (safety): with that build in progress the (single, Gaul) build lane is BUSY. Even with resources
+    // topped up, another slot's button is disabled for being busy — NOT for resources — so it must NOT carry
+    // `data-cost-*` (the client must never re-enable a non-resource-gated button).
+    sqlx::query(
+        "UPDATE village_resources SET wood = 999999, clay = 999999, iron = 999999, crop = 999999, \
+         updated_at = now() WHERE village_id IN (SELECT id FROM villages WHERE owner_id = \
+         (SELECT id FROM users WHERE username = $1))",
+    )
+    .bind(&user)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let busy = c
+        .get(format!("{base}/w/{home}/village/{vid}/field/1"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        busy.contains("disabled"),
+        "a busy-lane build button is disabled"
+    );
+    assert!(
+        !busy.contains("data-cost-wood="),
+        "a button disabled for a busy lane (not resources) carries no cost attrs"
+    );
 
     // AC8: the active build is shown with a countdown deadline.
     let after = c
@@ -5714,6 +5858,16 @@ async fn village_plan_names_the_build_gate(pool: sqlx::PgPool) {
     assert!(
         !body.contains("short on resources or the queue is busy"),
         "the old generic gate message is gone"
+    );
+    // 109: the cost-gated (disabled-only-for-resources) build button carries its cost as data-cost-*, and the
+    // shortfall note is flagged — so the client re-enables the button + hides the note as resources tick up.
+    assert!(
+        body.contains("disabled") && body.contains("data-cost-wood="),
+        "the unaffordable build button carries its cost for the client re-enable"
+    );
+    assert!(
+        body.contains("data-cost-note"),
+        "the shortfall note is flagged for the client to hide"
     );
 }
 

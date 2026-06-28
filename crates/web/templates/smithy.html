@@ -47,7 +47,9 @@
             <div class="unit__eff">{% if u.effect.is_empty() %}<span class="muted">Forged to its limit.</span>{% else %}{{ u.effect }}{% endif %}</div>
           </div>
           <div class="unit__price">
-            {% if u.can_order %}
+            {# 109: always show the next-forge cost while there's a level left (not just when affordable),
+               mirroring the Academy's "show until researched" — `effect` is empty only at max level. #}
+            {% if !u.effect.is_empty() %}
             <div class="unit__cost"><b class="w">{{ u.cost_wood }}</b><b class="c">{{ u.cost_clay }}</b><b class="i">{{ u.cost_iron }}</b><b class="r">{{ u.cost_crop }}</b></div>
             <div class="unit__time">forge {{ u.time }}</div>
             {% endif %}
@@ -61,6 +63,14 @@
                 <input type="hidden" name="unit" value="{{ u.id }}">
                 <button class="btn btn--primary" type="submit">Forge +{{ u.target }}</button>
               </form>
+            {% else if u.cost_gated %}
+              {# 109: only resources are short — render the disabled button with its cost so the client
+                 re-enables it as resources tick up (the gate note then hides). #}
+              <form method="post" action="/w/{{ world }}/village/{{ village_id }}/smithy/upgrade">
+                <input type="hidden" name="unit" value="{{ u.id }}">
+                <button class="btn btn--primary" type="submit" disabled data-cost-wood="{{ u.cost_wood }}" data-cost-clay="{{ u.cost_clay }}" data-cost-iron="{{ u.cost_iron }}" data-cost-crop="{{ u.cost_crop }}">Forge +{{ u.target }}</button>
+              </form>
+              <span class="unit__gate" data-cost-note>{{ u.gate }}</span>
             {% else %}
               <span class="unit__gate">{{ u.gate }}</span>
             {% endif %}

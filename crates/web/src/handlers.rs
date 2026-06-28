@@ -1010,6 +1010,9 @@ fn build_row(
         cost_crop: c.crop,
         at_max,
         can_order,
+        // 109: disabled purely because resources are short (not maxed, not a busy lane) — the client can
+        // re-enable it as resources tick up.
+        cost_gated: !busy && !at_max && !affordable,
         effect: if at_max { String::new() } else { effect },
         building_ms,
         gate,
@@ -2313,6 +2316,8 @@ pub async fn academy(
             });
             let mut gate = String::new();
             let mut can_order = false;
+            // 109: disabled *only* because resources are short — the client re-enables it as resources tick.
+            let mut cost_gated = false;
             if !is_researched {
                 match can_research(spec, false, &village.buildings) {
                     Ok(()) => {
@@ -2320,6 +2325,7 @@ pub async fn academy(
                             gate = "research in progress".to_owned();
                         } else if !cost.is_some_and(|c| can_afford(amounts, c)) {
                             gate = "insufficient resources".to_owned();
+                            cost_gated = true;
                         } else {
                             can_order = true;
                         }
@@ -2360,6 +2366,7 @@ pub async fn academy(
                 upkeep: spec.crop_upkeep,
                 researched: is_researched,
                 can_order,
+                cost_gated,
                 gate,
                 cost_wood: c.wood,
                 cost_clay: c.clay,
@@ -2453,12 +2460,15 @@ pub async fn smithy(ctx: GameContext, Path((_world, village)): Path<(String, Str
                 .map_or(0, |t| scaled_time_secs(t, ctx.speed));
             let mut gate = String::new();
             let mut can_order = false;
+            // 109: disabled *only* because resources are short — the client re-enables it as resources tick.
+            let mut cost_gated = false;
             match can_upgrade(spec, true, level, &village.buildings, &unit_rules.smithy) {
                 Ok(()) => {
                     if upgrade_active.is_some() {
                         gate = "upgrade in progress".to_owned();
                     } else if !cost.is_some_and(|c| can_afford(amounts, c)) {
                         gate = "insufficient resources".to_owned();
+                        cost_gated = true;
                     } else {
                         can_order = true;
                     }
@@ -2502,6 +2512,7 @@ pub async fn smithy(ctx: GameContext, Path((_world, village)): Path<(String, Str
                 forging: upgrade_active.is_some_and(|o| o.unit == spec.id),
                 pips: (0..smithy_lvl).map(|i| i < level).collect(),
                 can_order,
+                cost_gated,
                 gate,
                 cost_wood: c.wood,
                 cost_clay: c.clay,

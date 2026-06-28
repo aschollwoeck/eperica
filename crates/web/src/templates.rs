@@ -159,6 +159,7 @@ mod tests {
             cost_crop: 50,
             at_max: false,
             can_order: true,
+            cost_gated: false,
             effect: "Units in the roster".into(),
             building_ms: None,
             gate: String::new(),
@@ -235,6 +236,9 @@ pub struct BuildRow {
     pub at_max: bool,
     /// Whether an order can be placed now (affordable, not maxed, none active).
     pub can_order: bool,
+    /// 109: disabled *only* because resources are short (not maxed, not a busy lane) — the button then
+    /// carries its cost as `data-cost-*` so the client re-enables it as resources tick up.
+    pub cost_gated: bool,
     /// What the next level grants (e.g. "Production 30 → 42/h · +2 pop"); empty at max level.
     pub effect: String,
     /// If this slot is under construction, its completion time (Unix-ms) for the plan's on-plot countdown
@@ -322,6 +326,9 @@ pub struct AcademyRow {
     pub researched: bool,
     /// The Research action is offered now (requirements met, affordable, queue free).
     pub can_order: bool,
+    /// 109: requirements met & queue free but unaffordable — the button renders disabled with `data-cost-*`
+    /// so the client re-enables it as resources tick up.
+    pub cost_gated: bool,
     /// Why the action is unavailable (requirements text or "insufficient resources"); empty if
     /// researched or orderable.
     pub gate: String,
@@ -376,6 +383,9 @@ pub struct SmithyRow {
     pub pips: Vec<bool>,
     /// The Upgrade action is offered now.
     pub can_order: bool,
+    /// 109: forgeable & queue free but unaffordable — the button renders disabled with `data-cost-*` so the
+    /// client re-enables it as resources tick up.
+    pub cost_gated: bool,
     /// Why the action is unavailable (cap reached, smithy level, insufficient resources); empty
     /// when orderable.
     pub gate: String,

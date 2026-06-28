@@ -50,6 +50,14 @@
                 <input type="hidden" name="unit" value="{{ u.id }}">
                 <button class="btn btn--primary" type="submit">Research</button>
               </form>
+            {% else if u.cost_gated %}
+              {# 109: only resources are short — render the disabled button with its cost so the client
+                 re-enables it as resources tick up (the gate note then hides). #}
+              <form method="post" action="/w/{{ world }}/village/{{ village_id }}/academy/research">
+                <input type="hidden" name="unit" value="{{ u.id }}">
+                <button class="btn btn--primary" type="submit" disabled data-cost-wood="{{ u.cost_wood }}" data-cost-clay="{{ u.cost_clay }}" data-cost-iron="{{ u.cost_iron }}" data-cost-crop="{{ u.cost_crop }}">Research</button>
+              </form>
+              <span class="unit__gate" data-cost-note>{{ u.gate }}</span>
             {% else %}
               <span class="unit__gate">{{ u.gate }}</span>
             {% endif %}
