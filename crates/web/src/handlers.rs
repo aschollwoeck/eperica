@@ -1576,6 +1576,9 @@ const MAP_HALF_Y_MAX: i32 = 14;
 pub struct MapQuery {
     x: Option<i32>,
     y: Option<i32>,
+    /// 106: a Rally Point order to pre-select (from a map "Send troops"/"Send settlers" link). Ignored by
+    /// the map/market handlers; validated by the Rally Point.
+    mode: Option<String>,
 }
 
 /// 093: the draggable client's tile request — a rectangular region (`hx`×`hy` half-extents) around (`cx`,`cy`).
@@ -1783,11 +1786,19 @@ fn map_cells(
                             coord.x,
                             coord.y
                         );
-                        // 105: a send shortcut to the village's Rally Point — reinforce your own/an ally,
-                        // or attack/raid an enemy (the Rally Point picks the mode). Shown for every village,
-                        // including your own (reinforcing or moving troops between your villages).
+                        // 105/106: a send shortcut to the village's Rally Point, with the order pre-selected —
+                        // your own village defaults to Reinforce (move troops in), another's to Raid.
+                        let mode = if marker.owner_name == username {
+                            "reinforce"
+                        } else {
+                            "raid"
+                        };
                         href = acting_vid.map(|vid| {
-                            village_path(world, vid, &format!("/rally?x={}&y={}", coord.x, coord.y))
+                            village_path(
+                                world,
+                                vid,
+                                &format!("/rally?x={}&y={}&mode={mode}", coord.x, coord.y),
+                            )
                         });
                     } else if matches!(cell.tile, TileKind::Oasis(_)) {
                         // An oasis links to the Rally Point pre-filled with the tile (attack, or
@@ -1803,16 +1814,32 @@ fn map_cells(
                             label =
                                 format!("{base_label} — wild animals ({}|{})", coord.x, coord.y);
                         }
+                        // 106: an oasis you hold defaults to Reinforce (garrison it); a wild/other oasis to
+                        // Attack (clear & occupy it).
+                        let mode = if oasis_owners.get(&coord).is_some_and(|o| o == username) {
+                            "reinforce"
+                        } else {
+                            "attack"
+                        };
                         href = acting_vid.map(|vid| {
-                            village_path(world, vid, &format!("/rally?x={}&y={}", coord.x, coord.y))
+                            village_path(
+                                world,
+                                vid,
+                                &format!("/rally?x={}&y={}&mode={mode}", coord.x, coord.y),
+                            )
                         });
                     } else if matches!(cell.tile, TileKind::Valley(_)) {
                         // 104: an empty valley is a free tile you can found a new village on — link to the
                         // Rally Point (pre-filled with the tile) where a Settle order sends settlers.
                         settle = true;
                         label = format!("{base_label} — free valley ({}|{})", coord.x, coord.y);
+                        // 106: pre-select the Settle order so "Send settlers" lands ready to found a village.
                         href = acting_vid.map(|vid| {
-                            village_path(world, vid, &format!("/rally?x={}&y={}", coord.x, coord.y))
+                            village_path(
+                                world,
+                                vid,
+                                &format!("/rally?x={}&y={}&mode=settle", coord.x, coord.y),
+                            )
                         });
                     }
                     // Distance from home (toroidal, rounded) — helps judge travel time at a glance.
@@ -2861,6 +2888,15 @@ pub async fn rally(
         BuildingKind::RallyPoint,
         building_level(&village, BuildingKind::RallyPoint),
     );
+    // 106: pre-select the order a map link asked for (Send troops → reinforce/raid/attack, Send settlers →
+    // settle); default to raid. Unknown values fall back to the default.
+    let mode = match q.mode.as_deref() {
+        Some("attack") => "attack",
+        Some("reinforce") => "reinforce",
+        Some("scout") => "scout",
+        Some("settle") => "settle",
+        _ => "raid",
+    };
     page(&RallyTemplate {
         world: world_id_str(ctx.world_id),
         tribe_slug: village.tribe.map_or("", |t| t.slug()),
@@ -2870,6 +2906,7 @@ pub async fn rally(
         units,
         target_x: q.x,
         target_y: q.y,
+        mode,
         target_is_oasis,
         can_settle,
         settlers_per_village: ctx.rules.culture.settlers_per_village,

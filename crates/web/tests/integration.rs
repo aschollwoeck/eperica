@@ -1632,10 +1632,11 @@ async fn map_tiles_endpoint_serves_a_rectangular_region(pool: sqlx::PgPool) {
     // Rally Point "Send troops" shortcut (reinforce / move troops between your villages).
     let own = village.unwrap();
     assert!(own["cell_class"].as_str().unwrap().contains("--self"));
+    // 106: your own village pre-selects the Reinforce order.
     assert!(
         own["href"]
             .as_str()
-            .is_some_and(|h| h.contains("/rally?x="))
+            .is_some_and(|h| h.contains("/rally?x=") && h.contains("mode=reinforce"))
     );
     if let Some(oc) = rows.iter().flat_map(|r| r.as_array().unwrap()).find(|c| {
         let cl = c["cell_class"].as_str().unwrap();
@@ -1664,10 +1665,11 @@ async fn map_tiles_endpoint_serves_a_rectangular_region(pool: sqlx::PgPool) {
         })
         .expect("an empty valley is in view (the seeded map is valley-dominated)");
     assert_eq!(valley["settle"], serde_json::json!(true));
+    // 106: an empty valley pre-selects the Settle order.
     assert!(
         valley["href"]
             .as_str()
-            .is_some_and(|h| h.contains("/rally?x="))
+            .is_some_and(|h| h.contains("/rally?x=") && h.contains("mode=settle"))
     );
     assert_eq!(village.unwrap()["settle"], serde_json::json!(false));
 
@@ -2276,6 +2278,22 @@ async fn rally_send_station_and_return_flow(pool: sqlx::PgPool) {
     assert!(
         rally.find("Troops to send").unwrap() < rally.find("rally-mode").unwrap(),
         "the troop selection comes before the Order field"
+    );
+    // 106: a map "Send troops" link can pre-select the order via `?mode=…` (default above is raid).
+    let reinforce = cs
+        .get(format!(
+            "{base}/w/{home}/village/{vid}/rally?x=1&y=1&mode=reinforce"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        reinforce.contains("value=\"reinforce\" selected")
+            && !reinforce.contains("value=\"raid\" selected"),
+        "the map link's mode pre-selects the Rally Point order"
     );
 
     // AC1/AC7: send 4 Phalanx to the target's tile; PRG back to the village.
@@ -3264,8 +3282,11 @@ async fn oasis_attack_occupy_and_bonus_flow(pool: sqlx::PgPool) {
         .await
         .unwrap();
     assert!(
-        map_html.contains(&format!("/rally?x={}&amp;y={}", oasis.x, oasis.y)),
-        "the oasis links to the Rally Point pre-filled with its tile"
+        map_html.contains(&format!(
+            "/rally?x={}&amp;y={}&amp;mode=attack",
+            oasis.x, oasis.y
+        )),
+        "the wild oasis links to the Rally Point pre-selecting Attack (clear & occupy)"
     );
 
     // AC12: send an oasis attack from the Rally Point; PRG back to the village.
@@ -7805,10 +7826,11 @@ async fn map_shows_distance_and_send_shortcut(pool: sqlx::PgPool) {
         body.contains("fields away"),
         "tiles show distance from home"
     );
-    // The neighbour's village links to the Rally Point pre-filled with its tile (& is HTML-escaped).
+    // The neighbour's village links to the Rally Point pre-filled with its tile (& is HTML-escaped); 106:
+    // another player's village pre-selects the Raid order.
     assert!(
-        body.contains(&format!("/rally?x={bx}&amp;y={by}")),
-        "a neighbouring village has a send shortcut"
+        body.contains(&format!("/rally?x={bx}&amp;y={by}&amp;mode=raid")),
+        "a neighbouring village has a send shortcut pre-selecting Raid"
     );
     // 105: your own village IS a send target now — reinforce it, or move troops between your villages.
     assert!(

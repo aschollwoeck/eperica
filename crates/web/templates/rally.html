@@ -50,11 +50,11 @@
       <div class="field">
         <label>Order</label>
         <select name="mode" id="rally-mode">
-          <option value="raid" selected>Raid (fight to plunder)</option>
-          <option value="attack">Attack (fight to destroy)</option>
-          <option value="reinforce">Reinforce (defend an ally)</option>
-          <option value="scout">Scout (spy — scouts only)</option>
-          {% if can_settle %}<option value="settle">Settle (found a new village)</option>{% endif %}
+          <option value="raid"{% if mode == "raid" %} selected{% endif %}>Raid (fight to plunder)</option>
+          <option value="attack"{% if mode == "attack" %} selected{% endif %}>Attack (fight to destroy)</option>
+          <option value="reinforce"{% if mode == "reinforce" %} selected{% endif %}>Reinforce (defend an ally)</option>
+          <option value="scout"{% if mode == "scout" %} selected{% endif %}>Scout (spy — scouts only)</option>
+          {% if can_settle %}<option value="settle"{% if mode == "settle" %} selected{% endif %}>Settle (found a new village)</option>{% endif %}
         </select>
         {% if can_settle %}<span class="muted">You have a free expansion slot: a <em>settle</em> order sends
           {{ settlers_per_village }} settlers to a free valley tile to found a new village (other unit counts are ignored).</span>{% endif %}

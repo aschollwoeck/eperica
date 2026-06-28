@@ -562,6 +562,9 @@ pub struct RallyTemplate {
     /// Pre-filled target tile from a map link (012 AC12), if any.
     pub target_x: Option<i32>,
     pub target_y: Option<i32>,
+    /// 106: the order pre-selected in the form (`raid`/`attack`/`reinforce`/`scout`/`settle`) — from the map
+    /// link's `mode`, else the `raid` default.
+    pub mode: &'static str,
     /// Whether the pre-filled target is an oasis (hints attack/reinforce over the village modes).
     pub target_is_oasis: bool,
     /// Whether the player has a free expansion slot — offers the **Settle** order (013 AC11).
