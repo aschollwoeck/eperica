@@ -457,8 +457,8 @@ a { color: var(--c-gold); }
 .roster { display: flex; flex-direction: column; gap: 10px; }
 /* 073: one consistent roster row for research / training / forging — thumb · info · price · action. */
 .unit {
-  position: relative; display: grid; grid-template-columns: 56px minmax(0, 1fr) auto auto; align-items: center;
-  gap: 6px 16px; padding: 11px 14px 11px 13px; border: 1px solid var(--c-border); border-radius: var(--radius-md);
+  position: relative; display: grid; grid-template-columns: 56px minmax(200px, 1fr) auto minmax(0, 300px); align-items: center;
+  gap: 6px 12px; padding: 11px 14px 11px 13px; border: 1px solid var(--c-border); border-radius: var(--radius-md);
   background: var(--c-panel); box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
 }
 /* the price column — the resource cost + time, always here on every roster page (AC2). */
@@ -526,7 +526,7 @@ a { color: var(--c-gold); }
 .unit__stats b { color: var(--c-ink); font-weight: 500; }
 .unit__researched { display: inline-block; font-family: ui-monospace, monospace; font-size: .74rem; letter-spacing: .04em; color: var(--c-success); border: 1px solid color-mix(in srgb, var(--c-success) 45%, var(--c-border)); border-radius: 2px; padding: 3px 9px; }
 .train-form { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
-.train-form input[type=number] { width: 5em; background: var(--c-bg); border: 1px solid var(--c-border); color: var(--c-ink); border-radius: var(--radius-sm); padding: 6px 8px; font: inherit; font-variant-numeric: tabular-nums; }
+.train-form input[type=number] { width: 4em; background: var(--c-bg); border: 1px solid var(--c-border); color: var(--c-ink); border-radius: var(--radius-sm); padding: 6px 8px; font: inherit; font-variant-numeric: tabular-nums; }
 .train-form input[type=number]:focus-visible { outline: 2px solid var(--c-gold); outline-offset: 1px; }
 .batch-total { font-family: ui-monospace, monospace; font-size: .74rem; color: var(--c-ink-muted); width: 100%; text-align: right; }
 
