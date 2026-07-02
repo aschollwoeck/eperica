@@ -976,7 +976,19 @@ fn build_row(
     let lane_of = |t: BuildTarget| tribe.map_or(QueueLane::All, |tr| queue_lane(tr, t));
     let lane = lane_of(target);
     let busy = active.iter().any(|a| lane_of(a.target) == lane);
-    let cost = build_rules.cost(target, level);
+    // Fields price by resource so a cropland shows its own (cheaper) cost — matching what the order will
+    // charge (P4); the `res` slug ("crop" for croplands) is enough to pick the table.
+    let cost = match target {
+        BuildTarget::Field { .. } => {
+            let resource = if res == "crop" {
+                ResourceKind::Crop
+            } else {
+                ResourceKind::Wood
+            };
+            build_rules.field_cost(resource, level)
+        }
+        BuildTarget::Building { .. } => build_rules.cost(target, level),
+    };
     let at_max = cost.is_none();
     let affordable = cost.is_some_and(|c| can_afford(amounts, c));
     let can_order = !busy && affordable;

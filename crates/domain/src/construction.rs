@@ -2,6 +2,7 @@
 
 use crate::building::{BuildingKind, VILLAGE_BUILDING_SLOTS, reserved_kind};
 use crate::economy::ResourceAmounts;
+use crate::resource::ResourceKind;
 use crate::village::{BuildingSlot, Tribe};
 use crate::world::GameSpeed;
 use std::collections::HashMap;
@@ -40,8 +41,11 @@ impl LevelSpec {
 /// Injected construction balance.
 #[derive(Debug, Clone)]
 pub struct BuildRules {
-    /// Spec shared by all resource fields (its cost/time tables run to the **capital** cap).
+    /// Spec shared by wood/clay/iron resource fields (its cost/time tables run to the **capital** cap).
     pub field: LevelSpec,
+    /// Cropland's own upgrade **cost** table (faithful Travian: cheaper crop, 7:9:7:2 ratio). Croplands
+    /// share `field`'s time and level caps — only the per-resource cost differs, so this is just the cost.
+    pub crop_field_cost: Vec<ResourceAmounts>,
     /// The normal resource-field level cap (a non-capital village; 013 §3.4).
     pub field_max_level: u8,
     /// The resource-field level cap for a **capital** village (> `field_max_level`).
@@ -63,8 +67,25 @@ impl BuildRules {
     }
 
     /// Cost to raise `target` from `current_level` to the next; `None` if at max or unknown.
+    ///
+    /// For resource fields this returns the **shared** (wood/clay/iron) table; use [`Self::field_cost`]
+    /// where the field's resource is known so croplands charge their own table.
     pub fn cost(&self, target: BuildTarget, current_level: u8) -> Option<ResourceAmounts> {
         self.spec(target)?.cost(current_level)
+    }
+
+    /// Cost to raise a resource field of `resource` from `current_level` to the next — croplands use their
+    /// own cheaper table; wood/clay/iron fields share `field`. `None` at/above the table's end. Callers
+    /// with the acting village (order-time debit + upgrade display) route field costs through this so the
+    /// charged amount matches the shown amount (P4).
+    #[must_use]
+    pub fn field_cost(&self, resource: ResourceKind, current_level: u8) -> Option<ResourceAmounts> {
+        let table = if resource == ResourceKind::Crop {
+            &self.crop_field_cost
+        } else {
+            &self.field.cost_per_level
+        };
+        table.get(current_level as usize).copied()
     }
 
     /// Base build time (seconds, before speed/MB) for the next level; `None` if at max or unknown.
@@ -270,6 +291,8 @@ mod tests {
         );
         BuildRules {
             field,
+            // Cropland cost distinct from the shared field cost, so `field_cost` differentiation is testable.
+            crop_field_cost: vec![amounts(20), amounts(60), amounts(150)],
             field_max_level: 3,
             capital_field_max_level: 5,
             buildings,
@@ -286,6 +309,23 @@ mod tests {
         assert_eq!(r.cost(f, 2), Some(amounts(250))); // level 2 -> 3
         assert_eq!(r.cost(f, 3), None); // beyond the table
         assert_eq!(r.max_level(f), 3); // the normal field cap
+    }
+
+    // Croplands charge their own cost table; wood/clay/iron fields share `field` (== the generic `cost`).
+    #[test]
+    fn field_cost_differentiates_cropland() {
+        let r = rules();
+        let f = BuildTarget::Field { slot: 0 };
+        // Wood/clay/iron fields: field_cost matches the shared table (and the generic cost()).
+        for res in [ResourceKind::Wood, ResourceKind::Clay, ResourceKind::Iron] {
+            assert_eq!(r.field_cost(res, 0), Some(amounts(40)));
+            assert_eq!(r.field_cost(res, 0), r.cost(f, 0));
+        }
+        // Cropland: its own (cheaper) table, distinct from the shared one.
+        assert_eq!(r.field_cost(ResourceKind::Crop, 0), Some(amounts(20)));
+        assert_eq!(r.field_cost(ResourceKind::Crop, 2), Some(amounts(150)));
+        assert_ne!(r.field_cost(ResourceKind::Crop, 0), r.cost(f, 0));
+        assert_eq!(r.field_cost(ResourceKind::Crop, 3), None); // beyond the table
     }
 
     // 013 AC10: a capital may raise its fields past the normal cap; a non-capital may not.
