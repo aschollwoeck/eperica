@@ -17,7 +17,10 @@
       </svg>
       Eperica
     </a>
-    <nav class="topbar__nav">
+    <button class="topbar__burger" type="button" aria-label="Menu" aria-controls="topnav" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <nav class="topbar__nav" id="topnav">
       <!-- Public links — shown to everyone. `data-wl` carries the leaf path; JS (below) rewrites these to
            /w/{world}/… when the current URL is inside a world, else to /worlds (056). -->
       <a href="/leaderboard" data-wl-public="/leaderboard">Leaderboards</a> <a href="/wonder" data-wl-public="/wonder">Wonder</a>
@@ -66,6 +69,23 @@
     </div>
   </footer>
   <script>
+    // Mobile nav — toggle the collapsed topbar menu open/closed via the hamburger; close it after a tap.
+    (function () {
+      var burger = document.querySelector(".topbar__burger");
+      var bar = document.querySelector(".topbar");
+      if (!burger || !bar) return;
+      burger.addEventListener("click", function () {
+        var open = bar.classList.toggle("is-open");
+        burger.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+      bar.querySelectorAll(".topbar__nav a, .topbar__nav button").forEach(function (el) {
+        el.addEventListener("click", function () {
+          bar.classList.remove("is-open");
+          burger.setAttribute("aria-expanded", "false");
+        });
+      });
+    })();
+
     // 056: world-aware nav — the world lives in the URL (/w/{world}/…), so derive it from the current
     // path and point the world-coupled nav links/forms at /w/{world}/… . Outside a world (account pages,
     // the lobby) they fall back to /worlds. The URL is the sole source of truth — no cookie involved.
@@ -123,9 +143,22 @@
           var adm = document.getElementById("nav-admin");
           if (adm) adm.hidden = !(me.authed && me.admin);
           // 115: tribe-aware theming — set `data-tribe` on <body> from the account's tribe so
-          // tribe-specific styles (e.g. the primary button's per-tribe colours) apply.
+          // tribe-specific styles (e.g. the primary button's per-tribe colours) apply. Inside a world the
+          // per-world tribe overrides this (below) — a player can run a different tribe per world.
           if (me.tribe) document.body.setAttribute("data-tribe", me.tribe);
         })
+        .catch(function () {});
+    })();
+
+    // 115: inside a world, prefer the player's tribe IN THAT WORLD for the theming (overrides the account
+    // tribe above), so the button matches the village/world shown. Best-effort; falls back to the account
+    // tribe on account pages / on error.
+    (function () {
+      var m = window.location.pathname.match(/^\/w\/([^/]+)/);
+      if (!m) return;
+      fetch("/w/" + m[1] + "/me", { headers: { Accept: "application/json" } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (w) { if (w && w.tribe) document.body.setAttribute("data-tribe", w.tribe); })
         .catch(function () {});
     })();
 

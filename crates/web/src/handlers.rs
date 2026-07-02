@@ -4832,6 +4832,21 @@ pub async fn me(
     .into_response()
 }
 
+/// 115: the acting player's tribe **in the selected world**. A player may run a different tribe in a
+/// second world (the per-world join form picks one), so base.html prefers this over the account-level
+/// `/me` tribe when inside a world — keeping the primary-button theming true to the world being viewed.
+pub async fn world_me(ctx: GameContext) -> Response {
+    use eperica_application::AccountRepository;
+    let tribe = ctx
+        .accounts
+        .villages_of(ctx.player)
+        .await
+        .ok()
+        .and_then(|vs| vs.into_iter().find_map(|v| v.tribe))
+        .map(|t| t.slug());
+    axum::Json(serde_json::json!({ "tribe": tribe })).into_response()
+}
+
 /// Live sitting status (030) — the owner's name when actively sitting, else empty. Drives the persistent
 /// banner; excluded from presence-touch. Uses the sit cookie + a live authorisation check.
 pub async fn sitting_status(

@@ -49,7 +49,8 @@ async fn presence_touch(State(state): State<AppState>, req: Request, next: Next)
         || path == "/notifications/unread"
         || path == "/notifications/stream"
         || path == "/sitting/status"
-        || path == "/me";
+        // the global `/me` and the world-scoped `/w/{world}/me` (115) tribe poll
+        || path.ends_with("/me");
     if background {
         return next.run(req).await;
     }
@@ -256,6 +257,9 @@ async fn sitting_guard(State(state): State<AppState>, req: Request, next: Next) 
 /// the `{world}` prefix is read by the `GameContext`/`WorldScope` extractors (the game + public read pages).
 fn world_router() -> Router<AppState> {
     Router::new()
+        // 115: the acting player's tribe in THIS world (JSON), so base.html themes the primary button by
+        // the world's tribe (not the account tribe) when inside a world.
+        .route("/me", get(handlers::world_me))
         // The acting village rides in the path as a hyphenated UUID (064): `/village/{village}/…`. The bare
         // `/village` (no id) is the canonical entry — it 302s to the player's capital village.
         .route("/village", get(handlers::village_index))
