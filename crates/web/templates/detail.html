@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block body_class %}bld-page{% endblock %}
+{% block body_style %}{% if !art_slug.is_empty() %}--building-img: url('/static/buildings/{{ art_slug }}.webp');{% if !tribe_slug.is_empty() %} --building-img-tribe: url('/static/buildings/{{ tribe_slug }}_{{ art_slug }}.webp');{% endif %}{% endif %}{% endblock %}
 {% block content %}
 {% include "_icons.html" %}
 

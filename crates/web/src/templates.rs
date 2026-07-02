@@ -824,6 +824,9 @@ pub struct DetailTemplate {
     pub world: String,
     /// The village's tribe slug for the tribe-specific background plate (065); empty ⇒ neutral plate.
     pub tribe_slug: &'static str,
+    /// Filename stem of the building/field backdrop art (e.g. `main_building`, `warehouse`, `woodcutter`),
+    /// matching `/static/buildings/<art_slug>.webp` and `<tribe>_<art_slug>.webp`. Empty ⇒ no art plate.
+    pub art_slug: &'static str,
     /// The village this page acts on (carried into the upgrade form + back link).
     pub village_id: String,
     /// The acting village's coordinate label, shown in the hero eyebrow.
