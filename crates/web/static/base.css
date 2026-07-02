@@ -7,6 +7,11 @@
   --space-4: 16px;
   --space-5: 24px;
   --space-6: 32px;
+  /* Height of the sticky .topbar — the offset the resource ribbon pins below so it stays fully visible
+     while scrolling instead of ghosting behind the header. The header height varies (logged-in nav is
+     taller, mobile collapses to a burger), so base.html keeps this in sync with the real height via JS;
+     this is the sensible default before that runs / with JS off. */
+  --topbar-h: 64px;
   --space-7: 56px;
   --radius-sm: 3px;
   --radius-md: 6px;
@@ -462,13 +467,16 @@ a { color: var(--c-gold); }
 .bld-back { align-self: flex-start; font-family: ui-monospace, monospace; font-size: .78rem; color: var(--c-ink); border: 1px solid var(--c-border); border-radius: 2px; padding: 7px 12px; background: rgba(9,12,16,.55); backdrop-filter: blur(2px); }
 .bld-back:hover { border-color: var(--c-gold); }
 
-/* a building page drops the normal centered container and goes edge-to-edge for the hero */
-.bld-page main.container { max-width: none; padding: 0; }
+/* a building page drops the normal centered container and goes edge-to-edge for the hero — including the
+   container's top margin, so the full-bleed hero sits flush below the header (no dead whitespace band). */
+.bld-page main.container { max-width: none; padding: 0; margin-top: 0; }
 .bld-body { max-width: 1180px; margin: 0 auto; padding: 0 var(--space-5) var(--space-6); }
 
 /* resource ribbon — current/cap, rate, fill */
 .res-ribbon {
-  position: sticky; top: 0; z-index: 10; margin: 16px 0;
+  /* Pin below the sticky header (not at top:0, which parked it *behind* the frosted topbar and left the
+     cards' lower edge ghosting through). Now the resource bar stays fully visible while scrolling. */
+  position: sticky; top: var(--topbar-h); z-index: 10; margin: 16px 0;
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 11px;
   border: 1px solid var(--c-border); border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--c-panel-alt) 92%, transparent); backdrop-filter: blur(6px);
@@ -551,7 +559,9 @@ a { color: var(--c-gold); }
   .bld-aside .bld-card { flex: 1 1 240px; }
 }
 @media (max-width: 680px) {
-  .res-ribbon { grid-template-columns: repeat(2, 1fr); }
+  /* Mobile: the 2×2 ribbon is tall — pinning it would eat ~30% of the screen. So it scrolls away
+     (the "hide" option) rather than staying pinned, giving content the full width/height. */
+  .res-ribbon { grid-template-columns: repeat(2, 1fr); position: static; }
   .bld-title { font-size: 1.55rem; flex-wrap: wrap; }
   .bld-hero { min-height: 140px; }
   /* mobile hero: crest + text align at the top (not bottom), and the back link pins to the top-right
