@@ -748,6 +748,42 @@ mod tests {
         );
     }
 
+    // 117 AC3 (P4): ordering a CROPLAND debits its own cost table, not the shared wood/clay/iron one —
+    // the charged amount must match what the panel shows.
+    #[tokio::test]
+    async fn ordering_a_cropland_debits_the_crop_table() {
+        let mut village = make_village(0, true);
+        village.fields[0].kind = ResourceKind::Crop; // slot 0 is a cropland
+        let accounts = FakeAccounts {
+            village,
+            stored: amounts(100),
+        };
+        let builds = FakeBuilds::default();
+        let mut rules = build_rules();
+        rules.field.cost_per_level = vec![amounts(40)]; // shared field cost (wood/clay/iron)
+        rules.crop_field_cost = vec![amounts(70)]; // cropland's own, distinct cost
+        order_build(
+            &accounts,
+            &builds,
+            &NoopStarvation,
+            &economy_rules(),
+            &rules,
+            &unit_rules(),
+            GameSpeed::new(1.0).unwrap(),
+            Timestamp(0),
+            PlayerId(1),
+            None,
+            BuildTarget::Field { slot: 0 },
+        )
+        .await
+        .unwrap();
+        // The cropland cost (70) was debited — NOT the shared 40 — leaving 100 - 70 = 30.
+        assert_eq!(
+            builds.last_settled.lock().unwrap().expect("settled"),
+            amounts(30)
+        );
+    }
+
     #[tokio::test]
     async fn insufficient_resources_rejected() {
         // AC2: cost 40, only 10 stored.
