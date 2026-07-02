@@ -194,6 +194,17 @@ fn building_kind_id(kind: BuildingKind) -> &'static str {
     }
 }
 
+/// A resource field's backdrop-art filename stem — the field *building* name, not the resource id
+/// (the images are woodcutter/clay_pit/iron_mine/cropland under `/static/buildings/`).
+fn field_art_slug(kind: ResourceKind) -> &'static str {
+    match kind {
+        ResourceKind::Wood => "woodcutter",
+        ResourceKind::Clay => "clay_pit",
+        ResourceKind::Iron => "iron_mine",
+        ResourceKind::Crop => "cropland",
+    }
+}
+
 /// Fixed center slot per building kind (founding places Main Building/Rally Point at 0/1).
 fn building_slot(kind: BuildingKind) -> u8 {
     match kind {
@@ -2158,6 +2169,7 @@ pub async fn building_detail(
         village_label: format!("({}|{})", village.coordinate.x, village.coordinate.y),
         ribbon: resource_ribbon(&economy),
         eyebrow: "Building",
+        art_slug: building_kind_id(kind),
         title: building_label(kind).to_owned(),
         blurb: building_blurb(kind).to_owned(),
         icon: format!("i-{}", building_kind_id(kind)),
@@ -2234,6 +2246,7 @@ pub async fn slot_detail(
                 village_label: format!("({}|{})", village_d.coordinate.x, village_d.coordinate.y),
                 ribbon: resource_ribbon(&economy),
                 eyebrow: "Building",
+                art_slug: building_kind_id(kind),
                 title: building_label(kind).to_owned(),
                 blurb: building_blurb(kind).to_owned(),
                 icon: format!("i-{}", building_kind_id(kind)),
@@ -2379,6 +2392,7 @@ pub async fn field_detail(
         village_label: format!("({}|{})", village.coordinate.x, village.coordinate.y),
         ribbon: resource_ribbon(&economy),
         eyebrow: "Resource field",
+        art_slug: field_art_slug(f.kind),
         title,
         blurb,
         icon,
