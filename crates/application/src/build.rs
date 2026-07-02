@@ -200,9 +200,20 @@ where
         }
     }
 
-    let cost = build_rules
-        .cost(target, current)
-        .ok_or(BuildError::MaxLevel)?;
+    // Fields charge by resource so croplands use their own cost table (the shown cost must equal the
+    // charged cost, P4); buildings use the generic lookup.
+    let cost = match target {
+        BuildTarget::Field { slot } => {
+            let resource = village
+                .fields
+                .get(slot as usize)
+                .map(|f| f.kind)
+                .ok_or(BuildError::NotFound)?;
+            build_rules.field_cost(resource, current)
+        }
+        BuildTarget::Building { .. } => build_rules.cost(target, current),
+    }
+    .ok_or(BuildError::MaxLevel)?;
     let base_time = build_rules
         .base_time_secs(target, current)
         .ok_or(BuildError::MaxLevel)?;
@@ -511,6 +522,8 @@ mod tests {
                 cost_per_level: vec![amounts(40), amounts(90)],
                 time_secs_per_level: vec![600, 1200],
             },
+            // Same as the field cost here — these tests exercise the order flow, not cropland pricing.
+            crop_field_cost: vec![amounts(40), amounts(90)],
             field_max_level: 1,
             capital_field_max_level: 2,
             buildings,

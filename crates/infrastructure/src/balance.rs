@@ -464,6 +464,8 @@ struct FieldSpecDto {
     capital_max_level: u8,
     #[serde(flatten)]
     spec: LevelSpecDto,
+    /// Cropland's own upgrade cost (`[field.crop_cost]`) — cheaper crop, 7:9:7:2 (faithful Travian).
+    crop_cost: CostDto,
 }
 
 #[derive(Deserialize)]
@@ -580,8 +582,18 @@ pub(crate) fn parse_build_rules(src: &str) -> Result<BuildRules, BalanceError> {
     // and merged in, so the Wonder reuses the whole 003 build path. No building prerequisite — the gate
     // (site control + held plan) lives in `order_wonder_build`.
     buildings.insert(BuildingKind::Wonder, wonder_level_spec(&wonder_rules()?));
+    // Cropland's own cost table (same length/level-caps as the shared field table; only cost differs).
+    let crop_field_cost = (0..dto.field.spec.time_secs.len())
+        .map(|i| ResourceAmounts {
+            wood: dto.field.crop_cost.wood.get(i).copied().unwrap_or(0),
+            clay: dto.field.crop_cost.clay.get(i).copied().unwrap_or(0),
+            iron: dto.field.crop_cost.iron.get(i).copied().unwrap_or(0),
+            crop: dto.field.crop_cost.crop.get(i).copied().unwrap_or(0),
+        })
+        .collect();
     Ok(BuildRules {
         field: level_spec(&dto.field.spec),
+        crop_field_cost,
         field_max_level: dto.field.max_level,
         capital_field_max_level: dto.field.capital_max_level,
         buildings,
@@ -1682,6 +1694,32 @@ mod tests {
             c.wood != c.clay || c.clay != c.iron || c.iron != c.crop,
             "field cost must be asymmetric across resources"
         );
+    }
+
+    #[test]
+    fn cropland_has_its_own_cheaper_cost() {
+        let r = build_rules().expect("build rules");
+        // Cropland uses its own faithful table: level-1 = 70/90/70/20 (ratio 7:9:7:2, wood == iron).
+        let crop = r
+            .field_cost(ResourceKind::Crop, 0)
+            .expect("cropland L1 cost");
+        assert_eq!(
+            (crop.wood, crop.clay, crop.iron, crop.crop),
+            (70, 90, 70, 20)
+        );
+        assert_eq!(crop.wood, crop.iron, "cropland wood == iron (7:7)");
+        // Wood/clay/iron fields keep the shared 40/100/50/60 — distinct from cropland, and cheaper in crop.
+        let wood = r
+            .field_cost(ResourceKind::Wood, 0)
+            .expect("wood-field L1 cost");
+        assert_eq!(
+            (wood.wood, wood.clay, wood.iron, wood.crop),
+            (40, 100, 50, 60)
+        );
+        assert_ne!(crop, wood, "cropland cost differs from the other fields");
+        assert!(crop.crop < wood.crop, "cropland is cheaper in crop");
+        // The cropland table runs to the capital cap (20 levels).
+        assert_eq!(r.crop_field_cost.len(), 20);
     }
 
     #[test]
