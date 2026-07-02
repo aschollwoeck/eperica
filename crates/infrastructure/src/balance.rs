@@ -2177,4 +2177,28 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn resource_field_tables_reach_the_capital_level_20_cap() {
+        // A capital's resource fields go to level 20 (013; construction cost/time run that far). The
+        // production/population tables must too, or `level_value` clamps 11–20 to the level-10 value —
+        // the bug where a raised capital field cost resources but never paid out more.
+        let e = economy_rules().expect("economy rules");
+        assert_eq!(
+            e.wood_per_level.len(),
+            21,
+            "field production runs to level 20"
+        );
+        assert_eq!(e.wood_per_level[10], 280); // old cap
+        assert_eq!(e.wood_per_level[11], 375); // continues past it (Travian curve)
+        assert_eq!(e.wood_per_level[20], 3000);
+        // all four resources share the same field curve.
+        for table in [&e.clay_per_level, &e.iron_per_level, &e.crop_per_level] {
+            assert_eq!(table, &e.wood_per_level);
+        }
+        // population (crop upkeep) keeps scaling for high-level fields.
+        assert_eq!(e.field_population_per_level.len(), 21);
+        assert_eq!(e.field_population_per_level[10], 11);
+        assert_eq!(e.field_population_per_level[20], 52);
+    }
 }
