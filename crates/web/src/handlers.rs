@@ -11,7 +11,7 @@ use crate::templates::{
     AuditRow, BuildMenuTemplate, BuildRow, ChatLineView, CompletedQuestView, ConversationRow,
     ConversationTemplate, CurrentQuestView, DetailTemplate, DiploRowView, ForceRow, ForumPostRow,
     ForumTemplate, ForumThreadRow, ForumThreadTemplate, GarrisonRow, HistoryPointView,
-    ImpressumTemplate, IncomingView, IndexTemplate, JoinableWorldRow, JoinedWorldRow,
+    ImpressumTemplate, IncomingRow, IncomingView, IndexTemplate, JoinableWorldRow, JoinedWorldRow,
     LandingWorldRow, LeaderboardRowView, LeaderboardTemplate, LoginTemplate, MapCellView,
     MapTemplate, MarketTemplate, MedalRowView, MemberStatRow, MessagesTemplate, ModAccountTemplate,
     ModQueueTemplate, ModReportRow, MovementRow, NotificationRowView, NotificationsTemplate,
@@ -21,7 +21,8 @@ use crate::templates::{
     RosterRowView, ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate,
     SettingsTemplate, SettingsToggleRow, ShipmentRow, SitterRow, SittingTemplate, SmithyRow,
     SmithyTemplate, StyleGuideTemplate, TermsTemplate, TrainRow, TroopsTemplate, VillageStatRow,
-    VillageSwitchRow, VillageTemplate, WonderStandingView, WonderTemplate, WorldsTemplate,
+    VillageSwitchRow, VillageTemplate, VillageTrainingRow, WonderStandingView, WonderTemplate,
+    WorldsTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -1490,6 +1491,38 @@ pub async fn village(
     // The round-over notice (021 AC7) — best-effort; a lookup error must not break the village view.
     let world_won = matches!(ctx.accounts.world_ended().await, Ok(Some(_)));
 
+    // Top-strip status (surfaced above the plan): incoming attacks, active training, culture progress.
+    // 015 incoming-defence data — hostile movements landing here, soonest first; no attacker counts (P4).
+    let incoming: Vec<IncomingRow> = ctx
+        .accounts
+        .incoming_against(&[village.id])
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        // Arrival time only — the attacker's origin (and troops) are deliberately withheld (P4/§7.3);
+        // every row targets THIS village, so a coordinate here would just repeat its own tile.
+        .map(|a| IncomingRow {
+            arrive_ms: a.arrive_at.0,
+        })
+        .collect();
+    // Units currently training here across the troop buildings.
+    let training: Vec<VillageTrainingRow> = ctx
+        .accounts
+        .active_training(village.id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|t| VillageTrainingRow {
+            label: tribe
+                .and_then(|tr| unit_rules.unit(tr, &t.unit).map(|s| s.name.clone()))
+                .unwrap_or_else(|| t.unit.as_str().to_owned()),
+            remaining: t.count_total.saturating_sub(t.count_done),
+            complete_ms: t.next_complete_at.0,
+        })
+        .collect();
+    // Culture progress toward the next village slot, as a 0–100% for the top-strip bar (domain helper).
+    let cp_pct = eperica_domain::cp_pct(culture.cp, culture.next_threshold);
+
     page(&VillageTemplate {
         world: world_id_str(ctx.world_id),
         tribe_slug: village.tribe.map_or("", |t| t.slug()),
@@ -1506,6 +1539,9 @@ pub async fn village(
         slots_allowed: culture.allowed_villages,
         next_threshold: culture.next_threshold,
         has_free_slot,
+        cp_pct,
+        incoming,
+        training,
         tribe: tribe_label(village.tribe),
         x: village.coordinate.x,
         y: village.coordinate.y,
@@ -2870,6 +2906,8 @@ async fn troops(ctx: GameContext, village: String, building: BuildingKind) -> Re
         ),
         complete_ms: t.next_complete_at.0,
     });
+    // Portrait of the unit being trained, for the drill-yard card icon (mirrors the Smithy).
+    let active_portrait = batch.map(|t| format!("{}_{}", tribe.slug(), t.unit.as_str()));
 
     let rows = if building_level == 0 {
         Vec::new() // the template only renders the building-required notice
@@ -2938,6 +2976,7 @@ async fn troops(ctx: GameContext, village: String, building: BuildingKind) -> Re
         has_building: building_level > 0,
         rows,
         active: active_view,
+        active_portrait,
         upgrade,
     })
 }

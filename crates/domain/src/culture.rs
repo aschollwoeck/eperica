@@ -100,6 +100,17 @@ pub fn allowed_villages(cp: i64, residence_levels: &[u8], rules: &CultureRules) 
     by_cp.min(by_buildings)
 }
 
+/// Progress toward the **next village slot** as a `0..=100` percentage (`cp / nextThreshold`), for the
+/// village status strip's culture bar. No next threshold (`None` or non-positive) ⇒ at the cap (`100`);
+/// negative CP clamps to `0`; over the threshold clamps to `100`.
+#[must_use]
+pub fn cp_pct(cp: i64, next_threshold: Option<i64>) -> u8 {
+    match next_threshold {
+        Some(t) if t > 0 => ((cp.max(0) as f64 / t as f64) * 100.0).clamp(0.0, 100.0) as u8,
+        _ => 100,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +172,16 @@ mod tests {
         assert_eq!(allowed_villages(100_000, &[], &r), 1);
         // CP + buildings both ample ⇒ the CP table cap (4).
         assert_eq!(allowed_villages(100_000, &[5, 5], &r), 4);
+    }
+
+    #[test]
+    fn cp_pct_clamps_to_0_100() {
+        assert_eq!(cp_pct(0, Some(200)), 0); // empty
+        assert_eq!(cp_pct(100, Some(200)), 50); // halfway
+        assert_eq!(cp_pct(200, Some(200)), 100); // at threshold
+        assert_eq!(cp_pct(500, Some(200)), 100); // over-threshold clamps
+        assert_eq!(cp_pct(-10, Some(200)), 0); // negative CP clamps
+        assert_eq!(cp_pct(50, None), 100); // no next slot ⇒ at the cap
+        assert_eq!(cp_pct(50, Some(0)), 100); // non-positive threshold ⇒ cap (no divide-by-zero)
     }
 }

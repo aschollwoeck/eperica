@@ -55,6 +55,30 @@
 
   {% include "_ribbon.html" %}
 
+  <section class="vtop">
+    <div class="vtop__card vtop__card--attacks{% if !incoming.is_empty() %} vtop__card--alert{% endif %}">
+      <div class="vtop__h"><span class="vtop__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l9 9M19 3l-9 9M4 14l3 3-2 4 4-2 3-3M20 14l-3 3 2 4-4-2"/></svg></span><span class="vtop__title">Incoming attacks</span><span class="vtop__n">{{ incoming.len() }}</span></div>
+      {% if incoming.is_empty() %}
+      <p class="vtop__none">None — all quiet.</p>
+      {% else %}
+      {% for a in incoming %}<div class="vtop__row"><span>Attack</span><span class="vtop__t countdown num" data-deadline="{{ a.arrive_ms }}">…</span></div>{% endfor %}
+      {% endif %}
+    </div>
+    <div class="vtop__card">
+      <div class="vtop__h"><span class="vtop__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l3 3M17 2l5 5-3.5 3.5-5-5zM12.5 8.5L3 18l3 3 9.5-9.5"/></svg></span><span class="vtop__title">Training</span><span class="vtop__n">{{ training.len() }}</span></div>
+      {% if training.is_empty() %}
+      <p class="vtop__none">Not training.</p>
+      {% else %}
+      {% for t in training %}<div class="vtop__row"><span>{{ t.label }} <span class="muted">×{{ t.remaining }}</span></span><span class="vtop__t countdown num" data-deadline="{{ t.complete_ms }}">…</span></div>{% endfor %}
+      {% endif %}
+    </div>
+    <div class="vtop__card">
+      <div class="vtop__h"><span class="vtop__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 21l-5.2 2.8 1-5.8L3.5 9.2l5.9-.9z"/></svg></span><span class="vtop__title">Culture</span><span class="vtop__n">{{ slots_used }}/{{ slots_allowed }}</span></div>
+      <div class="vtop__row"><span>{{ cp }} CP <span class="muted">+{{ cp_rate }}/h</span></span>{% match next_threshold %}{% when Some with (t) %}<span class="muted">next {{ t }}</span>{% when None %}<span class="muted">max</span>{% endmatch %}</div>
+      <div class="vtop__bar"><i style="width:{{ cp_pct }}%"></i></div>
+    </div>
+  </section>
+
   <div class="vcols">
     <div>
       <!-- village map: the walled village in the centre, the resource fields ringing it (088) -->

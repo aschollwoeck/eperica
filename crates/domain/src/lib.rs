@@ -64,7 +64,7 @@ pub use construction::{
     building_levels_met, can_afford, can_place, debit, free_slots, prerequisites_met, queue_lane,
 };
 pub use culture::{
-    CultureRules, allowed_villages, cp_allows, culture_rate, expansion_slots, settle_value,
+    CultureRules, allowed_villages, cp_allows, cp_pct, culture_rate, expansion_slots, settle_value,
 };
 pub use economy::{
     Capacities, Economy, EconomyRules, ProductionRates, ResourceAmounts, accrue, capacities,
