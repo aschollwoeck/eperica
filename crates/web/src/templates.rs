@@ -143,6 +143,48 @@ mod tests {
         assert!(!village(5).render().unwrap().contains("starving"));
     }
 
+    // 116 AC2/AC3/AC4: the populated status strip renders each card's rows — an inbound attack flags the
+    // card and shows a countdown but NO coordinate/troop count (P4/§7.3, type-enforced by `IncomingRow`);
+    // the training row shows unit + remaining; the culture bar width is driven by `cp_pct`.
+    #[test]
+    fn status_strip_renders_populated_rows() {
+        let mut v = village(5); // positive crop → no "starving" noise
+        v.incoming = vec![IncomingRow {
+            arrive_ms: 1_700_000_000_000,
+        }];
+        v.training = vec![VillageTrainingRow {
+            label: "Phalanx".to_owned(),
+            remaining: 12,
+            complete_ms: 1_700_000_000_000,
+        }];
+        v.cp_pct = 42;
+        let html = v.render().unwrap();
+        assert!(
+            html.contains("vtop__card--alert"),
+            "attacks card flags alert"
+        );
+        assert!(
+            html.contains(
+                r#"<span>Attack</span><span class="vtop__t countdown num" data-deadline="1700000000000">"#
+            ),
+            "attack row is a countdown only — no origin/troops"
+        );
+        assert!(html.contains(r#"Phalanx <span class="muted">×12</span>"#));
+        assert!(
+            html.contains(r#"<i style="width:42%">"#),
+            "culture bar uses cp_pct"
+        );
+    }
+
+    // 116 AC2/AC3: the empty strip shows the quiet/idle copy and does not flag alert.
+    #[test]
+    fn status_strip_empty_state() {
+        let html = village(5).render().unwrap();
+        assert!(html.contains("None — all quiet."));
+        assert!(html.contains("Not training."));
+        assert!(!html.contains("vtop__card--alert"));
+    }
+
     // 065: a building page emits the village's tribe-specific plate (`<tribe>_<slug>.webp`) layered over the
     // neutral plate; an empty tribe slug emits no tribe layer (the neutral plate is the sole fallback). The
     // Academy stands in for the building pages (the village page itself now uses the 069 fortress plan, not

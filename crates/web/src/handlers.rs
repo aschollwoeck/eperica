@@ -1520,10 +1520,8 @@ pub async fn village(
             complete_ms: t.next_complete_at.0,
         })
         .collect();
-    // Culture progress toward the next village slot, as a 0–100% for the top-strip bar.
-    let cp_pct: u8 = culture.next_threshold.filter(|t| *t > 0).map_or(100, |t| {
-        ((culture.cp.max(0) as f64 / t as f64) * 100.0).clamp(0.0, 100.0) as u8
-    });
+    // Culture progress toward the next village slot, as a 0–100% for the top-strip bar (domain helper).
+    let cp_pct = eperica_domain::cp_pct(culture.cp, culture.next_threshold);
 
     page(&VillageTemplate {
         world: world_id_str(ctx.world_id),
