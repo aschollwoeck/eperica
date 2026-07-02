@@ -69,6 +69,28 @@
     </div>
   </footer>
   <script>
+    // Keep --topbar-h in sync with the real sticky-header height (it varies: logged-in nav is taller,
+    // mobile collapses to a burger, the burger menu expands the header, text wraps) so the resource ribbon
+    // pins flush below it — never behind it.
+    (function () {
+      var bar = document.querySelector(".topbar");
+      if (!bar) return;
+      function sync() {
+        document.documentElement.style.setProperty("--topbar-h", bar.offsetHeight + "px");
+      }
+      sync();
+      // A ResizeObserver on the header catches every height change in one loop-safe mechanism (the header's
+      // size never depends on --topbar-h): the async /me nav reveal, the burger menu opening at 681–820px,
+      // and text wrapping. Fall back to resize/load/timeout where it's unavailable.
+      if (window.ResizeObserver) {
+        new ResizeObserver(sync).observe(bar);
+      } else {
+        window.addEventListener("resize", sync, { passive: true });
+        window.addEventListener("load", sync);
+        setTimeout(sync, 300);
+      }
+    })();
+
     // Mobile nav — toggle the collapsed topbar menu open/closed via the hamburger; close it after a tap.
     (function () {
       var burger = document.querySelector(".topbar__burger");
