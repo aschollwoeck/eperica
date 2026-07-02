@@ -143,9 +143,12 @@
           var adm = document.getElementById("nav-admin");
           if (adm) adm.hidden = !(me.authed && me.admin);
           // 115: tribe-aware theming — set `data-tribe` on <body> from the account's tribe so
-          // tribe-specific styles (e.g. the primary button's per-tribe colours) apply. Inside a world the
-          // per-world tribe overrides this (below) — a player can run a different tribe per world.
-          if (me.tribe) document.body.setAttribute("data-tribe", me.tribe);
+          // tribe-specific styles (e.g. the primary button's per-tribe colours) apply. ONLY on account
+          // pages: inside a world the per-world poller (below) owns the theming, so we skip here to avoid
+          // a race (a player can run a different tribe per world).
+          if (me.tribe && !/^\/w\//.test(window.location.pathname)) {
+            document.body.setAttribute("data-tribe", me.tribe);
+          }
         })
         .catch(function () {});
     })();

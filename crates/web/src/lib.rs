@@ -49,7 +49,8 @@ async fn presence_touch(State(state): State<AppState>, req: Request, next: Next)
         || path == "/notifications/unread"
         || path == "/notifications/stream"
         || path == "/sitting/status"
-        // the global `/me` and the world-scoped `/w/{world}/me` (115) tribe poll
+        // the global `/me` and the world-scoped `/w/{world}/me` (115) tribe poll — both background JSON
+        // probes. Invariant: no user-action route may end in `/me`, or it would be wrongly presence-exempt.
         || path.ends_with("/me");
     if background {
         return next.run(req).await;

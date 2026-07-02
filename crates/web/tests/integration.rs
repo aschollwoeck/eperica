@@ -1000,6 +1000,8 @@ async fn me_probe_reports_auth_and_moderator(pool: sqlx::PgPool) {
         .unwrap();
     assert!(body.contains("\"authed\":false"), "got: {body}");
     assert!(body.contains("\"moderator\":false"), "got: {body}");
+    // 115: no account ⇒ no tribe for the theming (base.html falls back to the default palette).
+    assert!(body.contains("\"tribe\":null"), "got: {body}");
 
     // A logged-in player: authed, but not a moderator.
     let user = unique("navme");
@@ -1025,6 +1027,8 @@ async fn me_probe_reports_auth_and_moderator(pool: sqlx::PgPool) {
         .unwrap();
     assert!(body.contains("\"authed\":true"), "got: {body}");
     assert!(body.contains("\"moderator\":false"), "got: {body}");
+    // 115: the account tribe is exposed for base.html theming (registered as Gauls above).
+    assert!(body.contains("\"tribe\":\"gauls\""), "got: {body}");
 
     // Promote to moderator → the probe now reports it (drives the Moderation nav link).
     sqlx::query("UPDATE users SET is_moderator = TRUE WHERE username = $1")
@@ -1042,6 +1046,52 @@ async fn me_probe_reports_auth_and_moderator(pool: sqlx::PgPool) {
         .unwrap();
     assert!(body.contains("\"authed\":true"), "got: {body}");
     assert!(body.contains("\"moderator\":true"), "got: {body}");
+}
+
+/// 115: `/w/{world}/me` reports the player's tribe IN THAT WORLD (base.html themes the primary button by
+/// the world tribe, not the account tribe). Like every world-scoped route it denies a caller with no
+/// session — a visitor is redirected to /login and never reaches the world scope (P4 / Roles table).
+#[sqlx::test(migrations = "../../migrations")]
+async fn world_me_reports_in_world_tribe_and_denies_visitors(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    // A visitor (no session) is redirected to login — never reaches the world scope / any tribe.
+    let visitor = client();
+    let res = visitor
+        .get(format!("{base}/w/{home}/me"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303);
+    assert_eq!(
+        res.headers().get(LOCATION).unwrap().to_str().unwrap(),
+        "/login"
+    );
+
+    // A joined player (registered as Teutons → dropped into the home world) gets their in-world tribe.
+    let c = client();
+    let user = unique("wme");
+    let email = format!("{user}@example.com");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "teutons"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let body = c
+        .get(format!("{base}/w/{home}/me"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("\"tribe\":\"teutons\""), "got: {body}");
 }
 
 /// 055: the base-template background pollers must be visitor-safe — a logged-out caller gets the small

@@ -172,6 +172,21 @@ pub trait AccountRepository: Send + Sync {
     /// [`RepoError::Backend`] on storage failure.
     async fn villages_of(&self, owner: PlayerId) -> Result<Vec<Village>, RepoError>;
 
+    /// The player's tribe in their world — a single-row lookup for the 115 theming poll, which needs only
+    /// the slug and must **not** hydrate the player's whole village set (P11, runs on each page load).
+    /// Defaults to deriving it from [`villages_of`] so in-memory repos work unchanged; the DB repo
+    /// overrides with a `players`-row read. `None` if the player has no village/row.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn player_tribe(&self, player: PlayerId) -> Result<Option<Tribe>, RepoError> {
+        Ok(self
+            .villages_of(player)
+            .await?
+            .into_iter()
+            .find_map(|v| v.tribe))
+    }
+
     /// One village by id (with its fields and buildings) — used by system processors that only
     /// hold a village id (005 starvation checks).
     ///

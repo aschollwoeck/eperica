@@ -4837,12 +4837,13 @@ pub async fn me(
 /// `/me` tribe when inside a world — keeping the primary-button theming true to the world being viewed.
 pub async fn world_me(ctx: GameContext) -> Response {
     use eperica_application::AccountRepository;
+    // A single `players`-row read (P11) — this poll runs on each in-world page load and needs only the slug.
     let tribe = ctx
         .accounts
-        .villages_of(ctx.player)
+        .player_tribe(ctx.player)
         .await
         .ok()
-        .and_then(|vs| vs.into_iter().find_map(|v| v.tribe))
+        .flatten()
         .map(|t| t.slug());
     axum::Json(serde_json::json!({ "tribe": tribe })).into_response()
 }
