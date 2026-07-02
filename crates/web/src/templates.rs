@@ -98,6 +98,9 @@ mod tests {
             slots_allowed: 1,
             next_threshold: Some(200),
             has_free_slot: false,
+            cp_pct: 50,
+            incoming: Vec::new(),
+            training: Vec::new(),
             tribe: "Gauls",
             x: 0,
             y: 0,
@@ -477,6 +480,8 @@ pub struct TroopsTemplate {
     pub rows: Vec<TrainRow>,
     /// The running batch, if any.
     pub active: Option<QueueView>,
+    /// Portrait of the unit in the running batch (for the drill-yard card icon), if any.
+    pub active_portrait: Option<String>,
     /// This training building's own build/upgrade panel (087), shown in the aside.
     pub upgrade: BuildRow,
 }
@@ -601,6 +606,19 @@ pub struct MovementRow {
     pub troops: String,
     /// Arrival time (Unix-ms UTC) for the live countdown.
     pub arrive_ms: i64,
+}
+
+/// An incoming hostile movement landing on this village (top strip) — arrival time only; the
+/// attacker's origin and troops are deliberately withheld (P4/§7.3).
+pub struct IncomingRow {
+    pub arrive_ms: i64,
+}
+
+/// A unit batch currently training in this village (top strip).
+pub struct VillageTrainingRow {
+    pub label: String,
+    pub remaining: u32,
+    pub complete_ms: i64,
 }
 
 /// An occupied-oasis line on the village page (012 AC12): its tile, the bonus it grants, and a
@@ -885,6 +903,12 @@ pub struct VillageTemplate {
     pub next_threshold: Option<i64>,
     /// Whether a free expansion slot is available (used < allowed) — enables the settle hint.
     pub has_free_slot: bool,
+    /// Culture progress toward the next village slot, 0–100 (top-strip bar).
+    pub cp_pct: u8,
+    /// Incoming hostile movements landing on this village (top strip; no attacker counts, P4).
+    pub incoming: Vec<IncomingRow>,
+    /// Units currently training here across the troop buildings (top strip).
+    pub training: Vec<VillageTrainingRow>,
     /// The village's tribe display name (004).
     pub tribe: &'static str,
     /// Village x coordinate.

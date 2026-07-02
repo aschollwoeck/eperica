@@ -73,7 +73,7 @@
         <div class="bld-card__b">
           {% if let Some(t) = active %}
           <div class="forging">
-            <span class="forging__ico"></span>
+            <span class="forging__ico"{% if let Some(p) = active_portrait %} style="background-image:url('/static/units/{{ p }}.webp')"{% endif %}></span>
             <div><div class="forging__t">{{ t.label }}</div><div class="forging__s">next in <span class="countdown num" data-deadline="{{ t.complete_ms }}">…</span></div></div>
           </div>
           <p class="bld-tip">A batch trains one at a time; the page refreshes as each completes.</p>
