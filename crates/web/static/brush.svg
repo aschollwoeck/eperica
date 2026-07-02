@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0">
+  <!-- 115: organic "brush / torn ink" edge filter. feTurbulence makes fractal noise; feDisplacementMap
+       pushes the source's pixels along it, so a plain rectangle's edges become rough, brushed, hand-inked.
+       Applied via CSS `filter: url(/static/brush.svg#brush-rough)` to the button's ink/crimson layers
+       (not the text), and it roughens at the element's real size — no stretched bitmap. -->
+  <filter id="brush-rough" x="-25%" y="-70%" width="150%" height="240%" color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency="0.012 0.09" numOctaves="3" seed="4" result="noise"/>
+    <feDisplacementMap in="SourceGraphic" in2="noise" scale="15" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+  <!-- a finer, more energetic edge used for the crimson hover wipe so its leading edge frays harder -->
+  <filter id="brush-rough-fine" x="-25%" y="-70%" width="150%" height="240%" color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency="0.017 0.14" numOctaves="3" seed="9" result="noise"/>
+    <feDisplacementMap in="SourceGraphic" in2="noise" scale="20" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+</svg>

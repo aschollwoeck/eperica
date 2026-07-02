@@ -99,7 +99,8 @@
     const upd = () => {
       const n = Math.max(0, parseInt(input.value, 10) || 0);
       out.textContent = n
-        ? `= ${n*d.w}/${n*d.c}/${n*d.i}/${n*d.cr} · ${fmt(n*d.secs)} · −${n*d.up} crop/h`
+        // non-breaking space keeps "−N crop/h" intact (it only wraps at the "·" separators).
+        ? `= ${n*d.w}/${n*d.c}/${n*d.i}/${n*d.cr} · ${fmt(n*d.secs)} · −${n*d.up}\u00A0crop/h`
         : "";
     };
     input.addEventListener("input", upd); upd();

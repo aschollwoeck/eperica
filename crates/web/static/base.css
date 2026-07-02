@@ -108,6 +108,33 @@ a { color: var(--c-gold); }
 .topbar__search input:focus-visible { outline: 2px solid var(--c-gold); outline-offset: 1px; width: 12rem; }
 @media (max-width: 600px) { .topbar__search { display: none; } }
 
+/* Mobile hamburger — the burger (hidden on desktop) toggles the collapsed nav open below the bar. */
+.topbar__burger {
+  display: none; margin-left: auto;
+  flex-direction: column; justify-content: center; gap: 4px;
+  width: 42px; height: 34px; padding: 8px 9px;
+  background: transparent; border: 1px solid var(--c-border); border-radius: var(--radius-sm); cursor: pointer;
+}
+.topbar__burger span { display: block; height: 2px; background: var(--c-ink); border-radius: 2px; transition: transform 0.2s ease, opacity 0.2s ease; }
+.topbar__burger:hover { border-color: var(--c-gold); }
+.topbar__burger:hover span { background: var(--c-gold); }
+@media (max-width: 820px) {
+  .topbar__burger { display: flex; }
+  /* burger morphs into an X while open */
+  .topbar.is-open .topbar__burger span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+  .topbar.is-open .topbar__burger span:nth-child(2) { opacity: 0; }
+  .topbar.is-open .topbar__burger span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+  .topbar__nav {
+    flex-basis: 100%; margin-left: 0; padding-top: var(--space-2);
+    display: none; flex-direction: column; align-items: stretch; gap: 2px;
+  }
+  .topbar.is-open .topbar__nav { display: flex; }
+  .topbar__nav a, .topbar__logout button { display: block; width: 100%; padding: 11px 12px; font-size: 1rem; }
+  .topbar__cta, .topbar__nav a.topbar__cta { text-align: center; }
+  .topbar__search { display: block; margin-top: var(--space-2); }
+  .topbar__search input { width: 100%; }
+}
+
 .container { max-width: 880px; margin: var(--space-6) auto; padding: 0 var(--space-4); }
 
 /* Site footer — brand + link columns + a legal bar; global (every page). */
@@ -161,12 +188,93 @@ a { color: var(--c-gold); }
   text-decoration: none;
 }
 .btn:focus-visible { outline: 2px solid var(--c-gold); outline-offset: 2px; }
+/* 115 (v4 — wine war-banner): the primary is a brushed wine-red banner (SVG turbulence frays the
+   silhouette AND the crimson wipe's leading edge; the text stays crisp). On hover the crimson brush
+   wipes across, ember sparks ignite + rise OVER it, and the text flares white — with NO geometry
+   change (no resize, no punch). Layering: ::before = ink + crimson wipe (z-2); ::after = sparks
+   (z-1, above the ink); text on top. Tribe-driven via --blood/--paper. */
 .btn--primary {
-  background: var(--c-accent);
-  color: var(--c-accent-ink);
-  border-color: color-mix(in srgb, var(--c-accent) 70%, black);
+  --ink-1: #ad2d40; /* lit wine red */
+  --ink-2: #7a1c2d; /* deep wine — kept bright so it never reads muddy */
+  --blood: #c92a20; /* crimson the hover wipe escalates to */
+  --blood-lit: #e94130;
+  --paper: #f7eedd;
+  /* a field of glowing ember sparks (painted on ::after, above the banner, only on hover) */
+  --sparks:
+    radial-gradient(2.6px 2.6px at 14% 82%, rgba(255, 232, 178, 1), rgba(255, 150, 70, 0.5) 42%, transparent 75%),
+    radial-gradient(2px 2px at 31% 96%, rgba(255, 205, 125, 1), transparent 70%),
+    radial-gradient(2.8px 2.8px at 49% 70%, rgba(255, 238, 190, 1), rgba(255, 150, 70, 0.5) 42%, transparent 75%),
+    radial-gradient(1.9px 1.9px at 65% 90%, rgba(255, 190, 100, 1), transparent 70%),
+    radial-gradient(2.4px 2.4px at 79% 74%, rgba(255, 220, 150, 1), rgba(255, 150, 70, 0.5) 42%, transparent 75%),
+    radial-gradient(2px 2px at 91% 92%, rgba(255, 185, 95, 1), transparent 70%),
+    radial-gradient(1.8px 1.8px at 23% 58%, rgba(255, 214, 140, 1), transparent 72%),
+    radial-gradient(2.1px 2.1px at 57% 50%, rgba(255, 230, 165, 1), transparent 74%);
+
+  position: relative;
+  isolation: isolate;
+  color: var(--paper);
+  background: none;
+  border: 0;
+  border-radius: 0;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  padding: 12px 28px 13px;
+  text-shadow: 0 1px 2px #000, 0 0 1px #000;
+  transition: color 0.18s ease;
 }
-.btn--primary:hover { background: color-mix(in srgb, var(--c-accent) 88%, white); }
+/* the banner — wine ink + a crimson wipe layer that grows L→R on hover; the brush filter frays both
+   the outer silhouette and the wipe's leading edge */
+.btn--primary::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background:
+    linear-gradient(180deg, var(--blood-lit), var(--blood) 58%, color-mix(in srgb, var(--blood) 66%, #000)), /* accent wipe */
+    radial-gradient(95% 130% at 50% 122%, rgba(255, 96, 64, 0.18), transparent 60%), /* ember glow */
+    linear-gradient(180deg, var(--ink-1), var(--ink-2)); /* rest banner */
+  background-repeat: no-repeat;
+  background-size: 0% 100%, 100% 100%, 100% 100%; /* wipe collapsed at rest */
+  background-position: left center, center, center;
+  filter: url(/static/brush.svg#brush-rough) drop-shadow(0 3px 7px rgba(0, 0, 0, 0.5)) drop-shadow(0 0 6px color-mix(in srgb, var(--blood) 26%, transparent));
+  transition: background-size 0.32s cubic-bezier(0.55, 0, 0.2, 1), filter 0.2s ease;
+}
+.btn--primary:hover::before {
+  background-size: 100% 100%, 100% 100%, 100% 100%; /* accent brush wipes across */
+  filter: url(/static/brush.svg#brush-rough) drop-shadow(0 0 13px color-mix(in srgb, var(--blood-lit) 52%, transparent)) drop-shadow(0 4px 8px rgba(0, 0, 0, 0.6));
+}
+/* ember sparks — above the banner, below the text; ignite + rise only on hover */
+.btn--primary::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--sparks);
+  background-repeat: repeat-y;
+  background-size: 100% 52px;
+  opacity: 0;
+}
+.btn--primary:hover::after {
+  opacity: 1;
+  animation: embers-rise 1.3s linear infinite;
+}
+.btn--primary:hover { color: #fff; }
+.btn--primary:active { transform: translateY(1px); }
+@keyframes embers-rise {
+  from { background-position: 0 0; }
+  to { background-position: 0 -52px; }
+}
+
+/* tribe variants — recolour the whole banner (rest ink + accent wipe); the wipe edge + glows derive
+   from --blood via color-mix above. Romans = wine (default). */
+[data-tribe="gauls"] .btn--primary { /* dark greenish */
+  --ink-1: #2b6840; --ink-2: #143020; --blood: #2f8a4d; --blood-lit: #49b56c;
+}
+[data-tribe="teutons"] .btn--primary { /* black-blue */
+  --ink-1: #243c5e; --ink-2: #0c1320; --blood: #2c5ea2; --blood-lit: #4585d8;
+}
 .btn--secondary { background: transparent; color: var(--c-ink); border-color: var(--c-border); }
 .btn--secondary:hover { border-color: var(--c-gold); color: var(--c-gold); }
 
@@ -286,6 +394,20 @@ a { color: var(--c-gold); }
 .table th { color: var(--c-ink-muted); }
 .table tbody tr:nth-child(odd) { background: var(--c-panel-alt); }
 .table .num { text-align: right; }
+/* On narrow screens, `.table--cards` reflows each row into a card (label → value, action full-width)
+   so wide tables (e.g. the world selection) don't overflow / clip their action button. */
+@media (max-width: 680px) {
+  .table--cards, .table--cards tbody, .table--cards tr, .table--cards td { display: block; width: auto; }
+  .table--cards thead { display: none; }
+  .table--cards tr { border: 1px solid var(--c-border); border-radius: var(--radius-md); background: var(--c-panel); padding: 11px 14px; margin-bottom: 10px; }
+  .table--cards tr:nth-child(odd) { background: var(--c-panel); }
+  .table--cards td { border: 0; padding: 3px 0; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; text-align: right; }
+  .table--cards td::before { content: attr(data-label); color: var(--c-ink-muted); font-size: .82rem; text-align: left; }
+  .table--cards .table__title { display: block; font-size: 1.08rem; padding-bottom: 6px; }
+  .table--cards .table__title::before, .table--cards .table__act::before { content: none; }
+  .table--cards .table__act { display: block; margin-top: 10px; }
+  .table--cards .table__act .btn { display: block; width: 100%; text-align: center; }
+}
 
 /* ============================================================================
    066 — Building-page pattern (Smithy first): hero band + resource ribbon +
@@ -376,8 +498,8 @@ a { color: var(--c-gold); }
 .roster { display: flex; flex-direction: column; gap: 10px; }
 /* 073: one consistent roster row for research / training / forging — thumb · info · price · action. */
 .unit {
-  position: relative; display: grid; grid-template-columns: 56px minmax(0, 1fr) auto auto; align-items: center;
-  gap: 6px 16px; padding: 11px 14px 11px 13px; border: 1px solid var(--c-border); border-radius: var(--radius-md);
+  position: relative; display: grid; grid-template-columns: 56px minmax(200px, 1fr) auto minmax(0, 300px); align-items: center;
+  gap: 6px 12px; padding: 11px 14px 11px 13px; border: 1px solid var(--c-border); border-radius: var(--radius-md);
   background: var(--c-panel); box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
 }
 /* the price column — the resource cost + time, always here on every roster page (AC2). */
@@ -424,13 +546,21 @@ a { color: var(--c-gold); }
 
 @media (max-width: 920px) {
   .bld-cols { grid-template-columns: 1fr; }
-  .bld-aside { position: static; flex-direction: row; flex-wrap: wrap; }
+  /* stacked layout: lift the queue/upgrade aside ABOVE the units list (desktop keeps it on the side). */
+  .bld-aside { position: static; flex-direction: row; flex-wrap: wrap; order: -1; }
   .bld-aside .bld-card { flex: 1 1 240px; }
 }
 @media (max-width: 680px) {
   .res-ribbon { grid-template-columns: repeat(2, 1fr); }
-  .bld-title { font-size: 1.7rem; }
-  .bld-hero { min-height: 150px; }
+  .bld-title { font-size: 1.55rem; flex-wrap: wrap; }
+  .bld-hero { min-height: 140px; }
+  /* mobile hero: crest + text align at the top (not bottom), and the back link pins to the top-right
+     so the row isn't cramped/crooked. */
+  .bld-hero__inner { align-items: flex-start; gap: 12px; padding-top: 46px; padding-bottom: 16px; }
+  .bld-crest { width: 46px; height: 46px; }
+  .bld-crest svg { width: 26px; height: 26px; }
+  .bld-back { position: absolute; top: 12px; right: var(--space-5); align-self: auto; }
+  .bld-sub { font-size: .92rem; }
   .unit { grid-template-columns: 48px 1fr; }
   .unit > .unit__info, .unit > .unit__price, .unit > .unit__act { grid-column: 2; text-align: left; }
   .unit__price { align-items: flex-start; }
@@ -445,7 +575,7 @@ a { color: var(--c-gold); }
 .unit__stats b { color: var(--c-ink); font-weight: 500; }
 .unit__researched { display: inline-block; font-family: ui-monospace, monospace; font-size: .74rem; letter-spacing: .04em; color: var(--c-success); border: 1px solid color-mix(in srgb, var(--c-success) 45%, var(--c-border)); border-radius: 2px; padding: 3px 9px; }
 .train-form { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
-.train-form input[type=number] { width: 5em; background: var(--c-bg); border: 1px solid var(--c-border); color: var(--c-ink); border-radius: var(--radius-sm); padding: 6px 8px; font: inherit; font-variant-numeric: tabular-nums; }
+.train-form input[type=number] { width: 4em; background: var(--c-bg); border: 1px solid var(--c-border); color: var(--c-ink); border-radius: var(--radius-sm); padding: 6px 8px; font: inherit; font-variant-numeric: tabular-nums; }
 .train-form input[type=number]:focus-visible { outline: 2px solid var(--c-gold); outline-offset: 1px; }
 .batch-total { font-family: ui-monospace, monospace; font-size: .74rem; color: var(--c-ink-muted); width: 100%; text-align: right; }
 
@@ -663,7 +793,9 @@ a { color: var(--c-gold); }
 
 @media (max-width: 980px) {
   .vcols { grid-template-columns: 1fr; }
-  .vrail { position: static; flex-direction: row; flex-wrap: wrap; }
+  /* stacked: lift the rail (build queue · garrison · expansion · movements …) ABOVE the village plan
+     so the status cards aren't buried under the full-height plan. */
+  .vrail { position: static; flex-direction: row; flex-wrap: wrap; order: -1; }
   .vrail .bld-card { flex: 1 1 260px; }
 }
 @media (max-width: 680px) {
@@ -676,8 +808,9 @@ a { color: var(--c-gold); }
   .vcenter { position: static; inset: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px; }
   .rampart, .tower, .gate, .vcanvas__label { display: none; }
   /* `relative` (not static) so an on-tile `.vplot__cd` countdown still anchors to its own tile. */
-  .vplot, .vplot--keep { position: relative; transform: none; width: auto; height: 92px; }
-  .vfield { position: relative; transform: none; width: auto; height: 72px; }
+  /* reset the desktop slot offsets (left/top: var(--x/--y)) so tiles sit in their grid cells, not shifted */
+  .vplot, .vplot--keep { position: relative; left: 0; top: 0; transform: none; width: auto; height: 92px; }
+  .vfield { position: relative; left: 0; top: 0; transform: none; width: auto; height: 72px; }
   .vplot:hover, .vplot:focus-visible, .vfield:hover, .vfield:focus-visible { transform: none; }
 }
 
@@ -796,6 +929,14 @@ a { color: var(--c-gold); }
 .rally-send { display: inline-flex; align-items: center; gap: 6px; }
 .btn--danger { background: var(--c-danger); color: #fff; border: 1px solid color-mix(in srgb, var(--c-danger) 65%, #000); }
 .btn--danger:hover { background: color-mix(in srgb, var(--c-danger) 86%, #fff); }
+/* Narrow screens: slim the buttons so the wide war-banner Train button doesn't dominate / wrap. */
+@media (max-width: 680px) {
+  .btn { padding: 8px 14px; }
+  .btn--primary { padding: 8px 16px 9px; letter-spacing: 0.06em; }
+  .btn--small { padding: 3px 8px; }
+  .train-form input[type=number] { width: 3.5em; }
+  .batch-total { font-size: 0.66rem; } /* fit the live total on one line (still wraps at "·" for huge counts) */
+}
 .checkbox { display: flex; align-items: center; gap: 9px; padding: 7px 0; color: var(--c-ink); font-size: .95rem; }
 .checkbox input { flex: none; }
 .inline, .inline-form { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0; vertical-align: middle; }

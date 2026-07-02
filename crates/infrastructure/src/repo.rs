@@ -642,6 +642,20 @@ impl AccountRepository for PgAccountRepository {
             .collect()
     }
 
+    // 115: the theming poll needs only the tribe slug — a single `players`-row read, not the full
+    // `villages_of` hydration (fields/buildings/artifacts), since it fires on each in-world page load (P11).
+    async fn player_tribe(&self, player: PlayerId) -> Result<Option<Tribe>, RepoError> {
+        let row = sqlx::query("SELECT tribe FROM players WHERE id = $1")
+            .bind(Uuid::from_u128(player.0))
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(backend)?;
+        match row {
+            Some(r) => parse_tribe(r.try_get("tribe").map_err(backend)?),
+            None => Ok(None),
+        }
+    }
+
     async fn villages_of(&self, owner: PlayerId) -> Result<Vec<Village>, RepoError> {
         let owner_uuid = Uuid::from_u128(owner.0);
         let village_rows = sqlx::query(

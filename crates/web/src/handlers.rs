@@ -4862,8 +4862,29 @@ pub async fn me(
     };
     let authed = effective.is_some();
     let moderator = eff_rec.as_ref().is_some_and(|u| u.is_moderator);
-    axum::Json(serde_json::json!({ "authed": authed, "moderator": moderator, "admin": admin }))
-        .into_response()
+    // 115: the account's tribe ("chosen once, for keeps") so base.html can set `data-tribe` on <body>
+    // for tribe-specific theming (e.g. the primary button's per-tribe colours).
+    let tribe = eff_rec.as_ref().map(|u| u.tribe.slug());
+    axum::Json(
+        serde_json::json!({ "authed": authed, "moderator": moderator, "admin": admin, "tribe": tribe }),
+    )
+    .into_response()
+}
+
+/// 115: the acting player's tribe **in the selected world**. A player may run a different tribe in a
+/// second world (the per-world join form picks one), so base.html prefers this over the account-level
+/// `/me` tribe when inside a world — keeping the primary-button theming true to the world being viewed.
+pub async fn world_me(ctx: GameContext) -> Response {
+    use eperica_application::AccountRepository;
+    // A single `players`-row read (P11) — this poll runs on each in-world page load and needs only the slug.
+    let tribe = ctx
+        .accounts
+        .player_tribe(ctx.player)
+        .await
+        .ok()
+        .flatten()
+        .map(|t| t.slug());
+    axum::Json(serde_json::json!({ "tribe": tribe })).into_response()
 }
 
 /// Live sitting status (030) — the owner's name when actively sitting, else empty. Drives the persistent
