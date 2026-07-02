@@ -1669,6 +1669,22 @@ mod tests {
     }
 
     #[test]
+    fn resource_field_cost_is_asymmetric_and_faithful() {
+        let r = build_rules().expect("build rules");
+        // Level-1 field (index 0) is the canonical Travian 40 wood / 100 clay / 50 iron / 60 crop —
+        // clay-heavy, not uniform. (The bug this fixes had wood=clay=iron and a too-cheap crop.)
+        let c = r
+            .cost(BuildTarget::Field { slot: 0 }, 0)
+            .expect("level-1 field cost");
+        assert_eq!((c.wood, c.clay, c.iron, c.crop), (40, 100, 50, 60));
+        // Guard the regression: the four columns must not all be equal.
+        assert!(
+            c.wood != c.clay || c.clay != c.iron || c.iron != c.crop,
+            "field cost must be asymmetric across resources"
+        );
+    }
+
+    #[test]
     fn loads_embassy_building() {
         // 015 AC1: the Embassy is an ordinary infrastructure building — Main Building L1 prereq, a
         // 10-level cost/time table, and no exclusivity. It loads into the build catalog like any other.
