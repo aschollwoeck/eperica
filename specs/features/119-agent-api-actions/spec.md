@@ -41,7 +41,7 @@ the server to play competitively.
 | `POST /api/w/{w}/village/{v}/attack` | `order_attack` (`{x, y, units, mode: "attack"\|"raid", catapult_target?}`) |
 | `POST /api/w/{w}/village/{v}/scout` | `order_scout` (`{x, y, units, target: "resources"\|"defenses"}` — the scout unit is tribe-specific, so scouts are named like every send; `NotAllScouts` stays the use-case's rule) |
 | `POST /api/w/{w}/village/{v}/reinforce` | `order_reinforcement` (`{x, y, units}`) |
-| `POST /api/w/{w}/village/{v}/return` | `order_return` (`{station}` — a stationed-group id from the digest) |
+| `POST /api/w/{w}/village/{v}/return` | `order_return` (`{host: "<village-uuid>"}` — the `host_village` of a `reinforcements_abroad` group; plan Decision #3) |
 | `POST /api/w/{w}/village/{v}/trade` | `order_trade` (`{x, y, give: {wood,clay,iron,crop}}`) |
 | `POST /api/w/{w}/village/{v}/settle` | `order_settle` (`{x, y}`) |
 | `POST /api/w/{w}/village/{v}/research` | `order_research` (`{unit}`) |
@@ -63,8 +63,9 @@ levels, active research/smithy orders).
   empty-bundle, self-target, protection (019) and Natar/oasis rules). Success returns the movement
   with arrival; denials use the 118 error contract with the player-visible reason.
 
-- **AC2 — Recall.** A stationed group listed in the digest can be recalled by id via
-  `order_return`; a group not owned by the agent (or an unknown id) → `404 not_found` (P4).
+- **AC2 — Recall.** A stationed group listed in the digest can be recalled by its host village id
+  via `order_return`; no group stationed at that host (unknown, foreign, or already recalled) →
+  `404 nothing_stationed` — the use-case's own denial, leaking nothing (P4).
 
 - **AC3 — Trade & settle.** `trade` and `settle` mirror `order_trade`/`order_settle` (merchant
   capacity/counts, target rules, settler/CP/slot gates). Success returns the shipment/settling
@@ -79,8 +80,10 @@ levels, active research/smithy orders).
   never sees the attacker's surviving composition beyond the faithful 016 view).
 
 - **AC6 — Messages.** The agent can DM an existing player by username (open-or-continue semantics,
-  024 validation) and read new DMs since a timestamp. Unknown recipient → `404`; body rules are
-  024's (length caps). No new visibility: only conversations the agent is a party to.
+  024 validation) and track new mail via the conversation list's unread counts + per-message
+  `created_ms` (plan Decision #5 — the page's own read models; no separate "since" read exists).
+  Unknown recipient → `404`; body rules are 024's (length caps). No new visibility: only
+  conversations the agent is a party to.
 
 - **AC7 — Digest closure (page truth).** The digest additions (movements, reinforcements
   here/abroad, research state) equal the corresponding page read models at the same instant, carry

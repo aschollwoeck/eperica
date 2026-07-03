@@ -93,7 +93,9 @@ Body `{ "unit": "…", "count": n }` → `order_train`. Success:
 | `POST …/research` | `{unit}` | `{ordered, order}` |
 | `POST …/smithy` | `{unit}` | `{ordered, order}` |
 
-`movement` = `{kind, dest_x, dest_y, arrive_at_ms, troops}`. Denial codes are the use-cases' own
+`movement` = `{kind, dest_x, dest_y, arrive_at_ms, troops}`. On a read-back glitch the echo field
+(`movement`/`shipment`/`order`/`queue_entry`/`batch`) can be `null` while `ordered` is still `true`
+— the order **committed**; re-read the digest rather than retrying. Denial codes are the use-cases' own
 reasons: `empty_composition`, `not_all_scouts`, `same_tile`, `no_target`, `target_protected`,
 `invalid_catapult_target`, `nothing_stationed`, `no_marketplace`, `empty_bundle`,
 `not_enough_merchants`, `not_settler_group`, `no_slot`, `not_free_valley`, `in_progress`,

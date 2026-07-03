@@ -502,18 +502,7 @@ async fn state_digest(AgentGame(ctx): AgentGame) -> Result<Response, ApiError> {
         .map_err(internal("reports"))?
         .into_iter()
         .map(|r| {
-            let kind = match r.kind {
-                MovementKind::Attack => "attack",
-                MovementKind::Raid => "raid",
-                MovementKind::OasisAttack => "oasis_attack",
-                // Reinforce/Return/Scout/OasisReinforce/Settle never appear as a battle report kind,
-                // but exhaustive matching keeps clippy happy.
-                MovementKind::Reinforce => "reinforce",
-                MovementKind::Return => "return",
-                MovementKind::Scout => "scout",
-                MovementKind::OasisReinforce => "oasis_reinforce",
-                MovementKind::Settle => "settle",
-            };
+            let kind = movement_kind_str(r.kind);
             serde_json::json!({
                 "id": r.id.to_string(),
                 "occurred_at_ms": r.occurred_at.0,
@@ -836,8 +825,10 @@ fn unit_bundle(map: std::collections::BTreeMap<String, u32>) -> Vec<(UnitId, u32
 }
 
 /// Serialize an in-flight [`MovementView`] to the compact shape the send-action responses carry.
-fn movement_json(m: &eperica_application::MovementView) -> serde_json::Value {
-    let kind = match m.kind {
+/// Lowercase wire label for a [`MovementKind`] — one source of truth for echoes, digest heads and
+/// report reads.
+fn movement_kind_str(k: MovementKind) -> &'static str {
+    match k {
         MovementKind::Reinforce => "reinforce",
         MovementKind::Return => "return",
         MovementKind::Attack => "attack",
@@ -846,7 +837,11 @@ fn movement_json(m: &eperica_application::MovementView) -> serde_json::Value {
         MovementKind::OasisAttack => "oasis_attack",
         MovementKind::OasisReinforce => "oasis_reinforce",
         MovementKind::Settle => "settle",
-    };
+    }
+}
+
+fn movement_json(m: &eperica_application::MovementView) -> serde_json::Value {
+    let kind = movement_kind_str(m.kind);
     let troops: std::collections::BTreeMap<String, u32> = m
         .troops
         .iter()
@@ -1030,7 +1025,7 @@ async fn train_action(
 }
 
 // ---------------------------------------------------------------------------
-// Military actions (AC5) — thin JSON adapters onto the existing use-cases (P4).
+// Military actions (119 AC1) — thin JSON adapters onto the existing use-cases (P4).
 // ---------------------------------------------------------------------------
 
 #[derive(serde::Deserialize)]
@@ -1043,7 +1038,7 @@ struct AttackBody {
     catapult_target: Option<String>,
 }
 
-/// `POST /api/w/{world}/village/{village}/attack` → `order_attack` (AC5).
+/// `POST /api/w/{world}/village/{village}/attack` → `order_attack` (119 AC1).
 ///
 /// Strict village addressing: the path village must be owned by the agent (M3). Mode must be
 /// `"attack"` or `"raid"`; anything else → 400 `invalid_mode`. Success returns the created
@@ -1066,7 +1061,24 @@ async fn attack_action(
             ));
         }
     };
-    let catapult_target = crate::handlers::parse_building_kind(body.catapult_target.as_deref());
+    let ordered_kind = match mode {
+        AttackMode::Attack => MovementKind::Attack,
+        AttackMode::Raid => MovementKind::Raid,
+    };
+    // A machine contract rejects a typo'd catapult target outright (unlike the browser's <select>,
+    // which can't produce one) — the build endpoint's invalid_kind precedent.
+    let catapult_target = match body.catapult_target.as_deref() {
+        None => None,
+        Some(s) => Some(
+            crate::handlers::parse_building_kind(Some(s)).ok_or_else(|| {
+                ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_catapult_target",
+                    "Unknown catapult target building.",
+                )
+            })?,
+        ),
+    };
     let troops = unit_bundle(body.units);
     let vid = owned_village(&ctx, &village).await?;
     let target = Coordinate::new(body.x, body.y);
@@ -1090,7 +1102,7 @@ async fn attack_action(
     )
     .await
     .map_err(combat_error)?;
-    // Read back the most-recently scheduled movement to this target (page truth, AC5).
+    // Read back the most-recently scheduled movement to this target (page truth, AC1).
     let movement = ctx
         .accounts
         .active_movements(ctx.player)
@@ -1100,9 +1112,7 @@ async fn attack_action(
             Vec::new()
         })
         .into_iter()
-        .filter(|m| {
-            m.destination == target && matches!(m.kind, MovementKind::Attack | MovementKind::Raid)
-        })
+        .filter(|m| m.destination == target && m.kind == ordered_kind)
         .max_by_key(|m| m.arrive_at.0);
     Ok(Json(serde_json::json!({
         "ordered": true,
@@ -1119,7 +1129,7 @@ struct ScoutBody {
     target: String,
 }
 
-/// `POST /api/w/{world}/village/{village}/scout` → `order_scout` (AC5).
+/// `POST /api/w/{world}/village/{village}/scout` → `order_scout` (119 AC1).
 ///
 /// `target` must be `"resources"` or `"defenses"` (010 slug); anything else → 400
 /// `invalid_target`. Only Scout-role units are accepted; others → 400 `not_all_scouts`.
@@ -1181,7 +1191,7 @@ struct ReinforceBody {
     units: std::collections::BTreeMap<String, u32>,
 }
 
-/// `POST /api/w/{world}/village/{village}/reinforce` → `order_reinforcement` (AC5).
+/// `POST /api/w/{world}/village/{village}/reinforce` → `order_reinforcement` (119 AC1).
 async fn reinforce_action(
     AgentGame(ctx): AgentGame,
     axum::extract::Path((_world, village)): axum::extract::Path<(String, String)>,
@@ -1230,7 +1240,7 @@ struct ReturnBody {
     host: String,
 }
 
-/// `POST /api/w/{world}/village/{village}/return` → `order_return` (AC5).
+/// `POST /api/w/{world}/village/{village}/return` → `order_return` (119 AC2).
 ///
 /// `host` is the hyphenated UUID of the village where the agent's troops are currently stationed.
 /// Bad parse → 404 `not_found`. If no group is stationed there → 404 `nothing_stationed`.
@@ -1282,7 +1292,7 @@ async fn return_action(
 }
 
 // ---------------------------------------------------------------------------
-// Trade & settle actions (AC5) — thin JSON adapters onto the existing use-cases (P4).
+// Trade & settle actions (119 AC3) — thin JSON adapters onto the existing use-cases (P4).
 // ---------------------------------------------------------------------------
 
 #[derive(serde::Deserialize)]
@@ -1304,7 +1314,7 @@ struct TradeBody {
     give: ResourceBundle,
 }
 
-/// `POST /api/w/{world}/village/{village}/trade` → `order_trade` (AC5).
+/// `POST /api/w/{world}/village/{village}/trade` → `order_trade` (119 AC3).
 ///
 /// Negatives in the bundle are clamped to 0 (market_send precedent). Success returns the created
 /// shipment echoed via `active_trades` (page truth). If the read-back glitches, `shipment` is
@@ -1340,7 +1350,7 @@ async fn trade_action(
     )
     .await
     .map_err(trade_error)?;
-    // Read back the most-recently scheduled Deliver leg to the target (page truth, AC5).
+    // Read back the most-recently scheduled Deliver leg to the target (page truth, AC1).
     let shipment = ctx
         .accounts
         .active_trades(ctx.player)
@@ -1375,7 +1385,7 @@ struct SettleBody {
     y: i32,
 }
 
-/// `POST /api/w/{world}/village/{village}/settle` → `order_settle` (AC5).
+/// `POST /api/w/{world}/village/{village}/settle` → `order_settle` (119 AC3).
 ///
 /// Success returns the created settling movement echoed via `active_movements` (kind Settle).
 /// If the read-back glitches, `movement` is `null` — the order committed; success stands.
@@ -1404,7 +1414,7 @@ async fn settle_action(
     )
     .await
     .map_err(settle_error)?;
-    // Read back the Settle movement to the target (page truth, AC5).
+    // Read back the Settle movement to the target (page truth, AC1).
     let movement = ctx
         .accounts
         .active_movements(ctx.player)
@@ -1424,7 +1434,7 @@ async fn settle_action(
 }
 
 // ---------------------------------------------------------------------------
-// Research & smithy actions (AC6/AC10) — thin JSON adapters onto the existing use-cases (P4).
+// Research & smithy actions (119 AC4) — thin JSON adapters onto the existing use-cases (P4).
 // ---------------------------------------------------------------------------
 
 #[derive(serde::Deserialize)]
@@ -1446,7 +1456,7 @@ fn unit_order_json(o: &eperica_application::ActiveUnitOrder) -> serde_json::Valu
     })
 }
 
-/// `POST /api/w/{world}/village/{village}/research` → `order_research` (AC6).
+/// `POST /api/w/{world}/village/{village}/research` → `order_research` (119 AC4).
 ///
 /// Success returns the created research order echoed via `active_unit_orders` (page truth). If the
 /// read-back glitches, `order` is `null` — the order committed; success stands.
@@ -1490,7 +1500,7 @@ async fn research_action(
     .into_response())
 }
 
-/// `POST /api/w/{world}/village/{village}/smithy` → `order_smithy_upgrade` (AC10).
+/// `POST /api/w/{world}/village/{village}/smithy` → `order_smithy_upgrade` (119 AC4).
 ///
 /// Success returns the created upgrade order echoed via `active_unit_orders` (page truth). If the
 /// read-back glitches, `order` is `null` — the order committed; success stands.
@@ -1516,7 +1526,7 @@ async fn smithy_action(
     )
     .await
     .map_err(upgrade_error)?;
-    // Read back the active smithy-upgrade order (page truth, AC10).
+    // Read back the active smithy-upgrade order (page truth, AC4).
     let order = ctx
         .accounts
         .active_unit_orders(vid)
@@ -1575,16 +1585,7 @@ async fn report_get(
                 "No such report or you are not a party to it.",
             )
         })?;
-    let kind = match report.kind {
-        MovementKind::Attack => "attack",
-        MovementKind::Raid => "raid",
-        MovementKind::OasisAttack => "oasis_attack",
-        MovementKind::Reinforce => "reinforce",
-        MovementKind::Return => "return",
-        MovementKind::Scout => "scout",
-        MovementKind::OasisReinforce => "oasis_reinforce",
-        MovementKind::Settle => "settle",
-    };
+    let kind = movement_kind_str(report.kind);
     // Unit-count maps for forces/losses — deterministically ordered for stable JSON.
     let af: std::collections::BTreeMap<String, u32> = report
         .attacker_forces
@@ -1734,7 +1735,7 @@ async fn scout_report_get(
 }
 
 // ---------------------------------------------------------------------------
-// Messages (AC6) — 024 DMs. Comms key by ACCOUNT id (users id, cross-world —
+// Messages (119 AC6) — 024 DMs. Comms key by ACCOUNT id (users id, cross-world —
 // 045/060): the sender is `ctx.account`, never `ctx.player`. Game actions
 // elsewhere in this file key by `ctx.player`; do not mix the two.
 // ---------------------------------------------------------------------------
@@ -1834,6 +1835,24 @@ async fn messages_with(
         .trim()
         .parse()
         .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "No such conversation."))?;
+    // The partner must exist — otherwise open_dm's mark-read would write a read cursor for a
+    // nonexistent conversation on every garbage id.
+    if ctx
+        .accounts
+        .find_user_by_id(PlayerId(other))
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "dm partner lookup failed");
+            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "partner")
+        })?
+        .is_none()
+    {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "No such conversation.",
+        ));
+    }
     let history = open_dm(
         &ctx.accounts,
         ctx.account,
