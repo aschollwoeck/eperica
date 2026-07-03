@@ -1581,6 +1581,188 @@ async fn agent_api_economy_actions(pool: sqlx::PgPool) {
     assert_eq!(v["training"][0]["unit"], "clubswinger");
 }
 
+/// 118 T7 (AC6 + AC2): the opening loop end-to-end over HTTP — a scripted client with a fresh key
+/// reads who it is, reads the digest, orders a field, is lane-denied on a second order, trains
+/// troops, and sees both queues (with stable absolute deadlines) in subsequent digests. No HTML
+/// endpoint is involved. Then AC2 freeze parity: once the world is won, the agent's mutating POST is
+/// denied exactly like a player's — 403, with the API's structured error shape.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_opening_loop(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    let user = unique("loop");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+    // A Barracks + resources so the training leg genuinely succeeds (tier-1 needs no research).
+    let village_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         VALUES ($1, 4, 'barracks', 1)",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE village_resources SET wood = 5000, clay = 5000, iron = 5000, crop = 5000, \
+         updated_at = now() WHERE village_id = $1",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let agent = client();
+    let auth = format!("Bearer {token}");
+    let get_json = |path: String| {
+        let agent = agent.clone();
+        let auth = auth.clone();
+        let base = base.clone();
+        async move {
+            let r = agent
+                .get(format!("{base}{path}"))
+                .header("Authorization", auth)
+                .send()
+                .await
+                .unwrap();
+            let status = r.status().as_u16();
+            let v: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+            (status, v)
+        }
+    };
+
+    // 1. Who am I?
+    let (status, me) = get_json("/api/me".into()).await;
+    assert_eq!(status, 200);
+    assert_eq!(me["username"].as_str().unwrap(), user);
+    let world = me["worlds"][0]["world"].as_str().unwrap().to_owned();
+    assert_eq!(world, home);
+
+    // 2. Read the world: my village, my resources.
+    let (status, d0) = get_json(format!("/api/w/{world}/state")).await;
+    assert_eq!(status, 200);
+    let vseg = d0["villages"][0]["id"].as_str().unwrap().to_owned();
+    let wood0 = d0["villages"][0]["resources"]["wood"]["amount"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(
+        d0["villages"][0]["build_queue"].as_array().unwrap().len(),
+        0
+    );
+
+    // 3. Order a field upgrade.
+    let r = agent
+        .post(format!("{base}/api/w/{world}/village/{vseg}/build"))
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"target": "field", "slot": 2}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let ordered: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    let completes = ordered["queue_entry"]["completes_at_ms"].as_i64().unwrap();
+
+    // 4. A second order in the same lane is correctly denied (the use-case's rule, AC4/AC6).
+    let r = agent
+        .post(format!("{base}/api/w/{world}/village/{vseg}/build"))
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"target": "field", "slot": 3}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 409);
+
+    // 5. Train troops after affording them.
+    let r = agent
+        .post(format!("{base}/api/w/{world}/village/{vseg}/train"))
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"unit": "phalanx", "count": 2}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+
+    // 6. Subsequent digests show both queues with stable absolute deadlines, and the spend landed.
+    let (_, d1) = get_json(format!("/api/w/{world}/state")).await;
+    let v1 = &d1["villages"][0];
+    assert_eq!(v1["build_queue"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        v1["build_queue"][0]["completes_at_ms"].as_i64().unwrap(),
+        completes,
+        "absolute deadline is stable across reads (P1)"
+    );
+    assert_eq!(v1["training"].as_array().unwrap().len(), 1);
+    assert_eq!(v1["training"][0]["unit"], "phalanx");
+    assert!(
+        v1["resources"]["wood"]["amount"].as_i64().unwrap() < wood0 + 5000,
+        "the orders debited resources"
+    );
+    assert!(d1["now_ms"].as_i64().unwrap() >= d0["now_ms"].as_i64().unwrap());
+
+    // 7. AC2 freeze parity: win the world → the agent's next mutating POST is denied like a player's.
+    sqlx::query(
+        "INSERT INTO alliances (id, name, tag, founder_id) \
+         SELECT gen_random_uuid(), 'Winners', 'WIN', id FROM users LIMIT 1",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE worlds SET won_at = now(), winner_alliance_id = (SELECT id FROM alliances LIMIT 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let r = agent
+        .post(format!("{base}/api/w/{world}/village/{vseg}/train"))
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"unit": "phalanx", "count": 1}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403, "frozen world denies agents too");
+    let body = r.text().await.unwrap();
+    assert!(body.contains("\"error\":\"world_frozen\""), "got: {body}");
+}
+
 /// 055: the base-template background pollers must be visitor-safe — a logged-out caller gets the small
 /// expected body, never a redirect to the login HTML (which the sitting-banner JS would render as raw markup
 /// on the landing page). Guards the "huge HTML markup" regression.

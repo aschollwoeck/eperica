@@ -23,7 +23,7 @@
 - [x] **T6 — Admin bootstrap.** `POST /admin/agent { username, world, tribe }` (admin-gated):
   `is_ai` account + world join + key issued, plaintext shown once in the console. Denied to
   non-admins. (AC1, roles)
-- [ ] **T7 — Integration tests.** The AC suite from plan §Test strategy, including the **AC6 opening
+- [x] **T7 — Integration tests.** The AC suite from plan §Test strategy, including the **AC6 opening
   loop** end-to-end over HTTP (read `/api/me` → digest → build → lane-denied → train → queues progress
   in later digests) and the frozen-world/blocked-account parity check (AC2). (AC1–AC6)
 - [ ] **T8 — Technical docs.** Rustdoc on the new public items (`api.rs`, ports); `CLAUDE.md`: mention
