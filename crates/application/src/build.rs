@@ -200,9 +200,20 @@ where
         }
     }
 
-    let cost = build_rules
-        .cost(target, current)
-        .ok_or(BuildError::MaxLevel)?;
+    // Fields charge by resource so croplands use their own cost table (the shown cost must equal the
+    // charged cost, P4); buildings use the generic lookup.
+    let cost = match target {
+        BuildTarget::Field { slot } => {
+            let resource = village
+                .fields
+                .get(slot as usize)
+                .map(|f| f.kind)
+                .ok_or(BuildError::NotFound)?;
+            build_rules.field_cost(resource, current)
+        }
+        BuildTarget::Building { .. } => build_rules.cost(target, current),
+    }
+    .ok_or(BuildError::MaxLevel)?;
     let base_time = build_rules
         .base_time_secs(target, current)
         .ok_or(BuildError::MaxLevel)?;
@@ -511,6 +522,8 @@ mod tests {
                 cost_per_level: vec![amounts(40), amounts(90)],
                 time_secs_per_level: vec![600, 1200],
             },
+            // Same as the field cost here — these tests exercise the order flow, not cropland pricing.
+            crop_field_cost: vec![amounts(40), amounts(90)],
             field_max_level: 1,
             capital_field_max_level: 2,
             buildings,
@@ -732,6 +745,42 @@ mod tests {
         assert_eq!(
             builds.last_settled.lock().unwrap().expect("settled"),
             amounts(60)
+        );
+    }
+
+    // 117 AC3 (P4): ordering a CROPLAND debits its own cost table, not the shared wood/clay/iron one —
+    // the charged amount must match what the panel shows.
+    #[tokio::test]
+    async fn ordering_a_cropland_debits_the_crop_table() {
+        let mut village = make_village(0, true);
+        village.fields[0].kind = ResourceKind::Crop; // slot 0 is a cropland
+        let accounts = FakeAccounts {
+            village,
+            stored: amounts(100),
+        };
+        let builds = FakeBuilds::default();
+        let mut rules = build_rules();
+        rules.field.cost_per_level = vec![amounts(40)]; // shared field cost (wood/clay/iron)
+        rules.crop_field_cost = vec![amounts(70)]; // cropland's own, distinct cost
+        order_build(
+            &accounts,
+            &builds,
+            &NoopStarvation,
+            &economy_rules(),
+            &rules,
+            &unit_rules(),
+            GameSpeed::new(1.0).unwrap(),
+            Timestamp(0),
+            PlayerId(1),
+            None,
+            BuildTarget::Field { slot: 0 },
+        )
+        .await
+        .unwrap();
+        // The cropland cost (70) was debited — NOT the shared 40 — leaving 100 - 70 = 30.
+        assert_eq!(
+            builds.last_settled.lock().unwrap().expect("settled"),
+            amounts(30)
         );
     }
 
