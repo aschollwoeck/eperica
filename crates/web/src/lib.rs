@@ -2,6 +2,7 @@
 //! full stack. The binary (`main.rs`) wires configuration, persistence, and the scheduler around it.
 #![forbid(unsafe_code)]
 
+pub mod apikey;
 pub mod auth;
 pub mod handlers;
 pub mod registry;

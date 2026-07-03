@@ -289,6 +289,7 @@ mod tests {
             abandoned: false,
             is_moderator: false,
             is_admin,
+            is_ai: false,
             banned_at: None,
             suspended_until: None,
         }

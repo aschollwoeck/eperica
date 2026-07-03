@@ -3,7 +3,7 @@
 **Status:** Draft. Ordered; each gated by `cargo fmt --all -- --check`, `clippy --all-targets -- -D warnings`,
 `cargo test --workspace`, and the P11 budget. Branch `feature/118-agent-api-core`; commit per task.
 
-- [ ] **T1 — Keys: schema + ports.** Migration `0050_agent_keys.sql` (`users.is_ai`, `agent_keys`);
+- [x] **T1 — Keys: schema + ports.** Migration `0050_agent_keys.sql` (`users.is_ai`, `agent_keys`);
   ports `create_agent_key` / `find_agent_key` / `revoke_agent_key` / `create_ai_account` + Pg impls;
   key format `epk_<id>_<secret>` with SHA-256-at-rest verify (constant-time), unit-tested. (AC1)
 - [ ] **T2 — Bearer auth + `/api` skeleton.** `crates/web/src/api.rs`: `AgentContext` extractor
