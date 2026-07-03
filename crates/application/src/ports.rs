@@ -78,6 +78,9 @@ pub struct UserRecord {
     /// Whether the account holds the elevated **Administrator** role (036) — additive to Player/Moderator;
     /// operates worlds and accounts from the `/admin` console.
     pub is_admin: bool,
+    /// Whether this is a synthetic **AI agent** account (118) — created by an operator, not a human
+    /// registrant; agent API keys may only be bound to `is_ai` accounts.
+    pub is_ai: bool,
     /// When the account was permanently **banned** (022), or `None`. A ban always blocks.
     pub banned_at: Option<Timestamp>,
     /// The instant a temporary **suspension** lifts (022), or `None`. Blocks while `now` is before it.
@@ -357,6 +360,52 @@ pub trait AccountRepository: Send + Sync {
     ) -> Result<Vec<SitterActionView>, RepoError> {
         Ok(Vec::new())
     }
+
+    // ---- Agent API keys (118). The key methods default to Err so callers get a clear "not
+    // supported" rather than silent success on implementations that have not added them yet;
+    // `set_is_ai` alone defaults to a benign no-op (see its doc). ----
+
+    /// Mark an account as an AI agent account (118). Idempotent. Defaults to a no-op so
+    /// non-agent fakes are untouched; the real adapter overrides it.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn set_is_ai(&self, _user: PlayerId) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// Store a new API key for an agent account (118). `key_id` is the public hex id;
+    /// `secret_hash` is `sha256(secret)` hex — the plaintext is never stored.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure or when the implementation does not support
+    /// agent keys.
+    async fn create_agent_key(
+        &self,
+        _user: PlayerId,
+        _key_id: &str,
+        _secret_hash: &str,
+    ) -> Result<(), RepoError> {
+        Err(RepoError::Backend("agent keys not supported".into()))
+    }
+
+    /// Look up an agent key by its public id (118). Returns `None` if no key with that id exists.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure or when the implementation does not support
+    /// agent keys.
+    async fn find_agent_key(&self, _key_id: &str) -> Result<Option<AgentKeyRecord>, RepoError> {
+        Err(RepoError::Backend("agent keys not supported".into()))
+    }
+
+    /// Revoke an agent key (118) — sets `revoked_at = now()`. Idempotent.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure or when the implementation does not support
+    /// agent keys.
+    async fn revoke_agent_key(&self, _key_id: &str) -> Result<(), RepoError> {
+        Err(RepoError::Backend("agent keys not supported".into()))
+    }
 }
 
 /// A public player search hit (028 AC1) — id + display name only.
@@ -375,6 +424,17 @@ pub struct SitterActionView {
     pub action: String,
     /// When it happened (Unix-ms UTC).
     pub created_ms: i64,
+}
+
+/// A persisted agent API key record (118) — the data returned by a key lookup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentKeyRecord {
+    /// The user (account) the key is bound to.
+    pub user: PlayerId,
+    /// The stored SHA-256 hash of the secret (hex) — used for constant-time verification.
+    pub secret_hash: String,
+    /// Whether the key has been revoked (`revoked_at IS NOT NULL`).
+    pub revoked: bool,
 }
 
 /// A public alliance search hit (028 AC2) — id + name + tag.

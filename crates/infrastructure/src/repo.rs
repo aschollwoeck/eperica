@@ -3,9 +3,9 @@
 use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, AchievementRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder,
-    AdminAccount, AdminOverview, AdminRepository, AdminWorld, AllianceHit, AllianceLeaderboardRow,
-    AllianceRepository, AllianceStats, AlliedVillage, ArtifactRepository, BattleApply,
-    BattleReportView, BoardScope, BuildRepository, CombatRepository, CommsRepository,
+    AdminAccount, AdminOverview, AdminRepository, AdminWorld, AgentKeyRecord, AllianceHit,
+    AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage, ArtifactRepository,
+    BattleApply, BattleReportView, BoardScope, BuildRepository, CombatRepository, CommsRepository,
     ConflictMetric, ConquestRepository, ConversationSummary, CultureRepository, DefenderReport,
     DiplomacyEntry, DueAttack, DueBuild, DueMovement, DueOasisAttack, DueOasisRegrow,
     DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, ForumPost,
@@ -495,6 +495,7 @@ fn row_to_user(r: &PgRow) -> Result<UserRecord, RepoError> {
         abandoned: r.try_get("abandoned").map_err(backend)?,
         is_moderator: r.try_get("is_moderator").map_err(backend)?,
         is_admin: r.try_get("is_admin").map_err(backend)?,
+        is_ai: r.try_get("is_ai").map_err(backend)?,
         banned_at: r
             .try_get::<Option<i64>, _>("banned_ms")
             .map_err(backend)?
@@ -568,6 +569,7 @@ impl AccountRepository for PgAccountRepository {
             abandoned: false,
             is_moderator: false,
             is_admin: false,
+            is_ai: false,
             banned_at: None,
             suspended_until: None,
         })
@@ -576,7 +578,7 @@ impl AccountRepository for PgAccountRepository {
     async fn find_user_by_username(&self, username: &str) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
             "SELECT id, username, email, password_hash, email_confirmed, tribe, \
-             (abandoned_at IS NOT NULL) AS abandoned, is_moderator, is_admin, \
+             (abandoned_at IS NOT NULL) AS abandoned, is_moderator, is_admin, is_ai, \
              (EXTRACT(EPOCH FROM banned_at) * 1000)::bigint AS banned_ms, \
              (EXTRACT(EPOCH FROM suspended_until) * 1000)::bigint AS suspended_ms \
              FROM users WHERE username = $1",
@@ -591,7 +593,7 @@ impl AccountRepository for PgAccountRepository {
     async fn find_user_by_id(&self, id: PlayerId) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
             "SELECT id, username, email, password_hash, email_confirmed, tribe, \
-             (abandoned_at IS NOT NULL) AS abandoned, is_moderator, is_admin, \
+             (abandoned_at IS NOT NULL) AS abandoned, is_moderator, is_admin, is_ai, \
              (EXTRACT(EPOCH FROM banned_at) * 1000)::bigint AS banned_ms, \
              (EXTRACT(EPOCH FROM suspended_until) * 1000)::bigint AS suspended_ms \
              FROM users WHERE id = $1",
@@ -1127,6 +1129,65 @@ impl AccountRepository for PgAccountRepository {
                 })
             })
             .collect()
+    }
+
+    // ---- Agent API keys (118) ----
+
+    async fn set_is_ai(&self, user: PlayerId) -> Result<(), RepoError> {
+        sqlx::query("UPDATE users SET is_ai = true WHERE id = $1")
+            .bind(Uuid::from_u128(user.0))
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn create_agent_key(
+        &self,
+        user: PlayerId,
+        key_id: &str,
+        secret_hash: &str,
+    ) -> Result<(), RepoError> {
+        sqlx::query("INSERT INTO agent_keys (id, user_id, secret_hash) VALUES ($1, $2, $3)")
+            .bind(key_id)
+            .bind(Uuid::from_u128(user.0))
+            .bind(secret_hash)
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn find_agent_key(&self, key_id: &str) -> Result<Option<AgentKeyRecord>, RepoError> {
+        let row = sqlx::query(
+            "SELECT user_id, secret_hash, (revoked_at IS NOT NULL) AS revoked \
+             FROM agent_keys WHERE id = $1",
+        )
+        .bind(key_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        row.as_ref()
+            .map(|r| {
+                let user_id: Uuid = r.try_get("user_id").map_err(backend)?;
+                Ok(AgentKeyRecord {
+                    user: PlayerId(user_id.as_u128()),
+                    secret_hash: r.try_get("secret_hash").map_err(backend)?,
+                    revoked: r.try_get("revoked").map_err(backend)?,
+                })
+            })
+            .transpose()
+    }
+
+    async fn revoke_agent_key(&self, key_id: &str) -> Result<(), RepoError> {
+        sqlx::query(
+            "UPDATE agent_keys SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL",
+        )
+        .bind(key_id)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
     }
 }
 
@@ -8411,6 +8472,54 @@ mod tests {
             rec.suspended_until,
             crate::now()
         ));
+    }
+
+    /// 118: agent-key lifecycle — create, find (hash matches, not revoked), revoke, find shows
+    /// revoked; an unknown id returns `None`.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn agent_key_lifecycle(pool: PgPool) {
+        use eperica_application::AccountRepository as _;
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+
+        // Create a user who will hold the key.
+        let player = make_account(&repo, &template, "agent").await;
+
+        // Mark the account as AI; the flag should surface on the user record.
+        repo.set_is_ai(player).await.unwrap();
+        let rec = repo.find_user_by_id(player).await.unwrap().unwrap();
+        assert!(rec.is_ai, "set_is_ai surfaces on the user record");
+
+        // Store a key (the hash is a 64-char hex string; the actual hash computation is tested
+        // in the web/apikey unit tests — here we only test storage and retrieval).
+        let key_id = "0011223344556677";
+        let hash = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+        repo.create_agent_key(player, key_id, hash).await.unwrap();
+
+        // find_agent_key returns the record; hash round-trips; not yet revoked.
+        let found = repo
+            .find_agent_key(key_id)
+            .await
+            .unwrap()
+            .expect("key exists");
+        assert_eq!(found.user, player, "key is bound to the correct user");
+        assert_eq!(found.secret_hash, hash, "stored hash round-trips");
+        assert!(!found.revoked, "key is not yet revoked");
+
+        // Revoke and verify the flag is set.
+        repo.revoke_agent_key(key_id).await.unwrap();
+        let after = repo
+            .find_agent_key(key_id)
+            .await
+            .unwrap()
+            .expect("key still exists after revocation");
+        assert!(after.revoked, "revocation is persisted");
+
+        // Revoke again is idempotent (no error, no panic).
+        repo.revoke_agent_key(key_id).await.unwrap();
+
+        // An unknown key id returns None.
+        let missing = repo.find_agent_key("ffffffffffffffff").await.unwrap();
+        assert!(missing.is_none(), "unknown key id returns None");
     }
 
     /// 023 AC1/AC2: in a large seeded world the hot read paths (population board, `villages_of`, map

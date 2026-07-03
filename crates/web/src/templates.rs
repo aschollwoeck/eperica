@@ -1358,6 +1358,9 @@ pub struct AdminTemplate {
     /// Whether a (non-empty) account search was run — distinguishes "recent accounts" from "results".
     pub searched: bool,
     pub rows: Vec<AdminAccountRow>,
+    /// One-time plaintext agent API key (118) — `Some` only immediately after a successful
+    /// POST /admin/agent; `None` on every other render. Never persisted; shown to the admin ONCE.
+    pub agent_key: Option<String>,
 }
 
 /// A row in the conversations list (024 AC3 / 060: aggregated across worlds).

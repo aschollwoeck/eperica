@@ -9,6 +9,8 @@ actions_per_window = 60
 window_secs = 60
 # Max login attempts per window for one IP (brute-force guard).
 logins_per_window = 10
+# Agent API requests (all methods) per window per AI account — 118.
+agent_limit_per_window = 120
 
 [sanctions]
 # Default suspension length (seconds) when a moderator suspends without an explicit window (1 day).

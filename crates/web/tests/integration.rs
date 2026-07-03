@@ -1094,6 +1094,917 @@ async fn world_me_reports_in_world_tribe_and_denies_visitors(pool: sqlx::PgPool)
     assert!(body.contains("\"tribe\":\"teutons\""), "got: {body}");
 }
 
+/// 118 T2 (AC1): Agent-API bearer auth — 401 JSON for missing/malformed/revoked/non-AI keys (never a
+/// redirect), key introspection for a valid one, and a JSON 404 for unknown `/api` paths.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_bearer_auth(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    // An account that will act as the AI agent: register normally (creates the home-world player),
+    // then flag `is_ai` and issue a key — the raw-SQL stand-in for the T6 admin bootstrap.
+    let user = unique("agent");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let agent = client(); // no cookies involved — pure bearer auth
+    // Missing key → 401 JSON (never a redirect).
+    let r = agent.get(format!("{base}/api/me")).send().await.unwrap();
+    assert_eq!(r.status().as_u16(), 401);
+    let body = r.text().await.unwrap();
+    assert!(body.contains("\"error\":\"unauthorized\""), "got: {body}");
+    // Malformed / unknown key → 401.
+    for bad in [
+        "Bearer nonsense",
+        "Bearer epk_0000000000000000_wrongwrongwrongwrongwrongwrongwrongwrongwro",
+    ] {
+        let r = agent
+            .get(format!("{base}/api/me"))
+            .header("Authorization", bad)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 401, "for {bad}");
+    }
+    // Valid key → the bound account + its home-world player.
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let body = r.text().await.unwrap();
+    assert!(
+        body.contains(&format!("\"username\":\"{user}\"")),
+        "got: {body}"
+    );
+    assert!(body.contains(&home), "home world listed: {body}");
+    assert!(body.contains("\"tribe\":\"gauls\""), "got: {body}");
+    // Unknown /api path → JSON 404, not the HTML fallback.
+    let r = agent
+        .get(format!("{base}/api/nope"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 404);
+    assert!(
+        r.text()
+            .await
+            .unwrap()
+            .contains("\"error\":\"unknown_endpoint\"")
+    );
+    // Non-AI account → the key is refused outright (keys bind only to AI accounts, ADR 0036).
+    sqlx::query("UPDATE users SET is_ai = FALSE WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 401);
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // AC2: a suspended/banned AI account is denied on EVERY request with the same reason a player
+    // would see — agents never pass the login chokepoint, so the sanction bites at key resolution.
+    sqlx::query("UPDATE users SET suspended_until = now() + interval '1 day' WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403);
+    assert!(
+        r.text()
+            .await
+            .unwrap()
+            .contains("\"error\":\"account_blocked\"")
+    );
+    sqlx::query("UPDATE users SET suspended_until = NULL WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // M1 regression: a token WITHOUT the "Bearer " prefix must not authenticate (the rate guard and
+    // the extractor share one strict parser — an unprefixed token can't slip past the budget either).
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", token.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        401,
+        "bare token (no Bearer prefix) is rejected"
+    );
+    // Revoked key → 401.
+    sqlx::query("UPDATE agent_keys SET revoked_at = now() WHERE id = $1")
+        .bind(&key.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 401);
+}
+
+/// 118 T3 (AC5): Agent-API rate guard — under-limit requests pass; once the window counter is at the
+/// limit the next request is rejected with 429 JSON containing `error = "rate_limited"` and a
+/// `retry_after_secs` field. The test pre-seeds the `rate_limits` table to avoid looping 120+ times.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_rate_guard_enforces_limit(pool: sqlx::PgPool) {
+    use eperica_infrastructure::fair_play_rules;
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+
+    // Register an AI account and issue a key — the raw-SQL stand-in for the T6 admin bootstrap.
+    let user = unique("agentrg");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let agent = client();
+
+    // A request within the limit passes — proves the guard lets under-limit traffic through.
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "under-limit request succeeds");
+
+    // Pre-seed the rate_limits table with count = limit so the very next request tips over.
+    // Subject: `agent:<keyid>`, action: `agent` — mirrors agent_rate_guard's key scheme (118).
+    let rules = fair_play_rules().unwrap();
+    let window_secs = rules.rate_window_secs;
+    let limit = rules.agent_limit_per_window;
+    let subject = format!("agent:{}", key.id);
+    // Compute the current fixed-window boundary using the same formula as bump_rate.
+    let now_unix_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let window_start_secs = (now_unix_secs / window_secs) * window_secs;
+    sqlx::query(
+        "INSERT INTO rate_limits (subject, action, window_start, count) \
+         VALUES ($1, 'agent', to_timestamp($2::float8), $3) \
+         ON CONFLICT (subject, action, window_start) DO UPDATE SET count = EXCLUDED.count",
+    )
+    .bind(&subject)
+    .bind(window_start_secs as f64)
+    .bind(limit as i64)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The next request — window counter is at the limit, bump pushes it over — must be 429.
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 429, "over-limit request is rejected");
+    let body = r.text().await.unwrap();
+    assert!(body.contains("\"error\":\"rate_limited\""), "got: {body}");
+    assert!(body.contains("\"retry_after_secs\""), "got: {body}");
+}
+
+/// 118 T4 (AC2/AC3): the state digest reflects the player's real state (page truth), stays
+/// fog-of-war-honest, and world scoping matches the browser path (unknown → 404, unjoined → 403 JSON).
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_state_digest(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    let user = unique("digest");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "teutons"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let agent = client();
+    let get = |path: String| {
+        agent
+            .get(format!("{base}{path}"))
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+    };
+
+    // The digest: one starting village, 18 fields, the reserved buildings, positive resources with
+    // capacities, empty queues, quiet incoming, culture block present.
+    let r = get(format!("/api/w/{home}/state")).await.unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let d: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(d["world"].as_str().unwrap(), home);
+    assert!(d["now_ms"].as_i64().unwrap() > 0);
+    let vs = d["villages"].as_array().unwrap();
+    assert_eq!(vs.len(), 1);
+    let v = &vs[0];
+    // 013: no village is the capital until a Palace designates one — a fresh start has none.
+    assert!(!v["capital"].as_bool().unwrap());
+    assert_eq!(v["fields"].as_array().unwrap().len(), 18);
+    let kinds: Vec<&str> = v["buildings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["kind"].as_str().unwrap())
+        .collect();
+    assert!(kinds.contains(&"main_building"), "got: {kinds:?}");
+    for res in ["wood", "clay", "iron", "crop"] {
+        assert!(v["resources"][res]["amount"].as_i64().unwrap() > 0);
+        assert!(v["resources"][res]["capacity"].as_i64().unwrap() > 0);
+    }
+    assert_eq!(v["build_queue"].as_array().unwrap().len(), 0);
+    assert_eq!(v["training"].as_array().unwrap().len(), 0);
+    assert_eq!(d["incoming_attacks"].as_array().unwrap().len(), 0);
+    assert!(d["culture"]["villages_allowed"].as_u64().unwrap() >= 1);
+
+    // The map window: (2r+1) rows of (2r+1) cells around the given centre.
+    let x = v["x"].as_i64().unwrap();
+    let y = v["y"].as_i64().unwrap();
+    let r = get(format!("/api/w/{home}/map?x={x}&y={y}&r=3"))
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let m: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(m["r"].as_i64().unwrap(), 3);
+    let rows = m["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 7);
+    assert_eq!(rows[0].as_array().unwrap().len(), 7);
+
+    // AC3 — digest = page truth: the same application read models, called directly against the
+    // pool, must agree with the digest (rates/capacities exactly; amounts/cp within an accrual tick).
+    {
+        use eperica_application::{load_culture, load_economy};
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = ensure_world(&pool, &config).await.unwrap();
+        let rules = load_world_rules(&world.rule_preset).unwrap();
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            rules.economy.starting_amounts,
+            rules.lifecycle.beginner_protection_secs,
+            config.speed,
+        );
+        let uid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+            .bind(&user)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let player = PlayerId(uid.as_u128());
+        let econ = load_economy(
+            &repo,
+            &rules.economy,
+            &rules.units,
+            config.speed,
+            Timestamp(now().0),
+            player,
+            None,
+        )
+        .await
+        .unwrap()
+        .expect("economy");
+        let r = &v["resources"];
+        assert_eq!(r["wood"]["rate"].as_i64().unwrap(), econ.economy.rates.wood);
+        assert_eq!(r["clay"]["rate"].as_i64().unwrap(), econ.economy.rates.clay);
+        assert_eq!(r["iron"]["rate"].as_i64().unwrap(), econ.economy.rates.iron);
+        assert_eq!(
+            r["crop"]["rate"].as_i64().unwrap(),
+            econ.economy.rates.crop_net
+        );
+        assert_eq!(
+            r["wood"]["capacity"].as_i64().unwrap(),
+            econ.economy.capacities.warehouse
+        );
+        assert_eq!(
+            r["crop"]["capacity"].as_i64().unwrap(),
+            econ.economy.capacities.granary
+        );
+        for res in ["wood", "clay", "iron", "crop"] {
+            let digest_amt = r[res]["amount"].as_i64().unwrap();
+            let direct = match res {
+                "wood" => econ.economy.amounts.wood,
+                "clay" => econ.economy.amounts.clay,
+                "iron" => econ.economy.amounts.iron,
+                _ => econ.economy.amounts.crop,
+            };
+            assert!(
+                (digest_amt - direct).abs() <= 2,
+                "{res}: digest {digest_amt} vs direct {direct}"
+            );
+        }
+        let culture = load_culture(&repo, &repo, &rules.culture, Timestamp(now().0), player)
+            .await
+            .unwrap();
+        assert_eq!(
+            d["culture"]["rate_per_hour"].as_i64().unwrap(),
+            culture.rate
+        );
+        assert_eq!(
+            d["culture"]["villages_used"].as_u64().unwrap(),
+            u64::from(culture.used_slots)
+        );
+        assert_eq!(
+            d["culture"]["villages_allowed"].as_u64().unwrap(),
+            u64::from(culture.allowed_villages)
+        );
+        assert_eq!(
+            d["culture"]["next_threshold"].as_i64(),
+            culture.next_threshold
+        );
+        assert!(
+            (d["culture"]["cp"].as_i64().unwrap() - culture.cp).abs() <= 2,
+            "cp within an accrual tick"
+        );
+
+        // Fog-of-war shape (§7.3): seed one inbound attack and assert the digest entry carries
+        // EXACTLY {village, arrive_at_ms} — no origin, no troops, nothing else.
+        let attacker = unique("raider");
+        let aemail = format!("{attacker}@example.com");
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", attacker.as_str()),
+                ("email", aemail.as_str()),
+                ("password", "secret12"),
+                ("tribe", "romans"),
+            ])
+            .send()
+            .await
+            .unwrap();
+        sqlx::query(
+                "INSERT INTO troop_movements \
+                 (id, owner_id, kind, home_village, deliver_village, origin_x, origin_y, dest_x, dest_y, depart_at, arrive_at) \
+                 SELECT gen_random_uuid(), a.owner_id, 'attack', a.id, t.id, a.x, a.y, t.x, t.y, now(), now() + interval '1 hour' \
+                 FROM villages a, villages t \
+                 WHERE a.owner_id = (SELECT id FROM users WHERE username = $1) \
+                   AND t.owner_id = (SELECT id FROM users WHERE username = $2)",
+            )
+            .bind(&attacker)
+            .bind(&user)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let resp = agent
+            .get(format!("{base}/api/w/{home}/state"))
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+            .unwrap();
+        let d2: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap()).unwrap();
+        let inc = d2["incoming_attacks"].as_array().unwrap();
+        assert_eq!(inc.len(), 1);
+        let entry = inc[0].as_object().unwrap();
+        let mut keys: Vec<&str> = entry.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec!["arrive_at_ms", "village"],
+            "arrival-only — no origin/troops fields"
+        );
+        assert_eq!(
+            entry["village"].as_str().unwrap(),
+            vs[0]["id"].as_str().unwrap()
+        );
+        assert!(entry["arrive_at_ms"].as_i64().unwrap() > d2["now_ms"].as_i64().unwrap());
+    }
+
+    // World scoping parity (AC2): a bad uuid → 404 unknown_world; a real-but-unjoined world → 403.
+    let r = get("/api/w/not-a-uuid/state".to_owned()).await.unwrap();
+    assert_eq!(r.status().as_u16(), 404);
+    assert!(r.text().await.unwrap().contains("unknown_world"));
+    let r = get(format!(
+        "/api/w/{}/state",
+        uuid::Uuid::from_u128(0xDEAD_BEEF)
+    ))
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 403);
+    assert!(r.text().await.unwrap().contains("not_joined"));
+}
+
+/// 118 T5 (AC4): the economy actions are the use-cases — build/train succeed and fail under exactly
+/// their rules, with structured JSON codes and the created queue entry on success.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_economy_actions(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    let user = unique("actor");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "teutons"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+    // A Barracks + resources so a training order can genuinely succeed (tier-1 needs no research).
+    let village_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         VALUES ($1, 4, 'barracks', 1)",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE village_resources SET wood = 5000, clay = 5000, iron = 5000, crop = 5000, \
+         updated_at = now() WHERE village_id = $1",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let agent = client();
+    let vseg = village_id.to_string();
+    let post = |leaf: String, body: serde_json::Value| {
+        agent
+            .post(format!("{base}/api/w/{home}/village/{vseg}{leaf}"))
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+    };
+
+    // AC4 — insufficient: drained stores make the use-case's own affordability rule answer 409.
+    sqlx::query(
+        "UPDATE village_resources SET wood = 5, clay = 5, iron = 5, crop = 5 WHERE village_id = $1",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let r = post(
+        "/build".into(),
+        serde_json::json!({"target": "field", "slot": 0}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 409);
+    assert!(
+        r.text()
+            .await
+            .unwrap()
+            .contains("\"error\":\"insufficient\"")
+    );
+    sqlx::query(
+        "UPDATE village_resources SET wood = 5000, clay = 5000, iron = 5000, crop = 5000, \
+         updated_at = now() WHERE village_id = $1",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // AC4/M3 — a village the agent does NOT own is 404 not_found: no silent capital fallback on the
+    // machine surface (an agent's order must never land on a different village than addressed).
+    let stranger = unique("mark");
+    let semail = format!("{stranger}@example.com");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", stranger.as_str()),
+            ("email", semail.as_str()),
+            ("password", "secret12"),
+            ("tribe", "romans"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let foreign: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&stranger)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let r = agent
+        .post(format!("{base}/api/w/{home}/village/{foreign}/build"))
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"target": "field", "slot": 0}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        404,
+        "foreign village is refused, not fallen back"
+    );
+    assert!(r.text().await.unwrap().contains("\"error\":\"not_found\""));
+
+    // Build a field: success returns the queue entry with its completion time.
+    let r = post(
+        "/build".into(),
+        serde_json::json!({"target": "field", "slot": 0}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["ordered"], true);
+    assert_eq!(body["queue_entry"]["level"].as_i64().unwrap(), 1);
+    assert!(body["queue_entry"]["completes_at_ms"].as_i64().unwrap() > 0);
+
+    // A second order in the same (non-Roman, single) lane → 409 lane_busy, the use-case's own rule.
+    let r = post(
+        "/build".into(),
+        serde_json::json!({"target": "field", "slot": 1}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 409);
+    assert!(r.text().await.unwrap().contains("\"error\":\"lane_busy\""));
+
+    // Malformed body / unknown target → 400 with the API error shape (never axum plain text).
+    let r = agent
+        .post(format!("{base}/api/w/{home}/village/{vseg}/build"))
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .body("{not json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 400);
+    assert!(
+        r.text()
+            .await
+            .unwrap()
+            .contains("\"error\":\"invalid_json\"")
+    );
+    let r = post(
+        "/build".into(),
+        serde_json::json!({"target": "castle", "slot": 0}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 400);
+    assert!(r.text().await.unwrap().contains("invalid_target"));
+
+    // Train tier-1 infantry: success returns the batch.
+    let r = post(
+        "/train".into(),
+        serde_json::json!({"unit": "clubswinger", "count": 3}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["batch"]["remaining"].as_i64().unwrap(), 3);
+    assert!(body["batch"]["next_complete_at_ms"].as_i64().unwrap() > 0);
+
+    // Denials: same building already training → lane_busy; unknown unit → not_found;
+    // a foreign-tribe unit → not_found (the roster is tribe-scoped, P4).
+    let r = post(
+        "/train".into(),
+        serde_json::json!({"unit": "clubswinger", "count": 1}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 409);
+    assert!(r.text().await.unwrap().contains("lane_busy"));
+    let r = post(
+        "/train".into(),
+        serde_json::json!({"unit": "nope", "count": 1}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 404);
+    let r = post(
+        "/train".into(),
+        serde_json::json!({"unit": "phalanx", "count": 1}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        404,
+        "foreign-tribe unit is not in the roster"
+    );
+
+    // The digest reflects both queues (AC4 → AC3 handshake).
+    let r = agent
+        .get(format!("{base}/api/w/{home}/state"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    let d: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    let v = &d["villages"][0];
+    assert_eq!(v["build_queue"].as_array().unwrap().len(), 1);
+    assert_eq!(v["training"].as_array().unwrap().len(), 1);
+    assert_eq!(v["training"][0]["unit"], "clubswinger");
+}
+
+/// 118 T7 (AC6 + AC2): the opening loop end-to-end over HTTP — a scripted client with a fresh key
+/// reads who it is, reads the digest, orders a field, is lane-denied on a second order, trains
+/// troops, and sees both queues (with stable absolute deadlines) in subsequent digests. No HTML
+/// endpoint is involved. Then AC2 freeze parity: once the world is won, the agent's mutating POST is
+/// denied exactly like a player's — 403, with the API's structured error shape.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_opening_loop(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    let user = unique("loop");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+    // A Barracks + resources so the training leg genuinely succeeds (tier-1 needs no research).
+    let village_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         VALUES ($1, 4, 'barracks', 1)",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE village_resources SET wood = 5000, clay = 5000, iron = 5000, crop = 5000, \
+         updated_at = now() WHERE village_id = $1",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let agent = client();
+    let auth = format!("Bearer {token}");
+    let get_json = |path: String| {
+        let agent = agent.clone();
+        let auth = auth.clone();
+        let base = base.clone();
+        async move {
+            let r = agent
+                .get(format!("{base}{path}"))
+                .header("Authorization", auth)
+                .send()
+                .await
+                .unwrap();
+            let status = r.status().as_u16();
+            let v: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+            (status, v)
+        }
+    };
+
+    // 1. Who am I?
+    let (status, me) = get_json("/api/me".into()).await;
+    assert_eq!(status, 200);
+    assert_eq!(me["username"].as_str().unwrap(), user);
+    let world = me["worlds"][0]["world"].as_str().unwrap().to_owned();
+    assert_eq!(world, home);
+
+    // 2. Read the world: my village, my resources.
+    let (status, d0) = get_json(format!("/api/w/{world}/state")).await;
+    assert_eq!(status, 200);
+    let vseg = d0["villages"][0]["id"].as_str().unwrap().to_owned();
+    let wood0 = d0["villages"][0]["resources"]["wood"]["amount"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(
+        d0["villages"][0]["build_queue"].as_array().unwrap().len(),
+        0
+    );
+
+    // 3. Order a field upgrade.
+    let r = agent
+        .post(format!("{base}/api/w/{world}/village/{vseg}/build"))
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"target": "field", "slot": 2}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let ordered: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    let completes = ordered["queue_entry"]["completes_at_ms"].as_i64().unwrap();
+
+    // 4. A second order in the same lane is correctly denied (the use-case's rule, AC4/AC6).
+    let r = agent
+        .post(format!("{base}/api/w/{world}/village/{vseg}/build"))
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"target": "field", "slot": 3}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 409);
+
+    // 5. Train troops after affording them.
+    let r = agent
+        .post(format!("{base}/api/w/{world}/village/{vseg}/train"))
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"unit": "phalanx", "count": 2}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+
+    // 6. Subsequent digests show both queues with stable absolute deadlines, and the spend landed.
+    let (_, d1) = get_json(format!("/api/w/{world}/state")).await;
+    let v1 = &d1["villages"][0];
+    assert_eq!(v1["build_queue"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        v1["build_queue"][0]["completes_at_ms"].as_i64().unwrap(),
+        completes,
+        "absolute deadline is stable across reads (P1)"
+    );
+    assert_eq!(v1["training"].as_array().unwrap().len(), 1);
+    assert_eq!(v1["training"][0]["unit"], "phalanx");
+    assert!(
+        v1["resources"]["wood"]["amount"].as_i64().unwrap() < wood0 + 5000,
+        "the orders debited resources"
+    );
+    assert!(d1["now_ms"].as_i64().unwrap() >= d0["now_ms"].as_i64().unwrap());
+
+    // 7. AC2 freeze parity: win the world → the agent's next mutating POST is denied like a player's.
+    sqlx::query(
+        "INSERT INTO alliances (id, name, tag, founder_id) \
+         SELECT gen_random_uuid(), 'Winners', 'WIN', id FROM users LIMIT 1",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE worlds SET won_at = now(), winner_alliance_id = (SELECT id FROM alliances LIMIT 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let r = agent
+        .post(format!("{base}/api/w/{world}/village/{vseg}/train"))
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"unit": "phalanx", "count": 1}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403, "frozen world denies agents too");
+    let body = r.text().await.unwrap();
+    assert!(body.contains("\"error\":\"world_frozen\""), "got: {body}");
+}
+
 /// 055: the base-template background pollers must be visitor-safe — a logged-out caller gets the small
 /// expected body, never a redirect to the login HTML (which the sitting-banner JS would render as raw markup
 /// on the landing page). Guards the "huge HTML markup" regression.
@@ -8459,5 +9370,123 @@ async fn map_shows_distance_and_send_shortcut(pool: sqlx::PgPool) {
     assert!(
         body.contains(&format!("/rally?x={ax}&amp;y={ay}")),
         "own village offers a send shortcut (reinforce)"
+    );
+}
+
+/// 118 T6: an admin can bootstrap an AI agent account from the admin console.
+///
+/// - A non-admin POST /admin/agent is denied (403).
+/// - A valid admin POST creates a `users` row with `is_ai = true`, a village in the chosen world,
+///   and an `agent_keys` row; the response body contains the plaintext `epk_` token.
+/// - Using that token for `GET /api/me` with `Authorization: Bearer` returns 200 with the username.
+#[sqlx::test(migrations = "../../migrations")]
+async fn admin_creates_ai_agent(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    // AdminWorldRow.id is `world.id.0.to_string()` — decimal u128. The form must send that format.
+    let home_uuid: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM worlds ORDER BY created_at, id LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let home = home_uuid.as_u128().to_string();
+
+    let admin_name = unique("agadm");
+    let (ac, _admin_id) = register_client(&base, &pool, &admin_name).await;
+
+    let (plain, _plain_id) = register_client(&base, &pool, &unique("agplain")).await;
+
+    // A non-admin POST /admin/agent is forbidden (server-authoritative, P4).
+    let r = plain
+        .post(format!("{base}/admin/agent"))
+        .form(&[("username", "bot0"), ("world", &home), ("tribe", "romans")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403, "non-admin denied");
+
+    // Promote the admin account.
+    sqlx::query("UPDATE users SET is_admin = TRUE WHERE username = $1")
+        .bind(&admin_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let bot_name = unique("bot");
+    let r = ac
+        .post(format!("{base}/admin/agent"))
+        .form(&[
+            ("username", bot_name.as_str()),
+            ("world", home.as_str()),
+            ("tribe", "romans"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "admin create succeeded");
+
+    let body = r.text().await.unwrap();
+
+    // The response must contain the one-time plaintext `epk_` token.
+    let token_start = body.find("epk_").expect("epk_ token in response body");
+    // Extract until the closing `</code>` tag.
+    let after = &body[token_start..];
+    let token_end = after.find('<').unwrap_or(after.len());
+    let token = after[..token_end].trim().to_owned();
+    assert!(
+        token.starts_with("epk_"),
+        "extracted token starts with epk_: {token}"
+    );
+
+    // Verify the DB state: is_ai = true, a village exists in the world, an agent_keys row exists.
+    let is_ai: bool = sqlx::query_scalar("SELECT is_ai FROM users WHERE username = $1")
+        .bind(&bot_name)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(is_ai, "is_ai flag set on the created account");
+
+    let village_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM villages v \
+         JOIN players p ON p.id = v.owner_id \
+         JOIN users u ON u.id = p.user_id \
+         WHERE u.username = $1",
+    )
+    .bind(&bot_name)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(village_count > 0, "agent has at least one village");
+
+    let key_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM agent_keys ak \
+         JOIN users u ON u.id = ak.user_id \
+         WHERE u.username = $1",
+    )
+    .bind(&bot_name)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(key_count, 1, "exactly one agent_keys row created");
+
+    // Use the minted key to call GET /api/me and verify it resolves to the correct account.
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let me = anon
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        me.status().as_u16(),
+        200,
+        "valid bearer token accepted by /api/me"
+    );
+    let me_body = me.text().await.unwrap();
+    assert!(
+        me_body.contains(&bot_name),
+        "GET /api/me returns the agent's username: {me_body}"
     );
 }

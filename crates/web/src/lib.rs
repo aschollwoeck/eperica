@@ -2,6 +2,8 @@
 //! full stack. The binary (`main.rs`) wires configuration, persistence, and the scheduler around it.
 #![forbid(unsafe_code)]
 
+pub mod api;
+pub mod apikey;
 pub mod auth;
 pub mod handlers;
 pub mod registry;
@@ -103,7 +105,8 @@ fn peer_ip(parts: &axum::http::request::Parts) -> String {
 async fn rate_limit_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
     use eperica_application::{ModerationError, check_rate_limit};
     let path = req.uri().path();
-    if req.method() != Method::POST || path == "/logout" {
+    // Agent API paths (/api/…) have their own dedicated budget via agent_rate_guard (118).
+    if req.method() != Method::POST || path == "/logout" || path.starts_with("/api/") {
         return next.run(req).await;
     }
     let rules = state.fair_play_rules.clone();
@@ -143,9 +146,64 @@ async fn rate_limit_guard(State(state): State<AppState>, req: Request, next: Nex
     }
 }
 
-/// The world a request targets, parsed from a `/w/{world}/…` path (056). `None` for account routes (no
-/// world segment). Used by the freeze guard to check the **targeted** world's win/freeze state (057).
+/// Agent API rate guard (118, plan Decision #5, P11): all HTTP methods to `/api/…` paths are
+/// counted per bearer key-id against the `agent_limit_per_window` budget. Non-`/api` requests pass
+/// straight through; missing or unparseable bearer tokens also pass through (the `AgentAccount`/
+/// `AgentGame` extractors will 401 them — nothing to key on). Subject is `agent:<keyid>` — the
+/// public half of the bearer token, extractable cheaply without any DB round-trip. Action `"agent"`
+/// sits in its own namespace alongside `"action"` and `"login"` so it never competes with the
+/// per-player action budget. On limit: JSON 429 with `retry_after_secs` (plan Decision #5).
+async fn agent_rate_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    use eperica_application::{ModerationError, check_rate_limit};
+    let path = req.uri().path();
+    if !path.starts_with("/api/") {
+        return next.run(req).await;
+    }
+    let (parts, body) = req.into_parts();
+    // Extract the bearer key-id cheaply — no DB round-trip, no secret verify. Uses the SAME strict
+    // token parser as authentication (`api::bearer_token`), so a request that could authenticate can
+    // never slip past the budget (review M1); a non-token request 401s in the extractor anyway.
+    let subject =
+        crate::api::bearer_token(&parts.headers).map(|(id, _secret)| format!("agent:{id}"));
+    let Some(subject) = subject else {
+        // No parseable bearer token — pass through; the extractor will 401.
+        return next.run(Request::from_parts(parts, body)).await;
+    };
+    let rules = state.fair_play_rules.clone();
+    match check_rate_limit(
+        state.accounts.as_ref(),
+        &rules,
+        &subject,
+        "agent",
+        rules.agent_limit_per_window,
+        Timestamp(now().0),
+    )
+    .await
+    {
+        Err(ModerationError::RateLimited) => (
+            StatusCode::TOO_MANY_REQUESTS,
+            axum::Json(serde_json::json!({
+                "error": "rate_limited",
+                "reason": "Too many requests \u{2014} slow down.",
+                "retry_after_secs": rules.rate_window_secs
+            })),
+        )
+            .into_response(),
+        Ok(()) => next.run(Request::from_parts(parts, body)).await,
+        // Fail-open on a backend error: a counter glitch must not lock agents out.
+        Err(e) => {
+            tracing::error!(error = %e, "agent rate-limit check failed");
+            next.run(Request::from_parts(parts, body)).await
+        }
+    }
+}
+
+/// The world a request targets, parsed from a `/w/{world}/…` — or, for the Agent API (118), an
+/// `/api/w/{world}/…` — path (056). `None` for account routes (no world segment). Used by the freeze
+/// guard to check the **targeted** world's win/freeze state (057); including `/api` here is what keeps
+/// agent actions under the same freeze as players (AC2 parity).
 fn world_in_path(path: &str) -> Option<WorldId> {
+    let path = path.strip_prefix("/api").unwrap_or(path);
     let seg = path.strip_prefix("/w/")?.split('/').next()?;
     Some(WorldId(uuid::Uuid::parse_str(seg).ok()?.as_u128()))
 }
@@ -172,11 +230,17 @@ async fn action_guard(State(state): State<AppState>, req: Request, next: Next) -
     {
         match repo.world_ended().await {
             Ok(Some(_)) => {
-                return (
-                    StatusCode::FORBIDDEN,
-                    "The round is over — the world has been won and is frozen.",
-                )
+                let reason = "The round is over — the world has been won and is frozen.";
+                // Agent endpoints (118) answer the structured JSON error shape; pages keep plain text.
+                if req.uri().path().starts_with("/api/") {
+                    return crate::api::ApiError::new(
+                        StatusCode::FORBIDDEN,
+                        "world_frozen",
+                        reason,
+                    )
                     .into_response();
+                }
+                return (StatusCode::FORBIDDEN, reason).into_response();
             }
             Ok(None) => {}
             Err(e) => tracing::error!(error = %e, "action guard failed to read world state"),
@@ -386,6 +450,9 @@ pub fn router(state: AppState) -> Router {
         .route("/worlds/join", post(handlers::join_world))
         // World-coupled routes live under `/w/{world}/…` (056); the world (its UUID) is read from the path.
         .nest("/w/{world}", world_router())
+        // The Agent API (118, ADR 0036) — bearer-key JSON surface for AI agents; world-scoped agent
+        // routes live under `/api/w/{world}/…` so the freeze guard covers them too.
+        .nest("/api", api::router())
         // Bare landing routes (old links / nav fallbacks) bounce to the lobby — the URL is the sole world
         // authority, so without one we send the player to pick a world (056).
         // Bare game routes (no world) → the lobby (login-gated). Bare public boards → the home world, so a
@@ -421,6 +488,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin", get(handlers::admin))
         .route("/admin/role", post(handlers::admin_role_submit))
         .route("/admin/world", post(handlers::admin_world_submit))
+        .route("/admin/agent", post(handlers::admin_create_agent))
         .route("/mod", get(handlers::mod_queue))
         .route("/mod/account/{id}", get(handlers::mod_account))
         .route("/mod/resolve", post(handlers::mod_resolve_submit))
@@ -440,6 +508,10 @@ pub fn router(state: AppState) -> Router {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             rate_limit_guard,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            agent_rate_guard,
         ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
