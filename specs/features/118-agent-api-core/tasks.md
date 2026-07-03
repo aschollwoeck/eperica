@@ -17,7 +17,7 @@
   `active_builds`, `active_training`, `load_culture`, `incoming_against` per the plan;
   `GET /api/w/{world}/map` via the existing map read models, `r` clamped. Digest DTOs carry absolute-ms
   deadlines; incoming = village + arrival **only**. (AC3)
-- [ ] **T5 — Economy actions.** `POST …/build` and `POST …/train` as `axum::Json` adapters onto
+- [x] **T5 — Economy actions.** `POST …/build` and `POST …/train` as `axum::Json` adapters onto
   `order_build` / `order_train`; use-case error enums → (status, `error` code, player-visible `reason`).
   Success returns the queue entry + completes-at. (AC4)
 - [ ] **T6 — Admin bootstrap.** `POST /admin/agent { username, world, tribe }` (admin-gated):

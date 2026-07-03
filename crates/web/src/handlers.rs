@@ -230,7 +230,7 @@ fn building_slot(kind: BuildingKind) -> u8 {
     }
 }
 
-fn parse_building_kind(s: Option<&str>) -> Option<BuildingKind> {
+pub(crate) fn parse_building_kind(s: Option<&str>) -> Option<BuildingKind> {
     match s {
         Some("main_building") => Some(BuildingKind::MainBuilding),
         Some("rally_point") => Some(BuildingKind::RallyPoint),
@@ -349,7 +349,7 @@ fn quest_reward_label(reward: &QuestReward) -> String {
 /// The selected village as a domain id (server re-validates ownership in the use-case, P4). The id rides in
 /// the URL path as a hyphenated **UUID** (064), the same form as the `{world}` segment. An absent or
 /// unparseable id ⇒ `None` (the capital / first-village default).
-fn selected_village(village: Option<&str>) -> Option<VillageId> {
+pub(crate) fn selected_village(village: Option<&str>) -> Option<VillageId> {
     village
         .and_then(|s| uuid::Uuid::parse_str(s.trim()).ok())
         .map(|u| VillageId(u.as_u128()))

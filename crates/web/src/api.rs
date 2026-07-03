@@ -504,6 +504,214 @@ async fn map_window(
     .into_response())
 }
 
+// ---------------------------------------------------------------------------
+// Economy actions (AC4) — thin JSON adapters onto the existing use-cases (P4).
+// ---------------------------------------------------------------------------
+
+/// Map a [`BuildError`] to the API error contract (plan Decision #6): a stable machine code + the
+/// same player-visible message the form flash shows (`e.to_string()` — exact parity with
+/// `build_submit`). Rule denials are 409; unknown targets 404; backend failures 500.
+fn build_error(e: eperica_application::BuildError) -> ApiError {
+    use eperica_application::BuildError as E;
+    let (status, code) = match &e {
+        E::Insufficient => (StatusCode::CONFLICT, "insufficient"),
+        E::AlreadyBuilding => (StatusCode::CONFLICT, "lane_busy"),
+        E::MaxLevel => (StatusCode::CONFLICT, "max_level"),
+        E::PrereqUnmet => (StatusCode::CONFLICT, "prereq_unmet"),
+        E::Exclusive => (StatusCode::CONFLICT, "exclusive"),
+        E::Placement => (StatusCode::CONFLICT, "placement"),
+        E::NotDemolishable => (StatusCode::CONFLICT, "not_demolishable"),
+        E::MainBuildingTooLow => (StatusCode::CONFLICT, "main_building_too_low"),
+        E::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+        E::Conflict => (StatusCode::CONFLICT, "conflict"),
+        E::Backend(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+    };
+    ApiError::new(status, code, e.to_string())
+}
+
+/// Map a [`TrainError`] — same contract as [`build_error`], parity with `train_submit`'s flash.
+fn train_error(e: eperica_application::TrainError) -> ApiError {
+    use eperica_application::TrainError as E;
+    let (status, code) = match &e {
+        E::Insufficient => (StatusCode::CONFLICT, "insufficient"),
+        E::QueueBusy => (StatusCode::CONFLICT, "lane_busy"),
+        E::NotResearched => (StatusCode::CONFLICT, "not_researched"),
+        E::BuildingMissing => (StatusCode::CONFLICT, "building_missing"),
+        E::BuildingUnavailable => (StatusCode::CONFLICT, "building_unavailable"),
+        E::CountOutOfRange => (StatusCode::BAD_REQUEST, "count_out_of_range"),
+        E::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+        E::Conflict => (StatusCode::CONFLICT, "conflict"),
+        E::Backend(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+    };
+    ApiError::new(status, code, e.to_string())
+}
+
+/// Unwrap an `axum::Json` body, converting a malformed-JSON rejection into the API error shape
+/// (plan §Key risks — never axum's plain-text default).
+fn json_body<T>(
+    body: Result<Json<T>, axum::extract::rejection::JsonRejection>,
+) -> Result<T, ApiError> {
+    body.map(|Json(v)| v)
+        .map_err(|r| ApiError::new(StatusCode::BAD_REQUEST, "invalid_json", r.body_text()))
+}
+
+#[derive(serde::Deserialize)]
+struct BuildBody {
+    /// `"field"` or `"building"`.
+    target: String,
+    slot: u8,
+    /// Building kind id (required when `target == "building"`).
+    #[serde(default)]
+    kind: Option<String>,
+}
+
+/// `POST /api/w/{world}/village/{village}/build` → `order_build` (AC4): the same call the form
+/// handler makes — affordability, lanes, prerequisites, placement and ownership are all the
+/// use-case's. Success returns the created queue entry with its completion time.
+async fn build_action(
+    AgentGame(ctx): AgentGame,
+    axum::extract::Path((_world, village)): axum::extract::Path<(String, String)>,
+    body: Result<Json<BuildBody>, axum::extract::rejection::JsonRejection>,
+) -> Result<Response, ApiError> {
+    use eperica_application::order_build;
+    let body = json_body(body)?;
+    let target = match body.target.as_str() {
+        "field" => eperica_domain::BuildTarget::Field { slot: body.slot },
+        "building" => match crate::handlers::parse_building_kind(body.kind.as_deref()) {
+            Some(kind) => eperica_domain::BuildTarget::Building {
+                slot: body.slot,
+                kind,
+            },
+            None => {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_kind",
+                    "Unknown or missing building kind.",
+                ));
+            }
+        },
+        _ => {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_target",
+                "target must be \"field\" or \"building\".",
+            ));
+        }
+    };
+    order_build(
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.rules.economy,
+        &ctx.rules.build,
+        &ctx.rules.units,
+        ctx.speed,
+        now(),
+        ctx.player,
+        crate::handlers::selected_village(Some(&village)),
+        target,
+    )
+    .await
+    .map_err(build_error)?;
+    ordered_entry(&ctx, &village, target).await
+}
+
+/// The queue entry just created by a successful build order — read back through the same
+/// `active_builds` read model the digest uses (page truth, AC4).
+async fn ordered_entry(
+    ctx: &auth::GameContext,
+    village: &str,
+    target: eperica_domain::BuildTarget,
+) -> Result<Response, ApiError> {
+    let villages = ctx.accounts.villages_of(ctx.player).await.map_err(|e| {
+        tracing::error!(error = %e, "post-order village read failed");
+        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "read-back")
+    })?;
+    // The same selection rule as the use-case: the path village when owned, else capital/first.
+    let selected = crate::handlers::selected_village(Some(village))
+        .and_then(|vid| villages.iter().find(|v| v.id == vid))
+        .or_else(|| villages.iter().find(|v| v.is_capital))
+        .or_else(|| villages.first())
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "not_found", "No village."))?;
+    let entry = ctx
+        .accounts
+        .active_builds(selected.id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|b| b.target == target);
+    Ok(Json(serde_json::json!({
+        "ordered": true,
+        "village": crate::handlers::village_seg(selected.id),
+        "queue_entry": entry.map(|b| serde_json::json!({
+            "level": b.target_level,
+            "completes_at_ms": b.complete_at.0,
+        })),
+    }))
+    .into_response())
+}
+
+#[derive(serde::Deserialize)]
+struct TrainBody {
+    unit: String,
+    count: u32,
+}
+
+/// `POST /api/w/{world}/village/{village}/train` → `order_train` (AC4). Success returns the batch
+/// with its next completion time.
+async fn train_action(
+    AgentGame(ctx): AgentGame,
+    axum::extract::Path((_world, village)): axum::extract::Path<(String, String)>,
+    body: Result<Json<TrainBody>, axum::extract::rejection::JsonRejection>,
+) -> Result<Response, ApiError> {
+    use eperica_application::order_train;
+    let body = json_body(body)?;
+    let unit = eperica_domain::UnitId(body.unit);
+    order_train(
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.rules.economy,
+        &ctx.rules.units,
+        ctx.speed,
+        now(),
+        ctx.player,
+        crate::handlers::selected_village(Some(&village)),
+        unit.clone(),
+        body.count,
+    )
+    .await
+    .map_err(train_error)?;
+    // Read the batch back through the digest's own read model (page truth).
+    let villages = ctx.accounts.villages_of(ctx.player).await.map_err(|e| {
+        tracing::error!(error = %e, "post-train village read failed");
+        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "read-back")
+    })?;
+    let selected = crate::handlers::selected_village(Some(&village))
+        .and_then(|vid| villages.iter().find(|v| v.id == vid))
+        .or_else(|| villages.iter().find(|v| v.is_capital))
+        .or_else(|| villages.first())
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "not_found", "No village."))?;
+    let batch = ctx
+        .accounts
+        .active_training(selected.id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|t| t.unit == unit);
+    Ok(Json(serde_json::json!({
+        "ordered": true,
+        "village": crate::handlers::village_seg(selected.id),
+        "batch": batch.map(|t| serde_json::json!({
+            "unit": t.unit.as_str(),
+            "remaining": t.count_total.saturating_sub(t.count_done),
+            "next_complete_at_ms": t.next_complete_at.0,
+        })),
+    }))
+    .into_response())
+}
+
 /// The `/api` router (nested by [`crate::router`]). Every route answers JSON; unknown `/api` paths
 /// get a JSON 404 (never the HTML fallback).
 pub fn router() -> axum::Router<AppState> {
@@ -511,6 +719,14 @@ pub fn router() -> axum::Router<AppState> {
         .route("/me", axum::routing::get(me))
         .route("/w/{world}/state", axum::routing::get(state_digest))
         .route("/w/{world}/map", axum::routing::get(map_window))
+        .route(
+            "/w/{world}/village/{village}/build",
+            axum::routing::post(build_action),
+        )
+        .route(
+            "/w/{world}/village/{village}/train",
+            axum::routing::post(train_action),
+        )
         .fallback(|| async {
             ApiError::new(
                 StatusCode::NOT_FOUND,

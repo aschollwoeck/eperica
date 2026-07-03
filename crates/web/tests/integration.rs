@@ -1405,6 +1405,182 @@ async fn agent_api_state_digest(pool: sqlx::PgPool) {
     assert!(r.text().await.unwrap().contains("not_joined"));
 }
 
+/// 118 T5 (AC4): the economy actions are the use-cases — build/train succeed and fail under exactly
+/// their rules, with structured JSON codes and the created queue entry on success.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_economy_actions(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    let user = unique("actor");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "teutons"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+    // A Barracks + resources so a training order can genuinely succeed (tier-1 needs no research).
+    let village_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         VALUES ($1, 4, 'barracks', 1)",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE village_resources SET wood = 5000, clay = 5000, iron = 5000, crop = 5000, \
+         updated_at = now() WHERE village_id = $1",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let agent = client();
+    let vseg = village_id.to_string();
+    let post = |leaf: String, body: serde_json::Value| {
+        agent
+            .post(format!("{base}/api/w/{home}/village/{vseg}{leaf}"))
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+    };
+
+    // Build a field: success returns the queue entry with its completion time.
+    let r = post(
+        "/build".into(),
+        serde_json::json!({"target": "field", "slot": 0}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["ordered"], true);
+    assert_eq!(body["queue_entry"]["level"].as_i64().unwrap(), 1);
+    assert!(body["queue_entry"]["completes_at_ms"].as_i64().unwrap() > 0);
+
+    // A second order in the same (non-Roman, single) lane → 409 lane_busy, the use-case's own rule.
+    let r = post(
+        "/build".into(),
+        serde_json::json!({"target": "field", "slot": 1}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 409);
+    assert!(r.text().await.unwrap().contains("\"error\":\"lane_busy\""));
+
+    // Malformed body / unknown target → 400 with the API error shape (never axum plain text).
+    let r = agent
+        .post(format!("{base}/api/w/{home}/village/{vseg}/build"))
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .body("{not json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 400);
+    assert!(
+        r.text()
+            .await
+            .unwrap()
+            .contains("\"error\":\"invalid_json\"")
+    );
+    let r = post(
+        "/build".into(),
+        serde_json::json!({"target": "castle", "slot": 0}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 400);
+    assert!(r.text().await.unwrap().contains("invalid_target"));
+
+    // Train tier-1 infantry: success returns the batch.
+    let r = post(
+        "/train".into(),
+        serde_json::json!({"unit": "clubswinger", "count": 3}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["batch"]["remaining"].as_i64().unwrap(), 3);
+    assert!(body["batch"]["next_complete_at_ms"].as_i64().unwrap() > 0);
+
+    // Denials: same building already training → lane_busy; unknown unit → not_found;
+    // a foreign-tribe unit → not_found (the roster is tribe-scoped, P4).
+    let r = post(
+        "/train".into(),
+        serde_json::json!({"unit": "clubswinger", "count": 1}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 409);
+    assert!(r.text().await.unwrap().contains("lane_busy"));
+    let r = post(
+        "/train".into(),
+        serde_json::json!({"unit": "nope", "count": 1}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 404);
+    let r = post(
+        "/train".into(),
+        serde_json::json!({"unit": "phalanx", "count": 1}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        404,
+        "foreign-tribe unit is not in the roster"
+    );
+
+    // The digest reflects both queues (AC4 → AC3 handshake).
+    let r = agent
+        .get(format!("{base}/api/w/{home}/state"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    let d: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    let v = &d["villages"][0];
+    assert_eq!(v["build_queue"].as_array().unwrap().len(), 1);
+    assert_eq!(v["training"].as_array().unwrap().len(), 1);
+    assert_eq!(v["training"][0]["unit"], "clubswinger");
+}
+
 /// 055: the base-template background pollers must be visitor-safe — a logged-out caller gets the small
 /// expected body, never a redirect to the login HTML (which the sitting-banner JS would render as raw markup
 /// on the landing page). Guards the "huge HTML markup" regression.
