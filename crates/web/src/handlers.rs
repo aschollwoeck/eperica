@@ -369,8 +369,8 @@ fn world_path(world: WorldId, rest: &str) -> String {
 }
 
 /// The world's hyphenated UUID as a string (056) — the `world` field every world-scoped template carries so
-/// its links can read `/w/{{ world }}/…`.
-fn world_id_str(world: WorldId) -> String {
+/// its links can read `/w/{{ world }}/…` (and the Agent API's world fields, 118).
+pub(crate) fn world_id_str(world: WorldId) -> String {
     uuid::Uuid::from_u128(world.0).to_string()
 }
 

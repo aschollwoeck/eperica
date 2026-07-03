@@ -1094,6 +1094,127 @@ async fn world_me_reports_in_world_tribe_and_denies_visitors(pool: sqlx::PgPool)
     assert!(body.contains("\"tribe\":\"teutons\""), "got: {body}");
 }
 
+/// 118 T2 (AC1): Agent-API bearer auth — 401 JSON for missing/malformed/revoked/non-AI keys (never a
+/// redirect), key introspection for a valid one, and a JSON 404 for unknown `/api` paths.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_bearer_auth(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    // An account that will act as the AI agent: register normally (creates the home-world player),
+    // then flag `is_ai` and issue a key — the raw-SQL stand-in for the T6 admin bootstrap.
+    let user = unique("agent");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let agent = client(); // no cookies involved — pure bearer auth
+    // Missing key → 401 JSON (never a redirect).
+    let r = agent.get(format!("{base}/api/me")).send().await.unwrap();
+    assert_eq!(r.status().as_u16(), 401);
+    let body = r.text().await.unwrap();
+    assert!(body.contains("\"error\":\"unauthorized\""), "got: {body}");
+    // Malformed / unknown key → 401.
+    for bad in [
+        "Bearer nonsense",
+        "Bearer epk_0000000000000000_wrongwrongwrongwrongwrongwrongwrongwrongwro",
+    ] {
+        let r = agent
+            .get(format!("{base}/api/me"))
+            .header("Authorization", bad)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 401, "for {bad}");
+    }
+    // Valid key → the bound account + its home-world player.
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let body = r.text().await.unwrap();
+    assert!(
+        body.contains(&format!("\"username\":\"{user}\"")),
+        "got: {body}"
+    );
+    assert!(body.contains(&home), "home world listed: {body}");
+    assert!(body.contains("\"tribe\":\"gauls\""), "got: {body}");
+    // Unknown /api path → JSON 404, not the HTML fallback.
+    let r = agent
+        .get(format!("{base}/api/nope"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 404);
+    assert!(
+        r.text()
+            .await
+            .unwrap()
+            .contains("\"error\":\"unknown_endpoint\"")
+    );
+    // Non-AI account → the key is refused outright (keys bind only to AI accounts, ADR 0036).
+    sqlx::query("UPDATE users SET is_ai = FALSE WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 401);
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Revoked key → 401.
+    sqlx::query("UPDATE agent_keys SET revoked_at = now() WHERE id = $1")
+        .bind(&key.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 401);
+}
+
 /// 055: the base-template background pollers must be visitor-safe — a logged-out caller gets the small
 /// expected body, never a redirect to the login HTML (which the sitting-banner JS would render as raw markup
 /// on the landing page). Guards the "huge HTML markup" regression.

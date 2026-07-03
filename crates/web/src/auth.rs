@@ -200,6 +200,51 @@ pub struct GameContext {
     pub rules: std::sync::Arc<eperica_infrastructure::WorldRules>,
 }
 
+/// Why [`resolve_game_context`] could not produce a [`GameContext`]. The two callers map these
+/// differently: the cookie path redirects (login/lobby), the agent path (118) answers JSON — but the
+/// **resolution itself is shared**, so the browser and agent worlds cannot drift (P4).
+pub(crate) enum WorldResolveFailure {
+    /// No/invalid `{world}` in the path.
+    NoWorld,
+    /// The account has no player in that world, or the registry is not running it.
+    NotJoined,
+}
+
+/// The shared world-resolution core (118): `account` + the `/w/{world}` (or `/api/w/{world}`) path →
+/// the full per-world [`GameContext`]. Used by both the cookie-driven extractor below and the
+/// bearer-driven agent extractor (`api::AgentGame`).
+pub(crate) async fn resolve_game_context(
+    parts: &mut Parts,
+    state: &AppState,
+    account: PlayerId,
+) -> Result<GameContext, WorldResolveFailure> {
+    use eperica_infrastructure::application::AccountRepository;
+    // The selected world from the URL path (056) — `/w/{world}/…`.
+    let Some(world) = world_from_path(parts).await else {
+        return Err(WorldResolveFailure::NoWorld);
+    };
+    // The account must have a player in that world, and the registry must be running it — so a path
+    // to an unjoined/unknown world never leaks game state (P4).
+    let player = match state.accounts.player_in_world(account, world).await {
+        Ok(Some(p)) => p,
+        _ => return Err(WorldResolveFailure::NotJoined),
+    };
+    let Some((accounts, map, speed, radius, rules)) = state.world_registry.context_for(world).await
+    else {
+        return Err(WorldResolveFailure::NotJoined);
+    };
+    Ok(GameContext {
+        accounts,
+        map,
+        player,
+        account,
+        world_id: world,
+        speed,
+        radius,
+        rules,
+    })
+}
+
 impl FromRequestParts<AppState> for GameContext {
     type Rejection = Response;
 
@@ -207,38 +252,14 @@ impl FromRequestParts<AppState> for GameContext {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        use eperica_infrastructure::application::AccountRepository;
         let Some((real, sitting_owner)) = effective_identity(parts, state).await else {
             return Err(Redirect::to("/login").into_response());
         };
         let account = sitting_owner.unwrap_or(real);
-
-        // The selected world from the URL path (056) — `/w/{world}/…`. No/invalid world → the lobby.
-        let Some(world) = world_from_path(parts).await else {
-            return Err(Redirect::to("/worlds").into_response());
-        };
-        // The account must have a player in that world, and the registry must be running it — else the
-        // lobby, so a path to an unjoined/unknown world never leaks game state (P4).
-        let player = match state.accounts.player_in_world(account, world).await {
-            Ok(Some(p)) => p,
-            _ => return Err(Redirect::to("/worlds").into_response()),
-        };
-        let Some((accounts, map, speed, radius, rules)) =
-            state.world_registry.context_for(world).await
-        else {
-            return Err(Redirect::to("/worlds").into_response());
-        };
-
-        Ok(GameContext {
-            accounts,
-            map,
-            player,
-            account,
-            world_id: world,
-            speed,
-            radius,
-            rules,
-        })
+        resolve_game_context(parts, state, account)
+            .await
+            // No/invalid world, unjoined, or not running → the lobby (the original redirects).
+            .map_err(|_| Redirect::to("/worlds").into_response())
     }
 }
 

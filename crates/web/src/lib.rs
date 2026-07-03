@@ -2,6 +2,7 @@
 //! full stack. The binary (`main.rs`) wires configuration, persistence, and the scheduler around it.
 #![forbid(unsafe_code)]
 
+pub mod api;
 pub mod apikey;
 pub mod auth;
 pub mod handlers;
@@ -144,9 +145,12 @@ async fn rate_limit_guard(State(state): State<AppState>, req: Request, next: Nex
     }
 }
 
-/// The world a request targets, parsed from a `/w/{world}/…` path (056). `None` for account routes (no
-/// world segment). Used by the freeze guard to check the **targeted** world's win/freeze state (057).
+/// The world a request targets, parsed from a `/w/{world}/…` — or, for the Agent API (118), an
+/// `/api/w/{world}/…` — path (056). `None` for account routes (no world segment). Used by the freeze
+/// guard to check the **targeted** world's win/freeze state (057); including `/api` here is what keeps
+/// agent actions under the same freeze as players (AC2 parity).
 fn world_in_path(path: &str) -> Option<WorldId> {
+    let path = path.strip_prefix("/api").unwrap_or(path);
     let seg = path.strip_prefix("/w/")?.split('/').next()?;
     Some(WorldId(uuid::Uuid::parse_str(seg).ok()?.as_u128()))
 }
@@ -173,11 +177,17 @@ async fn action_guard(State(state): State<AppState>, req: Request, next: Next) -
     {
         match repo.world_ended().await {
             Ok(Some(_)) => {
-                return (
-                    StatusCode::FORBIDDEN,
-                    "The round is over — the world has been won and is frozen.",
-                )
+                let reason = "The round is over — the world has been won and is frozen.";
+                // Agent endpoints (118) answer the structured JSON error shape; pages keep plain text.
+                if req.uri().path().starts_with("/api/") {
+                    return crate::api::ApiError::new(
+                        StatusCode::FORBIDDEN,
+                        "world_frozen",
+                        reason,
+                    )
                     .into_response();
+                }
+                return (StatusCode::FORBIDDEN, reason).into_response();
             }
             Ok(None) => {}
             Err(e) => tracing::error!(error = %e, "action guard failed to read world state"),
@@ -387,6 +397,9 @@ pub fn router(state: AppState) -> Router {
         .route("/worlds/join", post(handlers::join_world))
         // World-coupled routes live under `/w/{world}/…` (056); the world (its UUID) is read from the path.
         .nest("/w/{world}", world_router())
+        // The Agent API (118, ADR 0036) — bearer-key JSON surface for AI agents; world-scoped agent
+        // routes live under `/api/w/{world}/…` so the freeze guard covers them too.
+        .nest("/api", api::router())
         // Bare landing routes (old links / nav fallbacks) bounce to the lobby — the URL is the sole world
         // authority, so without one we send the player to pick a world (056).
         // Bare game routes (no world) → the lobby (login-gated). Bare public boards → the home world, so a

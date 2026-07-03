@@ -6,7 +6,7 @@
 - [x] **T1 — Keys: schema + ports.** Migration `0050_agent_keys.sql` (`users.is_ai`, `agent_keys`);
   ports `create_agent_key` / `find_agent_key` / `revoke_agent_key` / `create_ai_account` + Pg impls;
   key format `epk_<id>_<secret>` with SHA-256-at-rest verify (constant-time), unit-tested. (AC1)
-- [ ] **T2 — Bearer auth + `/api` skeleton.** `crates/web/src/api.rs`: `AgentContext` extractor
+- [x] **T2 — Bearer auth + `/api` skeleton.** `crates/web/src/api.rs`: `AgentContext` extractor
   (bearer → account → shared world-resolution core with `GameContext`, JSON failures), the `/api`
   router (nested in `lib.rs`), `GET /api/me`, the JSON error shape + axum-rejection mapper. 401/403
   never redirect. (AC1/AC2)
