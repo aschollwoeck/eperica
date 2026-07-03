@@ -105,7 +105,8 @@ fn peer_ip(parts: &axum::http::request::Parts) -> String {
 async fn rate_limit_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
     use eperica_application::{ModerationError, check_rate_limit};
     let path = req.uri().path();
-    if req.method() != Method::POST || path == "/logout" {
+    // Agent API paths (/api/…) have their own dedicated budget via agent_rate_guard (118).
+    if req.method() != Method::POST || path == "/logout" || path.starts_with("/api/") {
         return next.run(req).await;
     }
     let rules = state.fair_play_rules.clone();
@@ -140,6 +141,61 @@ async fn rate_limit_guard(State(state): State<AppState>, req: Request, next: Nex
         // Fail-open on a backend error: a counter glitch must not lock players out.
         Err(e) => {
             tracing::error!(error = %e, "rate-limit check failed");
+            next.run(Request::from_parts(parts, body)).await
+        }
+    }
+}
+
+/// Agent API rate guard (118, plan Decision #5, P11): all HTTP methods to `/api/…` paths are
+/// counted per bearer key-id against the `agent_limit_per_window` budget. Non-`/api` requests pass
+/// straight through; missing or unparseable bearer tokens also pass through (the `AgentAccount`/
+/// `AgentGame` extractors will 401 them — nothing to key on). Subject is `agent:<keyid>` — the
+/// public half of the bearer token, extractable cheaply without any DB round-trip. Action `"agent"`
+/// sits in its own namespace alongside `"action"` and `"login"` so it never competes with the
+/// per-player action budget. On limit: JSON 429 with `retry_after_secs` (plan Decision #5).
+async fn agent_rate_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    use eperica_application::{ModerationError, check_rate_limit};
+    let path = req.uri().path();
+    if !path.starts_with("/api/") {
+        return next.run(req).await;
+    }
+    let (parts, body) = req.into_parts();
+    // Extract the bearer key-id cheaply — no DB round-trip, no secret verify.
+    let subject = parts
+        .headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .and_then(crate::apikey::parse)
+        .map(|(id, _secret)| format!("agent:{id}"));
+    let Some(subject) = subject else {
+        // No parseable bearer token — pass through; the extractor will 401.
+        return next.run(Request::from_parts(parts, body)).await;
+    };
+    let rules = state.fair_play_rules.clone();
+    match check_rate_limit(
+        state.accounts.as_ref(),
+        &rules,
+        &subject,
+        "agent",
+        rules.agent_limit_per_window,
+        Timestamp(now().0),
+    )
+    .await
+    {
+        Err(ModerationError::RateLimited) => (
+            StatusCode::TOO_MANY_REQUESTS,
+            axum::Json(serde_json::json!({
+                "error": "rate_limited",
+                "reason": "Too many requests \u{2014} slow down.",
+                "retry_after_secs": rules.rate_window_secs
+            })),
+        )
+            .into_response(),
+        Ok(()) => next.run(Request::from_parts(parts, body)).await,
+        // Fail-open on a backend error: a counter glitch must not lock agents out.
+        Err(e) => {
+            tracing::error!(error = %e, "agent rate-limit check failed");
             next.run(Request::from_parts(parts, body)).await
         }
     }
@@ -454,6 +510,10 @@ pub fn router(state: AppState) -> Router {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             rate_limit_guard,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            agent_rate_guard,
         ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

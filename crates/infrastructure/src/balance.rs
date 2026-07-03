@@ -960,6 +960,7 @@ struct RateLimitDto {
     actions_per_window: u32,
     window_secs: i64,
     logins_per_window: u32,
+    agent_limit_per_window: u32,
 }
 
 #[derive(Deserialize)]
@@ -986,6 +987,7 @@ pub fn fair_play_rules() -> Result<FairPlayRules, BalanceError> {
         suspend_default_secs: dto.sanctions.suspend_default_secs,
         ip_association_threshold: dto.detection.ip_association_threshold,
         inhuman_rate_threshold: dto.detection.inhuman_rate_threshold,
+        agent_limit_per_window: dto.rate_limit.agent_limit_per_window,
     })
 }
 

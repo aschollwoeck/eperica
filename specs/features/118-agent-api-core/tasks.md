@@ -10,7 +10,7 @@
   (bearer → account → shared world-resolution core with `GameContext`, JSON failures), the `/api`
   router (nested in `lib.rs`), `GET /api/me`, the JSON error shape + axum-rejection mapper. 401/403
   never redirect. (AC1/AC2)
-- [ ] **T3 — Agent rate budget.** `agent_limit_per_window` in `specs/balance/fairplay.toml` +
+- [x] **T3 — Agent rate budget.** `agent_limit_per_window` in `specs/balance/fairplay.toml` +
   `FairPlayRules`; `agent_rate_guard` on the `/api` router (all methods, subject = bound account,
   action `"agent"`), 429 JSON with `retry_after_secs`. (AC5)
 - [ ] **T4 — State digest + map window.** `GET /api/w/{world}/state` composing `load_economy`,

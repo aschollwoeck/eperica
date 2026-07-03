@@ -1215,6 +1215,94 @@ async fn agent_api_bearer_auth(pool: sqlx::PgPool) {
     assert_eq!(r.status().as_u16(), 401);
 }
 
+/// 118 T3 (AC5): Agent-API rate guard — under-limit requests pass; once the window counter is at the
+/// limit the next request is rejected with 429 JSON containing `error = "rate_limited"` and a
+/// `retry_after_secs` field. The test pre-seeds the `rate_limits` table to avoid looping 120+ times.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_rate_guard_enforces_limit(pool: sqlx::PgPool) {
+    use eperica_infrastructure::fair_play_rules;
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+
+    // Register an AI account and issue a key — the raw-SQL stand-in for the T6 admin bootstrap.
+    let user = unique("agentrg");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let agent = client();
+
+    // A request within the limit passes — proves the guard lets under-limit traffic through.
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "under-limit request succeeds");
+
+    // Pre-seed the rate_limits table with count = limit so the very next request tips over.
+    // Subject: `agent:<keyid>`, action: `agent` — mirrors agent_rate_guard's key scheme (118).
+    let rules = fair_play_rules().unwrap();
+    let window_secs = rules.rate_window_secs;
+    let limit = rules.agent_limit_per_window;
+    let subject = format!("agent:{}", key.id);
+    // Compute the current fixed-window boundary using the same formula as bump_rate.
+    let now_unix_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let window_start_secs = (now_unix_secs / window_secs) * window_secs;
+    sqlx::query(
+        "INSERT INTO rate_limits (subject, action, window_start, count) \
+         VALUES ($1, 'agent', to_timestamp($2::float8), $3) \
+         ON CONFLICT (subject, action, window_start) DO UPDATE SET count = EXCLUDED.count",
+    )
+    .bind(&subject)
+    .bind(window_start_secs as f64)
+    .bind(limit as i64)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The next request — window counter is at the limit, bump pushes it over — must be 429.
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 429, "over-limit request is rejected");
+    let body = r.text().await.unwrap();
+    assert!(body.contains("\"error\":\"rate_limited\""), "got: {body}");
+    assert!(body.contains("\"retry_after_secs\""), "got: {body}");
+}
+
 /// 055: the base-template background pollers must be visitor-safe — a logged-out caller gets the small
 /// expected body, never a redirect to the login HTML (which the sitting-banner JS would render as raw markup
 /// on the landing page). Guards the "huge HTML markup" regression.

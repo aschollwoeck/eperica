@@ -101,6 +101,8 @@ pub struct FairPlayRules {
     pub ip_association_threshold: u32,
     /// A windowed action count at/above this raises the inhuman-action-rate signal.
     pub inhuman_rate_threshold: u32,
+    /// Max Agent API requests (all methods) per window for one AI account before rejection (429 — 118).
+    pub agent_limit_per_window: u32,
 }
 
 /// Whether the shared-registration-IP signal is raised for an `association_count` (022 AC7).
@@ -125,6 +127,7 @@ mod tests {
             suspend_default_secs: 86_400,
             ip_association_threshold: 3,
             inhuman_rate_threshold: 100,
+            agent_limit_per_window: 120,
         }
     }
 
