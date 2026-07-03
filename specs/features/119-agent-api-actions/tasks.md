@@ -15,7 +15,7 @@
 - [x] **T4 — Digest closure + report reads.** Digest `movements`/`reinforcements_here`/`_abroad` +
   `scout_reports` heads + `kind` on report heads; `GET report/{id}` + `GET scout-report/{id}`
   party-scoped. Integration: digest equality (M4 pattern) + non-party 404. (AC5/AC7)
-- [ ] **T5 — Messages.** `POST message` (username→account, `send_dm`), `GET messages`
+- [x] **T5 — Messages.** `POST message` (username→account, `send_dm`), `GET messages`
   (`conversation_list`), `GET messages/{account}` (`open_dm`); Comms error map; account-id vs
   player-id called out in comments. Integration: exchange + self-send + unknown recipient. (AC6)
 - [ ] **T6 — AC8 loop test.** The two-agent raid→report→reinforce→recall script over pure JSON,

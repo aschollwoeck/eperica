@@ -12,10 +12,11 @@ use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 use eperica_application::{
     AccountRepository, AllianceRepository, BuildRepository, CombatError, CombatRepository,
-    MovementError, MovementRepository, OasisRepository, ResearchError, ScoutError, ScoutIntel,
-    ScoutRepository, SettleError, TradeError, TradeRepository, TrainingRepository, UnitRepository,
-    UpgradeError, order_attack, order_reinforcement, order_research, order_return, order_scout,
-    order_settle, order_smithy_upgrade, order_trade,
+    CommsError, MovementError, MovementRepository, OasisRepository, ResearchError, ScoutError,
+    ScoutIntel, ScoutRepository, SettleError, TradeError, TradeRepository, TrainingRepository,
+    UnitRepository, UpgradeError, conversation_list, open_dm, order_attack, order_reinforcement,
+    order_research, order_return, order_scout, order_settle, order_smithy_upgrade, order_trade,
+    parse_dm_key, send_dm,
 };
 use eperica_domain::{
     AttackMode, Coordinate, MovementKind, PlayerId, ResourceAmounts, ScoutTarget, Timestamp,
@@ -1732,6 +1733,131 @@ async fn scout_report_get(
     .into_response())
 }
 
+// ---------------------------------------------------------------------------
+// Messages (AC6) — 024 DMs. Comms key by ACCOUNT id (users id, cross-world —
+// 045/060): the sender is `ctx.account`, never `ctx.player`. Game actions
+// elsewhere in this file key by `ctx.player`; do not mix the two.
+// ---------------------------------------------------------------------------
+
+/// Map a [`CommsError`] to the API contract (plan Decision #6).
+fn comms_error(e: CommsError) -> ApiError {
+    use CommsError as E;
+    let (status, code) = match &e {
+        E::Invalid => (StatusCode::BAD_REQUEST, "invalid"),
+        E::SelfSend => (StatusCode::BAD_REQUEST, "self_send"),
+        E::RecipientUnavailable => (StatusCode::NOT_FOUND, "recipient_unavailable"),
+        E::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
+        E::Backend(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+    };
+    ApiError::new(status, code, e.to_string())
+}
+
+#[derive(serde::Deserialize)]
+struct MessageBody {
+    /// Recipient **username** — resolved to the account id here (the browser links by id; a bot
+    /// knows names from the map/boards).
+    to: String,
+    body: String,
+}
+
+/// `POST /api/w/{world}/message` → `send_dm` (AC6). Username → account id at the adapter; the
+/// use-case owns body validation, self-send and abandoned-recipient rules (024, P4).
+async fn message_send(
+    AgentGame(ctx): AgentGame,
+    body: Result<Json<MessageBody>, axum::extract::rejection::JsonRejection>,
+) -> Result<Response, ApiError> {
+    let body = json_body(body)?;
+    let recipient = ctx
+        .accounts
+        .find_user_by_username(body.to.trim())
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "recipient lookup failed");
+            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "recipient")
+        })?
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "recipient_unavailable",
+                "No such player.",
+            )
+        })?;
+    let id = send_dm(
+        &ctx.accounts,
+        &ctx.accounts,
+        ctx.account,
+        recipient.id,
+        &body.body,
+        Timestamp(now().0),
+    )
+    .await
+    .map_err(comms_error)?;
+    Ok(Json(serde_json::json!({
+        "sent": true,
+        "message_id": id.to_string(),
+        "to": recipient.id.0.to_string(),
+    }))
+    .into_response())
+}
+
+/// `GET /api/w/{world}/messages` → `conversation_list` (AC6): DM + channel summaries. DM entries
+/// additionally carry the partner's decimal `account` id (derived from the `dm:<uuid>` key) so an
+/// agent can follow up with `GET /api/w/{world}/messages/{account}` without uuid juggling.
+async fn messages_list(AgentGame(ctx): AgentGame) -> Result<Response, ApiError> {
+    let summaries = conversation_list(&ctx.accounts, &ctx.accounts, ctx.account, ctx.player)
+        .await
+        .map_err(comms_error)?;
+    let rows: Vec<serde_json::Value> = summaries
+        .into_iter()
+        .map(|c| {
+            let account = parse_dm_key(&c.key).map(|p| p.0.to_string());
+            serde_json::json!({
+                "key": c.key,
+                "account": account,
+                "title": c.title,
+                "last_body": c.last_body,
+                "last_ms": c.last_ms,
+                "unread": c.unread,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "conversations": rows })).into_response())
+}
+
+/// `GET /api/w/{world}/messages/{account}` → `open_dm` (AC6): the DM history with that account
+/// (newest last), marking it read — the page's own semantics.
+async fn messages_with(
+    AgentGame(ctx): AgentGame,
+    axum::extract::Path((_world, account)): axum::extract::Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let other: u128 = account
+        .trim()
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "No such conversation."))?;
+    let history = open_dm(
+        &ctx.accounts,
+        ctx.account,
+        PlayerId(other),
+        50,
+        Timestamp(now().0),
+    )
+    .await
+    .map_err(comms_error)?;
+    let rows: Vec<serde_json::Value> = history
+        .into_iter()
+        .map(|m| {
+            serde_json::json!({
+                "id": m.id.to_string(),
+                "sender": m.sender.0.to_string(),
+                "sender_name": m.sender_name,
+                "body": m.body,
+                "created_ms": m.created_ms,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "messages": rows })).into_response())
+}
+
 /// The `/api` router (nested by [`crate::router`]). Every route answers JSON; unknown `/api` paths
 /// get a JSON 404 (never the HTML fallback).
 pub fn router() -> axum::Router<AppState> {
@@ -1746,6 +1872,12 @@ pub fn router() -> axum::Router<AppState> {
         .route(
             "/w/{world}/village/{village}/train",
             axum::routing::post(train_action),
+        )
+        .route("/w/{world}/message", axum::routing::post(message_send))
+        .route("/w/{world}/messages", axum::routing::get(messages_list))
+        .route(
+            "/w/{world}/messages/{account}",
+            axum::routing::get(messages_with),
         )
         .route(
             "/w/{world}/village/{village}/attack",

@@ -2005,6 +2005,136 @@ async fn agent_api_opening_loop(pool: sqlx::PgPool) {
     assert!(body.contains("\"error\":\"world_frozen\""), "got: {body}");
 }
 
+/// 119 T5 (AC6): agent DMs — send by username (account-id comms, 024/045), conversation list with
+/// unread + partner account id, history read marks read; self-send/unknown-recipient/empty-body
+/// denials are the use-case's own.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_messages(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    // Two AI agents, A and B.
+    let mut tokens = Vec::new();
+    let mut names = Vec::new();
+    for (prefix, tribe) in [("dm_a", "teutons"), ("dm_b", "gauls")] {
+        let user = unique(prefix);
+        let email = format!("{user}@example.com");
+        let c = client();
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", user.as_str()),
+                ("email", email.as_str()),
+                ("password", "secret12"),
+                ("tribe", tribe),
+            ])
+            .send()
+            .await
+            .unwrap();
+        sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+            .bind(&user)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (key, token) = apikey::generate();
+        sqlx::query(
+            "INSERT INTO agent_keys (id, user_id, secret_hash) \
+             VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+        )
+        .bind(&key.id)
+        .bind(&user)
+        .bind(apikey::secret_hash(&key.secret))
+        .execute(&pool)
+        .await
+        .unwrap();
+        tokens.push(token);
+        names.push(user);
+    }
+    let agent = client();
+    let (tok_a, tok_b) = (tokens[0].clone(), tokens[1].clone());
+    let (name_a, name_b) = (names[0].clone(), names[1].clone());
+
+    // A → B by username.
+    let r = agent
+        .post(format!("{base}/api/w/{home}/message"))
+        .header("Authorization", format!("Bearer {tok_a}"))
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"to": name_b, "body": "war council at dawn"}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let sent: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert!(sent["message_id"].as_str().unwrap().parse::<u128>().is_ok());
+
+    // B's conversation list: one DM, unread 1, carrying A's decimal account id.
+    let r = agent
+        .get(format!("{base}/api/w/{home}/messages"))
+        .header("Authorization", format!("Bearer {tok_b}"))
+        .send()
+        .await
+        .unwrap();
+    let list: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    let dm = list["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["key"].as_str().unwrap().starts_with("dm:"))
+        .expect("a dm conversation");
+    assert_eq!(dm["unread"].as_i64().unwrap(), 1);
+    assert_eq!(dm["title"].as_str().unwrap(), name_a);
+    let a_account = dm["account"].as_str().unwrap().to_owned();
+
+    // B reads the history (marks read) — the body is there, sender named.
+    let r = agent
+        .get(format!("{base}/api/w/{home}/messages/{a_account}"))
+        .header("Authorization", format!("Bearer {tok_b}"))
+        .send()
+        .await
+        .unwrap();
+    let hist: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    let msgs = hist["messages"].as_array().unwrap();
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0]["body"], "war council at dawn");
+    assert_eq!(msgs[0]["sender_name"].as_str().unwrap(), name_a);
+    // Unread cleared after the read (the page's own mark-read semantics).
+    let r = agent
+        .get(format!("{base}/api/w/{home}/messages"))
+        .header("Authorization", format!("Bearer {tok_b}"))
+        .send()
+        .await
+        .unwrap();
+    let list: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    let dm = list["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["key"].as_str().unwrap().starts_with("dm:"))
+        .unwrap();
+    assert_eq!(dm["unread"].as_i64().unwrap(), 0);
+
+    // Denials — the use-case's own rules: self-send, unknown recipient, empty body.
+    for (to, body, status, code) in [
+        (name_a.as_str(), "hi me", 400, "self_send"),
+        ("no_such_player_xyz", "hello?", 404, "recipient_unavailable"),
+        (name_b.as_str(), "", 400, "invalid"),
+    ] {
+        let r = agent
+            .post(format!("{base}/api/w/{home}/message"))
+            .header("Authorization", format!("Bearer {tok_a}"))
+            .header("Content-Type", "application/json")
+            .body(serde_json::json!({"to": to, "body": body}).to_string())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), status, "to={to}");
+        assert!(
+            r.text().await.unwrap().contains(code),
+            "expected {code} for to={to}"
+        );
+    }
+}
+
 /// 055: the base-template background pollers must be visitor-safe — a logged-out caller gets the small
 /// expected body, never a redirect to the login HTML (which the sitting-banner JS would render as raw markup
 /// on the landing page). Guards the "huge HTML markup" regression.
