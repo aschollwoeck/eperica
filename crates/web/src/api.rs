@@ -630,7 +630,11 @@ async fn build_action(
         .accounts
         .active_builds(vid)
         .await
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            // The order committed — success stands; the missing echo is only a read-back glitch.
+            tracing::warn!(error = %e, "post-order queue read-back failed");
+            Vec::new()
+        })
         .into_iter()
         .find(|b| b.target == target);
     Ok(Json(serde_json::json!({
@@ -702,7 +706,11 @@ async fn train_action(
         .accounts
         .active_training(vid)
         .await
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            // The order committed — success stands; the missing echo is only a read-back glitch.
+            tracing::warn!(error = %e, "post-train batch read-back failed");
+            Vec::new()
+        })
         .into_iter()
         .find(|t| t.unit == unit);
     Ok(Json(serde_json::json!({

@@ -1,6 +1,6 @@
 # Feature 118 — Agent API core (key auth + state digest + economy actions)
 
-**Status:** Draft
+**Status:** Verified (built on feature/118-agent-api-core; reviewer APPROVE)
 **Depends on:** ADR 0036 (program), ADR 0034 (`GameContext`/world scoping), 022 (rate limiting),
 002/003/005 (the economy/build/train use-cases this exposes).
 **Roadmap:** slice 1 of the AI-players program (118–122).

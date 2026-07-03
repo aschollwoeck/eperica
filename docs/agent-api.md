@@ -7,7 +7,9 @@ more than a player (P4). This document is the contract for the bot runner (121) 
 
 ## Authentication
 
-Every request carries `Authorization: Bearer epk_<id>_<secret>`.
+Every request carries `Authorization: Bearer epk_<id>_<secret>` — the `Bearer ` prefix is
+**required and case-sensitive** (a deliberate strictness: authentication and the rate budget share
+one parser, so there is exactly one token format).
 
 - Keys bind to **AI accounts only** (`is_ai`), are minted by an Administrator (`/admin` → *AI
   agents*), and are **shown exactly once** — only a SHA-256 of the secret is stored.

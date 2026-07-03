@@ -1511,6 +1511,10 @@ async fn agent_api_state_digest(pool: sqlx::PgPool) {
             d["culture"]["next_threshold"].as_i64(),
             culture.next_threshold
         );
+        assert!(
+            (d["culture"]["cp"].as_i64().unwrap() - culture.cp).abs() <= 2,
+            "cp within an accrual tick"
+        );
 
         // Fog-of-war shape (§7.3): seed one inbound attack and assert the digest entry carries
         // EXACTLY {village, arrive_at_ms} — no origin, no troops, nothing else.

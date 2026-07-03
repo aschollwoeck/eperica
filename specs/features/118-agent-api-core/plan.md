@@ -1,6 +1,6 @@
 # Plan — 118 Agent API core
 
-**Status:** Draft (spec approved — ADR 0036)
+**Status:** Verified (built as planned; deviations recorded in Decisions #2/#5 and §Persistence)
 
 ## Constitution check
 

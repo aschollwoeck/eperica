@@ -361,8 +361,9 @@ pub trait AccountRepository: Send + Sync {
         Ok(Vec::new())
     }
 
-    // ---- Agent API keys (118). Default Err so callers get a clear "not supported" rather than
-    // silent success on implementations that have not added these yet. ----
+    // ---- Agent API keys (118). The key methods default to Err so callers get a clear "not
+    // supported" rather than silent success on implementations that have not added them yet;
+    // `set_is_ai` alone defaults to a benign no-op (see its doc). ----
 
     /// Mark an account as an AI agent account (118). Idempotent. Defaults to a no-op so
     /// non-agent fakes are untouched; the real adapter overrides it.

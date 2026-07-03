@@ -1,10 +1,11 @@
 # Tasks — 118 Agent API core
 
-**Status:** Draft. Ordered; each gated by `cargo fmt --all -- --check`, `clippy --all-targets -- -D warnings`,
+**Status:** Verified (reviewer APPROVE, 2026-07-03). Ordered; each gated by `cargo fmt --all -- --check`, `clippy --all-targets -- -D warnings`,
 `cargo test --workspace`, and the P11 budget. Branch `feature/118-agent-api-core`; commit per task.
 
 - [x] **T1 — Keys: schema + ports.** Migration `0050_agent_keys.sql` (`users.is_ai`, `agent_keys`);
-  ports `create_agent_key` / `find_agent_key` / `revoke_agent_key` / `create_ai_account` + Pg impls;
+  ports `create_agent_key` / `find_agent_key` / `revoke_agent_key` / `set_is_ai` + Pg impls (the
+  bootstrap composes `register` + `set_is_ai` — no separate creation path);
   key format `epk_<id>_<secret>` with SHA-256-at-rest verify (constant-time), unit-tested. (AC1)
 - [x] **T2 — Bearer auth + `/api` skeleton.** `crates/web/src/api.rs`: `AgentContext` extractor
   (bearer → account → shared world-resolution core with `GameContext`, JSON failures), the `/api`
@@ -31,7 +32,7 @@
 - [x] **T9 — End-user docs.** Internal/operator-facing slice — record as internal; add a short
   `docs/agent-api.md` (endpoints, auth, error shape, rate budget) as the contract reference for 119+
   and the runner. No player-manual change.
-- [ ] **T10 — Review & accept.** Full gates green; `eperica-reviewer` on the slice diff → fix findings
+- [x] **T10 — Review & accept.** Full gates green; `eperica-reviewer` on the slice diff → fix findings
   until **APPROVE**; PR #136 updated; spec/plan/tasks statuses flipped to Built.
 
 ## Done when
