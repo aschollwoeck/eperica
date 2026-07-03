@@ -3,7 +3,7 @@
 **Status:** Draft. Ordered; each gated by `cargo fmt --all -- --check`, `clippy --all-targets -- -D warnings`,
 `cargo test --workspace`, and the P11 budget. Branch `feature/119-agent-api-actions`; commit per task.
 
-- [ ] **T1 — Military sends.** `attack`/`scout`/`reinforce`/`return` adapters (units-map bodies,
+- [x] **T1 — Military sends.** `attack`/`scout`/`reinforce`/`return` adapters (units-map bodies,
   plan Decisions #1–#3) + Combat/Scout/Movement error maps; success returns the movement via
   `active_movements`. Integration: success + empty-composition + not-all-scouts + protection +
   recall-by-host + foreign-group 404. (AC1/AC2)

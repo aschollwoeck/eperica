@@ -9490,3 +9490,206 @@ async fn admin_creates_ai_agent(pool: sqlx::PgPool) {
         "GET /api/me returns the agent's username: {me_body}"
     );
 }
+
+/// 119 T1 (AC5): four military send adapters — attack, scout, reinforce, return — over the agent
+/// API. Two agents: A (teutons) raids B (gauls). Denial class coverage per plan Decision #6.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_military_sends(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let repo = movement_repo(&pool).await;
+
+    // --- Register A (teutons, agent) and B (gauls, ordinary player). ---
+    let user_a = unique("mil_a");
+    let user_b = unique("mil_b");
+    let c = client();
+    for (u, tribe) in [(&user_a, "teutons"), (&user_b, "gauls")] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", tribe),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user_a)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user_a)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Village IDs and coordinates — using the reliable village_uuid helper + direct coord lookup.
+    let a_vid = village_uuid(&pool, &user_a).await;
+    let a_uuid = uuid::Uuid::parse_str(&a_vid).unwrap();
+    let (ax, ay): (i32, i32) = sqlx::query_as("SELECT x, y FROM villages WHERE id = $1")
+        .bind(a_uuid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let b_vid = village_uuid(&pool, &user_b).await;
+    let b_uuid = uuid::Uuid::parse_str(&b_vid).unwrap();
+    let (bx, by): (i32, i32) = sqlx::query_as("SELECT x, y FROM villages WHERE id = $1")
+        .bind(b_uuid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Seed A's garrison: 20 clubswinger (Teuton tier-1 infantry).
+    sqlx::query(
+        "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'clubswinger', 20)",
+    )
+    .bind(a_uuid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let agent = client();
+    let post = |leaf: String, body: serde_json::Value| {
+        agent
+            .post(format!("{base}/api/w/{home}/village/{a_vid}{leaf}"))
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+    };
+
+    // B is freshly registered → protected (019 AC2). Raid rejected with 409 target_protected.
+    let r = post(
+        "/attack".into(),
+        serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 5}, "mode": "raid"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 409, "protected defender → 409");
+    assert!(r.text().await.unwrap().contains("target_protected"));
+
+    // Lift protection then retry → 200 with a movement echo.
+    clear_protection(&pool).await;
+    let r = post(
+        "/attack".into(),
+        serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 5}, "mode": "raid"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "raid after clear_protection");
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["ordered"], true);
+    assert!(
+        body["movement"]["arrive_at_ms"].as_i64().unwrap() > 0,
+        "arrive_at_ms is set"
+    );
+    assert_eq!(body["movement"]["kind"], "raid");
+
+    // Empty unit bundle → 400 empty_composition.
+    let r = post(
+        "/attack".into(),
+        serde_json::json!({"x": bx, "y": by, "units": {}, "mode": "raid"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 400);
+    assert!(r.text().await.unwrap().contains("empty_composition"));
+
+    // Self-target (A's own coordinate) → 400 same_tile.
+    let r = post(
+        "/attack".into(),
+        serde_json::json!({"x": ax, "y": ay, "units": {"clubswinger": 1}, "mode": "raid"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 400);
+    assert!(r.text().await.unwrap().contains("same_tile"));
+
+    // Unknown unit → use-case denial (Insufficient: not in garrison). Just assert 4xx.
+    let r = post(
+        "/attack".into(),
+        serde_json::json!({"x": bx, "y": by, "units": {"nope": 3}, "mode": "raid"}),
+    )
+    .await
+    .unwrap();
+    let status = r.status().as_u16();
+    assert!(
+        (400..500).contains(&status),
+        "unknown unit → 4xx (got {status})"
+    );
+
+    // Scout with a non-scout unit (clubswinger is Teuton infantry, not Scout role)
+    // → 400 not_all_scouts.
+    let r = post(
+        "/scout".into(),
+        serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 1}, "target": "resources"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        400,
+        "non-scout unit in scout mission → 400"
+    );
+    assert!(r.text().await.unwrap().contains("not_all_scouts"));
+
+    // Reinforce B with 5 clubswingers → 200 with movement echo (kind = "reinforce").
+    let r = post(
+        "/reinforce".into(),
+        serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 5}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "reinforce order");
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["ordered"], true);
+    assert_eq!(body["movement"]["kind"], "reinforce");
+    assert!(body["movement"]["arrive_at_ms"].as_i64().unwrap() > 0);
+
+    // Drive the System: deliver the reinforce using a far-future timestamp (deterministic — no
+    // sleeps). process_due_movements only claims Reinforce/Return movements; the in-flight raid
+    // is a combat movement and is left untouched (claimed by process_due_combat, not here).
+    let future = Timestamp(now().0 + 10_000_000_000);
+    process_due_movements(
+        &repo,
+        &repo,
+        &economy_rules().unwrap(),
+        &unit_rules().unwrap(),
+        GameSpeed::new(1.0).unwrap(),
+        future,
+        100,
+    )
+    .await
+    .unwrap();
+
+    // First recall: A's troops are now stationed at B → order_return succeeds → 200.
+    let r = post("/return".into(), serde_json::json!({"host": b_vid}))
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "first recall");
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["ordered"], true);
+    assert_eq!(body["movement"]["kind"], "return");
+
+    // Second recall while the Return is in transit: the group is already gone from stationed_troops
+    // → order_return returns NothingStationed → 404 nothing_stationed. No further processing needed.
+    let r = post("/return".into(), serde_json::json!({"host": b_vid}))
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        404,
+        "second recall → nothing_stationed"
+    );
+    assert!(r.text().await.unwrap().contains("nothing_stationed"));
+}

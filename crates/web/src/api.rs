@@ -11,10 +11,13 @@ use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 use eperica_application::{
-    AccountRepository, AllianceRepository, BuildRepository, CombatRepository, OasisRepository,
-    TrainingRepository,
+    AccountRepository, AllianceRepository, BuildRepository, CombatError, CombatRepository,
+    MovementError, MovementRepository, OasisRepository, ScoutError, TrainingRepository,
+    order_attack, order_reinforcement, order_return, order_scout,
 };
-use eperica_domain::{PlayerId, Timestamp, account_blocked};
+use eperica_domain::{
+    AttackMode, Coordinate, MovementKind, PlayerId, ScoutTarget, Timestamp, UnitId, account_blocked,
+};
 use eperica_infrastructure::now;
 
 use crate::state::AppState;
@@ -557,6 +560,86 @@ fn train_error(e: eperica_application::TrainError) -> ApiError {
     ApiError::new(status, code, e.to_string())
 }
 
+/// Map a [`CombatError`] to the API error contract (plan Decision #6): stable machine code + the
+/// same player-visible message the form flash shows (`e.to_string()`). Rule denials 409 or 400;
+/// unknown targets 404; backend failures 500.
+fn combat_error(e: CombatError) -> ApiError {
+    let (status, code) = match &e {
+        CombatError::Insufficient => (StatusCode::CONFLICT, "insufficient"),
+        CombatError::EmptyComposition => (StatusCode::BAD_REQUEST, "empty_composition"),
+        CombatError::NoTargetThere => (StatusCode::NOT_FOUND, "no_target"),
+        CombatError::SameTile => (StatusCode::BAD_REQUEST, "same_tile"),
+        CombatError::TargetProtected => (StatusCode::CONFLICT, "target_protected"),
+        CombatError::InvalidCatapultTarget => (StatusCode::BAD_REQUEST, "invalid_catapult_target"),
+        CombatError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+        CombatError::Backend(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+    };
+    ApiError::new(status, code, e.to_string())
+}
+
+/// Map a [`ScoutError`] — same contract as [`combat_error`], plus `not_all_scouts`.
+fn scout_error(e: ScoutError) -> ApiError {
+    let (status, code) = match &e {
+        ScoutError::Insufficient => (StatusCode::CONFLICT, "insufficient"),
+        ScoutError::EmptyComposition => (StatusCode::BAD_REQUEST, "empty_composition"),
+        ScoutError::NotAllScouts => (StatusCode::BAD_REQUEST, "not_all_scouts"),
+        ScoutError::NoTargetThere => (StatusCode::NOT_FOUND, "no_target"),
+        ScoutError::SameTile => (StatusCode::BAD_REQUEST, "same_tile"),
+        ScoutError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+        ScoutError::Backend(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+    };
+    ApiError::new(status, code, e.to_string())
+}
+
+/// Map a [`MovementError`] — same contract as [`combat_error`], plus `nothing_stationed`.
+fn movement_error(e: MovementError) -> ApiError {
+    let (status, code) = match &e {
+        MovementError::Insufficient => (StatusCode::CONFLICT, "insufficient"),
+        MovementError::EmptyComposition => (StatusCode::BAD_REQUEST, "empty_composition"),
+        MovementError::NoTargetThere => (StatusCode::NOT_FOUND, "no_target"),
+        MovementError::SameTile => (StatusCode::BAD_REQUEST, "same_tile"),
+        MovementError::NothingStationed => (StatusCode::NOT_FOUND, "nothing_stationed"),
+        MovementError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+        MovementError::Backend(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+    };
+    ApiError::new(status, code, e.to_string())
+}
+
+/// Convert a JSON unit map (`{ "<unit_id>": count }`) into the `Vec<(UnitId, u32)>` that every
+/// send use-case expects, filtering out zero counts (rally-handler precedent).
+fn unit_bundle(map: std::collections::BTreeMap<String, u32>) -> Vec<(UnitId, u32)> {
+    map.into_iter()
+        .filter(|(_, n)| *n > 0)
+        .map(|(k, n)| (UnitId(k), n))
+        .collect()
+}
+
+/// Serialize an in-flight [`MovementView`] to the compact shape the send-action responses carry.
+fn movement_json(m: &eperica_application::MovementView) -> serde_json::Value {
+    let kind = match m.kind {
+        MovementKind::Reinforce => "reinforce",
+        MovementKind::Return => "return",
+        MovementKind::Attack => "attack",
+        MovementKind::Raid => "raid",
+        MovementKind::Scout => "scout",
+        MovementKind::OasisAttack => "oasis_attack",
+        MovementKind::OasisReinforce => "oasis_reinforce",
+        MovementKind::Settle => "settle",
+    };
+    let troops: std::collections::BTreeMap<String, u32> = m
+        .troops
+        .iter()
+        .map(|(u, c)| (u.as_str().to_owned(), *c))
+        .collect();
+    serde_json::json!({
+        "kind": kind,
+        "dest_x": m.destination.x,
+        "dest_y": m.destination.y,
+        "arrive_at_ms": m.arrive_at.0,
+        "troops": troops,
+    })
+}
+
 /// Unwrap an `axum::Json` body, converting a malformed-JSON rejection into the API error shape
 /// (plan §Key risks — never axum's plain-text default).
 fn json_body<T>(
@@ -725,6 +808,258 @@ async fn train_action(
     .into_response())
 }
 
+// ---------------------------------------------------------------------------
+// Military actions (AC5) — thin JSON adapters onto the existing use-cases (P4).
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+struct AttackBody {
+    x: i32,
+    y: i32,
+    units: std::collections::BTreeMap<String, u32>,
+    mode: String,
+    #[serde(default)]
+    catapult_target: Option<String>,
+}
+
+/// `POST /api/w/{world}/village/{village}/attack` → `order_attack` (AC5).
+///
+/// Strict village addressing: the path village must be owned by the agent (M3). Mode must be
+/// `"attack"` or `"raid"`; anything else → 400 `invalid_mode`. Success returns the created
+/// movement read back through `active_movements` (page truth); if the read-back glitches the
+/// movement is `null` (the order committed — success stands).
+async fn attack_action(
+    AgentGame(ctx): AgentGame,
+    axum::extract::Path((_world, village)): axum::extract::Path<(String, String)>,
+    body: Result<Json<AttackBody>, axum::extract::rejection::JsonRejection>,
+) -> Result<Response, ApiError> {
+    let body = json_body(body)?;
+    let mode = match body.mode.as_str() {
+        "attack" => AttackMode::Attack,
+        "raid" => AttackMode::Raid,
+        _ => {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_mode",
+                "mode must be \"attack\" or \"raid\".",
+            ));
+        }
+    };
+    let catapult_target = crate::handlers::parse_building_kind(body.catapult_target.as_deref());
+    let troops = unit_bundle(body.units);
+    let vid = owned_village(&ctx, &village).await?;
+    let target = Coordinate::new(body.x, body.y);
+    order_attack(
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.rules.economy,
+        &ctx.rules.units,
+        ctx.map.as_ref(),
+        ctx.speed,
+        now(),
+        ctx.player,
+        Some(vid),
+        target,
+        troops,
+        mode,
+        None, // scout_target — agent uses /scout for standalone scouting
+        catapult_target,
+    )
+    .await
+    .map_err(combat_error)?;
+    // Read back the most-recently scheduled movement to this target (page truth, AC5).
+    let movement = ctx
+        .accounts
+        .active_movements(ctx.player)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "post-attack movement read-back failed");
+            Vec::new()
+        })
+        .into_iter()
+        .filter(|m| {
+            m.destination == target && matches!(m.kind, MovementKind::Attack | MovementKind::Raid)
+        })
+        .max_by_key(|m| m.arrive_at.0);
+    Ok(Json(serde_json::json!({
+        "ordered": true,
+        "movement": movement.as_ref().map(movement_json),
+    }))
+    .into_response())
+}
+
+#[derive(serde::Deserialize)]
+struct ScoutBody {
+    x: i32,
+    y: i32,
+    units: std::collections::BTreeMap<String, u32>,
+    target: String,
+}
+
+/// `POST /api/w/{world}/village/{village}/scout` → `order_scout` (AC5).
+///
+/// `target` must be `"resources"` or `"defenses"` (010 slug); anything else → 400
+/// `invalid_target`. Only Scout-role units are accepted; others → 400 `not_all_scouts`.
+async fn scout_action(
+    AgentGame(ctx): AgentGame,
+    axum::extract::Path((_world, village)): axum::extract::Path<(String, String)>,
+    body: Result<Json<ScoutBody>, axum::extract::rejection::JsonRejection>,
+) -> Result<Response, ApiError> {
+    let body = json_body(body)?;
+    let scout_target = ScoutTarget::from_slug(&body.target).ok_or_else(|| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_target",
+            "target must be \"resources\" or \"defenses\".",
+        )
+    })?;
+    let troops = unit_bundle(body.units);
+    let vid = owned_village(&ctx, &village).await?;
+    let target = Coordinate::new(body.x, body.y);
+    order_scout(
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.rules.economy,
+        &ctx.rules.units,
+        ctx.map.as_ref(),
+        ctx.speed,
+        now(),
+        ctx.player,
+        Some(vid),
+        target,
+        troops,
+        scout_target,
+    )
+    .await
+    .map_err(scout_error)?;
+    let movement = ctx
+        .accounts
+        .active_movements(ctx.player)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "post-scout movement read-back failed");
+            Vec::new()
+        })
+        .into_iter()
+        .filter(|m| m.destination == target && m.kind == MovementKind::Scout)
+        .max_by_key(|m| m.arrive_at.0);
+    Ok(Json(serde_json::json!({
+        "ordered": true,
+        "movement": movement.as_ref().map(movement_json),
+    }))
+    .into_response())
+}
+
+#[derive(serde::Deserialize)]
+struct ReinforceBody {
+    x: i32,
+    y: i32,
+    units: std::collections::BTreeMap<String, u32>,
+}
+
+/// `POST /api/w/{world}/village/{village}/reinforce` → `order_reinforcement` (AC5).
+async fn reinforce_action(
+    AgentGame(ctx): AgentGame,
+    axum::extract::Path((_world, village)): axum::extract::Path<(String, String)>,
+    body: Result<Json<ReinforceBody>, axum::extract::rejection::JsonRejection>,
+) -> Result<Response, ApiError> {
+    let body = json_body(body)?;
+    let troops = unit_bundle(body.units);
+    let vid = owned_village(&ctx, &village).await?;
+    let target = Coordinate::new(body.x, body.y);
+    order_reinforcement(
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.rules.economy,
+        &ctx.rules.units,
+        ctx.map.as_ref(),
+        ctx.speed,
+        now(),
+        ctx.player,
+        Some(vid),
+        target,
+        troops,
+    )
+    .await
+    .map_err(movement_error)?;
+    let movement = ctx
+        .accounts
+        .active_movements(ctx.player)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "post-reinforce movement read-back failed");
+            Vec::new()
+        })
+        .into_iter()
+        .filter(|m| m.destination == target && m.kind == MovementKind::Reinforce)
+        .max_by_key(|m| m.arrive_at.0);
+    Ok(Json(serde_json::json!({
+        "ordered": true,
+        "movement": movement.as_ref().map(movement_json),
+    }))
+    .into_response())
+}
+
+#[derive(serde::Deserialize)]
+struct ReturnBody {
+    host: String,
+}
+
+/// `POST /api/w/{world}/village/{village}/return` → `order_return` (AC5).
+///
+/// `host` is the hyphenated UUID of the village where the agent's troops are currently stationed.
+/// Bad parse → 404 `not_found`. If no group is stationed there → 404 `nothing_stationed`.
+async fn return_action(
+    AgentGame(ctx): AgentGame,
+    axum::extract::Path((_world, village)): axum::extract::Path<(String, String)>,
+    body: Result<Json<ReturnBody>, axum::extract::rejection::JsonRejection>,
+) -> Result<Response, ApiError> {
+    let body = json_body(body)?;
+    let host_vid = crate::handlers::selected_village(Some(&body.host)).ok_or_else(|| {
+        ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Invalid host village id.",
+        )
+    })?;
+    // Strict addressing: verify the path village is owned, even though order_return keys on the
+    // owner — this keeps the ownership check consistent with the other send actions (review M3).
+    let _vid = owned_village(&ctx, &village).await?;
+    order_return(
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.rules.units,
+        ctx.map.as_ref(),
+        ctx.speed,
+        now(),
+        ctx.player,
+        host_vid,
+    )
+    .await
+    .map_err(movement_error)?;
+    // Read back the return movement: the most-recently scheduled Return (host coord → home).
+    let movement = ctx
+        .accounts
+        .active_movements(ctx.player)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "post-return movement read-back failed");
+            Vec::new()
+        })
+        .into_iter()
+        .filter(|m| m.kind == MovementKind::Return)
+        .max_by_key(|m| m.arrive_at.0);
+    Ok(Json(serde_json::json!({
+        "ordered": true,
+        "movement": movement.as_ref().map(movement_json),
+    }))
+    .into_response())
+}
+
 /// The `/api` router (nested by [`crate::router`]). Every route answers JSON; unknown `/api` paths
 /// get a JSON 404 (never the HTML fallback).
 pub fn router() -> axum::Router<AppState> {
@@ -739,6 +1074,22 @@ pub fn router() -> axum::Router<AppState> {
         .route(
             "/w/{world}/village/{village}/train",
             axum::routing::post(train_action),
+        )
+        .route(
+            "/w/{world}/village/{village}/attack",
+            axum::routing::post(attack_action),
+        )
+        .route(
+            "/w/{world}/village/{village}/scout",
+            axum::routing::post(scout_action),
+        )
+        .route(
+            "/w/{world}/village/{village}/reinforce",
+            axum::routing::post(reinforce_action),
+        )
+        .route(
+            "/w/{world}/village/{village}/return",
+            axum::routing::post(return_action),
         )
         .fallback(|| async {
             ApiError::new(
