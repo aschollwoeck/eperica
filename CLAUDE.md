@@ -41,7 +41,12 @@ the UX-information passes) and the **M9 multi-world & administration** program (
 the account↔player split, world-scoped scheduling, the world registry/lifecycle, and the full
 player-facing multi-world layer: per-request world context, handler migration, join/switch lobby, and
 world-scoped boards/stat pages/search) are all built and Verified. The dependency-ordered roadmap
-(001–046) is **complete**; further work (e.g. visual theming/imagery) starts as a fresh slice.
+(001–046) is **complete**; further work (e.g. visual theming/imagery) starts as a fresh slice. The
+**AI players & Agent API** program ([ADR 0036](docs/architecture/0036-ai-players-and-agent-api.md),
+slices 118–122) is in progress: a bearer-key JSON surface under `/api` (contract:
+[docs/agent-api.md](docs/agent-api.md)) through which AI agents play as **true clients** — state digest +
+actions as thin adapters over the existing use-cases — to be driven by an `eperica-bots` runner
+(rule-based reflexes + a periodic LLM strategist).
 
 ## Read the specs first — they are the source of truth
 

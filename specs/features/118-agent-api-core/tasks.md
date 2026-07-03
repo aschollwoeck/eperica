@@ -26,9 +26,9 @@
 - [x] **T7 — Integration tests.** The AC suite from plan §Test strategy, including the **AC6 opening
   loop** end-to-end over HTTP (read `/api/me` → digest → build → lane-denied → train → queues progress
   in later digests) and the frozen-world/blocked-account parity check (AC2). (AC1–AC6)
-- [ ] **T8 — Technical docs.** Rustdoc on the new public items (`api.rs`, ports); `CLAUDE.md`: mention
+- [x] **T8 — Technical docs.** Rustdoc on the new public items (`api.rs`, ports); `CLAUDE.md`: mention
   the `/api` surface + ADR 0036; no architecture note needed beyond the ADR (already written).
-- [ ] **T9 — End-user docs.** Internal/operator-facing slice — record as internal; add a short
+- [x] **T9 — End-user docs.** Internal/operator-facing slice — record as internal; add a short
   `docs/agent-api.md` (endpoints, auth, error shape, rate budget) as the contract reference for 119+
   and the runner. No player-manual change.
 - [ ] **T10 — Review & accept.** Full gates green; `eperica-reviewer` on the slice diff → fix findings
