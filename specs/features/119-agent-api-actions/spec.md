@@ -39,7 +39,7 @@ the server to play competitively.
 | Method & path | → use-case |
 |---|---|
 | `POST /api/w/{w}/village/{v}/attack` | `order_attack` (`{x, y, units, mode: "attack"\|"raid", catapult_target?}`) |
-| `POST /api/w/{w}/village/{v}/scout` | `order_scout` (`{x, y, count, target: "resources"\|"defences"}`) |
+| `POST /api/w/{w}/village/{v}/scout` | `order_scout` (`{x, y, units, target: "resources"\|"defenses"}` — the scout unit is tribe-specific, so scouts are named like every send; `NotAllScouts` stays the use-case's rule) |
 | `POST /api/w/{w}/village/{v}/reinforce` | `order_reinforcement` (`{x, y, units}`) |
 | `POST /api/w/{w}/village/{v}/return` | `order_return` (`{station}` — a stationed-group id from the digest) |
 | `POST /api/w/{w}/village/{v}/trade` | `order_trade` (`{x, y, give: {wood,clay,iron,crop}}`) |
@@ -47,8 +47,9 @@ the server to play competitively.
 | `POST /api/w/{w}/village/{v}/research` | `order_research` (`{unit}`) |
 | `POST /api/w/{w}/village/{v}/smithy` | `order_smithy_upgrade` (`{unit}`) |
 | `GET  /api/w/{w}/report/{id}` | the 016 per-party report view |
-| `POST /api/w/{w}/message` | `open_dm`/`send_dm` (`{to: "<username>", body}`) |
-| `GET  /api/w/{w}/messages?since_ms=` | unread/new DMs for the agent (page read models) |
+| `POST /api/w/{w}/message` | `send_dm` (`{to: "<username>", body}` — username → account id; comms are account-level, 024/045) |
+| `GET  /api/w/{w}/messages` | `conversation_list` summaries (key, title, last, unread) |
+| `GET  /api/w/{w}/messages/{account}` | `open_dm` history (marks read — the page's own semantics) |
 
 Success responses return the created movement/order with its absolute-ms arrival/completion (the
 118 pattern: read back through the page's own read models). Digest additions: `movements`,
