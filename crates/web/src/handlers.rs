@@ -82,7 +82,7 @@ fn resource_label(kind: ResourceKind) -> &'static str {
 }
 
 /// Lowercase resource slug for the village-plan field plot colour (069).
-fn resource_slug(kind: ResourceKind) -> &'static str {
+pub(crate) fn resource_slug(kind: ResourceKind) -> &'static str {
     match kind {
         ResourceKind::Wood => "wood",
         ResourceKind::Clay => "clay",
@@ -170,7 +170,7 @@ fn building_blurb(kind: BuildingKind) -> &'static str {
     }
 }
 
-fn building_kind_id(kind: BuildingKind) -> &'static str {
+pub(crate) fn building_kind_id(kind: BuildingKind) -> &'static str {
     match kind {
         BuildingKind::MainBuilding => "main_building",
         BuildingKind::RallyPoint => "rally_point",
@@ -357,7 +357,7 @@ fn selected_village(village: Option<&str>) -> Option<VillageId> {
 
 /// A village id as its hyphenated-UUID path segment (064) — the `village_id` every village-coupled template
 /// carries so its links/forms read `/w/{world}/village/{village}/…`.
-fn village_seg(village: VillageId) -> String {
+pub(crate) fn village_seg(village: VillageId) -> String {
     uuid::Uuid::from_u128(village.0).to_string()
 }
 
@@ -1808,7 +1808,7 @@ async fn map_for(ctx: GameContext, path_village: Option<String>, q: MapQuery) ->
 /// village markers (self/capital/inactive, alliance tag + presence), the rally `href` for a sendable tile,
 /// and the toroidal distance-from-home suffix. Shared by the map page and the `/map/tiles` JSON endpoint (093).
 #[allow(clippy::too_many_arguments)]
-fn map_cells(
+pub(crate) fn map_cells(
     world: WorldId,
     map: &eperica_domain::WorldMap,
     inactive_after_secs: i64,

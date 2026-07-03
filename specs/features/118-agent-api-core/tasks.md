@@ -13,7 +13,7 @@
 - [x] **T3 — Agent rate budget.** `agent_limit_per_window` in `specs/balance/fairplay.toml` +
   `FairPlayRules`; `agent_rate_guard` on the `/api` router (all methods, subject = bound account,
   action `"agent"`), 429 JSON with `retry_after_secs`. (AC5)
-- [ ] **T4 — State digest + map window.** `GET /api/w/{world}/state` composing `load_economy`,
+- [x] **T4 — State digest + map window.** `GET /api/w/{world}/state` composing `load_economy`,
   `active_builds`, `active_training`, `load_culture`, `incoming_against` per the plan;
   `GET /api/w/{world}/map` via the existing map read models, `r` clamped. Digest DTOs carry absolute-ms
   deadlines; incoming = village + arrival **only**. (AC3)

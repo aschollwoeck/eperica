@@ -1303,6 +1303,108 @@ async fn agent_rate_guard_enforces_limit(pool: sqlx::PgPool) {
     assert!(body.contains("\"retry_after_secs\""), "got: {body}");
 }
 
+/// 118 T4 (AC2/AC3): the state digest reflects the player's real state (page truth), stays
+/// fog-of-war-honest, and world scoping matches the browser path (unknown → 404, unjoined → 403 JSON).
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_state_digest(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    let user = unique("digest");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "teutons"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let agent = client();
+    let get = |path: String| {
+        agent
+            .get(format!("{base}{path}"))
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+    };
+
+    // The digest: one starting village, 18 fields, the reserved buildings, positive resources with
+    // capacities, empty queues, quiet incoming, culture block present.
+    let r = get(format!("/api/w/{home}/state")).await.unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let d: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(d["world"].as_str().unwrap(), home);
+    assert!(d["now_ms"].as_i64().unwrap() > 0);
+    let vs = d["villages"].as_array().unwrap();
+    assert_eq!(vs.len(), 1);
+    let v = &vs[0];
+    // 013: no village is the capital until a Palace designates one — a fresh start has none.
+    assert!(!v["capital"].as_bool().unwrap());
+    assert_eq!(v["fields"].as_array().unwrap().len(), 18);
+    let kinds: Vec<&str> = v["buildings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["kind"].as_str().unwrap())
+        .collect();
+    assert!(kinds.contains(&"main_building"), "got: {kinds:?}");
+    for res in ["wood", "clay", "iron", "crop"] {
+        assert!(v["resources"][res]["amount"].as_i64().unwrap() > 0);
+        assert!(v["resources"][res]["capacity"].as_i64().unwrap() > 0);
+    }
+    assert_eq!(v["build_queue"].as_array().unwrap().len(), 0);
+    assert_eq!(v["training"].as_array().unwrap().len(), 0);
+    assert_eq!(d["incoming_attacks"].as_array().unwrap().len(), 0);
+    assert!(d["culture"]["villages_allowed"].as_u64().unwrap() >= 1);
+
+    // The map window: (2r+1) rows of (2r+1) cells around the given centre.
+    let x = v["x"].as_i64().unwrap();
+    let y = v["y"].as_i64().unwrap();
+    let r = get(format!("/api/w/{home}/map?x={x}&y={y}&r=3"))
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let m: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(m["r"].as_i64().unwrap(), 3);
+    let rows = m["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 7);
+    assert_eq!(rows[0].as_array().unwrap().len(), 7);
+
+    // World scoping parity (AC2): a bad uuid → 404 unknown_world; a real-but-unjoined world → 403.
+    let r = get("/api/w/not-a-uuid/state".to_owned()).await.unwrap();
+    assert_eq!(r.status().as_u16(), 404);
+    assert!(r.text().await.unwrap().contains("unknown_world"));
+    let r = get(format!(
+        "/api/w/{}/state",
+        uuid::Uuid::from_u128(0xDEAD_BEEF)
+    ))
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 403);
+    assert!(r.text().await.unwrap().contains("not_joined"));
+}
+
 /// 055: the base-template background pollers must be visitor-safe — a logged-out caller gets the small
 /// expected body, never a redirect to the login HTML (which the sitting-banner JS would render as raw markup
 /// on the landing page). Guards the "huge HTML markup" regression.
