@@ -18,7 +18,7 @@
 - [x] **T5 — Messages.** `POST message` (username→account, `send_dm`), `GET messages`
   (`conversation_list`), `GET messages/{account}` (`open_dm`); Comms error map; account-id vs
   player-id called out in comments. Integration: exchange + self-send + unknown recipient. (AC6)
-- [ ] **T6 — AC8 loop test.** The two-agent raid→report→reinforce→recall script over pure JSON,
+- [x] **T6 — AC8 loop test.** The two-agent raid→report→reinforce→recall script over pure JSON,
   driving `process_due_combat`/`process_due_movements` for determinism. (AC8, AC9 spot-checks)
 - [ ] **T7 — Docs.** docs/agent-api.md v0.2: all new endpoints/bodies/codes + digest additions;
   rustdoc on new public items.

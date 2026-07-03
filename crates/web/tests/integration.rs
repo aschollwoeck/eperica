@@ -2135,6 +2135,290 @@ async fn agent_api_messages(pool: sqlx::PgPool) {
     }
 }
 
+/// 119 T6 (AC8): the full two-agent loop over pure JSON — A raids B (garrison drops, movement
+/// appears; B sees arrival-only), combat processes, BOTH parties read the SAME report id, A
+/// reinforces B (both digests show the group), A recalls, and after the due return both lists are
+/// clear and A's garrison is home again. No HTML anywhere.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_full_loop(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let repo = movement_repo(&pool).await;
+
+    // Two agents.
+    let user_a = unique("loop_a");
+    let user_b = unique("loop_b");
+    let c = client();
+    let mut tokens = Vec::new();
+    for (u, tribe) in [(&user_a, "teutons"), (&user_b, "gauls")] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", tribe),
+            ])
+            .send()
+            .await
+            .unwrap();
+        sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+            .bind(u)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (key, token) = apikey::generate();
+        sqlx::query(
+            "INSERT INTO agent_keys (id, user_id, secret_hash) \
+             VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+        )
+        .bind(&key.id)
+        .bind(u)
+        .bind(apikey::secret_hash(&key.secret))
+        .execute(&pool)
+        .await
+        .unwrap();
+        tokens.push(token);
+    }
+    let (tok_a, tok_b) = (tokens[0].clone(), tokens[1].clone());
+    clear_protection(&pool).await;
+    // A gets a garrison of 20 clubswingers.
+    let a_vid: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&user_a)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'clubswinger', 20)",
+    )
+    .bind(a_vid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let agent = client();
+    let digest = |tok: String| {
+        let agent = agent.clone();
+        let base = base.clone();
+        let home = home.clone();
+        async move {
+            let r = agent
+                .get(format!("{base}/api/w/{home}/state"))
+                .header("Authorization", format!("Bearer {tok}"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status().as_u16(), 200);
+            let v: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+            v
+        }
+    };
+    let garrison_count = |d: &serde_json::Value, unit: &str| -> i64 {
+        d["villages"][0]["garrison"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["unit"] == unit)
+            .map_or(0, |g| g["count"].as_i64().unwrap())
+    };
+
+    // 1. A raids B with 5 clubswingers.
+    let da0 = digest(tok_a.clone()).await;
+    assert_eq!(garrison_count(&da0, "clubswinger"), 20);
+    let db0 = digest(tok_b.clone()).await;
+    let (bx, by) = (
+        db0["villages"][0]["x"].clone(),
+        db0["villages"][0]["y"].clone(),
+    );
+    let r = agent
+        .post(format!(
+            "{base}/api/w/{home}/village/{}/build",
+            da0["villages"][0]["id"].as_str().unwrap()
+        ))
+        .header("Authorization", format!("Bearer {tok_a}"))
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"target":"field","slot":0}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        200,
+        "sanity: economy still works mid-loop"
+    );
+    let a_vseg = da0["villages"][0]["id"].as_str().unwrap().to_owned();
+    let r = agent
+        .post(format!("{base}/api/w/{home}/village/{a_vseg}/attack"))
+        .header("Authorization", format!("Bearer {tok_a}"))
+        .header("Content-Type", "application/json")
+        .body(
+            serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 5}, "mode": "raid"})
+                .to_string(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+
+    // Garrison dropped, movement listed; B sees the incoming attack ARRIVAL-ONLY.
+    let da1 = digest(tok_a.clone()).await;
+    assert_eq!(
+        garrison_count(&da1, "clubswinger"),
+        15,
+        "5 left with the raid"
+    );
+    assert_eq!(da1["movements"].as_array().unwrap().len(), 1);
+    let db1 = digest(tok_b.clone()).await;
+    let inc = db1["incoming_attacks"].as_array().unwrap();
+    assert_eq!(inc.len(), 1);
+    let mut keys: Vec<&str> = inc[0]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(keys, vec!["arrive_at_ms", "village"], "arrival-only, §7.3");
+
+    // 2. Combat processes; both parties read the SAME report.
+    let future = Timestamp(now().0 + 10_000_000_000);
+    let econ = economy_rules().unwrap();
+    let units = unit_rules().unwrap();
+    let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+    let world = ensure_world(&pool, &config).await.unwrap();
+    let map = WorldMap::new(world.seed as u64, config.radius, map_rules().unwrap());
+    process_due_combat(
+        &repo,
+        &repo,
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        &combat_rules().unwrap(),
+        &scout_rules().unwrap(),
+        &culture_rules().unwrap(),
+        &loyalty_rules().unwrap(),
+        &ranking_rules().unwrap(),
+        &map,
+        GameSpeed::new(1.0).unwrap(),
+        world.seed as u64,
+        future,
+        100,
+        (3, 6, 10),
+    )
+    .await
+    .unwrap();
+    let da2 = digest(tok_a.clone()).await;
+    let report_id = da2["reports"].as_array().unwrap()[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(da2["reports"][0]["kind"], "raid");
+    let db2 = digest(tok_b.clone()).await;
+    assert!(
+        db2["reports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["id"].as_str().unwrap() == report_id),
+        "B's heads carry the SAME report id"
+    );
+    for tok in [&tok_a, &tok_b] {
+        let r = agent
+            .get(format!("{base}/api/w/{home}/report/{report_id}"))
+            .header("Authorization", format!("Bearer {tok}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 200, "both parties read the report");
+    }
+    // The raiders return home (the return leg is a due movement too).
+    process_due_movements(
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        GameSpeed::new(1.0).unwrap(),
+        Timestamp(now().0 + 20_000_000_000),
+        100,
+    )
+    .await
+    .unwrap();
+    let da3 = digest(tok_a.clone()).await;
+    assert_eq!(
+        garrison_count(&da3, "clubswinger"),
+        20,
+        "raiders home (undefended target, no losses)"
+    );
+
+    // 3. A reinforces B, both digests show the group, A recalls, lists clear.
+    let r = agent
+        .post(format!("{base}/api/w/{home}/village/{a_vseg}/reinforce"))
+        .header("Authorization", format!("Bearer {tok_a}"))
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 6}}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    process_due_movements(
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        GameSpeed::new(1.0).unwrap(),
+        Timestamp(now().0 + 30_000_000_000),
+        100,
+    )
+    .await
+    .unwrap();
+    let da4 = digest(tok_a.clone()).await;
+    let abroad = da4["reinforcements_abroad"].as_array().unwrap();
+    assert_eq!(abroad.len(), 1);
+    let host = abroad[0]["host_village"].as_str().unwrap().to_owned();
+    let db4 = digest(tok_b.clone()).await;
+    assert_eq!(
+        db4["villages"][0]["reinforcements_here"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let r = agent
+        .post(format!("{base}/api/w/{home}/village/{a_vseg}/return"))
+        .header("Authorization", format!("Bearer {tok_a}"))
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"host": host}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    process_due_movements(
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        GameSpeed::new(1.0).unwrap(),
+        Timestamp(now().0 + 40_000_000_000),
+        100,
+    )
+    .await
+    .unwrap();
+    let da5 = digest(tok_a.clone()).await;
+    assert_eq!(da5["reinforcements_abroad"].as_array().unwrap().len(), 0);
+    assert_eq!(garrison_count(&da5, "clubswinger"), 20, "everyone home");
+    let db5 = digest(tok_b.clone()).await;
+    assert_eq!(
+        db5["villages"][0]["reinforcements_here"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
 /// 055: the base-template background pollers must be visitor-safe — a logged-out caller gets the small
 /// expected body, never a redirect to the login HTML (which the sitting-banner JS would render as raw markup
 /// on the landing page). Guards the "huge HTML markup" regression.
