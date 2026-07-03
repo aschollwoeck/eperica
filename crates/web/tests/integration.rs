@@ -8948,3 +8948,121 @@ async fn map_shows_distance_and_send_shortcut(pool: sqlx::PgPool) {
         "own village offers a send shortcut (reinforce)"
     );
 }
+
+/// 118 T6: an admin can bootstrap an AI agent account from the admin console.
+///
+/// - A non-admin POST /admin/agent is denied (403).
+/// - A valid admin POST creates a `users` row with `is_ai = true`, a village in the chosen world,
+///   and an `agent_keys` row; the response body contains the plaintext `epk_` token.
+/// - Using that token for `GET /api/me` with `Authorization: Bearer` returns 200 with the username.
+#[sqlx::test(migrations = "../../migrations")]
+async fn admin_creates_ai_agent(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    // AdminWorldRow.id is `world.id.0.to_string()` — decimal u128. The form must send that format.
+    let home_uuid: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM worlds ORDER BY created_at, id LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let home = home_uuid.as_u128().to_string();
+
+    let admin_name = unique("agadm");
+    let (ac, _admin_id) = register_client(&base, &pool, &admin_name).await;
+
+    let (plain, _plain_id) = register_client(&base, &pool, &unique("agplain")).await;
+
+    // A non-admin POST /admin/agent is forbidden (server-authoritative, P4).
+    let r = plain
+        .post(format!("{base}/admin/agent"))
+        .form(&[("username", "bot0"), ("world", &home), ("tribe", "romans")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403, "non-admin denied");
+
+    // Promote the admin account.
+    sqlx::query("UPDATE users SET is_admin = TRUE WHERE username = $1")
+        .bind(&admin_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let bot_name = unique("bot");
+    let r = ac
+        .post(format!("{base}/admin/agent"))
+        .form(&[
+            ("username", bot_name.as_str()),
+            ("world", home.as_str()),
+            ("tribe", "romans"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "admin create succeeded");
+
+    let body = r.text().await.unwrap();
+
+    // The response must contain the one-time plaintext `epk_` token.
+    let token_start = body.find("epk_").expect("epk_ token in response body");
+    // Extract until the closing `</code>` tag.
+    let after = &body[token_start..];
+    let token_end = after.find('<').unwrap_or(after.len());
+    let token = after[..token_end].trim().to_owned();
+    assert!(
+        token.starts_with("epk_"),
+        "extracted token starts with epk_: {token}"
+    );
+
+    // Verify the DB state: is_ai = true, a village exists in the world, an agent_keys row exists.
+    let is_ai: bool = sqlx::query_scalar("SELECT is_ai FROM users WHERE username = $1")
+        .bind(&bot_name)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(is_ai, "is_ai flag set on the created account");
+
+    let village_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM villages v \
+         JOIN players p ON p.id = v.owner_id \
+         JOIN users u ON u.id = p.user_id \
+         WHERE u.username = $1",
+    )
+    .bind(&bot_name)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(village_count > 0, "agent has at least one village");
+
+    let key_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM agent_keys ak \
+         JOIN users u ON u.id = ak.user_id \
+         WHERE u.username = $1",
+    )
+    .bind(&bot_name)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(key_count, 1, "exactly one agent_keys row created");
+
+    // Use the minted key to call GET /api/me and verify it resolves to the correct account.
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let me = anon
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        me.status().as_u16(),
+        200,
+        "valid bearer token accepted by /api/me"
+    );
+    let me_body = me.text().await.unwrap();
+    assert!(
+        me_body.contains(&bot_name),
+        "GET /api/me returns the agent's username: {me_body}"
+    );
+}

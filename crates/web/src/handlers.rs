@@ -4220,6 +4220,28 @@ pub async fn admin(
     RealUser(player): RealUser,
     Query(q): Query<AdminQuery>,
 ) -> Response {
+    let query = q.q.unwrap_or_default();
+    render_admin_page(&state, player, &query, None).await
+}
+
+/// Assemble and render the admin console page. Shared between the GET `/admin` handler and the
+/// successful `POST /admin/agent` response (which must show the one-time key on the same page).
+///
+/// * `query`     — the current search string; empty for non-search renders.
+/// * `agent_key` — the one-time plaintext bearer token (118); `None` on every render except the
+///   immediate success of an agent-create POST.
+///
+/// Authorization is implicitly enforced: `admin_overview` (the first call) returns
+/// `AdminError::NotAuthorized` for non-admins, which maps to a 403 here.
+async fn render_admin_page(
+    state: &AppState,
+    player: PlayerId,
+    query: &str,
+    agent_key: Option<String>,
+) -> Response {
+    let trimmed = query.trim();
+    let searched = !trimmed.is_empty();
+
     let overview =
         match admin_overview(state.accounts.as_ref(), state.accounts.as_ref(), player).await {
             Ok(o) => o,
@@ -4229,10 +4251,6 @@ pub async fn admin(
                 return server_error();
             }
         };
-    let query = q.q.unwrap_or_default();
-    let trimmed = query.trim();
-    let searched = !trimmed.is_empty();
-    // A search lists matching accounts (any account); otherwise the recent-accounts listing.
     let listing = if searched {
         admin_search_accounts(
             state.accounts.as_ref(),
@@ -4270,7 +4288,6 @@ pub async fn admin(
             is_self: a.id == player,
         })
         .collect();
-    // The worlds the registry runs (041 AC3).
     let worlds =
         match admin_list_worlds(state.accounts.as_ref(), state.accounts.as_ref(), player).await {
             Ok(w) => w
@@ -4310,6 +4327,7 @@ pub async fn admin(
         query: trimmed.to_owned(),
         searched,
         rows,
+        agent_key,
     })
 }
 
@@ -4395,6 +4413,157 @@ pub async fn admin_world_submit(
             )
         }
     }
+}
+
+/// The AI-agent bootstrap form (118 T6): `POST /admin/agent`.
+#[derive(Deserialize)]
+pub struct CreateAgentForm {
+    username: String,
+    /// The target world's UUID (u128 decimal), from the worlds select on the admin page.
+    world: String,
+    /// Tribe slug: `romans`, `teutons`, or `gauls`.
+    tribe: String,
+}
+
+/// Bootstrap an AI agent account from the admin console (118 T6). Admin-gated on the real human
+/// (`RealUser`) — same guard as the other admin POSTs.
+///
+/// Composition:
+/// 1. Call `register` (via the existing use-case) with a synthetic unusable password and the
+///    `username@ai.invalid` email — this atomically creates the `users` row + a home-world
+///    `players` row + starting village (`create_account` invariant).
+/// 2. If the chosen world differs from the home world, additionally call
+///    `create_player_in_world` on the world-scoped repo so the agent has a village in the
+///    requested world. (The home-world village is an acceptable side-effect of 118's minimal
+///    bootstrap path; 120 will expose finer seeding controls.)
+/// 3. Set `is_ai = true` on the user row.
+/// 4. Generate an agent key, store only `sha256(secret)`, and re-render the admin page with the
+///    plaintext token shown exactly once (never logged — Decision #2, plan.md).
+pub async fn admin_create_agent(
+    State(state): State<AppState>,
+    RealUser(player): RealUser,
+    Form(form): Form<CreateAgentForm>,
+) -> Response {
+    // Gate: admin only (same as admin_role_submit, admin_world_submit).
+    if let Err(AdminError::NotAuthorized) = require_admin(state.accounts.as_ref(), player).await {
+        return admin_forbidden();
+    }
+
+    // Validate tribe server-side (P4) before touching any storage.
+    let Some(tribe) = Tribe::from_slug(form.tribe.trim()) else {
+        return with_flash(
+            Redirect::to("/admin").into_response(),
+            Some("Invalid tribe — choose romans, teutons, or gauls.".to_owned()),
+        );
+    };
+
+    // Parse the chosen world UUID.
+    let Ok(world_raw) = form.world.trim().parse::<u128>() else {
+        return with_flash(
+            Redirect::to("/admin").into_response(),
+            Some("Invalid world ID.".to_owned()),
+        );
+    };
+    let world = WorldId(world_raw);
+
+    // Synthesise an unusable random password (32 random bytes as hex; argon2-hashed inside
+    // `register` — slow but this is an admin-only operation, not a hot path).
+    let synthetic_password = {
+        use rand::RngCore as _;
+        let mut bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        bytes.iter().fold(String::with_capacity(64), |mut s, b| {
+            use std::fmt::Write as _;
+            write!(s, "{b:02x}").expect("write to String is infallible");
+            s
+        })
+    };
+
+    let username = form.username.trim().to_owned();
+    let email = format!("{username}@ai.invalid");
+
+    // Step 1: create the account atomically with a home-world player + starting village.
+    let user = match register(
+        state.accounts.as_ref(),
+        state.hasher.as_ref(),
+        &state.world_rules.starting_village,
+        false, // AI accounts are pre-confirmed — no email to send.
+        RegisterCommand {
+            username: username.clone(),
+            email,
+            password: synthetic_password,
+            tribe: form.tribe.trim().to_owned(),
+        },
+    )
+    .await
+    {
+        Ok(u) => u,
+        Err(RegisterError::Taken) => {
+            return with_flash(
+                Redirect::to("/admin").into_response(),
+                Some("That username is already taken.".to_owned()),
+            );
+        }
+        Err(RegisterError::WorldFull) => {
+            return with_flash(
+                Redirect::to("/admin").into_response(),
+                Some("The home world is full; cannot place the starting village.".to_owned()),
+            );
+        }
+        Err(RegisterError::Invalid(msg)) => {
+            return with_flash(Redirect::to("/admin").into_response(), Some(msg));
+        }
+        Err(RegisterError::Backend(e)) => {
+            tracing::error!(error = %e, "admin_create_agent: register failed");
+            return server_error();
+        }
+    };
+
+    // Step 2: if the chosen world is not the home world, also place the agent there.
+    if world != state.world_id {
+        let Some((repo, _map, _speed, _radius, rules)) =
+            state.world_registry.context_for(world).await
+        else {
+            // The world does not exist in the registry. The account row was already created;
+            // that is acceptable — the operator can delete it manually. 120 will add clean-up.
+            return with_flash(
+                Redirect::to("/admin").into_response(),
+                Some(
+                    "World not found in registry; agent account created but not joined.".to_owned(),
+                ),
+            );
+        };
+        if let Err(e) = repo
+            .create_player_in_world(user.id, tribe, &rules.starting_village)
+            .await
+        {
+            tracing::error!(error = %e, "admin_create_agent: create_player_in_world failed");
+            return server_error();
+        }
+    }
+
+    // Step 3: mark the account as AI (118 invariant: keys only bind to is_ai accounts).
+    if let Err(e) = state.accounts.set_is_ai(user.id).await {
+        tracing::error!(error = %e, "admin_create_agent: set_is_ai failed");
+        return server_error();
+    }
+
+    // Step 4: generate a key and persist only the SHA-256 hash (Decision #2, plan.md).
+    // The plaintext token is NEVER logged — only `key.id` (the public half) may appear in traces.
+    let (key, token) = crate::apikey::generate();
+    let secret_hash = crate::apikey::secret_hash(&key.secret);
+    if let Err(e) = state
+        .accounts
+        .create_agent_key(user.id, &key.id, &secret_hash)
+        .await
+    {
+        tracing::error!(key_id = %key.id, error = %e, "admin_create_agent: create_agent_key failed");
+        return server_error();
+    }
+
+    // Re-render the admin page with the one-time plaintext token. The operator must copy it now
+    // — it is not stored and cannot be recovered (Decision #2, plan.md).
+    render_admin_page(&state, player, "", Some(token)).await
 }
 
 /// The admin console search query (036 AC3).

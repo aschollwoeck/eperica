@@ -63,6 +63,35 @@
   </div>
 
   <div class="psec">
+    <div class="bld-cols__head"><h2>AI agents (118)</h2><span class="bld-cols__rule"></span></div>
+    {% match agent_key %}
+    {% when Some with (token) %}
+    <div class="notice notice--warn" style="margin-bottom:12px">
+      <strong>Copy this key now — it is shown only once and cannot be recovered.</strong>
+      <code class="agent-key" style="display:block;margin-top:8px;word-break:break-all">{{ token }}</code>
+    </div>
+    {% when None %}
+    {% endmatch %}
+    <form method="post" action="/admin/agent" class="inline-form">
+      <label>Username <input type="text" name="username" maxlength="32" placeholder="e.g. bot1" required></label>
+      <label>World
+        <select name="world" required>
+          {% for w in worlds %}<option value="{{ w.id }}">{{ w.name }}{% if w.is_home %} (home){% endif %}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Tribe
+        <select name="tribe" required>
+          <option value="romans">Romans</option>
+          <option value="teutons">Teutons</option>
+          <option value="gauls">Gauls</option>
+        </select>
+      </label>
+      <button type="submit" class="btn btn--primary">Create AI agent</button>
+    </form>
+    <p class="bld-tip">Creates an <code>is_ai</code> account, places it in the chosen world, and issues an API key shown once.</p>
+  </div>
+
+  <div class="psec">
     <div class="bld-cols__head"><h2>Accounts</h2><span class="bld-cols__rule"></span></div>
     <form method="get" action="/admin" class="filters">
       <input type="text" name="q" value="{{ query }}" placeholder="Search any account by username…" autocomplete="off">

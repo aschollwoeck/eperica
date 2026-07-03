@@ -20,7 +20,7 @@
 - [x] **T5 — Economy actions.** `POST …/build` and `POST …/train` as `axum::Json` adapters onto
   `order_build` / `order_train`; use-case error enums → (status, `error` code, player-visible `reason`).
   Success returns the queue entry + completes-at. (AC4)
-- [ ] **T6 — Admin bootstrap.** `POST /admin/agent { username, world, tribe }` (admin-gated):
+- [x] **T6 — Admin bootstrap.** `POST /admin/agent { username, world, tribe }` (admin-gated):
   `is_ai` account + world join + key issued, plaintext shown once in the console. Denied to
   non-admins. (AC1, roles)
 - [ ] **T7 — Integration tests.** The AC suite from plan §Test strategy, including the **AC6 opening
