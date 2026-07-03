@@ -160,14 +160,11 @@ async fn agent_rate_guard(State(state): State<AppState>, req: Request, next: Nex
         return next.run(req).await;
     }
     let (parts, body) = req.into_parts();
-    // Extract the bearer key-id cheaply — no DB round-trip, no secret verify.
-    let subject = parts
-        .headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|h| h.strip_prefix("Bearer "))
-        .and_then(crate::apikey::parse)
-        .map(|(id, _secret)| format!("agent:{id}"));
+    // Extract the bearer key-id cheaply — no DB round-trip, no secret verify. Uses the SAME strict
+    // token parser as authentication (`api::bearer_token`), so a request that could authenticate can
+    // never slip past the budget (review M1); a non-token request 401s in the extractor anyway.
+    let subject =
+        crate::api::bearer_token(&parts.headers).map(|(id, _secret)| format!("agent:{id}"));
     let Some(subject) = subject else {
         // No parseable bearer token — pass through; the extractor will 401.
         return next.run(Request::from_parts(parts, body)).await;

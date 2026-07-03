@@ -58,30 +58,37 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// The parsed `(id, secret)` of a request's bearer token, or `None` when the header is missing,
+/// non-`Bearer `, or malformed. **Strict about the `Bearer ` prefix** and shared with the rate guard
+/// (`crate::agent_rate_guard`) so authentication and budgeting can never disagree on what counts as
+/// a token (the review's M1: an unprefixed token must not authenticate while escaping the budget).
+pub(crate) fn bearer_token(headers: &axum::http::HeaderMap) -> Option<(String, String)> {
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")?;
+    apikey::parse(token)
+}
+
 /// Resolve the `Authorization: Bearer epk_…` header to the bound **AI account** (AC1):
 /// parse → key lookup by id → constant-time secret verify → not revoked → account exists,
 /// **is_ai**, and not banned/suspended. Sanction enforcement lives here because agents never pass
-/// the login chokepoint (019/022) — a blocked AI account is refused on **every** request.
+/// the login chokepoint (019/022) — a blocked AI account is refused on **every** request. Backend
+/// failures surface as 500 `internal` — never as a 401 that would make a bot retire a healthy key.
 async fn bearer_account(parts: &Parts, state: &AppState) -> Result<PlayerId, ApiError> {
-    let header = parts
-        .headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(ApiError::unauthorized)?;
-    let token = header.strip_prefix("Bearer ").unwrap_or(header);
-    let (id, secret) = apikey::parse(token).ok_or_else(ApiError::unauthorized)?;
+    let internal = |what: &'static str| {
+        move |e| {
+            tracing::error!(error = %e, "bearer resolution failed: {what}");
+            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", what)
+        }
+    };
+    let (id, secret) = bearer_token(&parts.headers).ok_or_else(ApiError::unauthorized)?;
     let key = state
         .accounts
         .find_agent_key(&id)
         .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "agent key lookup failed");
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "Key lookup failed.",
-            )
-        })?
+        .map_err(internal("key lookup"))?
         .ok_or_else(ApiError::unauthorized)?;
     if key.revoked || !apikey::verify(&secret, &key.secret_hash) {
         return Err(ApiError::unauthorized());
@@ -90,8 +97,7 @@ async fn bearer_account(parts: &Parts, state: &AppState) -> Result<PlayerId, Api
         .accounts
         .find_user_by_id(key.user)
         .await
-        .ok()
-        .flatten()
+        .map_err(internal("account lookup"))?
         .ok_or_else(ApiError::unauthorized)?;
     // Keys bind only to AI accounts (ADR 0036) — a key pointing anywhere else is refused outright.
     if !user.is_ai {
@@ -158,18 +164,23 @@ async fn me(
     axum::extract::State(state): axum::extract::State<AppState>,
     AgentAccount(account): AgentAccount,
 ) -> Result<Response, ApiError> {
-    let username = state
+    let internal = |what: &'static str| {
+        move |e| {
+            tracing::error!(error = %e, "/api/me read failed: {what}");
+            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", what)
+        }
+    };
+    let user = state
         .accounts
         .find_user_by_id(account)
         .await
-        .ok()
-        .flatten()
-        .map(|u| u.username);
+        .map_err(internal("account"))?
+        .ok_or_else(ApiError::unauthorized)?;
     let worlds: Vec<serde_json::Value> = state
         .accounts
         .worlds_of_user(account)
         .await
-        .unwrap_or_default()
+        .map_err(internal("worlds"))?
         .into_iter()
         .map(|w| {
             serde_json::json!({
@@ -181,8 +192,8 @@ async fn me(
         .collect();
     Ok(Json(serde_json::json!({
         "account": account.0.to_string(),
-        "username": username,
-        "is_ai": true,
+        "username": user.username,
+        "is_ai": user.is_ai,
         "worlds": worlds,
     }))
     .into_response())
@@ -598,6 +609,7 @@ async fn build_action(
             ));
         }
     };
+    let vid = owned_village(&ctx, &village).await?;
     order_build(
         &ctx.accounts,
         &ctx.accounts,
@@ -608,47 +620,48 @@ async fn build_action(
         ctx.speed,
         now(),
         ctx.player,
-        crate::handlers::selected_village(Some(&village)),
+        Some(vid),
         target,
     )
     .await
     .map_err(build_error)?;
-    ordered_entry(&ctx, &village, target).await
-}
-
-/// The queue entry just created by a successful build order — read back through the same
-/// `active_builds` read model the digest uses (page truth, AC4).
-async fn ordered_entry(
-    ctx: &auth::GameContext,
-    village: &str,
-    target: eperica_domain::BuildTarget,
-) -> Result<Response, ApiError> {
-    let villages = ctx.accounts.villages_of(ctx.player).await.map_err(|e| {
-        tracing::error!(error = %e, "post-order village read failed");
-        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "read-back")
-    })?;
-    // The same selection rule as the use-case: the path village when owned, else capital/first.
-    let selected = crate::handlers::selected_village(Some(village))
-        .and_then(|vid| villages.iter().find(|v| v.id == vid))
-        .or_else(|| villages.iter().find(|v| v.is_capital))
-        .or_else(|| villages.first())
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "not_found", "No village."))?;
+    // Read the created entry back through the digest's own read model (page truth, AC4).
     let entry = ctx
         .accounts
-        .active_builds(selected.id)
+        .active_builds(vid)
         .await
         .unwrap_or_default()
         .into_iter()
         .find(|b| b.target == target);
     Ok(Json(serde_json::json!({
         "ordered": true,
-        "village": crate::handlers::village_seg(selected.id),
+        "village": crate::handlers::village_seg(vid),
         "queue_entry": entry.map(|b| serde_json::json!({
             "level": b.target_level,
             "completes_at_ms": b.complete_at.0,
         })),
     }))
     .into_response())
+}
+
+/// The **strict** village resolution for agent actions (review M3): the path village must parse and
+/// be owned by the acting player, else `404 not_found`. A machine client gets no silent
+/// capital-fallback (the browser flow's convenience) — an agent must never have its order land on a
+/// different village than it addressed.
+async fn owned_village(
+    ctx: &auth::GameContext,
+    village: &str,
+) -> Result<eperica_domain::VillageId, ApiError> {
+    let not_found = || ApiError::new(StatusCode::NOT_FOUND, "not_found", "No such village.");
+    let vid = crate::handlers::selected_village(Some(village)).ok_or_else(not_found)?;
+    let owned = ctx.accounts.villages_of(ctx.player).await.map_err(|e| {
+        tracing::error!(error = %e, "village ownership read failed");
+        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "ownership")
+    })?;
+    if !owned.iter().any(|v| v.id == vid) {
+        return Err(not_found());
+    }
+    Ok(vid)
 }
 
 #[derive(serde::Deserialize)]
@@ -667,6 +680,7 @@ async fn train_action(
     use eperica_application::order_train;
     let body = json_body(body)?;
     let unit = eperica_domain::UnitId(body.unit);
+    let vid = owned_village(&ctx, &village).await?;
     order_train(
         &ctx.accounts,
         &ctx.accounts,
@@ -677,32 +691,23 @@ async fn train_action(
         ctx.speed,
         now(),
         ctx.player,
-        crate::handlers::selected_village(Some(&village)),
+        Some(vid),
         unit.clone(),
         body.count,
     )
     .await
     .map_err(train_error)?;
-    // Read the batch back through the digest's own read model (page truth).
-    let villages = ctx.accounts.villages_of(ctx.player).await.map_err(|e| {
-        tracing::error!(error = %e, "post-train village read failed");
-        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "read-back")
-    })?;
-    let selected = crate::handlers::selected_village(Some(&village))
-        .and_then(|vid| villages.iter().find(|v| v.id == vid))
-        .or_else(|| villages.iter().find(|v| v.is_capital))
-        .or_else(|| villages.first())
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "not_found", "No village."))?;
+    // Read the batch back through the digest's own read model (page truth, AC4).
     let batch = ctx
         .accounts
-        .active_training(selected.id)
+        .active_training(vid)
         .await
         .unwrap_or_default()
         .into_iter()
         .find(|t| t.unit == unit);
     Ok(Json(serde_json::json!({
         "ordered": true,
-        "village": crate::handlers::village_seg(selected.id),
+        "village": crate::handlers::village_seg(vid),
         "batch": batch.map(|t| serde_json::json!({
             "unit": t.unit.as_str(),
             "remaining": t.count_total.saturating_sub(t.count_done),

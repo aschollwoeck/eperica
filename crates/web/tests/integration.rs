@@ -1200,6 +1200,44 @@ async fn agent_api_bearer_auth(pool: sqlx::PgPool) {
         .execute(&pool)
         .await
         .unwrap();
+    // AC2: a suspended/banned AI account is denied on EVERY request with the same reason a player
+    // would see — agents never pass the login chokepoint, so the sanction bites at key resolution.
+    sqlx::query("UPDATE users SET suspended_until = now() + interval '1 day' WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403);
+    assert!(
+        r.text()
+            .await
+            .unwrap()
+            .contains("\"error\":\"account_blocked\"")
+    );
+    sqlx::query("UPDATE users SET suspended_until = NULL WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // M1 regression: a token WITHOUT the "Bearer " prefix must not authenticate (the rate guard and
+    // the extractor share one strict parser — an unprefixed token can't slip past the budget either).
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", token.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        401,
+        "bare token (no Bearer prefix) is rejected"
+    );
     // Revoked key → 401.
     sqlx::query("UPDATE agent_keys SET revoked_at = now() WHERE id = $1")
         .bind(&key.id)
@@ -1391,6 +1429,140 @@ async fn agent_api_state_digest(pool: sqlx::PgPool) {
     assert_eq!(rows.len(), 7);
     assert_eq!(rows[0].as_array().unwrap().len(), 7);
 
+    // AC3 — digest = page truth: the same application read models, called directly against the
+    // pool, must agree with the digest (rates/capacities exactly; amounts/cp within an accrual tick).
+    {
+        use eperica_application::{load_culture, load_economy};
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let world = ensure_world(&pool, &config).await.unwrap();
+        let rules = load_world_rules(&world.rule_preset).unwrap();
+        let repo = PgAccountRepository::new(
+            pool.clone(),
+            world.id,
+            world.seed,
+            config.radius,
+            rules.economy.starting_amounts,
+            rules.lifecycle.beginner_protection_secs,
+            config.speed,
+        );
+        let uid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+            .bind(&user)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let player = PlayerId(uid.as_u128());
+        let econ = load_economy(
+            &repo,
+            &rules.economy,
+            &rules.units,
+            config.speed,
+            Timestamp(now().0),
+            player,
+            None,
+        )
+        .await
+        .unwrap()
+        .expect("economy");
+        let r = &v["resources"];
+        assert_eq!(r["wood"]["rate"].as_i64().unwrap(), econ.economy.rates.wood);
+        assert_eq!(r["clay"]["rate"].as_i64().unwrap(), econ.economy.rates.clay);
+        assert_eq!(r["iron"]["rate"].as_i64().unwrap(), econ.economy.rates.iron);
+        assert_eq!(
+            r["crop"]["rate"].as_i64().unwrap(),
+            econ.economy.rates.crop_net
+        );
+        assert_eq!(
+            r["wood"]["capacity"].as_i64().unwrap(),
+            econ.economy.capacities.warehouse
+        );
+        assert_eq!(
+            r["crop"]["capacity"].as_i64().unwrap(),
+            econ.economy.capacities.granary
+        );
+        for res in ["wood", "clay", "iron", "crop"] {
+            let digest_amt = r[res]["amount"].as_i64().unwrap();
+            let direct = match res {
+                "wood" => econ.economy.amounts.wood,
+                "clay" => econ.economy.amounts.clay,
+                "iron" => econ.economy.amounts.iron,
+                _ => econ.economy.amounts.crop,
+            };
+            assert!(
+                (digest_amt - direct).abs() <= 2,
+                "{res}: digest {digest_amt} vs direct {direct}"
+            );
+        }
+        let culture = load_culture(&repo, &repo, &rules.culture, Timestamp(now().0), player)
+            .await
+            .unwrap();
+        assert_eq!(
+            d["culture"]["rate_per_hour"].as_i64().unwrap(),
+            culture.rate
+        );
+        assert_eq!(
+            d["culture"]["villages_used"].as_u64().unwrap(),
+            u64::from(culture.used_slots)
+        );
+        assert_eq!(
+            d["culture"]["villages_allowed"].as_u64().unwrap(),
+            u64::from(culture.allowed_villages)
+        );
+        assert_eq!(
+            d["culture"]["next_threshold"].as_i64(),
+            culture.next_threshold
+        );
+
+        // Fog-of-war shape (§7.3): seed one inbound attack and assert the digest entry carries
+        // EXACTLY {village, arrive_at_ms} — no origin, no troops, nothing else.
+        let attacker = unique("raider");
+        let aemail = format!("{attacker}@example.com");
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", attacker.as_str()),
+                ("email", aemail.as_str()),
+                ("password", "secret12"),
+                ("tribe", "romans"),
+            ])
+            .send()
+            .await
+            .unwrap();
+        sqlx::query(
+                "INSERT INTO troop_movements \
+                 (id, owner_id, kind, home_village, deliver_village, origin_x, origin_y, dest_x, dest_y, depart_at, arrive_at) \
+                 SELECT gen_random_uuid(), a.owner_id, 'attack', a.id, t.id, a.x, a.y, t.x, t.y, now(), now() + interval '1 hour' \
+                 FROM villages a, villages t \
+                 WHERE a.owner_id = (SELECT id FROM users WHERE username = $1) \
+                   AND t.owner_id = (SELECT id FROM users WHERE username = $2)",
+            )
+            .bind(&attacker)
+            .bind(&user)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let resp = agent
+            .get(format!("{base}/api/w/{home}/state"))
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+            .unwrap();
+        let d2: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap()).unwrap();
+        let inc = d2["incoming_attacks"].as_array().unwrap();
+        assert_eq!(inc.len(), 1);
+        let entry = inc[0].as_object().unwrap();
+        let mut keys: Vec<&str> = entry.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec!["arrive_at_ms", "village"],
+            "arrival-only — no origin/troops fields"
+        );
+        assert_eq!(
+            entry["village"].as_str().unwrap(),
+            vs[0]["id"].as_str().unwrap()
+        );
+        assert!(entry["arrive_at_ms"].as_i64().unwrap() > d2["now_ms"].as_i64().unwrap());
+    }
+
     // World scoping parity (AC2): a bad uuid → 404 unknown_world; a real-but-unjoined world → 403.
     let r = get("/api/w/not-a-uuid/state".to_owned()).await.unwrap();
     assert_eq!(r.status().as_u16(), 404);
@@ -1477,6 +1649,72 @@ async fn agent_api_economy_actions(pool: sqlx::PgPool) {
             .body(body.to_string())
             .send()
     };
+
+    // AC4 — insufficient: drained stores make the use-case's own affordability rule answer 409.
+    sqlx::query(
+        "UPDATE village_resources SET wood = 5, clay = 5, iron = 5, crop = 5 WHERE village_id = $1",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let r = post(
+        "/build".into(),
+        serde_json::json!({"target": "field", "slot": 0}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 409);
+    assert!(
+        r.text()
+            .await
+            .unwrap()
+            .contains("\"error\":\"insufficient\"")
+    );
+    sqlx::query(
+        "UPDATE village_resources SET wood = 5000, clay = 5000, iron = 5000, crop = 5000, \
+         updated_at = now() WHERE village_id = $1",
+    )
+    .bind(village_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // AC4/M3 — a village the agent does NOT own is 404 not_found: no silent capital fallback on the
+    // machine surface (an agent's order must never land on a different village than addressed).
+    let stranger = unique("mark");
+    let semail = format!("{stranger}@example.com");
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", stranger.as_str()),
+            ("email", semail.as_str()),
+            ("password", "secret12"),
+            ("tribe", "romans"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let foreign: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&stranger)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let r = agent
+        .post(format!("{base}/api/w/{home}/village/{foreign}/build"))
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"target": "field", "slot": 0}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        404,
+        "foreign village is refused, not fallen back"
+    );
+    assert!(r.text().await.unwrap().contains("\"error\":\"not_found\""));
 
     // Build a field: success returns the queue entry with its completion time.
     let r = post(

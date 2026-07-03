@@ -46,7 +46,9 @@ market, settling and messages follow in 119; AI-account seeding/visibility in 12
 (amount/rate/capacity per kind, crop net), fields (slot/kind/level), buildings (slot/kind/level), build
 queue (target, level, completes-at), training queue (unit, remaining, next-complete-at), garrison;
 per player — culture (cp, rate, next threshold, slots used/allowed), incoming attacks (village,
-arrival-at — **nothing else**), unread report count + latest report ids. Timestamps are absolute ms
+arrival-at — **nothing else**), and the latest report heads (id, occurred-at, outcome; battle reports
+carry no read-state in the schema, so there is no unread count — the full report read arrives with
+119). Timestamps are absolute ms
 (P1/P7-safe: the client computes countdowns; nothing is wall-clock-dependent server-side).
 
 ## Acceptance criteria

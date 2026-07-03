@@ -58,15 +58,22 @@ pub fn parse(token: &str) -> Option<(String, String)> {
     // enforce length anyway. Using splitn(2) so the secret is not further split.
     let (id, secret) = rest.split_once('_')?;
 
-    // id: exactly 16 lowercase hex chars (8 bytes).
-    if id.len() != 16 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+    // id: exactly 16 lowercase hex chars (8 bytes) — uppercase is rejected (generation is lowercase).
+    if id.len() != 16
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
         return None;
     }
-    // secret: exactly 43 base64url chars (32 bytes, no padding).
-    if secret.len() != 43 {
+    // secret: exactly 43 base64url chars (32 bytes, no padding), charset-checked.
+    if secret.len() != 43
+        || !secret
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
         return None;
     }
-    // No trailing data allowed.
     Some((id.to_owned(), secret.to_owned()))
 }
 

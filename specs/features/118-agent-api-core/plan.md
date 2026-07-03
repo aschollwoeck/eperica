@@ -42,9 +42,14 @@
    assembler; rejected — it would add serde to `application` for zero logic gain, and AC3 pins
    digest-equals-page at the integration level regardless.)
 5. **Rate limiting.** A dedicated `agent_rate_guard` middleware on the `/api` router covering **all**
-   methods (the global guard skips GETs, but digest polling is the agent hot path): subject = the bound
-   account id, action `"agent"`, limit from a new `agent_limit_per_window` in `fairplay.toml`
-   (process-global, 048 precedent). Over budget → `429` JSON with `retry_after_secs`.
+   methods (the global guard skips GETs, but digest polling is the agent hot path): subject = the
+   **unverified key-id** (`agent:<id>`, parsed by the same strict `bearer_token` helper the extractor
+   uses — the budget and authentication can never disagree on what counts as a token). Keying on the
+   unverified id is a recorded trade: no DB round-trip or hash on the guard path (P11), failed-auth
+   floods are still counted, and the id is only ever exposed inside the one-time plaintext token, so a
+   third party cannot burn a victim's budget without already holding the key. Action `"agent"`, limit
+   from a new `agent_limit_per_window` in `fairplay.toml` (process-global, 048 precedent). Over budget
+   → `429` JSON with `retry_after_secs`.
 6. **Errors.** One JSON error shape everywhere: `{ "error": "<machine_code>", "reason": "<text>" }` —
    `error` is a stable snake_case code (`unauthorized`, `not_joined`, `rate_limited`, `insufficient`,
    `lane_busy`, `max_level`, …) mapped from the use-case error enums; `reason` is the player-visible
@@ -67,8 +72,10 @@ CREATE INDEX agent_keys_user ON agent_keys (user_id);
 ```
 
 Ports (`application/ports.rs`, implemented in `infrastructure/repo.rs`): `create_agent_key`,
-`find_agent_key(id) -> Option<(user_id, secret_hash, revoked)>`, `revoke_agent_key`,
-plus `create_ai_account` (a thin variant of account creation that sets `is_ai`, no email path).
+`find_agent_key(id) -> Option<(user_id, secret_hash, revoked)>`, `revoke_agent_key`, and `set_is_ai`.
+(No separate `create_ai_account`: the bootstrap **composes** the existing `register` use-case — with a
+synthetic random password + `@ai.invalid` email, pre-confirmed — then `set_is_ai`, so account/village
+placement logic is never duplicated.)
 
 ## Interface
 
@@ -111,5 +118,8 @@ See [tasks.md](tasks.md). Gates every task: `cargo fmt --all -- --check`,
 - **First `axum::Json` bodies.** Malformed-JSON rejections must come back as our JSON error shape, not
   axum's default plain text — needs a rejection mapper on the router.
 - **Key-in-logs.** The plaintext key must never be logged; only the `id` half may appear in traces.
-- **Digest cost on many-village accounts.** Linear in owned villages (like the village switcher); fine
-  for bots (few villages), documented as the budget in AC5's sense. Revisit in 119 if needed.
+- **Digest cost on many-village accounts.** One `load_economy(selected = v)` per owned village — and
+  each call re-hydrates the owner's village list inside `select_village`, so the digest is O(V²) in
+  owned villages today. Deliberately accepted: page-truth parity outweighs the cost at bot scale
+  (agents hold a handful of villages), and the reads are bounded per call. Revisit with a shared
+  village list (the pure `pick_village`) if 119+ agents grow large empires.

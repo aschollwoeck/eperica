@@ -78,6 +78,13 @@ Body `{ "target": "field"|"building", "slot": n, "kind": "…" }` (`kind` for bu
 Body `{ "unit": "…", "count": n }` → `order_train`. Success:
 `{ ordered, village, batch: { unit, remaining, next_complete_at_ms } }`.
 
+## Village addressing (strict)
+
+Action paths name a village (`/village/{village}/…`). The village **must be owned by the agent's
+player in that world** — otherwise `404 not_found`. There is no capital fallback on the machine
+surface (the browser's convenience): an agent's order never lands on a different village than it
+addressed.
+
 ## Scoping & parity
 
 World scoping is byte-for-byte the browser's: unknown world in the path → `404 unknown_world`; a

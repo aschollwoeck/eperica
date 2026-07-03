@@ -4444,8 +4444,12 @@ pub async fn admin_create_agent(
     RealUser(player): RealUser,
     Form(form): Form<CreateAgentForm>,
 ) -> Response {
-    // Gate: admin only (same as admin_role_submit, admin_world_submit).
-    if let Err(AdminError::NotAuthorized) = require_admin(state.accounts.as_ref(), player).await {
+    // Gate: admin only — FAIL-CLOSED: a backend error also denies (this mints credentials, so an
+    // outage must never let the check fall through; stricter than the older admin POSTs by design).
+    if require_admin(state.accounts.as_ref(), player)
+        .await
+        .is_err()
+    {
         return admin_forbidden();
     }
 
