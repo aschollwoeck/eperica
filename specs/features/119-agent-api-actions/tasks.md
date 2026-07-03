@@ -12,7 +12,7 @@
 - [x] **T3 — Research & smithy + digest research block.** `research`/`smithy` adapters + error maps;
   digest gains per-village `research` (researched/levels/active orders). Integration: success +
   already-researched + digest reflects. (AC4)
-- [ ] **T4 — Digest closure + report reads.** Digest `movements`/`reinforcements_here`/`_abroad` +
+- [x] **T4 — Digest closure + report reads.** Digest `movements`/`reinforcements_here`/`_abroad` +
   `scout_reports` heads + `kind` on report heads; `GET report/{id}` + `GET scout-report/{id}`
   party-scoped. Integration: digest equality (M4 pattern) + non-party 404. (AC5/AC7)
 - [ ] **T5 — Messages.** `POST message` (username→account, `send_dm`), `GET messages`

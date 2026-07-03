@@ -12,10 +12,10 @@ use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 use eperica_application::{
     AccountRepository, AllianceRepository, BuildRepository, CombatError, CombatRepository,
-    MovementError, MovementRepository, OasisRepository, ResearchError, ScoutError, SettleError,
-    TradeError, TradeRepository, TrainingRepository, UnitRepository, UpgradeError, order_attack,
-    order_reinforcement, order_research, order_return, order_scout, order_settle,
-    order_smithy_upgrade, order_trade,
+    MovementError, MovementRepository, OasisRepository, ResearchError, ScoutError, ScoutIntel,
+    ScoutRepository, SettleError, TradeError, TradeRepository, TrainingRepository, UnitRepository,
+    UpgradeError, order_attack, order_reinforcement, order_research, order_return, order_scout,
+    order_settle, order_smithy_upgrade, order_trade,
 };
 use eperica_domain::{
     AttackMode, Coordinate, MovementKind, PlayerId, ResourceAmounts, ScoutTarget, Timestamp,
@@ -284,6 +284,8 @@ struct VillageDigest {
     training: Vec<TrainingEntry>,
     garrison: Vec<GarrisonEntry>,
     research: ResearchDigest,
+    /// Reinforcement groups stationed here from allied players — from `reinforcements_at`.
+    reinforcements_here: Vec<serde_json::Value>,
 }
 
 /// `GET /api/w/{world}/state` — the digest (AC3): every number equals what the corresponding page
@@ -351,6 +353,31 @@ async fn state_digest(AgentGame(ctx): AgentGame) -> Result<Response, ApiError> {
             .active_unit_orders(v.id)
             .await
             .map_err(internal("unit_orders"))?;
+        let reinf_here_raw = ctx
+            .accounts
+            .reinforcements_at(v.id)
+            .await
+            .map_err(internal("reinforcements_here"))?;
+        let reinforcements_here: Vec<serde_json::Value> = reinf_here_raw
+            .into_iter()
+            .map(|g| {
+                let troops: std::collections::BTreeMap<String, u32> = g
+                    .troops
+                    .iter()
+                    .map(|(u, c)| (u.as_str().to_owned(), *c))
+                    .collect();
+                serde_json::json!({
+                    // home_village = the guest/reinforcer's home village (hyphenated UUID, §064)
+                    "home_village": crate::handlers::village_seg(g.home_village),
+                    // other_coord = the guest's home coord (viewed by the host)
+                    "x": g.other_coord.x,
+                    "y": g.other_coord.y,
+                    // other_owner = the guest/reinforcer's owner name
+                    "owner": g.other_owner,
+                    "troops": troops,
+                })
+            })
+            .collect();
         village_digests.push(VillageDigest {
             id: crate::handlers::village_seg(v.id),
             x: v.coordinate.x,
@@ -439,6 +466,7 @@ async fn state_digest(AgentGame(ctx): AgentGame) -> Result<Response, ApiError> {
                     })
                     .collect(),
             },
+            reinforcements_here,
         });
     }
 
@@ -465,7 +493,7 @@ async fn state_digest(AgentGame(ctx): AgentGame) -> Result<Response, ApiError> {
             })
         })
         .collect();
-    // Latest report heads (ids + occurrence); the full report read arrives with 119.
+    // Latest battle report heads — now with kind (119 T4).
     let reports: Vec<serde_json::Value> = ctx
         .accounts
         .reports_for(ctx.player, 10)
@@ -473,10 +501,77 @@ async fn state_digest(AgentGame(ctx): AgentGame) -> Result<Response, ApiError> {
         .map_err(internal("reports"))?
         .into_iter()
         .map(|r| {
+            let kind = match r.kind {
+                MovementKind::Attack => "attack",
+                MovementKind::Raid => "raid",
+                MovementKind::OasisAttack => "oasis_attack",
+                // Reinforce/Return/Scout/OasisReinforce/Settle never appear as a battle report kind,
+                // but exhaustive matching keeps clippy happy.
+                MovementKind::Reinforce => "reinforce",
+                MovementKind::Return => "return",
+                MovementKind::Scout => "scout",
+                MovementKind::OasisReinforce => "oasis_reinforce",
+                MovementKind::Settle => "settle",
+            };
             serde_json::json!({
                 "id": r.id.to_string(),
                 "occurred_at_ms": r.occurred_at.0,
                 "attacker_won": r.attacker_won,
+                "kind": kind,
+            })
+        })
+        .collect();
+
+    // Per-player active movements (reuses the movement_json helper from T1/T3 actions).
+    let movements: Vec<serde_json::Value> = ctx
+        .accounts
+        .active_movements(ctx.player)
+        .await
+        .map_err(internal("movements"))?
+        .iter()
+        .map(movement_json)
+        .collect();
+
+    // Reinforcement groups the player has stationed abroad (host = the foreign village).
+    // StationedGroup viewed as the owner: other_coord = host's coord, other_owner = host's owner.
+    let reinforcements_abroad: Vec<serde_json::Value> = ctx
+        .accounts
+        .reinforcements_of(ctx.player)
+        .await
+        .map_err(internal("reinforcements_abroad"))?
+        .into_iter()
+        .map(|g| {
+            let troops: std::collections::BTreeMap<String, u32> = g
+                .troops
+                .iter()
+                .map(|(u, c)| (u.as_str().to_owned(), *c))
+                .collect();
+            serde_json::json!({
+                // host_village = where the troops are currently stationed (hyphenated UUID, §064)
+                "host_village": crate::handlers::village_seg(g.host_village),
+                // other_coord = the host's coordinate (viewed by the owner)
+                "x": g.other_coord.x,
+                "y": g.other_coord.y,
+                // other_owner = the host village's owner
+                "owner": g.other_owner,
+                "troops": troops,
+            })
+        })
+        .collect();
+
+    // Latest scout report heads (ids + metadata) — intel is in the full /scout-report/{id} read.
+    let scout_reports: Vec<serde_json::Value> = ctx
+        .accounts
+        .scout_reports_for(ctx.player, 10)
+        .await
+        .map_err(internal("scout_reports"))?
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "id": r.id.to_string(),
+                "occurred_at_ms": r.occurred_at.0,
+                "viewer_is_scouter": r.viewer_is_scouter,
+                "detected": r.detected,
             })
         })
         .collect();
@@ -495,6 +590,9 @@ async fn state_digest(AgentGame(ctx): AgentGame) -> Result<Response, ApiError> {
         },
         "incoming_attacks": incoming,
         "reports": reports,
+        "movements": movements,
+        "reinforcements_abroad": reinforcements_abroad,
+        "scout_reports": scout_reports,
     }))
     .into_response())
 }
@@ -1437,6 +1535,203 @@ async fn smithy_action(
     .into_response())
 }
 
+// ---------------------------------------------------------------------------
+// Report detail endpoints (119 T4) — party-scoped reads (P4).
+// ---------------------------------------------------------------------------
+
+/// `GET /api/w/{world}/report/{id}` — full battle report, party-scoped by the port (P4).
+///
+/// `{id}` is the decimal `u128` string emitted by the digest's `reports[].id`. Parses as decimal
+/// (matching `r.id.to_string()` in `state_digest`). The port's `report(id, player)` returns `None`
+/// for non-parties — mapped to 404 `not_found` here (P4, no `forbidden` leak).
+///
+/// Both parties receive the identical full view; per-party differences (e.g. "which side I'm on")
+/// are left to the caller. The report page itself applies no additional field-level redaction beyond
+/// what the port pre-scopes: attacker and defender each see all forces, losses, loot, razed, and
+/// loyalty data.
+async fn report_get(
+    AgentGame(ctx): AgentGame,
+    axum::extract::Path((_world, id)): axum::extract::Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let internal = |what: &'static str| {
+        move |e| {
+            tracing::error!(error = %e, "report read failed: {what}");
+            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", what)
+        }
+    };
+    let id: u128 = id
+        .parse()
+        .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "Invalid report id."))?;
+    let report = ctx
+        .accounts
+        .report(id, ctx.player)
+        .await
+        .map_err(internal("report"))?
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "No such report or you are not a party to it.",
+            )
+        })?;
+    let kind = match report.kind {
+        MovementKind::Attack => "attack",
+        MovementKind::Raid => "raid",
+        MovementKind::OasisAttack => "oasis_attack",
+        MovementKind::Reinforce => "reinforce",
+        MovementKind::Return => "return",
+        MovementKind::Scout => "scout",
+        MovementKind::OasisReinforce => "oasis_reinforce",
+        MovementKind::Settle => "settle",
+    };
+    // Unit-count maps for forces/losses — deterministically ordered for stable JSON.
+    let af: std::collections::BTreeMap<String, u32> = report
+        .attacker_forces
+        .iter()
+        .map(|(u, c)| (u.as_str().to_owned(), *c))
+        .collect();
+    let al: std::collections::BTreeMap<String, u32> = report
+        .attacker_losses
+        .iter()
+        .map(|(u, c)| (u.as_str().to_owned(), *c))
+        .collect();
+    let df: std::collections::BTreeMap<String, u32> = report
+        .defender_forces
+        .iter()
+        .map(|(u, c)| (u.as_str().to_owned(), *c))
+        .collect();
+    let dl: std::collections::BTreeMap<String, u32> = report
+        .defender_losses
+        .iter()
+        .map(|(u, c)| (u.as_str().to_owned(), *c))
+        .collect();
+    let razed = report.razed.map(|d| {
+        serde_json::json!({
+            "building": crate::handlers::building_kind_id(d.kind),
+            "before": d.before,
+            "after": d.after,
+        })
+    });
+    Ok(Json(serde_json::json!({
+        "id": report.id.to_string(),
+        "occurred_at_ms": report.occurred_at.0,
+        "kind": kind,
+        "attacker_name": report.attacker_name,
+        "attacker_coord": { "x": report.attacker_coord.x, "y": report.attacker_coord.y },
+        "defender_name": report.defender_name,
+        "defender_coord": { "x": report.defender_coord.x, "y": report.defender_coord.y },
+        "attacker_won": report.attacker_won,
+        "luck": report.luck,
+        "morale": report.morale,
+        "wall_before": report.wall_before,
+        "wall_after": report.wall_after,
+        "attacker_forces": af,
+        "attacker_losses": al,
+        "defender_forces": df,
+        "defender_losses": dl,
+        "scouted": report.scouted,
+        "scout_target": report.scout_target.map(|t| t.as_str()),
+        "loot": {
+            "wood": report.loot.wood,
+            "clay": report.loot.clay,
+            "iron": report.loot.iron,
+            "crop": report.loot.crop,
+        },
+        "razed": razed,
+        "loyalty_before": report.loyalty_before,
+        "loyalty_after": report.loyalty_after,
+        "conquered": report.conquered,
+    }))
+    .into_response())
+}
+
+/// Serialize a [`ScoutIntel`] variant to a compact JSON value.
+fn scout_intel_json(intel: &ScoutIntel) -> serde_json::Value {
+    match intel {
+        ScoutIntel::Resources(a) => serde_json::json!({
+            "kind": "resources",
+            "wood": a.wood,
+            "clay": a.clay,
+            "iron": a.iron,
+            "crop": a.crop,
+        }),
+        ScoutIntel::Defenses { troops, wall_level } => {
+            let troops_map: std::collections::BTreeMap<String, u32> = troops
+                .iter()
+                .map(|(u, c)| (u.as_str().to_owned(), *c))
+                .collect();
+            serde_json::json!({
+                "kind": "defenses",
+                "troops": troops_map,
+                "wall_level": wall_level,
+            })
+        }
+    }
+}
+
+/// `GET /api/w/{world}/scout-report/{id}` — full scout report, party-scoped by the port (P4).
+///
+/// `{id}` is the decimal `u128` string from the digest's `scout_reports[].id`. The port's
+/// `scout_report(id, player)` applies redaction for a target viewer (strips intel + scouts_sent)
+/// and returns `None` for non-parties — do NOT add extra field redaction here (010 rule: the port
+/// pre-redacts).
+async fn scout_report_get(
+    AgentGame(ctx): AgentGame,
+    axum::extract::Path((_world, id)): axum::extract::Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let internal = |what: &'static str| {
+        move |e| {
+            tracing::error!(error = %e, "scout report read failed: {what}");
+            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", what)
+        }
+    };
+    let id: u128 = id.parse().map_err(|_| {
+        ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Invalid scout report id.",
+        )
+    })?;
+    let r = ctx
+        .accounts
+        .scout_report(id, ctx.player)
+        .await
+        .map_err(internal("scout_report"))?
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "No such scout report or you are not a party to it.",
+            )
+        })?;
+    // Troops maps — scouts_sent is already empty for a target viewer (port pre-redacts, P4).
+    let scouts_sent: std::collections::BTreeMap<String, u32> = r
+        .scouts_sent
+        .iter()
+        .map(|(u, c)| (u.as_str().to_owned(), *c))
+        .collect();
+    let scouts_lost: std::collections::BTreeMap<String, u32> = r
+        .scouts_lost
+        .iter()
+        .map(|(u, c)| (u.as_str().to_owned(), *c))
+        .collect();
+    Ok(Json(serde_json::json!({
+        "id": r.id.to_string(),
+        "occurred_at_ms": r.occurred_at.0,
+        "scouter_name": r.scouter_name,
+        "scouter_coord": { "x": r.scouter_coord.x, "y": r.scouter_coord.y },
+        "target_name": r.target_name,
+        "target_coord": { "x": r.target_coord.x, "y": r.target_coord.y },
+        "target_type": r.target_type.as_str(),
+        "scouts_sent": scouts_sent,
+        "scouts_lost": scouts_lost,
+        "detected": r.detected,
+        "viewer_is_scouter": r.viewer_is_scouter,
+        "intel": r.intel.as_ref().map(scout_intel_json),
+    }))
+    .into_response())
+}
+
 /// The `/api` router (nested by [`crate::router`]). Every route answers JSON; unknown `/api` paths
 /// get a JSON 404 (never the HTML fallback).
 pub fn router() -> axum::Router<AppState> {
@@ -1483,6 +1778,11 @@ pub fn router() -> axum::Router<AppState> {
         .route(
             "/w/{world}/village/{village}/smithy",
             axum::routing::post(smithy_action),
+        )
+        .route("/w/{world}/report/{id}", axum::routing::get(report_get))
+        .route(
+            "/w/{world}/scout-report/{id}",
+            axum::routing::get(scout_report_get),
         )
         .fallback(|| async {
             ApiError::new(

@@ -9979,3 +9979,305 @@ async fn agent_api_research_and_smithy(pool: sqlx::PgPool) {
         "complete_at_ms present in digest"
     );
 }
+
+/// 119 T4: digest closure — movements/reinforcements/scout_reports in the digest, plus
+/// /report/{id} and /scout-report/{id} endpoints with party scoping.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_digest_closure(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let repo = movement_repo(&pool).await;
+
+    // --- Register A, B (both agents, both need keys), and C (third agent, non-party). ---
+    let user_a = unique("dc_a");
+    let user_b = unique("dc_b");
+    let user_c = unique("dc_c");
+    let c = client();
+    for (u, tribe) in [
+        (&user_a, "teutons"),
+        (&user_b, "gauls"),
+        (&user_c, "romans"),
+    ] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", tribe),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+    // Mark all three as AI agents.
+    for u in [&user_a, &user_b, &user_c] {
+        sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+            .bind(u)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    // Mint bearer keys for all three.
+    let (key_a, token_a) = apikey::generate();
+    let (key_b, token_b) = apikey::generate();
+    let (key_c, token_c) = apikey::generate();
+    for (key, user) in [(&key_a, &user_a), (&key_b, &user_b), (&key_c, &user_c)] {
+        sqlx::query(
+            "INSERT INTO agent_keys (id, user_id, secret_hash) \
+             VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+        )
+        .bind(&key.id)
+        .bind(user)
+        .bind(apikey::secret_hash(&key.secret))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // Village IDs and coordinates.
+    let a_vid = village_uuid(&pool, &user_a).await;
+    let a_uuid = uuid::Uuid::parse_str(&a_vid).unwrap();
+    let (ax, ay): (i32, i32) = sqlx::query_as("SELECT x, y FROM villages WHERE id = $1")
+        .bind(a_uuid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let b_vid = village_uuid(&pool, &user_b).await;
+    let b_uuid = uuid::Uuid::parse_str(&b_vid).unwrap();
+    let (bx, by): (i32, i32) = sqlx::query_as("SELECT x, y FROM villages WHERE id = $1")
+        .bind(b_uuid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Seed A's garrison: 20 clubswingers (Teuton tier-1) — enough for both reinforce and raid.
+    sqlx::query(
+        "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'clubswinger', 20)",
+    )
+    .bind(a_uuid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let agent_a = client();
+    let agent_b = client();
+
+    let post_a = |leaf: String, body: serde_json::Value| {
+        agent_a
+            .post(format!("{base}/api/w/{home}/village/{a_vid}{leaf}"))
+            .header("Authorization", format!("Bearer {token_a}"))
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+    };
+    let digest_a = || {
+        agent_a
+            .get(format!("{base}/api/w/{home}/state"))
+            .header("Authorization", format!("Bearer {token_a}"))
+            .send()
+    };
+    let digest_b = || {
+        agent_b
+            .get(format!("{base}/api/w/{home}/state"))
+            .header("Authorization", format!("Bearer {token_b}"))
+            .send()
+    };
+    let get_report = |token: &str, rid: &str| {
+        let url = format!("{base}/api/w/{home}/report/{rid}");
+        let tok = token.to_owned();
+        let ag = reqwest::Client::builder()
+            .cookie_store(true)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        async move {
+            ag.get(&url)
+                .header("Authorization", format!("Bearer {tok}"))
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+
+    // -----------------------------------------------------------------------
+    // Phase 1: A reinforces B → digest A shows a movements entry in-flight.
+    // -----------------------------------------------------------------------
+    let r = post_a(
+        "/reinforce".into(),
+        serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 5}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "reinforce order");
+
+    // A's digest should show the in-flight reinforce in "movements".
+    let d = digest_a().await.unwrap();
+    assert_eq!(d.status().as_u16(), 200);
+    let dv: serde_json::Value = serde_json::from_str(&d.text().await.unwrap()).unwrap();
+    let movements = dv["movements"].as_array().unwrap();
+    assert_eq!(movements.len(), 1, "one in-flight movement in A's digest");
+    assert_eq!(movements[0]["kind"], "reinforce");
+    assert_eq!(movements[0]["dest_x"], bx);
+    assert_eq!(movements[0]["dest_y"], by);
+    assert!(
+        movements[0]["arrive_at_ms"].as_i64().unwrap() > 0,
+        "arrive_at_ms set"
+    );
+    assert_eq!(movements[0]["troops"]["clubswinger"], 5);
+
+    // -----------------------------------------------------------------------
+    // Phase 2: drive due movements — the reinforce lands at B.
+    // -----------------------------------------------------------------------
+    let future = Timestamp(now().0 + 10_000_000_000);
+    process_due_movements(
+        &repo,
+        &repo,
+        &economy_rules().unwrap(),
+        &unit_rules().unwrap(),
+        GameSpeed::new(1.0).unwrap(),
+        future,
+        100,
+    )
+    .await
+    .unwrap();
+
+    // B's digest should now show reinforcements_here from A.
+    let d = digest_b().await.unwrap();
+    assert_eq!(d.status().as_u16(), 200);
+    let bv: serde_json::Value = serde_json::from_str(&d.text().await.unwrap()).unwrap();
+    let rhere = bv["villages"][0]["reinforcements_here"].as_array().unwrap();
+    assert_eq!(
+        rhere.len(),
+        1,
+        "B's village has one reinforcement group here"
+    );
+    assert_eq!(rhere[0]["x"], ax, "GUEST's home coord x = A's coord x");
+    assert_eq!(rhere[0]["y"], ay, "GUEST's home coord y = A's coord y");
+    assert_eq!(rhere[0]["owner"], user_a.as_str(), "GUEST owner = A");
+    assert_eq!(rhere[0]["troops"]["clubswinger"], 5);
+    // home_village of the group should be A's village.
+    assert_eq!(rhere[0]["home_village"], a_vid.as_str());
+
+    // A's digest should now show reinforcements_abroad with host = B's village.
+    let d = digest_a().await.unwrap();
+    let av2: serde_json::Value = serde_json::from_str(&d.text().await.unwrap()).unwrap();
+    let rabroad = av2["reinforcements_abroad"].as_array().unwrap();
+    assert_eq!(
+        rabroad.len(),
+        1,
+        "A has one group stationed abroad after delivery"
+    );
+    assert_eq!(rabroad[0]["host_village"], b_vid.as_str(), "host = B");
+    assert_eq!(rabroad[0]["x"], bx, "HOST coord x = B's coord x");
+    assert_eq!(rabroad[0]["y"], by, "HOST coord y = B's coord y");
+    assert_eq!(rabroad[0]["owner"], user_b.as_str(), "HOST owner = B");
+    assert_eq!(rabroad[0]["troops"]["clubswinger"], 5);
+
+    // Equality spot-check (M4 pattern): A's movements are clear now; abroad matches the stationed
+    // group the reinforce just created.  The digest field equals what reinforcements_of would return.
+    let movements_after = av2["movements"].as_array().unwrap();
+    assert!(
+        movements_after.is_empty(),
+        "A has no in-flight movements after delivery"
+    );
+
+    // -----------------------------------------------------------------------
+    // Phase 3: A raids B (clear protection first) → reports both gain kind "raid".
+    // -----------------------------------------------------------------------
+    clear_protection(&pool).await;
+
+    // Seed A with enough resources so the raid is not blocked by cost (attacks cost nothing,
+    // but ensure the garrison is large enough for the send after the 5 were reinforced out).
+    // A still has 15 clubswingers in garrison (20 - 5 reinforced away).
+    let r = post_a(
+        "/attack".into(),
+        serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 5}, "mode": "raid"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "raid after clear_protection");
+
+    // Drive combat resolution.
+    let econ = economy_rules().unwrap();
+    let units = unit_rules().unwrap();
+    let combat = combat_rules().unwrap();
+    let scout = scout_rules().unwrap();
+    let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+    let world = ensure_world(&pool, &config).await.unwrap();
+    let map = WorldMap::new(world.seed as u64, config.radius, map_rules().unwrap());
+    process_due_combat(
+        &repo,
+        &repo,
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        &combat,
+        &scout,
+        &culture_rules().unwrap(),
+        &loyalty_rules().unwrap(),
+        &ranking_rules().unwrap(),
+        &map,
+        GameSpeed::new(1.0).unwrap(),
+        world.seed as u64,
+        future,
+        100,
+        (3, 6, 10),
+    )
+    .await
+    .unwrap();
+
+    // A's digest reports heads must contain the raid (kind = "raid").
+    let d = digest_a().await.unwrap();
+    let av3: serde_json::Value = serde_json::from_str(&d.text().await.unwrap()).unwrap();
+    let a_reports = av3["reports"].as_array().unwrap();
+    assert!(
+        !a_reports.is_empty(),
+        "A has at least one report after the raid"
+    );
+    let raid_head = a_reports
+        .iter()
+        .find(|r| r["kind"] == "raid")
+        .expect("A's digest has a 'raid' report head");
+    let report_id = raid_head["id"].as_str().unwrap().to_owned();
+
+    // B's digest also shows the raid report.
+    let d = digest_b().await.unwrap();
+    let bv3: serde_json::Value = serde_json::from_str(&d.text().await.unwrap()).unwrap();
+    let b_reports = bv3["reports"].as_array().unwrap();
+    assert!(
+        b_reports.iter().any(|r| r["kind"] == "raid"),
+        "B's digest also has a 'raid' report head"
+    );
+
+    // -----------------------------------------------------------------------
+    // Phase 4: /report/{id} party scoping — A and B see it, C gets 404.
+    // -----------------------------------------------------------------------
+    let r = get_report(&token_a, &report_id).await;
+    assert_eq!(r.status().as_u16(), 200, "A (attacker) can read the report");
+    let report_a: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(report_a["id"], report_id.as_str());
+    assert_eq!(report_a["kind"], "raid");
+    // Verify the full shape is present (no fog beyond port scoping).
+    assert!(report_a["attacker_name"].is_string());
+    assert!(report_a["defender_name"].is_string());
+    assert!(report_a["attacker_forces"].is_object());
+    assert!(report_a["defender_forces"].is_object());
+    assert!(report_a["loot"].is_object());
+
+    let r = get_report(&token_b, &report_id).await;
+    assert_eq!(r.status().as_u16(), 200, "B (defender) can read the report");
+    let report_b: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(report_b["id"], report_id.as_str());
+    assert_eq!(report_b["kind"], "raid");
+
+    // C is not a party → 404 not_found.
+    let r = get_report(&token_c, &report_id).await;
+    assert_eq!(
+        r.status().as_u16(),
+        404,
+        "C (non-party) gets 404 on the report"
+    );
+    assert!(r.text().await.unwrap().contains("not_found"));
+}
