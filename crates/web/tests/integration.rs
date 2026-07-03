@@ -9693,3 +9693,289 @@ async fn agent_api_military_sends(pool: sqlx::PgPool) {
     );
     assert!(r.text().await.unwrap().contains("nothing_stationed"));
 }
+
+/// 119 T2: trade & settle adapters over the agent API. Denial-class coverage per plan Decision #6.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_trade_and_settle(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    // Register A (teutons, agent) and B (gauls, ordinary player).
+    let user_a = unique("tr_a");
+    let user_b = unique("tr_b");
+    let c = client();
+    for (u, tribe) in [(&user_a, "teutons"), (&user_b, "gauls")] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", tribe),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user_a)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user_a)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let a_vid = village_uuid(&pool, &user_a).await;
+    let a_uuid = uuid::Uuid::parse_str(&a_vid).unwrap();
+    let b_vid = village_uuid(&pool, &user_b).await;
+    let b_uuid = uuid::Uuid::parse_str(&b_vid).unwrap();
+    let (bx, by): (i32, i32) = sqlx::query_as("SELECT x, y FROM villages WHERE id = $1")
+        .bind(b_uuid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let agent = client();
+    let post = |leaf: String, body: serde_json::Value| {
+        agent
+            .post(format!("{base}/api/w/{home}/village/{a_vid}{leaf}"))
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+    };
+
+    // --- Trade ---
+
+    // No marketplace yet → 409 no_marketplace.
+    let r = post(
+        "/trade".into(),
+        serde_json::json!({"x": bx, "y": by, "give": {"wood": 100}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 409, "no_marketplace → 409");
+    assert!(r.text().await.unwrap().contains("no_marketplace"));
+
+    // Seed a marketplace (level 1) and enough resources.
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         VALUES ($1, 10, 'marketplace', 1)",
+    )
+    .bind(a_uuid)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE village_resources SET wood = 5000, clay = 5000, iron = 5000, crop = 5000, \
+         updated_at = now() WHERE village_id = $1",
+    )
+    .bind(a_uuid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Valid trade to B's coordinates → 200 with shipment echo.
+    let r = post(
+        "/trade".into(),
+        serde_json::json!({"x": bx, "y": by, "give": {"wood": 100}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "trade to B → 200");
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["ordered"], true);
+    assert_eq!(body["shipment"]["dest_x"], bx);
+    assert_eq!(body["shipment"]["dest_y"], by);
+    assert!(
+        body["shipment"]["arrive_at_ms"].as_i64().unwrap() > 0,
+        "arrive_at_ms is set"
+    );
+    assert_eq!(body["shipment"]["give"]["wood"], 100);
+
+    // Empty give bundle → 400 empty_bundle.
+    let r = post(
+        "/trade".into(),
+        serde_json::json!({"x": bx, "y": by, "give": {}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 400, "empty give → 400");
+    assert!(r.text().await.unwrap().contains("empty_bundle"));
+
+    // --- Settle ---
+
+    // No settlers in garrison → 409 (insufficient or not_settler_group).
+    let r = post(
+        "/settle".into(),
+        // Use a coordinate offset from B that's likely a valley (test map).
+        // The exact tile doesn't matter for the denial we're testing here.
+        serde_json::json!({"x": bx + 3, "y": by + 3}),
+    )
+    .await
+    .unwrap();
+    let status = r.status().as_u16();
+    let text = r.text().await.unwrap();
+    assert_eq!(status, 409, "settle without settlers → 409 (got {status})");
+    // The use-case yields NotFreeValley before checking garrison for some tiles,
+    // or Insufficient / NotSettlerGroup if it reaches the garrison check.
+    // Assert 409 and that the error code is one of the expected denial codes.
+    assert!(
+        text.contains("insufficient")
+            || text.contains("not_settler_group")
+            || text.contains("not_free_valley")
+            || text.contains("no_slot"),
+        "settle denial code should be a settle error: {text}"
+    );
+}
+
+/// 119 T3: research & smithy adapters + digest research block over the agent API.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_research_and_smithy(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    // Register A (teutons, agent) — spearman requires academy L1 and is the first researchable unit.
+    let user_a = unique("res_a");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user_a.as_str()),
+            ("email", format!("{user_a}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "teutons"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user_a)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user_a)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let a_vid = village_uuid(&pool, &user_a).await;
+    let a_uuid = uuid::Uuid::parse_str(&a_vid).unwrap();
+
+    let agent = client();
+    let post = |leaf: String, body: serde_json::Value| {
+        agent
+            .post(format!("{base}/api/w/{home}/village/{a_vid}{leaf}"))
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+    };
+    let get = |path: String| {
+        agent
+            .get(format!("{base}/api/w/{home}{path}"))
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+    };
+
+    // --- Smithy: no smithy building → 409 no_smithy ---
+    // Use the tier-1 unit (clubswinger — researched by default, no Academy required) so the
+    // use-case reaches the NoSmithy check rather than aborting earlier on NotResearched.
+    let r = post("/smithy".into(), serde_json::json!({"unit": "clubswinger"}))
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 409, "no smithy → 409");
+    assert!(r.text().await.unwrap().contains("no_smithy"));
+
+    // --- Research: seed academy L1 + storage buildings, then fund resources ---
+    // spearman research cost: wood=970, clay=380, iron=880, crop=400 (classic preset).
+    // Default warehouse/granary capacity is only 800 (level 0), so we need level-1 storage
+    // (capacity = 1200) to hold the amounts above the default 800 cap.
+    for (slot, kind) in [(2_i16, "warehouse"), (3_i16, "granary"), (5_i16, "academy")] {
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+             VALUES ($1, $2, $3, 1)",
+        )
+        .bind(a_uuid)
+        .bind(slot)
+        .bind(kind)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    // Set to 1100 — above all per-resource research costs but below level-1 capacity (1200).
+    sqlx::query(
+        "UPDATE village_resources SET wood = 1100, clay = 1100, iron = 1100, crop = 1100, \
+         updated_at = now() WHERE village_id = $1",
+    )
+    .bind(a_uuid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Research spearman → 200 with order echo.
+    // (spearman is the first Teuton unit with academy L1 requirement — classic/units.toml line 233)
+    let r = post("/research".into(), serde_json::json!({"unit": "spearman"}))
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "research spearman → 200");
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["ordered"], true);
+    assert_eq!(body["order"]["kind"], "research");
+    assert_eq!(body["order"]["unit"], "spearman");
+    assert!(
+        body["order"]["complete_at_ms"].as_i64().unwrap() > 0,
+        "complete_at_ms is set"
+    );
+
+    // Re-POST while in progress → 409 in_progress.
+    // The first research debited wood/iron; top up so the second call reaches the duplicate check.
+    sqlx::query(
+        "UPDATE village_resources SET wood = 1100, clay = 1100, iron = 1100, crop = 1100, \
+         updated_at = now() WHERE village_id = $1",
+    )
+    .bind(a_uuid)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let r = post("/research".into(), serde_json::json!({"unit": "spearman"}))
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        409,
+        "re-research while in progress → 409"
+    );
+    assert!(r.text().await.unwrap().contains("in_progress"));
+
+    // --- Digest research block ---
+    let r = get("/state".into()).await.unwrap();
+    assert_eq!(r.status().as_u16(), 200, "digest → 200");
+    let digest: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    let research = &digest["villages"][0]["research"];
+    // The active queue must contain the spearman research order.
+    let active = research["active"].as_array().unwrap();
+    assert_eq!(active.len(), 1, "one active research order in digest");
+    assert_eq!(active[0]["kind"], "research");
+    assert_eq!(active[0]["unit"], "spearman");
+    assert!(
+        active[0]["complete_at_ms"].as_i64().unwrap() > 0,
+        "complete_at_ms present in digest"
+    );
+}

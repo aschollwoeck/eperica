@@ -12,11 +12,14 @@ use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 use eperica_application::{
     AccountRepository, AllianceRepository, BuildRepository, CombatError, CombatRepository,
-    MovementError, MovementRepository, OasisRepository, ScoutError, TrainingRepository,
-    order_attack, order_reinforcement, order_return, order_scout,
+    MovementError, MovementRepository, OasisRepository, ResearchError, ScoutError, SettleError,
+    TradeError, TradeRepository, TrainingRepository, UnitRepository, UpgradeError, order_attack,
+    order_reinforcement, order_research, order_return, order_scout, order_settle,
+    order_smithy_upgrade, order_trade,
 };
 use eperica_domain::{
-    AttackMode, Coordinate, MovementKind, PlayerId, ScoutTarget, Timestamp, UnitId, account_blocked,
+    AttackMode, Coordinate, MovementKind, PlayerId, ResourceAmounts, ScoutTarget, Timestamp,
+    TradeKind, UnitId, account_blocked,
 };
 use eperica_infrastructure::now;
 
@@ -247,6 +250,28 @@ struct GarrisonEntry {
 }
 
 #[derive(serde::Serialize)]
+struct UnitLevel {
+    unit: String,
+    level: u8,
+}
+
+#[derive(serde::Serialize)]
+struct ActiveOrderEntry {
+    kind: &'static str,
+    unit: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_level: Option<u8>,
+    complete_at_ms: i64,
+}
+
+#[derive(serde::Serialize)]
+struct ResearchDigest {
+    researched: Vec<String>,
+    levels: Vec<UnitLevel>,
+    active: Vec<ActiveOrderEntry>,
+}
+
+#[derive(serde::Serialize)]
 struct VillageDigest {
     id: String,
     x: i32,
@@ -258,6 +283,7 @@ struct VillageDigest {
     build_queue: Vec<QueueEntry>,
     training: Vec<TrainingEntry>,
     garrison: Vec<GarrisonEntry>,
+    research: ResearchDigest,
 }
 
 /// `GET /api/w/{world}/state` — the digest (AC3): every number equals what the corresponding page
@@ -310,6 +336,21 @@ async fn state_digest(AgentGame(ctx): AgentGame) -> Result<Response, ApiError> {
             .active_training(v.id)
             .await
             .map_err(internal("training"))?;
+        let researched = ctx
+            .accounts
+            .researched_units(v.id)
+            .await
+            .map_err(internal("researched_units"))?;
+        let unit_levels = ctx
+            .accounts
+            .unit_levels(v.id)
+            .await
+            .map_err(internal("unit_levels"))?;
+        let unit_orders = ctx
+            .accounts
+            .active_unit_orders(v.id)
+            .await
+            .map_err(internal("unit_orders"))?;
         village_digests.push(VillageDigest {
             id: crate::handlers::village_seg(v.id),
             x: v.coordinate.x,
@@ -376,6 +417,28 @@ async fn state_digest(AgentGame(ctx): AgentGame) -> Result<Response, ApiError> {
                     count: *count,
                 })
                 .collect(),
+            research: ResearchDigest {
+                researched: researched.into_iter().map(|u| u.as_str().to_owned()).collect(),
+                levels: unit_levels
+                    .into_iter()
+                    .map(|(u, lvl)| UnitLevel {
+                        unit: u.as_str().to_owned(),
+                        level: lvl,
+                    })
+                    .collect(),
+                active: unit_orders
+                    .into_iter()
+                    .map(|o| ActiveOrderEntry {
+                        kind: match o.kind {
+                            eperica_application::UnitOrderKind::Research => "research",
+                            eperica_application::UnitOrderKind::SmithyUpgrade => "smithy",
+                        },
+                        unit: o.unit.as_str().to_owned(),
+                        target_level: o.target_level,
+                        complete_at_ms: o.complete_at.0,
+                    })
+                    .collect(),
+            },
         });
     }
 
@@ -601,6 +664,65 @@ fn movement_error(e: MovementError) -> ApiError {
         MovementError::NothingStationed => (StatusCode::NOT_FOUND, "nothing_stationed"),
         MovementError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
         MovementError::Backend(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+    };
+    ApiError::new(status, code, e.to_string())
+}
+
+/// Map a [`TradeError`] — stable machine code + the same player-visible message the form flash
+/// shows (`e.to_string()`). Rule denials 409; unknown targets 404; backend failures 500.
+fn trade_error(e: TradeError) -> ApiError {
+    let (status, code) = match &e {
+        TradeError::NoMarketplace => (StatusCode::CONFLICT, "no_marketplace"),
+        TradeError::EmptyBundle => (StatusCode::BAD_REQUEST, "empty_bundle"),
+        TradeError::Insufficient => (StatusCode::CONFLICT, "insufficient"),
+        TradeError::NotEnoughMerchants => (StatusCode::CONFLICT, "not_enough_merchants"),
+        TradeError::NoTargetThere => (StatusCode::NOT_FOUND, "no_target"),
+        TradeError::SameTile => (StatusCode::BAD_REQUEST, "same_tile"),
+        TradeError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+        TradeError::Backend(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+    };
+    ApiError::new(status, code, e.to_string())
+}
+
+/// Map a [`SettleError`] — stable machine code + the same player-visible message (`e.to_string()`).
+fn settle_error(e: SettleError) -> ApiError {
+    let (status, code) = match &e {
+        SettleError::Insufficient => (StatusCode::CONFLICT, "insufficient"),
+        SettleError::NotSettlerGroup => (StatusCode::CONFLICT, "not_settler_group"),
+        SettleError::NoSlot => (StatusCode::CONFLICT, "no_slot"),
+        SettleError::NotFreeValley => (StatusCode::CONFLICT, "not_free_valley"),
+        SettleError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+        SettleError::Backend(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+    };
+    ApiError::new(status, code, e.to_string())
+}
+
+/// Map a [`ResearchError`] — stable machine code + the same player-visible message (`e.to_string()`).
+fn research_error(e: ResearchError) -> ApiError {
+    let (status, code) = match &e {
+        ResearchError::Insufficient => (StatusCode::CONFLICT, "insufficient"),
+        ResearchError::InProgress => (StatusCode::CONFLICT, "in_progress"),
+        ResearchError::AlreadyResearched => (StatusCode::CONFLICT, "already_researched"),
+        ResearchError::RequirementsUnmet => (StatusCode::CONFLICT, "requirements_unmet"),
+        ResearchError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+        ResearchError::Conflict => (StatusCode::CONFLICT, "conflict"),
+        ResearchError::Backend(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+    };
+    ApiError::new(status, code, e.to_string())
+}
+
+/// Map an [`UpgradeError`] — stable machine code + the same player-visible message (`e.to_string()`).
+fn upgrade_error(e: UpgradeError) -> ApiError {
+    let (status, code) = match &e {
+        UpgradeError::Insufficient => (StatusCode::CONFLICT, "insufficient"),
+        UpgradeError::InProgress => (StatusCode::CONFLICT, "in_progress"),
+        UpgradeError::NotResearched => (StatusCode::CONFLICT, "not_researched"),
+        UpgradeError::NoSmithy => (StatusCode::CONFLICT, "no_smithy"),
+        UpgradeError::MaxLevel => (StatusCode::CONFLICT, "max_level"),
+        UpgradeError::SmithyLevelTooLow => (StatusCode::CONFLICT, "smithy_level_too_low"),
+        UpgradeError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+        UpgradeError::Conflict => (StatusCode::CONFLICT, "conflict"),
+        UpgradeError::Backend(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
     };
     ApiError::new(status, code, e.to_string())
 }
@@ -1060,6 +1182,261 @@ async fn return_action(
     .into_response())
 }
 
+// ---------------------------------------------------------------------------
+// Trade & settle actions (AC5) — thin JSON adapters onto the existing use-cases (P4).
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+struct ResourceBundle {
+    #[serde(default)]
+    wood: i64,
+    #[serde(default)]
+    clay: i64,
+    #[serde(default)]
+    iron: i64,
+    #[serde(default)]
+    crop: i64,
+}
+
+#[derive(serde::Deserialize)]
+struct TradeBody {
+    x: i32,
+    y: i32,
+    give: ResourceBundle,
+}
+
+/// `POST /api/w/{world}/village/{village}/trade` → `order_trade` (AC5).
+///
+/// Negatives in the bundle are clamped to 0 (market_send precedent). Success returns the created
+/// shipment echoed via `active_trades` (page truth). If the read-back glitches, `shipment` is
+/// `null` — the order committed; success stands.
+async fn trade_action(
+    AgentGame(ctx): AgentGame,
+    axum::extract::Path((_world, village)): axum::extract::Path<(String, String)>,
+    body: Result<Json<TradeBody>, axum::extract::rejection::JsonRejection>,
+) -> Result<Response, ApiError> {
+    let body = json_body(body)?;
+    // Clamp negatives to 0, matching market_send's `.filter(|n| *n > 0).unwrap_or(0)`.
+    let bundle = ResourceAmounts {
+        wood: body.give.wood.max(0),
+        clay: body.give.clay.max(0),
+        iron: body.give.iron.max(0),
+        crop: body.give.crop.max(0),
+    };
+    let vid = owned_village(&ctx, &village).await?;
+    let target = Coordinate::new(body.x, body.y);
+    order_trade(
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.rules.economy,
+        &ctx.rules.units,
+        &ctx.rules.merchant,
+        ctx.map.as_ref(),
+        ctx.speed,
+        now(),
+        ctx.player,
+        Some(vid),
+        target,
+        bundle,
+    )
+    .await
+    .map_err(trade_error)?;
+    // Read back the most-recently scheduled Deliver leg to the target (page truth, AC5).
+    let shipment = ctx
+        .accounts
+        .active_trades(ctx.player)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "post-trade shipment read-back failed");
+            Vec::new()
+        })
+        .into_iter()
+        .filter(|t| t.destination == target && matches!(t.kind, TradeKind::Deliver))
+        .max_by_key(|t| t.arrive_at.0);
+    Ok(Json(serde_json::json!({
+        "ordered": true,
+        "shipment": shipment.as_ref().map(|t| serde_json::json!({
+            "dest_x": t.destination.x,
+            "dest_y": t.destination.y,
+            "arrive_at_ms": t.arrive_at.0,
+            "give": {
+                "wood": t.bundle.wood,
+                "clay": t.bundle.clay,
+                "iron": t.bundle.iron,
+                "crop": t.bundle.crop,
+            },
+        })),
+    }))
+    .into_response())
+}
+
+#[derive(serde::Deserialize)]
+struct SettleBody {
+    x: i32,
+    y: i32,
+}
+
+/// `POST /api/w/{world}/village/{village}/settle` → `order_settle` (AC5).
+///
+/// Success returns the created settling movement echoed via `active_movements` (kind Settle).
+/// If the read-back glitches, `movement` is `null` — the order committed; success stands.
+async fn settle_action(
+    AgentGame(ctx): AgentGame,
+    axum::extract::Path((_world, village)): axum::extract::Path<(String, String)>,
+    body: Result<Json<SettleBody>, axum::extract::rejection::JsonRejection>,
+) -> Result<Response, ApiError> {
+    let body = json_body(body)?;
+    let vid = owned_village(&ctx, &village).await?;
+    let target = Coordinate::new(body.x, body.y);
+    order_settle(
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.rules.economy,
+        &ctx.rules.units,
+        &ctx.rules.culture,
+        ctx.map.as_ref(),
+        ctx.speed,
+        now(),
+        ctx.player,
+        Some(vid),
+        target,
+    )
+    .await
+    .map_err(settle_error)?;
+    // Read back the Settle movement to the target (page truth, AC5).
+    let movement = ctx
+        .accounts
+        .active_movements(ctx.player)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "post-settle movement read-back failed");
+            Vec::new()
+        })
+        .into_iter()
+        .filter(|m| m.destination == target && m.kind == MovementKind::Settle)
+        .max_by_key(|m| m.arrive_at.0);
+    Ok(Json(serde_json::json!({
+        "ordered": true,
+        "movement": movement.as_ref().map(movement_json),
+    }))
+    .into_response())
+}
+
+// ---------------------------------------------------------------------------
+// Research & smithy actions (AC6/AC10) — thin JSON adapters onto the existing use-cases (P4).
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+struct UnitBody {
+    unit: String,
+}
+
+/// Serialize an [`ActiveUnitOrder`] to the compact shape the research/smithy responses carry.
+fn unit_order_json(o: &eperica_application::ActiveUnitOrder) -> serde_json::Value {
+    let kind = match o.kind {
+        eperica_application::UnitOrderKind::Research => "research",
+        eperica_application::UnitOrderKind::SmithyUpgrade => "smithy",
+    };
+    serde_json::json!({
+        "kind": kind,
+        "unit": o.unit.as_str(),
+        "target_level": o.target_level,
+        "complete_at_ms": o.complete_at.0,
+    })
+}
+
+/// `POST /api/w/{world}/village/{village}/research` → `order_research` (AC6).
+///
+/// Success returns the created research order echoed via `active_unit_orders` (page truth). If the
+/// read-back glitches, `order` is `null` — the order committed; success stands.
+async fn research_action(
+    AgentGame(ctx): AgentGame,
+    axum::extract::Path((_world, village)): axum::extract::Path<(String, String)>,
+    body: Result<Json<UnitBody>, axum::extract::rejection::JsonRejection>,
+) -> Result<Response, ApiError> {
+    let body = json_body(body)?;
+    let unit = UnitId(body.unit);
+    let vid = owned_village(&ctx, &village).await?;
+    order_research(
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.rules.economy,
+        &ctx.rules.units,
+        ctx.speed,
+        now(),
+        ctx.player,
+        Some(vid),
+        unit.clone(),
+    )
+    .await
+    .map_err(research_error)?;
+    // Read back the active research order (page truth, AC6).
+    let order = ctx
+        .accounts
+        .active_unit_orders(vid)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "post-research order read-back failed");
+            Vec::new()
+        })
+        .into_iter()
+        .find(|o| o.unit == unit && matches!(o.kind, eperica_application::UnitOrderKind::Research));
+    Ok(Json(serde_json::json!({
+        "ordered": true,
+        "order": order.as_ref().map(unit_order_json),
+    }))
+    .into_response())
+}
+
+/// `POST /api/w/{world}/village/{village}/smithy` → `order_smithy_upgrade` (AC10).
+///
+/// Success returns the created upgrade order echoed via `active_unit_orders` (page truth). If the
+/// read-back glitches, `order` is `null` — the order committed; success stands.
+async fn smithy_action(
+    AgentGame(ctx): AgentGame,
+    axum::extract::Path((_world, village)): axum::extract::Path<(String, String)>,
+    body: Result<Json<UnitBody>, axum::extract::rejection::JsonRejection>,
+) -> Result<Response, ApiError> {
+    let body = json_body(body)?;
+    let unit = UnitId(body.unit);
+    let vid = owned_village(&ctx, &village).await?;
+    order_smithy_upgrade(
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.accounts,
+        &ctx.rules.economy,
+        &ctx.rules.units,
+        ctx.speed,
+        now(),
+        ctx.player,
+        Some(vid),
+        unit.clone(),
+    )
+    .await
+    .map_err(upgrade_error)?;
+    // Read back the active smithy-upgrade order (page truth, AC10).
+    let order = ctx
+        .accounts
+        .active_unit_orders(vid)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "post-smithy order read-back failed");
+            Vec::new()
+        })
+        .into_iter()
+        .find(|o| {
+            o.unit == unit && matches!(o.kind, eperica_application::UnitOrderKind::SmithyUpgrade)
+        });
+    Ok(Json(serde_json::json!({
+        "ordered": true,
+        "order": order.as_ref().map(unit_order_json),
+    }))
+    .into_response())
+}
+
 /// The `/api` router (nested by [`crate::router`]). Every route answers JSON; unknown `/api` paths
 /// get a JSON 404 (never the HTML fallback).
 pub fn router() -> axum::Router<AppState> {
@@ -1090,6 +1467,22 @@ pub fn router() -> axum::Router<AppState> {
         .route(
             "/w/{world}/village/{village}/return",
             axum::routing::post(return_action),
+        )
+        .route(
+            "/w/{world}/village/{village}/trade",
+            axum::routing::post(trade_action),
+        )
+        .route(
+            "/w/{world}/village/{village}/settle",
+            axum::routing::post(settle_action),
+        )
+        .route(
+            "/w/{world}/village/{village}/research",
+            axum::routing::post(research_action),
+        )
+        .route(
+            "/w/{world}/village/{village}/smithy",
+            axum::routing::post(smithy_action),
         )
         .fallback(|| async {
             ApiError::new(

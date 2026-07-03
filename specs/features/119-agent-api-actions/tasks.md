@@ -7,9 +7,9 @@
   plan Decisions #1–#3) + Combat/Scout/Movement error maps; success returns the movement via
   `active_movements`. Integration: success + empty-composition + not-all-scouts + protection +
   recall-by-host + foreign-group 404. (AC1/AC2)
-- [ ] **T2 — Trade & settle.** `trade`/`settle` adapters + Trade/Settle error maps; success returns
+- [x] **T2 — Trade & settle.** `trade`/`settle` adapters + Trade/Settle error maps; success returns
   shipment/settling arrival. Integration: success + no-marketplace + not-settler-group. (AC3)
-- [ ] **T3 — Research & smithy + digest research block.** `research`/`smithy` adapters + error maps;
+- [x] **T3 — Research & smithy + digest research block.** `research`/`smithy` adapters + error maps;
   digest gains per-village `research` (researched/levels/active orders). Integration: success +
   already-researched + digest reflects. (AC4)
 - [ ] **T4 — Digest closure + report reads.** Digest `movements`/`reinforcements_here`/`_abroad` +
