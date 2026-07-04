@@ -414,10 +414,12 @@ async fn fleet_loop_ticks_two_bots(pool: sqlx::PgPool) {
         tick_scale: Some(1), // 1-second ticks to keep the test fast
         cap: 1,              // serialise: exercises the semaphore
         open_window: true,   // bypass activity-window check for determinism
+        llm: None,           // no LLM in this test
     };
 
     // Run the fleet for 6 seconds (enough for each bot to tick several times).
-    run_fleet_until(cfg, tokio::time::sleep(Duration::from_secs(6))).await;
+    // No backend (None) → strategist disabled; behaviour identical to 121 baseline.
+    run_fleet_until(cfg, tokio::time::sleep(Duration::from_secs(6)), None).await;
 
     let _ = std::fs::remove_file(&manifest_path);
 

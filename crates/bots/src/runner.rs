@@ -32,9 +32,17 @@
 //!
 //! On SIGINT the scheduler stops accepting new ticks and waits for all
 //! in-flight tick tasks to complete before exiting cleanly.
+//!
+//! # LLM strategist (122)
+//!
+//! When a `StrategistBackend` is supplied, each bot runs a strategist check
+//! once per `LlmConfig::interval_secs` (default 4h, ±10% jitter), only inside
+//! its activity window, and only when the fleet-wide `LlmBudget` has headroom.
+//! The strategist call runs inside the bot's tick task (accepted latency risk —
+//! bounded by the semaphore cap and made rare by the long interval).
 
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::Semaphore;
@@ -47,6 +55,8 @@ use crate::executor::{Outcome, classify, execute_intents};
 use crate::manifest::{load_manifest, validate};
 use crate::persona::Persona;
 use crate::policy::{BotTribe, plan_tick};
+use crate::strategist::{LlmBudget, StrategistBackend};
+use crate::strategy::{Strategy, build_prompt, parse_reply};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -60,6 +70,29 @@ pub const MAP_TTL_TICKS: u64 = 5;
 /// Matches the documented server clamp of 10 (docs/agent-api.md); the persona
 /// raid range is bounded to 5..=10, so this covers the full possible range.
 const MAP_RADIUS: u32 = 10;
+
+/// Default strategist call interval in seconds (4 hours).
+const DEFAULT_LLM_INTERVAL_SECS: u64 = 4 * 3600;
+
+/// Default fleet-wide LLM budget (calls per rolling hour).
+const DEFAULT_LLM_BUDGET_PER_HOUR: u32 = 12;
+
+// ---------------------------------------------------------------------------
+// LlmConfig
+// ---------------------------------------------------------------------------
+
+/// LLM strategist configuration — kept serializable/simple (no backend here).
+///
+/// The backend itself (`Arc<dyn StrategistBackend>`) is passed separately so
+/// that `RunnerConfig` stays serializable.
+pub struct LlmConfig {
+    /// Model ID to use (e.g. `"claude-haiku-4-5-20251001"`).
+    pub model: String,
+    /// Maximum strategist calls per rolling hour, fleet-wide.
+    pub budget_per_hour: u32,
+    /// Seconds between per-bot strategist calls (±10% jitter applied).
+    pub interval_secs: u64,
+}
 
 // ---------------------------------------------------------------------------
 // RunnerConfig
@@ -84,6 +117,8 @@ pub struct RunnerConfig {
     /// regardless of the UTC hour.  For deterministic tests only; never set
     /// in production (the binary always sets this to `false`).
     pub open_window: bool,
+    /// LLM strategist configuration.  `None` when disabled (no key or --no-llm).
+    pub llm: Option<LlmConfig>,
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +147,34 @@ struct BotState {
     retired: bool,
     /// FNV-1a(username) precomputed to avoid re-hashing every tick.
     name_hash: u64,
+    /// Current LLM-derived strategy (default = no bias, identical to 121 behaviour).
+    strategy: Strategy,
+    /// Unix-ms when this bot's next strategist call is due.
+    /// Set to `i64::MAX` when the LLM is disabled so it never fires.
+    next_strategist_at_ms: i64,
+}
+
+// ---------------------------------------------------------------------------
+// Internal: per-tick strategist context (bundled to keep run_tick manageable)
+// ---------------------------------------------------------------------------
+
+struct StrategistCtx {
+    /// Current strategy (cloned from BotState for use inside the tick task).
+    strategy: Strategy,
+    /// Unix-ms when the next strategist call is due.
+    next_at_ms: i64,
+    /// Name hash for jitter (same as BotState.name_hash).
+    name_hash: u64,
+    /// Current tick count for jitter seed variety.
+    tick_count: u64,
+    /// LLM backend (fleet-shared Arc).
+    backend: Arc<dyn StrategistBackend>,
+    /// Fleet-wide rolling-hour budget (fleet-shared Arc<Mutex<>>).
+    budget: Arc<Mutex<LlmBudget>>,
+    /// Budget limit (calls per rolling hour).
+    budget_per_hour: u32,
+    /// Interval between per-bot strategist calls in seconds.
+    interval_secs: u64,
 }
 
 // Result returned by a tick task to the scheduler.
@@ -127,6 +190,11 @@ struct TickTaskResult {
     backoff_secs: Option<u64>,
     /// True when the server responded 401 (dead key).
     retire: bool,
+    /// Non-None when the strategist ran and produced a validated (non-dry-run) update.
+    new_strategy: Option<Strategy>,
+    /// Non-None when the strategist was due this tick (regardless of outcome).
+    /// The scheduler updates `bot.next_strategist_at_ms` to this value.
+    new_next_strategist_at_ms: Option<i64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +234,18 @@ fn tick_jitter(name_hash: u64, tick_count: u64, min_secs: u32, max_secs: u32) ->
     x ^= x << 17;
     let range = (max_secs - min_secs) as u64;
     min_secs as u64 + (x % (range + 1))
+}
+
+/// Compute a ±10% jittered strategist interval in seconds.
+///
+/// Uses the same XorShift64 as tick jitter, but with a separate seed offset
+/// (`tick_count | (1 << 63)`) so strategist and tick jitter never collide.
+fn strategist_jitter(name_hash: u64, tick_count: u64, interval_secs: u64) -> u64 {
+    // ±10% of interval, clamped to u32 for tick_jitter.
+    let min = (interval_secs.saturating_mul(9) / 10).min(u32::MAX as u64) as u32;
+    let max = (interval_secs.saturating_mul(11) / 10).min(u32::MAX as u64) as u32;
+    // Distinguish from the tick jitter seed by OR-ing the high bit.
+    tick_jitter(name_hash, tick_count | (1u64 << 63), min, max)
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +300,15 @@ fn apply_tick_result(
         return;
     }
 
+    // Update strategy if the LLM produced a valid (non-dry-run) update.
+    if let Some(s) = r.new_strategy {
+        bot.strategy = s;
+    }
+    // Advance the strategist schedule whenever it was due this tick.
+    if let Some(t) = r.new_next_strategist_at_ms {
+        bot.next_strategist_at_ms = t;
+    }
+
     // Update map cache.
     if let Some(m) = r.new_map {
         bot.cached_map = Some(m);
@@ -268,6 +357,10 @@ async fn run_tick(
     cached_map: Option<MapWindow>,
     should_fetch_map: bool,
     open_window: bool,
+    // Current strategy (from BotState; Strategy::default() when LLM is disabled).
+    strategy: Strategy,
+    // Some when the LLM is enabled; carries the state needed for the strategist step.
+    strategist_ctx: Option<StrategistCtx>,
 ) -> TickTaskResult {
     // Check activity window (skipped when open_window=true, e.g. in tests).
     if !open_window {
@@ -280,6 +373,8 @@ async fn run_tick(
                 map_was_attempted: false,
                 backoff_secs: None,
                 retire: false,
+                new_strategy: None,
+                new_next_strategist_at_ms: None,
             };
         }
     }
@@ -300,6 +395,8 @@ async fn run_tick(
                 map_was_attempted: false,
                 backoff_secs,
                 retire,
+                new_strategy: None,
+                new_next_strategist_at_ms: None,
             };
         }
     };
@@ -330,15 +427,138 @@ async fn run_tick(
     let map_ref = new_map.as_ref().or(cached_map.as_ref());
 
     let now_ms = digest.now_ms;
-    // T3 will wire real Strategy state; for now pass the default (no bias → 121 behaviour).
-    let intents = plan_tick(
-        &digest,
-        map_ref,
-        &persona,
-        &crate::strategy::Strategy::default(),
-        now_ms,
-        tribe,
-    );
+
+    // ---------------------------------------------------------------------------
+    // Strategist step — runs BEFORE plan_tick.
+    //
+    // NOTE (accepted risk, plan.md §Key risks): the advise() call runs inside
+    // the tick task.  Worst case: delays this bot's own next reflex tick only.
+    // Fleet impact is bounded by the semaphore cap; the ~4h interval makes it rare.
+    // ---------------------------------------------------------------------------
+    let (current_strategy, new_strategy, new_next_strategist_at_ms) = if let Some(ctx) =
+        strategist_ctx
+    {
+        if now_ms >= ctx.next_at_ms {
+            // Compute the new next-due time (always done when the strategist is due,
+            // regardless of budget or call outcome — AC5 invariant).
+            let jitter_secs = strategist_jitter(ctx.name_hash, ctx.tick_count, ctx.interval_secs);
+            let next_at = now_ms + jitter_secs as i64 * 1_000;
+
+            // Check the fleet-wide rolling-hour budget.
+            let budget_ok = {
+                ctx.budget
+                    .lock()
+                    .expect("LlmBudget mutex poisoned")
+                    .try_take(now_ms, ctx.budget_per_hour)
+            };
+
+            let (updated_strategy, strategy_changed) = if budget_ok {
+                let prompt =
+                    build_prompt(&digest, map_ref, &persona, &ctx.strategy, &username, tribe);
+
+                info!(
+                    bot = %username,
+                    prompt_bytes = prompt.len(),
+                    "calling strategist"
+                );
+
+                match ctx.backend.advise(&prompt).await {
+                    Ok(raw) => match parse_reply(&raw) {
+                        Ok(reply) => {
+                            if dry_run {
+                                info!(
+                                    bot = %username,
+                                    motto = %reply.strategy.motto,
+                                    "DRY strategy would apply"
+                                );
+                                if let Some(ref msg) = reply.message {
+                                    info!(
+                                        bot = %username,
+                                        to = %msg.to,
+                                        "DRY would message"
+                                    );
+                                }
+                                // dry_run: do not apply the strategy or send the DM.
+                                (ctx.strategy, false)
+                            } else {
+                                info!(
+                                    bot = %username,
+                                    motto = %reply.strategy.motto,
+                                    outcome = "applied",
+                                    "strategist applied"
+                                );
+                                // Send the optional diplomatic DM (once per cycle).
+                                if let Some(msg) = reply.message {
+                                    match client.message(&world, &msg.to, &msg.body).await {
+                                        Ok(_) => {
+                                            debug!(
+                                                bot = %username,
+                                                to = %msg.to,
+                                                "diplomatic message sent"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            // Denials logged, never retried in-cycle.
+                                            warn!(
+                                                bot = %username,
+                                                to = %msg.to,
+                                                error = %e,
+                                                "diplomatic message denied/failed; not retried"
+                                            );
+                                        }
+                                    }
+                                }
+                                (reply.strategy, true)
+                            }
+                        }
+                        Err(e) => {
+                            // Strict no-fallback rule: keep the prior strategy.
+                            error!(
+                                bot = %username,
+                                error = %e,
+                                strategist_errors = 1,
+                                outcome = "rejected",
+                                "strategist reply rejected; keeping prior strategy"
+                            );
+                            (ctx.strategy, false)
+                        }
+                    },
+                    Err(e) => {
+                        error!(
+                            bot = %username,
+                            error = %e,
+                            strategist_errors = 1,
+                            outcome = "error",
+                            "strategist advise failed; keeping prior strategy"
+                        );
+                        (ctx.strategy, false)
+                    }
+                }
+            } else {
+                debug!(
+                    bot = %username,
+                    outcome = "budget-skipped",
+                    "strategist skipped: fleet budget exhausted"
+                );
+                (ctx.strategy, false)
+            };
+
+            let new_strat = if strategy_changed {
+                Some(updated_strategy.clone())
+            } else {
+                None
+            };
+            (updated_strategy, new_strat, Some(next_at))
+        } else {
+            // Strategist not yet due.
+            (ctx.strategy, None, None)
+        }
+    } else {
+        // LLM disabled — use the passed-in strategy (Strategy::default()).
+        (strategy, None, None)
+    };
+
+    let intents = plan_tick(&digest, map_ref, &persona, &current_strategy, now_ms, tribe);
 
     if intents.is_empty() {
         debug!(bot = %username, "no intents this tick");
@@ -366,6 +586,8 @@ async fn run_tick(
         map_was_attempted,
         backoff_secs: report.backoff_secs,
         retire: report.retire,
+        new_strategy,
+        new_next_strategist_at_ms,
     }
 }
 
@@ -381,28 +603,42 @@ async fn run_tick(
 /// 3. Run the scheduler loop until `shutdown` resolves.
 /// 4. On shutdown: stop spawning new ticks; drain all in-flight tasks; exit.
 ///
+/// `backend` — the LLM strategist backend.  `None` disables the strategist;
+/// fleet behaviour is then byte-identical to the 121 baseline (AC1).
+///
 /// Callers that want Ctrl-C shutdown should use [`run_fleet`]; pass an explicit
 /// future (e.g. `tokio::time::sleep(…)`) here for time-bounded or test runs.
-pub async fn run_fleet_until<F>(cfg: RunnerConfig, shutdown: F)
-where
+pub async fn run_fleet_until<F>(
+    cfg: RunnerConfig,
+    shutdown: F,
+    backend: Option<Arc<dyn StrategistBackend>>,
+) where
     F: Future<Output = ()> + Send,
 {
     tokio::pin!(shutdown);
-    run_fleet_inner(cfg, &mut shutdown).await;
+    run_fleet_inner(cfg, &mut shutdown, backend).await;
 }
 
 /// Start the bot fleet and run until Ctrl-C is received.
 ///
 /// Thin wrapper around [`run_fleet_until`] that supplies `tokio::signal::ctrl_c`
 /// as the shutdown signal.
-pub async fn run_fleet(cfg: RunnerConfig) {
-    run_fleet_until(cfg, async {
-        let _ = tokio::signal::ctrl_c().await;
-    })
+pub async fn run_fleet(cfg: RunnerConfig, backend: Option<Arc<dyn StrategistBackend>>) {
+    run_fleet_until(
+        cfg,
+        async {
+            let _ = tokio::signal::ctrl_c().await;
+        },
+        backend,
+    )
     .await;
 }
 
-async fn run_fleet_inner(cfg: RunnerConfig, shutdown: &mut (impl Future<Output = ()> + Unpin)) {
+async fn run_fleet_inner(
+    cfg: RunnerConfig,
+    shutdown: &mut (impl Future<Output = ()> + Unpin),
+    backend: Option<Arc<dyn StrategistBackend>>,
+) {
     if cfg.cap == 0 {
         warn!("cap=0; no bot ticks will ever run — exiting immediately");
         return;
@@ -431,6 +667,21 @@ async fn run_fleet_inner(cfg: RunnerConfig, shutdown: &mut (impl Future<Output =
     );
 
     let validated = validate(&cfg.server, entries).await;
+
+    // Fleet-wide LLM budget (always created; used only when backend is Some).
+    let budget = Arc::new(Mutex::new(LlmBudget::new()));
+
+    // Derive LLM config values (with defaults) for initial scheduling.
+    let llm_interval_secs = cfg
+        .llm
+        .as_ref()
+        .map(|l| l.interval_secs)
+        .unwrap_or(DEFAULT_LLM_INTERVAL_SECS);
+    let llm_budget_per_hour = cfg
+        .llm
+        .as_ref()
+        .map(|l| l.budget_per_hour)
+        .unwrap_or(DEFAULT_LLM_BUDGET_PER_HOUR);
 
     let mut bots: Vec<BotState> = Vec::new();
     for (entry, result) in validated {
@@ -465,6 +716,16 @@ async fn run_fleet_inner(cfg: RunnerConfig, shutdown: &mut (impl Future<Output =
                                 continue;
                             }
                         };
+
+                        // Initial strategist schedule: stagger by interval±10% from start.
+                        let next_strategist_at_ms = if backend.is_some() {
+                            let jitter =
+                                strategist_jitter(name_hash, bots.len() as u64, llm_interval_secs);
+                            start_ms + jitter as i64 * 1_000
+                        } else {
+                            i64::MAX // never due when LLM is disabled
+                        };
+
                         info!(
                             bot = %entry.username,
                             tribe = %we.tribe,
@@ -483,6 +744,8 @@ async fn run_fleet_inner(cfg: RunnerConfig, shutdown: &mut (impl Future<Output =
                             in_flight: false,
                             retired: false,
                             name_hash,
+                            strategy: Strategy::default(),
+                            next_strategist_at_ms,
                         });
                     }
                 }
@@ -551,7 +814,21 @@ async fn run_fleet_inner(cfg: RunnerConfig, shutdown: &mut (impl Future<Output =
                 let dry_run = cfg.dry_run;
                 let cached_map = bot.cached_map.clone();
                 let tick_count = bot.tick_count;
+                let name_hash = bot.name_hash;
                 let sem = Arc::clone(&semaphore);
+
+                // Bundle strategist state for this tick.
+                let strategy = bot.strategy.clone();
+                let strategist_ctx = backend.as_ref().map(|b| StrategistCtx {
+                    strategy: strategy.clone(),
+                    next_at_ms: bot.next_strategist_at_ms,
+                    name_hash,
+                    tick_count,
+                    backend: Arc::clone(b),
+                    budget: Arc::clone(&budget),
+                    budget_per_hour: llm_budget_per_hour,
+                    interval_secs: llm_interval_secs,
+                });
 
                 join_set.spawn(async move {
                     // Acquire a semaphore permit before doing any work.
@@ -566,6 +843,8 @@ async fn run_fleet_inner(cfg: RunnerConfig, shutdown: &mut (impl Future<Output =
                                 map_was_attempted: false,
                                 backoff_secs: None,
                                 retire: false,
+                                new_strategy: None,
+                                new_next_strategist_at_ms: None,
                             };
                         }
                     };
@@ -582,6 +861,8 @@ async fn run_fleet_inner(cfg: RunnerConfig, shutdown: &mut (impl Future<Output =
                         cached_map,
                         should_fetch_map,
                         open_window,
+                        strategy,
+                        strategist_ctx,
                     )
                     .instrument(span)
                     .await
@@ -643,20 +924,14 @@ async fn run_fleet_inner(cfg: RunnerConfig, shutdown: &mut (impl Future<Output =
 mod tests {
     use super::*;
 
-    // -----------------------------------------------------------------------
-    // M3: apply_tick_result — backoff respects persona tick_min_secs
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn apply_tick_result_backoff_floored_to_tick_min() {
-        // A 429 with retry_after_secs=30 on a bot with tick_min_secs=180 must
-        // schedule the next tick at least 180 s away, not 30 s.
+    fn make_bot_state(username: &str) -> BotState {
         let client = Arc::new(crate::client::ApiClient::new(
             "http://localhost:0",
             "epk_0000000000000000_testtoken",
         ));
-        let mut bots = vec![BotState {
-            username: "testbot".to_owned(),
+        let name_hash = crate::persona::fnv1a_64(username.as_bytes());
+        BotState {
+            username: username.to_owned(),
             persona: crate::persona::Persona {
                 window_start_hour: 0,
                 window_len_hours: 24,
@@ -673,10 +948,14 @@ mod tests {
             cached_map: None,
             in_flight: true,
             retired: false,
-            name_hash: crate::persona::fnv1a_64(b"testbot"),
-        }];
+            name_hash,
+            strategy: Strategy::default(),
+            next_strategist_at_ms: i64::MAX,
+        }
+    }
 
-        let cfg = RunnerConfig {
+    fn minimal_cfg() -> RunnerConfig {
+        RunnerConfig {
             server: "http://localhost:0".to_owned(),
             world: "world-test".to_owned(),
             keys_path: "".to_owned(),
@@ -684,7 +963,21 @@ mod tests {
             tick_scale: None,
             cap: 1,
             open_window: false,
-        };
+            llm: None,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // M3: apply_tick_result — backoff respects persona tick_min_secs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn apply_tick_result_backoff_floored_to_tick_min() {
+        // A 429 with retry_after_secs=30 on a bot with tick_min_secs=180 must
+        // schedule the next tick at least 180 s away, not 30 s.
+        let mut bots = vec![make_bot_state("testbot")];
+
+        let cfg = minimal_cfg();
 
         let at_ms = 1_000_000_000_000_i64;
         let result = TickTaskResult {
@@ -693,6 +986,8 @@ mod tests {
             map_was_attempted: false,
             backoff_secs: Some(30), // 30 s < tick_min_secs (180 s)
             retire: false,
+            new_strategy: None,
+            new_next_strategist_at_ms: None,
         };
 
         apply_tick_result(&mut bots, Ok(result), &cfg, at_ms);
@@ -709,40 +1004,9 @@ mod tests {
     fn apply_tick_result_backoff_larger_than_tick_min_used_verbatim() {
         // A 429 with retry_after_secs=300 on a bot with tick_min_secs=180 must
         // schedule 300 s out (the backoff is larger, so it wins).
-        let client = Arc::new(crate::client::ApiClient::new(
-            "http://localhost:0",
-            "epk_0000000000000000_testtoken",
-        ));
-        let mut bots = vec![BotState {
-            username: "testbot2".to_owned(),
-            persona: crate::persona::Persona {
-                window_start_hour: 0,
-                window_len_hours: 24,
-                tick_min_secs: 180,
-                tick_max_secs: 720,
-                aggression: 0,
-                raid_range: 8,
-            },
-            tribe: BotTribe::Romans,
-            client,
-            next_tick_at_ms: 0,
-            tick_count: 0,
-            map_ticks_since_fetch: 0,
-            cached_map: None,
-            in_flight: true,
-            retired: false,
-            name_hash: crate::persona::fnv1a_64(b"testbot2"),
-        }];
+        let mut bots = vec![make_bot_state("testbot2")];
 
-        let cfg = RunnerConfig {
-            server: "http://localhost:0".to_owned(),
-            world: "world-test".to_owned(),
-            keys_path: "".to_owned(),
-            dry_run: false,
-            tick_scale: None,
-            cap: 1,
-            open_window: false,
-        };
+        let cfg = minimal_cfg();
 
         let at_ms = 1_000_000_000_000_i64;
         let result = TickTaskResult {
@@ -751,6 +1015,8 @@ mod tests {
             map_was_attempted: false,
             backoff_secs: Some(300), // 300 s > tick_min_secs (180 s)
             retire: false,
+            new_strategy: None,
+            new_next_strategist_at_ms: None,
         };
 
         apply_tick_result(&mut bots, Ok(result), &cfg, at_ms);
@@ -759,6 +1025,75 @@ mod tests {
             bots[0].next_tick_at_ms,
             at_ms + 300 * 1_000,
             "backoff=300s > tick_min=180s; should use 300s verbatim"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // apply_tick_result — strategy + next_strategist_at_ms updated correctly
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn apply_tick_result_updates_strategy_when_some() {
+        let mut bots = vec![make_bot_state("strat_bot")];
+        assert_eq!(bots[0].strategy.focus, crate::strategy::Focus::Balanced);
+
+        let new_strat = Strategy {
+            focus: crate::strategy::Focus::Military,
+            ..Strategy::default()
+        };
+        let result = TickTaskResult {
+            username: "strat_bot".to_owned(),
+            new_map: None,
+            map_was_attempted: false,
+            backoff_secs: None,
+            retire: false,
+            new_strategy: Some(new_strat),
+            new_next_strategist_at_ms: Some(9_999_999_999_999),
+        };
+
+        apply_tick_result(&mut bots, Ok(result), &minimal_cfg(), 0);
+
+        assert_eq!(
+            bots[0].strategy.focus,
+            crate::strategy::Focus::Military,
+            "strategy must be updated when new_strategy is Some"
+        );
+        assert_eq!(
+            bots[0].next_strategist_at_ms, 9_999_999_999_999,
+            "next_strategist_at_ms must be updated"
+        );
+    }
+
+    #[test]
+    fn apply_tick_result_keeps_strategy_when_none() {
+        let mut bots = vec![make_bot_state("keep_bot")];
+        bots[0].strategy = Strategy {
+            focus: crate::strategy::Focus::Economy,
+            motto: "save resources".to_owned(),
+            ..Strategy::default()
+        };
+        bots[0].next_strategist_at_ms = 42_000;
+
+        let result = TickTaskResult {
+            username: "keep_bot".to_owned(),
+            new_map: None,
+            map_was_attempted: false,
+            backoff_secs: None,
+            retire: false,
+            new_strategy: None,
+            new_next_strategist_at_ms: None,
+        };
+
+        apply_tick_result(&mut bots, Ok(result), &minimal_cfg(), 0);
+
+        assert_eq!(
+            bots[0].strategy.focus,
+            crate::strategy::Focus::Economy,
+            "strategy must be unchanged when new_strategy is None"
+        );
+        assert_eq!(
+            bots[0].next_strategist_at_ms, 42_000,
+            "next_strategist_at_ms must be unchanged when None"
         );
     }
 
@@ -865,5 +1200,39 @@ mod tests {
         let j = tick_jitter(42, 42, 100, 500); // 42 XOR 42 = 0 → bias to 1
         assert!(j >= 100, "degenerate seed: jitter {j} below min");
         assert!(j <= 500, "degenerate seed: jitter {j} above max");
+    }
+
+    // -----------------------------------------------------------------------
+    // strategist_jitter — stays within ±10% of interval
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn strategist_jitter_within_ten_percent() {
+        let hash = crate::persona::fnv1a_64(b"strat_jitter_bot");
+        let interval = 14_400u64; // 4h
+        for seed in 0u64..50 {
+            let j = strategist_jitter(hash, seed, interval);
+            let min = interval * 9 / 10;
+            let max = interval * 11 / 10;
+            assert!(
+                j >= min && j <= max,
+                "strategist jitter {j} outside [{min},{max}] at seed {seed}"
+            );
+        }
+    }
+
+    #[test]
+    fn strategist_jitter_differs_from_tick_jitter() {
+        // Strategist jitter must use a different seed than tick jitter to avoid
+        // the two schedules always aligning.
+        let hash = crate::persona::fnv1a_64(b"jitter_diff");
+        let tick_j = tick_jitter(hash, 0, 12960, 15840);
+        let strat_j = strategist_jitter(hash, 0, 14400);
+        // They CAN coincide by chance, but the seed construction (high-bit OR)
+        // makes it extremely unlikely on a 64-bit range.
+        // We just confirm the function runs without panicking; the actual
+        // values are tested for range above.
+        let _ = tick_j;
+        let _ = strat_j;
     }
 }

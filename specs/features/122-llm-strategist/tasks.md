@@ -6,9 +6,9 @@
 - [x] **T1 — Strategy overlay in the pure doctrine.** `strategy.rs` (Strategy/Focus, strict
   `parse_reply`, bounded `build_prompt`); `plan_tick(…, &Strategy, …)` with the five bias rules;
   `Strategy::default()` proven a no-op. Unit tests per AC1/AC2/AC3/AC4. (AC1–AC4)
-- [ ] **T2 — Backend seam.** `StrategistBackend` trait; `AnthropicBackend` (Messages API via
+- [x] **T2 — Backend seam.** `StrategistBackend` trait; `AnthropicBackend` (Messages API via
   reqwest, env model/key); `ScriptedBackend`. No test touches the network. (AC3 plumbing)
-- [ ] **T3 — Runner integration.** Per-bot strategist cadence (4h ± jitter, in-window) + fleet
+- [x] **T3 — Runner integration.** Per-bot strategist cadence (4h ± jitter, in-window) + fleet
   `LlmBudget` (rolling hour, pure + tested); apply-or-reject; the optional DM (one per cycle);
   `--no-llm` / key detection / `EPB_LLM_MODEL` / `--llm-budget`; dry-run coverage. (AC1/AC5/AC6)
 - [ ] **T4 — E2E with ScriptedBackend.** Military-strategy-vs-baseline intents; invalid reply →
