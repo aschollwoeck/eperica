@@ -194,9 +194,33 @@ fn load_cookie_key() -> Key {
     }
 }
 
-/// Resolve when Ctrl-C is received, signaling shutdown to the scheduler and server.
+/// Resolve when Ctrl-C (SIGINT) or — on unix — SIGTERM is received, signaling shutdown to the
+/// scheduler and server. SIGTERM matters because it is the DEFAULT stop signal of systemd and
+/// container runtimes; without handling it the per-world scheduler drain would be skipped (124).
 async fn shutdown_signal(shutdown_tx: tokio::sync::watch::Sender<bool>) {
-    let _ = tokio::signal::ctrl_c().await;
-    tracing::info!("shutdown signal received");
+    #[cfg(unix)]
+    {
+        let mut sigterm =
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(s) => s,
+                Err(e) => {
+                    // Registration failure is unheard-of; fall back to ctrl-c-only rather than abort.
+                    tracing::error!(error = %e, "SIGTERM handler registration failed; ctrl-c only");
+                    let _ = tokio::signal::ctrl_c().await;
+                    tracing::info!("shutdown signal received (SIGINT)");
+                    let _ = shutdown_tx.send(true);
+                    return;
+                }
+            };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => tracing::info!("shutdown signal received (SIGINT)"),
+            _ = sigterm.recv() => tracing::info!("shutdown signal received (SIGTERM)"),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::info!("shutdown signal received");
+    }
     let _ = shutdown_tx.send(true);
 }
