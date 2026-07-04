@@ -1094,6 +1094,89 @@ async fn world_me_reports_in_world_tribe_and_denies_visitors(pool: sqlx::PgPool)
     assert!(body.contains("\"tribe\":\"teutons\""), "got: {body}");
 }
 
+/// 123 (AC1/AC2): a successfully authenticated agent request refreshes the account's
+/// `last_activity` (throttled port) — a playing bot is an ACTIVE player and stops being derived
+/// as inactive; a failed-auth request touches nothing.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_request_counts_as_activity(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let user = unique("act");
+    let email = format!("{user}@example.com");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user.as_str()),
+            ("email", email.as_str()),
+            ("password", "secret12"),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Make the account stale far beyond any inactivity window.
+    sqlx::query("UPDATE users SET last_activity = now() - interval '60 days' WHERE username = $1")
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // A failed-auth request must NOT touch activity.
+    let agent = client();
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", "Bearer epk_bogus_bogus")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 401);
+    let stale: bool = sqlx::query_scalar(
+        "SELECT last_activity < now() - interval '50 days' FROM users WHERE username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(stale, "failed auth must not refresh last_activity");
+
+    // One authenticated call refreshes it (AC1) and clears the derived inactive state (AC2).
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let fresh: bool = sqlx::query_scalar(
+        "SELECT last_activity > now() - interval '1 minute' FROM users WHERE username = $1",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        fresh,
+        "authenticated agent call must refresh last_activity (AC1/AC2)"
+    );
+}
+
 /// 118 T2 (AC1): Agent-API bearer auth — 401 JSON for missing/malformed/revoked/non-AI keys (never a
 /// redirect), key introspection for a valid one, and a JSON 404 for unknown `/api` paths.
 #[sqlx::test(migrations = "../../migrations")]
