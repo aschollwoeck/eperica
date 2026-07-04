@@ -22,10 +22,10 @@ use crate::templates::{
     SearchHitRow, SearchTemplate, SettingsTemplate, SettingsToggleRow, ShipmentRow, SitterRow,
     SittingTemplate, SmithyRow, SmithyTemplate, SpectateBuildRow, SpectateFeedTemplate,
     SpectateMovementRow, SpectatePlayerRow, SpectatePlayersTemplate, SpectateReportRow,
-    SpectateShipmentRow, SpectateTrainingRow, SpectateVillageTemplate, SpectateWorldRow,
-    SpectateWorldsTemplate, SpectatorHolderRow, StyleGuideTemplate, TermsTemplate, TrainRow,
-    TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate, VillageTrainingRow,
-    WonderStandingView, WonderTemplate, WorldsTemplate,
+    SpectateShipmentRow, SpectateTrainingRow, SpectateVillageLink, SpectateVillageTemplate,
+    SpectateWorldRow, SpectateWorldsTemplate, SpectatorHolderRow, StyleGuideTemplate,
+    TermsTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate,
+    VillageTrainingRow, WonderStandingView, WonderTemplate, WorldsTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -62,7 +62,7 @@ use eperica_application::{
     sitter_log, start_thread, transfer_founder, unread_badge, view_profile, viewport_coords_rect,
 };
 use eperica_application::{
-    PLAYERS_PER_PAGE, players as spectate_player_index, village_detail, world_feed,
+    PLAYERS_PER_PAGE, player_villages, players as spectate_player_index, village_detail, world_feed,
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, ChatChannel,
@@ -5321,10 +5321,39 @@ pub async fn spectate_players(
         }
     };
     let has_next = rows.len() as i64 == PLAYERS_PER_PAGE;
+
+    // 125 SF2: the players-index → village drill-down. One world-scoped query for the whole page's
+    // owners, then grouped back onto each row (never one query per player, P11).
+    let owners: Vec<PlayerId> = rows.iter().map(|r| r.player).collect();
+    let villages = match player_villages(&world.accounts, &owners).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "spectate_players: village links failed");
+            return server_error();
+        }
+    };
+    let mut villages_by_owner: std::collections::HashMap<PlayerId, Vec<SpectateVillageLink>> =
+        std::collections::HashMap::new();
+    for v in villages {
+        let label = if v.is_capital {
+            format!("★ ({}|{})", v.x, v.y)
+        } else {
+            format!("({}|{})", v.x, v.y)
+        };
+        villages_by_owner
+            .entry(v.owner)
+            .or_default()
+            .push(SpectateVillageLink {
+                href: format!("/spectate/{world_id}/village/{}", village_seg(v.village)),
+                label,
+            });
+    }
+
     let rows = rows
         .into_iter()
         .map(|r| SpectatePlayerRow {
             href: format!("/w/{world_id}/stats/player/{}", r.player.0),
+            village_links: villages_by_owner.remove(&r.player).unwrap_or_default(),
             username: r.username,
             tribe: tribe_label(r.tribe).to_owned(),
             population: r.population,

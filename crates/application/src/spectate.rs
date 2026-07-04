@@ -8,11 +8,11 @@
 use crate::economy::{VillageEconomy, load_economy};
 use crate::ports::{
     AccountRepository, ActiveBuild, ActiveTraining, BuildRepository, ConquestRepository,
-    MovementRepository, RepoError, SpectateReadRepository, SpectatorPlayerRow, StationedGroup,
-    TrainingRepository, UnitRepository, WorldBuildOrder, WorldMovement, WorldReportRow,
-    WorldShipment, WorldTrainingOrder,
+    MovementRepository, RepoError, SpectateReadRepository, SpectatorPlayerRow,
+    SpectatorPlayerVillage, StationedGroup, TrainingRepository, UnitRepository, WorldBuildOrder,
+    WorldMovement, WorldReportRow, WorldShipment, WorldTrainingOrder,
 };
-use eperica_domain::{EconomyRules, GameSpeed, Timestamp, UnitId, UnitRules, VillageId};
+use eperica_domain::{EconomyRules, GameSpeed, PlayerId, Timestamp, UnitId, UnitRules, VillageId};
 
 /// The maximum rows any one feed category returns (125 AC5 — "N ≤ 50").
 pub const FEED_CAP: i64 = 50;
@@ -69,6 +69,18 @@ pub async fn players<R: SpectateReadRepository>(
         .await
 }
 
+/// The villages belonging to `owners` for the players-index drill-down (125 SF2) — one world-scoped
+/// query regardless of how many owners are on the page (≤ [`PLAYERS_PER_PAGE`]).
+///
+/// # Errors
+/// Propagates [`RepoError`] from the underlying read.
+pub async fn player_villages<R: SpectateReadRepository>(
+    repo: &R,
+    owners: &[PlayerId],
+) -> Result<Vec<SpectatorPlayerVillage>, RepoError> {
+    repo.spectate_villages_of(owners).await
+}
+
 /// Full omniscient detail for one village (125 AC3): the owner-view economy (resources computed on
 /// read, fields/buildings, garrison) plus the build queue, training batches, stationed
 /// reinforcements, loyalty, and research — every value equal to what the owner's own `/village` page
@@ -92,7 +104,9 @@ pub struct SpectatorVillageDetail {
 
 /// Load the omniscient village detail (125 AC3). Bypasses the ownership check every other village
 /// read applies — the caller has already been authorized by the Spectator role (server-side, T4).
-/// Returns `None` if the village does not exist.
+/// Returns `None` if the village does not exist **or belongs to another world** (125 SF1 — uses the
+/// world-scoped [`SpectateReadRepository::village_in_world`], never the unscoped `village_by_id`, so
+/// a village id from world B can never be served under world A's rules).
 ///
 /// # Errors
 /// Propagates [`RepoError`] from the underlying reads.
@@ -110,9 +124,10 @@ where
         + TrainingRepository
         + MovementRepository
         + ConquestRepository
-        + UnitRepository,
+        + UnitRepository
+        + SpectateReadRepository,
 {
-    let Some(target) = repo.village_by_id(village).await? else {
+    let Some(target) = repo.village_in_world(village).await? else {
         return Ok(None);
     };
     let Some(economy) = load_economy(

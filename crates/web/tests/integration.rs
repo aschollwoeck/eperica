@@ -3111,6 +3111,19 @@ async fn spectate_dashboard_role_gate(pool: sqlx::PgPool) {
         picker.contains(&format!("href=\"/spectate/{home}\"")),
         "the picker links to the feed with a valid world id: {picker}"
     );
+
+    // The dashboard router is GET-only, by construction (no mutating route is registered): a POST to
+    // a recognised `/spectate` path is rejected by axum's method routing before any handler runs.
+    let r = c
+        .post(format!("{base}/spectate/{home}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        405,
+        "POST to a GET-only /spectate path is rejected, not routed"
+    );
 }
 
 /// 125 AC3 (T3 web): the spectator village drill-down reuses the exact owner-view read-model — a
@@ -3184,6 +3197,106 @@ async fn spectate_village_matches_owner_view(pool: sqlx::PgPool) {
         first_deadline(&spec_body),
         "the same build-queue deadline shows on both pages"
     );
+}
+
+/// 125 SF1: `village_by_id` (used by `village_detail`'s callers elsewhere — combat/scouting/
+/// starvation) is NOT world-scoped, so a village id copied from world B into a world-A spectate URL
+/// must 404 rather than render world B's village under world A's rules. Covers both the T3 dashboard
+/// and its T4 API twin, and confirms the same village resolves fine under its own world's path.
+#[sqlx::test(migrations = "../../migrations")]
+async fn spectate_village_cross_world_mismatch_404s(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    let spec_name = unique("spxw");
+    let (sc, spec_uid) = register_client(&base, &pool, &spec_name).await;
+    sqlx::query("UPDATE users SET is_spectator = TRUE WHERE id = $1")
+        .bind(spec_uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate_spectator();
+    sqlx::query("INSERT INTO spectator_keys (id, user_id, secret_hash) VALUES ($1, $2, $3)")
+        .bind(&key.id)
+        .bind(spec_uid)
+        .bind(apikey::secret_hash(&key.secret))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // A second world with its own village (the 042 join primitive, mirroring
+    // `selecting_a_world_switches_the_village_page`).
+    let world_b = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 30, 4343)")
+        .bind(world_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repo_b = PgAccountRepository::new(
+        pool.clone(),
+        WorldId(world_b.as_u128()),
+        4343,
+        30,
+        economy_rules().unwrap().starting_amounts,
+        lifecycle_rules().unwrap().beginner_protection_secs,
+        GameSpeed::new(1.0).unwrap(),
+    );
+    let owner_b_name = unique("spxwown");
+    let (_oc_b, owner_b_uid) = register_client(&base, &pool, &owner_b_name).await;
+    let player_b = repo_b
+        .create_player_in_world(
+            PlayerId(owner_b_uid.as_u128()),
+            Tribe::Teutons,
+            &starting_village().unwrap(),
+        )
+        .await
+        .unwrap();
+    let b_vid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE owner_id = $1")
+        .bind(uuid::Uuid::from_u128(player_b.0))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // The dashboard: a world-A path carrying world-B's village id 404s.
+    let r = sc
+        .get(format!("{base}/spectate/{home}/village/{b_vid}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        404,
+        "a village from another world 404s under this world's spectate path"
+    );
+
+    // Sanity: the same village resolves under its own world's path.
+    let r = sc
+        .get(format!("{base}/spectate/{world_b}/village/{b_vid}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        200,
+        "the village resolves fine in its own world"
+    );
+
+    // The API twin: same cross-world mismatch, same 404, JSON.
+    let agent = client();
+    let r = agent
+        .get(format!("{base}/spectator/w/{home}/village/{b_vid}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        404,
+        "the API twin 404s the same cross-world mismatch"
+    );
+    let body = r.text().await.unwrap();
+    assert!(body.contains("\"error\":\"not_found\""), "got: {body}");
 }
 
 /// 125 AC4 (T3 web): a launched attack appears on the spectator feed WITH its full composition, while
@@ -3346,6 +3459,32 @@ async fn spectate_players_npc_tag_by_world_visibility(pool: sqlx::PgPool) {
     assert!(
         labeled_body.contains(r#"class="badge">NPC<"#),
         "NPC tag shown on the labeled world: {labeled_body}"
+    );
+
+    // 125 SF2: the row also links to the bot's village (the players → village drill-down), with a
+    // real, navigable (hyphenated-UUID) village id that actually resolves.
+    let bot_vid: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN players p ON p.id = v.owner_id \
+         JOIN users u ON u.id = p.user_id WHERE u.username = $1",
+    )
+    .bind(&bot_name)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let village_href = format!("/spectate/{home}/village/{bot_vid}");
+    assert!(
+        labeled_body.contains(&format!("href=\"{village_href}\"")),
+        "the players index links to the bot's village: {labeled_body}"
+    );
+    let r = sc
+        .get(format!("{base}{village_href}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        200,
+        "the players-index village link actually resolves"
     );
 
     // A disguised world: the same bot mechanism, but the tag never appears.
@@ -3882,6 +4021,25 @@ async fn spectator_api_players_npc_visibility(pool: sqlx::PgPool) {
     assert!(
         !labeled_body.contains("is_ai"),
         "raw is_ai never serialized: {labeled_body}"
+    );
+
+    // 125 SF2: each row also carries its `villages` array (id/x/y/capital) — the API twin of the
+    // dashboard's players → village drill-down.
+    let bot_vid: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN players p ON p.id = v.owner_id \
+         JOIN users u ON u.id = p.user_id WHERE u.username = $1",
+    )
+    .bind(&bot_name)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        labeled_body.contains(&format!("\"id\":\"{bot_vid}\"")),
+        "the bot's village id appears in its villages array: {labeled_body}"
+    );
+    assert!(
+        labeled_body.contains("\"capital\":"),
+        "each village row carries a capital flag: {labeled_body}"
     );
 
     // A disguised world: the same bot mechanism, but npc is false and is_ai never leaks.

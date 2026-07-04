@@ -3724,6 +3724,18 @@ pub struct SpectatorPlayerRow {
     pub is_ai: bool,
 }
 
+/// One village belonging to a player, for the spectator players-index drill-down (125 SF2) —
+/// coordinate + capital flag only; full village detail lives behind
+/// [`SpectateReadRepository::village_in_world`]/village_detail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpectatorPlayerVillage {
+    pub owner: PlayerId,
+    pub village: VillageId,
+    pub x: i32,
+    pub y: i32,
+    pub is_capital: bool,
+}
+
 /// World-scoped, capped read queries backing the spectator feed/players/village-detail surfaces
 /// (125 AC3–AC5). Each method is scoped to the implementing repository's bound world; `cap`/
 /// `per_page` bound the result (≤ 50, AC5). Default empty so non-spectator fakes are untouched.
@@ -3792,5 +3804,32 @@ pub trait SpectateReadRepository: Send + Sync {
         _per_page: i64,
     ) -> Result<Vec<SpectatorPlayerRow>, RepoError> {
         Ok(Vec::new())
+    }
+
+    /// Every village owned by any of `owners`, in this world, for the players-index drill-down
+    /// (125 SF2) — one query regardless of how many owners are passed (a page's worth, ≤
+    /// [`crate::spectate::PLAYERS_PER_PAGE`]), ordered by owner, then capital first, then
+    /// coordinate.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn spectate_villages_of(
+        &self,
+        _owners: &[PlayerId],
+    ) -> Result<Vec<SpectatorPlayerVillage>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// `village` scoped to **this repository's world** — `None` both when the village doesn't exist
+    /// and when it exists in a different world (125 SF1). Unlike [`VillageRepository::village_by_id`]
+    /// (unscoped — shared by combat/scouting/starvation callers that already know the village is in
+    /// their world), this is the world-boundary check the spectator village-detail read needs: a
+    /// village id copied from world B into a `/spectate/{worldA}/village/{id}` URL must 404, never
+    /// serve world B's village under world A's rules.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn village_in_world(&self, _village: VillageId) -> Result<Option<Village>, RepoError> {
+        Ok(None)
     }
 }

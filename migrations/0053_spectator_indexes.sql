@@ -5,8 +5,9 @@
 -- FK (troop/trade movements via `owner_id`/`home_village` → `players`/`villages`; build/training
 -- orders via `village_id` → `villages`) — the existing partial indexes on those columns already bound
 -- the scan to the requesting world's rows (the same pattern the 009/023 due-event claimers use). The
--- indexes below only add the **ordering** column so the capped, soonest-first read is a pure index
--- scan instead of a sort over the world's rows.
+-- indexes below only add the **ordering** column so the capped, soonest-first read is index-assisted,
+-- bounded (world-scoped merges may still sort within the cap — e.g. the `recent_reports_in_world`
+-- battle/scout `UNION ALL` — rather than a plain sort over the whole world's rows).
 
 -- movements_in_world: soonest-arrival ordering alongside the existing owner_id-only partial index
 -- (troop_movements_owner, 007).

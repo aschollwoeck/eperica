@@ -27,7 +27,10 @@
         <td><a href="{{ r.href }}">{{ r.username }}</a>{% if r.npc %} <span class="badge">NPC</span>{% endif %}</td>
         <td>{{ r.tribe }}</td>
         <td class="num">{{ r.population }}</td>
-        <td class="num">{{ r.villages }}</td>
+        <td class="num">
+          {{ r.villages }}
+          {% for v in r.village_links %}<a href="{{ v.href }}">{{ v.label }}</a>{% if !loop.last %}, {% endif %}{% endfor %}
+        </td>
         <td class="muted">{{ r.alliance_tag }}</td>
       </tr>
       {% endfor %}

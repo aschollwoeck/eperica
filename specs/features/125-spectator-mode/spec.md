@@ -1,6 +1,6 @@
 # Feature 125 — spectator mode: the omniscient read-only world view
 
-**Status:** Draft
+**Status:** Verified (reviewer APPROVE at fd11234; both SHOULD-FIX findings closed in-slice)
 **Depends on:** 016/018 read paths (rankings, reports), 009/003/007 (movements, build/training
 queues), 034/045 (worlds, per-world context), 118 (bearer-key auth pattern), roles.md.
 **Origin:** operator request — watch a world (e.g. an AI-fleet world) in full detail without

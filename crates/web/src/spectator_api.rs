@@ -18,8 +18,8 @@ use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 use eperica_application::{
-    AccountRepository, PLAYERS_PER_PAGE, SpectatorRepository, players as spectate_player_index,
-    village_detail, world_feed,
+    AccountRepository, PLAYERS_PER_PAGE, SpectatorRepository, player_villages,
+    players as spectate_player_index, village_detail, world_feed,
 };
 use eperica_domain::{BuildTarget, PlayerId, Timestamp, TradeKind, VillageId, account_blocked};
 use eperica_infrastructure::now;
@@ -103,8 +103,9 @@ impl FromRequestParts<AppState> for SpectatorAccount {
 /// Extractor: the bearer-authenticated spectator **in the selected world** — the read-only,
 /// player-less twin of [`auth::WorldScope`] (there is no per-world "player" for a spectator; the
 /// role itself is the only gate). World resolution mirrors the agent API's `AgentGame`: path uuid →
-/// registry lookup → JSON 404 if the world is unknown or not running (no `NotJoined` case — a
-/// spectator has standing on every world by construction, AC1).
+/// registry lookup → JSON 404 for an unknown world (a spectator has standing on every *existing*
+/// world by construction — running or frozen alike, AC1 — so there is no `NotJoined` case, and
+/// unlike a player's own `WorldScope` this never rejects on the world's run state).
 pub struct SpectatorWorld {
     pub accounts: eperica_infrastructure::PgAccountRepository,
     pub rules: std::sync::Arc<eperica_infrastructure::WorldRules>,
@@ -350,6 +351,8 @@ struct PlayersQuery {
 /// `GET /spectator/w/{world}/players?page=` — the paged, population-descending player index (AC5/
 /// AC7). `npc` is computed as `is_ai && world.ai_labeled` — the raw `is_ai` truth is read only to
 /// compute this and is never itself serialized, on either a labeled or a disguised world (AC7).
+/// Each row also carries its `villages` (125 SF2 — the players → village drill-down promised by the
+/// Surfaces section), fetched in one world-scoped query for the whole page rather than one per row.
 async fn players(
     world: SpectatorWorld,
     Query(q): Query<PlayersQuery>,
@@ -362,6 +365,32 @@ async fn players(
             ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "players")
         })?;
     let has_next = rows.len() as i64 == PLAYERS_PER_PAGE;
+
+    let owners: Vec<PlayerId> = rows.iter().map(|r| r.player).collect();
+    let villages = player_villages(&world.accounts, &owners)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "spectator players village read failed");
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "players_villages",
+            )
+        })?;
+    let mut villages_by_owner: std::collections::HashMap<PlayerId, Vec<serde_json::Value>> =
+        std::collections::HashMap::new();
+    for v in villages {
+        villages_by_owner
+            .entry(v.owner)
+            .or_default()
+            .push(serde_json::json!({
+                "id": crate::handlers::village_seg(v.village),
+                "x": v.x,
+                "y": v.y,
+                "capital": v.is_capital,
+            }));
+    }
+
     let players: Vec<serde_json::Value> = rows
         .into_iter()
         .map(|r| {
@@ -370,7 +399,8 @@ async fn players(
                 "username": r.username,
                 "tribe": r.tribe.map(eperica_domain::Tribe::slug),
                 "population": r.population,
-                "villages": r.village_count,
+                "village_count": r.village_count,
+                "villages": villages_by_owner.get(&r.player).cloned().unwrap_or_default(),
                 "alliance_tag": r.alliance_tag,
                 "npc": r.is_ai && world.ai_labeled,
             })

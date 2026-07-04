@@ -113,14 +113,18 @@ countdowns client-side.
 
 A paged index of every player in the world, ordered by population descending, **50 per page**.
 `npc` is derived server-side as `is_ai && world.ai_labeled` — the raw `is_ai` truth is never itself
-serialized, on either a labeled or a disguised world (AC7).
+serialized, on either a labeled or a disguised world (AC7). Each row also carries its `villages` —
+the players → village drill-down: every village that player owns, capital first then coordinate,
+each linking to `GET /spectator/w/{world}/village/{id}` below.
 
 ```json
 {
   "world": "…", "page": 1, "has_next": false,
   "players": [{
     "player": "…", "username": "…", "tribe": "romans|teutons|gauls"|null,
-    "population": 0, "villages": 0, "alliance_tag": "…"|null, "npc": false
+    "population": 0, "village_count": 0,
+    "villages": [{ "id": "…", "x": 0, "y": 0, "capital": false }],
+    "alliance_tag": "…"|null, "npc": false
   }]
 }
 ```

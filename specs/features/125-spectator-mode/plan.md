@@ -1,6 +1,6 @@
 # Plan — 125 spectator mode
 
-**Status:** Draft (spec approved)
+**Status:** Verified (built as planned; reviewer APPROVE)
 
 ## Constitution check
 

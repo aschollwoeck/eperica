@@ -1,6 +1,6 @@
 # Tasks — 125 spectator mode
 
-**Status:** Draft. Gates per task: fmt, clippy -D warnings, cargo test --workspace.
+**Status:** Verified (reviewer APPROVE, 2026-07-05). Gates per task: fmt, clippy -D warnings, cargo test --workspace.
 
 - [x] **T1 — Role, keys, migration.** `0052_spectator.sql` (is_spectator + spectator_keys);
   `spk_` token support; ports + repo (set/find/insert/revoke); admin console: role toggle +
@@ -18,7 +18,7 @@
 - [x] **T5 — Docs.** manual: `spectating.md` (player-facing: what a spectator is, how to ask for
   access) + index; operations/administration.md: granting the role, minting keys, the fog
   caveat; agent-api.md cross-note or `spectator-api.md` contract stub.
-- [ ] **T6 — Review & accept.** Gates green; reviewer APPROVE (in-loop if agents unavailable);
+- [x] **T6 — Review & accept.** Gates green; reviewer APPROVE (in-loop if agents unavailable);
   statuses flipped; PR merged when Verified.
 
 ## Done when

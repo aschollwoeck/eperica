@@ -1697,8 +1697,18 @@ pub struct SpectateFeedTemplate {
     pub reports: Vec<SpectateReportRow>,
 }
 
+/// One village coordinate link on the spectator players index (125 SF2), pointing at the omniscient
+/// village drill-down (`/spectate/{world}/village/{id}`, hyphenated uuid — the T3 link-resolution
+/// lesson).
+pub struct SpectateVillageLink {
+    pub href: String,
+    /// e.g. `"(12|34)"`, or `"★ (12|34)"` for the capital.
+    pub label: String,
+}
+
 /// One player on the spectator index (125 AC5/AC7) — links to the existing public 016 player stats page
-/// (the closest thing to a per-player "drill-down"; the omniscient detail lives at village granularity).
+/// (the closest thing to a per-player "drill-down") **and** to each of that player's villages (125
+/// SF2 — the Surfaces section's promised players → village drill-down).
 pub struct SpectatePlayerRow {
     pub href: String,
     pub username: String,
@@ -1710,6 +1720,8 @@ pub struct SpectatePlayerRow {
     /// The NPC tag (125 AC7) — `true` only on `labeled` worlds for an `is_ai` account; never set on
     /// `disguised` worlds (the caller enforces this, mirroring the leaderboard's `npc` field).
     pub npc: bool,
+    /// This player's villages, capital first then coordinate (125 SF2).
+    pub village_links: Vec<SpectateVillageLink>,
 }
 
 #[derive(Template)]

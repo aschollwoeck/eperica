@@ -18,11 +18,11 @@ use eperica_application::{
     PlayerStats, PlayerWorld, ProfileView, QuestRepository, RankingRepository, RazedBuilding,
     RepoError, ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
     ScoutRepository, SettleApply, SettleOutcome, SettleRepository, SitterActionView,
-    SpectateReadRepository, SpectatorKeyHolder, SpectatorPlayerRow, SpectatorRepository,
-    StarvationRepository, StationedGroup, ThreadHead, ThreadSummary, TradeRepository, TradeView,
-    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome,
-    WonderRepository, WonderStanding, WorldBuildOrder, WorldMovement, WorldReportRow,
-    WorldShipment, WorldTrainingOrder,
+    SpectateReadRepository, SpectatorKeyHolder, SpectatorPlayerRow, SpectatorPlayerVillage,
+    SpectatorRepository, StarvationRepository, StationedGroup, ThreadHead, ThreadSummary,
+    TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository, UserRecord,
+    VillageMarker, WonderOutcome, WonderRepository, WonderStanding, WorldBuildOrder, WorldMovement,
+    WorldReportRow, WorldShipment, WorldTrainingOrder,
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactEffects,
@@ -80,6 +80,80 @@ impl PgAccountRepository {
     /// This repository's world id (e.g. for the `eperica-perf` scale tool to seed/measure, 023).
     pub fn world_id(&self) -> WorldId {
         self.world_id
+    }
+
+    /// Build a full [`Village`] from the core `villages` row (`owner_id, x, y, tribe, is_capital,
+    /// is_natar, is_wonder_site`) plus its fields/buildings/oasis-bonus/artifact-effects reads.
+    /// Shared by [`AccountRepository::village_by_id`] (unscoped — combat/scouting/starvation callers
+    /// resolve any village in any world) and [`SpectateReadRepository::village_in_world`] (125 SF1 —
+    /// world-scoped, so the caller's `SELECT … WHERE id = $1 [AND world_id = $2]` decides scoping,
+    /// not this helper).
+    async fn village_from_core_row(
+        &self,
+        village: VillageId,
+        r: &PgRow,
+    ) -> Result<Village, RepoError> {
+        let vid = Uuid::from_u128(village.0);
+        let owner: Uuid = r.try_get("owner_id").map_err(backend)?;
+        let x: i32 = r.try_get("x").map_err(backend)?;
+        let y: i32 = r.try_get("y").map_err(backend)?;
+        let tribe_raw: Option<String> = r.try_get("tribe").map_err(backend)?;
+        let is_capital: bool = r.try_get("is_capital").map_err(backend)?;
+        let is_natar: bool = r.try_get("is_natar").map_err(backend)?;
+        let is_wonder_site: bool = r.try_get("is_wonder_site").map_err(backend)?;
+
+        let field_rows = sqlx::query(
+            "SELECT resource_type, level FROM village_fields WHERE village_id = $1 ORDER BY slot",
+        )
+        .bind(vid)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut fields = Vec::with_capacity(field_rows.len());
+        for fr in &field_rows {
+            let kind = parse_resource(&fr.try_get::<String, _>("resource_type").map_err(backend)?)?;
+            let level: i16 = fr.try_get("level").map_err(backend)?;
+            fields.push(ResourceField {
+                kind,
+                level: u8::try_from(level).unwrap_or(0),
+            });
+        }
+
+        let building_rows = sqlx::query(
+            "SELECT slot, building_type, level FROM village_buildings WHERE village_id = $1 ORDER BY slot",
+        )
+        .bind(vid)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        let mut buildings = Vec::with_capacity(building_rows.len());
+        for br in &building_rows {
+            let kind = parse_building(&br.try_get::<String, _>("building_type").map_err(backend)?)?;
+            let level: i16 = br.try_get("level").map_err(backend)?;
+            let slot: i16 = br.try_get("slot").map_err(backend)?;
+            buildings.push(BuildingSlot {
+                slot: u8::try_from(slot).unwrap_or(0),
+                kind,
+                level: u8::try_from(level).unwrap_or(0),
+            });
+        }
+
+        Ok(Village {
+            id: village,
+            owner: PlayerId(owner.as_u128()),
+            coordinate: Coordinate::new(x, y),
+            tribe: parse_tribe(tribe_raw)?,
+            fields,
+            buildings,
+            // Fold the village's occupied-oasis bonus into the read (012, AC8).
+            oasis_bonus: self.village_oasis_bonus(village).await?,
+            is_capital,
+            is_natar,
+            is_wonder_site,
+            artifact_effects: self
+                .artifact_effects_for(PlayerId(owner.as_u128()), village, is_natar)
+                .await?,
+        })
     }
 
     /// Place a starting village for `owner` (a player) in **this repo's world** within `tx`, on the first
@@ -757,66 +831,7 @@ impl AccountRepository for PgAccountRepository {
         else {
             return Ok(None);
         };
-        let owner: Uuid = r.try_get("owner_id").map_err(backend)?;
-        let x: i32 = r.try_get("x").map_err(backend)?;
-        let y: i32 = r.try_get("y").map_err(backend)?;
-        let tribe_raw: Option<String> = r.try_get("tribe").map_err(backend)?;
-        let is_capital: bool = r.try_get("is_capital").map_err(backend)?;
-        let is_natar: bool = r.try_get("is_natar").map_err(backend)?;
-        let is_wonder_site: bool = r.try_get("is_wonder_site").map_err(backend)?;
-
-        let field_rows = sqlx::query(
-            "SELECT resource_type, level FROM village_fields WHERE village_id = $1 ORDER BY slot",
-        )
-        .bind(vid)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(backend)?;
-        let mut fields = Vec::with_capacity(field_rows.len());
-        for fr in &field_rows {
-            let kind = parse_resource(&fr.try_get::<String, _>("resource_type").map_err(backend)?)?;
-            let level: i16 = fr.try_get("level").map_err(backend)?;
-            fields.push(ResourceField {
-                kind,
-                level: u8::try_from(level).unwrap_or(0),
-            });
-        }
-
-        let building_rows = sqlx::query(
-            "SELECT slot, building_type, level FROM village_buildings WHERE village_id = $1 ORDER BY slot",
-        )
-        .bind(vid)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(backend)?;
-        let mut buildings = Vec::with_capacity(building_rows.len());
-        for br in &building_rows {
-            let kind = parse_building(&br.try_get::<String, _>("building_type").map_err(backend)?)?;
-            let level: i16 = br.try_get("level").map_err(backend)?;
-            let slot: i16 = br.try_get("slot").map_err(backend)?;
-            buildings.push(BuildingSlot {
-                slot: u8::try_from(slot).unwrap_or(0),
-                kind,
-                level: u8::try_from(level).unwrap_or(0),
-            });
-        }
-
-        Ok(Some(Village {
-            id: village,
-            owner: PlayerId(owner.as_u128()),
-            coordinate: Coordinate::new(x, y),
-            tribe: parse_tribe(tribe_raw)?,
-            fields,
-            buildings,
-            // Fold the village's occupied-oasis bonus into the read (012, AC8).
-            oasis_bonus: self.village_oasis_bonus(village).await?,
-            is_capital,
-            is_natar,
-            is_wonder_site,
-            artifact_effects: self
-                .artifact_effects_for(PlayerId(owner.as_u128()), village, is_natar)
-                .await?,
-        }))
+        self.village_from_core_row(village, &r).await.map(Some)
     }
 
     async fn stored_resources(
@@ -7893,13 +7908,18 @@ impl SpectatorRepository for PgAccountRepository {
     }
 
     async fn list_spectator_key_holders(&self) -> Result<Vec<SpectatorKeyHolder>, RepoError> {
+        // `DISTINCT ON (u.id)` requires its own `ORDER BY` to start with `u.id`, so the de-duplication
+        // and the doc-promised username ordering can't share one `ORDER BY` clause — the inner query
+        // dedupes (one row per user), the outer query then orders the deduped rows by username.
         let rows = sqlx::query(
-            "SELECT DISTINCT ON (u.id) u.id, u.username, \
-             EXISTS(SELECT 1 FROM spectator_keys sk \
-                    WHERE sk.user_id = u.id AND sk.revoked_at IS NULL) AS has_active_key \
-             FROM users u \
-             JOIN spectator_keys sk2 ON sk2.user_id = u.id \
-             ORDER BY u.id, u.username",
+            "SELECT * FROM ( \
+                 SELECT DISTINCT ON (u.id) u.id, u.username, \
+                 EXISTS(SELECT 1 FROM spectator_keys sk \
+                        WHERE sk.user_id = u.id AND sk.revoked_at IS NULL) AS has_active_key \
+                 FROM users u \
+                 JOIN spectator_keys sk2 ON sk2.user_id = u.id \
+                 ORDER BY u.id \
+             ) AS h ORDER BY username",
         )
         .fetch_all(&self.pool)
         .await
@@ -8231,6 +8251,57 @@ impl SpectateReadRepository for PgAccountRepository {
             });
         }
         Ok(out)
+    }
+
+    async fn spectate_villages_of(
+        &self,
+        owners: &[PlayerId],
+    ) -> Result<Vec<SpectatorPlayerVillage>, RepoError> {
+        if owners.is_empty() {
+            return Ok(Vec::new());
+        }
+        let owner_uuids: Vec<Uuid> = owners.iter().map(|p| Uuid::from_u128(p.0)).collect();
+        let rows = sqlx::query(
+            "SELECT owner_id, id, x, y, is_capital FROM villages \
+             WHERE world_id = $1 AND owner_id = ANY($2) \
+             ORDER BY owner_id, is_capital DESC, x, y",
+        )
+        .bind(Uuid::from_u128(self.world_id.0))
+        .bind(&owner_uuids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let owner: Uuid = r.try_get("owner_id").map_err(backend)?;
+            let id: Uuid = r.try_get("id").map_err(backend)?;
+            out.push(SpectatorPlayerVillage {
+                owner: PlayerId(owner.as_u128()),
+                village: VillageId(id.as_u128()),
+                x: r.try_get("x").map_err(backend)?,
+                y: r.try_get("y").map_err(backend)?,
+                is_capital: r.try_get("is_capital").map_err(backend)?,
+            });
+        }
+        Ok(out)
+    }
+
+    async fn village_in_world(&self, village: VillageId) -> Result<Option<Village>, RepoError> {
+        let vid = Uuid::from_u128(village.0);
+        let Some(r) = sqlx::query(
+            "SELECT owner_id, x, y, tribe, is_capital, is_natar, is_wonder_site \
+             FROM villages WHERE id = $1 AND world_id = $2",
+        )
+        .bind(vid)
+        .bind(Uuid::from_u128(self.world_id.0))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?
+        else {
+            return Ok(None);
+        };
+        self.village_from_core_row(village, &r).await.map(Some)
     }
 }
 
@@ -18132,6 +18203,59 @@ mod tests {
         let _ = va; // kept for symmetry/clarity; world A has no movements to assert on.
     }
 
+    /// 125 SF1: `village_in_world` is world-scoped, unlike `village_by_id` — a village that exists
+    /// only in another world reads back as `None`, and the same village resolves via its own
+    /// repository.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn village_in_world_is_scoped_to_the_repos_world(pool: PgPool) {
+        let Setup {
+            repo: repo_a,
+            template,
+            config,
+            econ,
+            ..
+        } = setup(pool.clone()).await;
+        let lifecycle = crate::lifecycle_rules().unwrap();
+        let world_b = second_world(&pool, &config).await;
+        let repo_b = PgAccountRepository::new(
+            pool.clone(),
+            world_b.id,
+            world_b.seed,
+            config.radius,
+            econ.starting_amounts,
+            lifecycle.beginner_protection_secs,
+            config.speed,
+        );
+
+        let pb = make_account(&repo_b, &template, "sf1_b").await;
+        let vb = repo_b.villages_of(pb).await.unwrap().remove(0);
+
+        assert!(
+            repo_a.village_in_world(vb.id).await.unwrap().is_none(),
+            "a village that exists only in world B reads as None through world A's repo"
+        );
+        let found = repo_b
+            .village_in_world(vb.id)
+            .await
+            .unwrap()
+            .expect("the village resolves through its own world's repo");
+        assert_eq!(found.id, vb.id);
+        assert_eq!(found.owner, pb);
+
+        // The unscoped `village_by_id` (used by combat/scouting/starvation) still resolves it from
+        // either repo — only `village_in_world` draws the world boundary.
+        assert!(repo_a.village_by_id(vb.id).await.unwrap().is_some());
+
+        assert!(
+            repo_a
+                .village_in_world(VillageId(Uuid::new_v4().as_u128()))
+                .await
+                .unwrap()
+                .is_none(),
+            "an unknown village id also reads as None"
+        );
+    }
+
     /// 125 AC4/AC5: `shipments_in_world` caps and orders soonest-arrival first, hydrating the
     /// carried bundle.
     #[sqlx::test(migrations = "../../migrations")]
@@ -18172,6 +18296,50 @@ mod tests {
         assert_eq!(rows[0].merchants, 2);
     }
 
+    /// 125 AC5 (NIT 6): seeding past the cap still returns exactly `cap` rows, soonest-arrival first.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn shipments_in_world_caps_past_seed(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let p1 = make_account(&repo, &template, "shpcap1").await;
+        let p2 = make_account(&repo, &template, "shpcap2").await;
+        let v1 = repo.villages_of(p1).await.unwrap().remove(0);
+        let v2 = repo.villages_of(p2).await.unwrap().remove(0);
+        let now = crate::now();
+        const CAP: i64 = 3;
+        let mut ids = Vec::new();
+        for i in 0..(CAP + 2) {
+            let id = Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO trade_movements \
+                 (id, owner_id, kind, home_village, target_village, origin_x, origin_y, dest_x, dest_y, \
+                  wood, clay, iron, crop, merchants, depart_at, arrive_at, status) \
+                 VALUES ($1, $2, 'deliver', $3, $4, 0, 0, 1, 1, 100, 0, 0, 0, 2, now(), \
+                         to_timestamp($5::double precision / 1000.0), 'in_transit')",
+            )
+            .bind(id)
+            .bind(Uuid::from_u128(p1.0))
+            .bind(Uuid::from_u128(v1.id.0))
+            .bind(Uuid::from_u128(v2.id.0))
+            .bind((now.0 + 4_000 + i * 1_000) as f64)
+            .execute(&pool)
+            .await
+            .unwrap();
+            ids.push(id.as_u128());
+        }
+
+        let rows = repo.shipments_in_world(CAP).await.unwrap();
+        assert_eq!(
+            rows.len(),
+            CAP as usize,
+            "capped even though more were seeded"
+        );
+        assert_eq!(
+            rows.iter().map(|r| r.id).collect::<Vec<_>>(),
+            ids[..CAP as usize],
+            "the CAP soonest-arriving shipments, in order"
+        );
+    }
+
     /// 125 AC5: `active_build_orders_in_world` returns a seeded pending order, soonest-completing
     /// first.
     #[sqlx::test(migrations = "../../migrations")]
@@ -18202,6 +18370,47 @@ mod tests {
         assert_eq!(rows[0].target_level, 2);
     }
 
+    /// 125 AC5 (NIT 6): seeding past the cap still returns exactly `cap` rows, soonest-completing
+    /// first. One order per village (the `one_active_build_per_lane` constraint allows only one
+    /// pending order per village/lane), so each row comes from its own account.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn active_build_orders_in_world_caps_past_seed(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let now = crate::now();
+        const CAP: i64 = 3;
+        let mut ids = Vec::new();
+        for i in 0..(CAP + 2) {
+            let p = make_account(&repo, &template, &format!("bldcap{i}")).await;
+            let v = repo.villages_of(p).await.unwrap().remove(0);
+            let id = Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO build_orders \
+                 (id, village_id, target_table, slot, building_type, target_level, complete_at, status) \
+                 VALUES ($1, $2, 'field', 0, NULL, 2, \
+                         to_timestamp($3::double precision / 1000.0), 'pending')",
+            )
+            .bind(id)
+            .bind(Uuid::from_u128(v.id.0))
+            .bind((now.0 + 5_000 + i * 1_000) as f64)
+            .execute(&pool)
+            .await
+            .unwrap();
+            ids.push(v.id);
+        }
+
+        let rows = repo.active_build_orders_in_world(CAP).await.unwrap();
+        assert_eq!(
+            rows.len(),
+            CAP as usize,
+            "capped even though more were seeded"
+        );
+        assert_eq!(
+            rows.iter().map(|r| r.village).collect::<Vec<_>>(),
+            ids[..CAP as usize],
+            "the CAP soonest-completing orders, in order"
+        );
+    }
+
     /// 125 AC5: `active_training_in_world` returns a seeded active batch, with `remaining` computed
     /// as `count_total - count_done`.
     #[sqlx::test(migrations = "../../migrations")]
@@ -18230,6 +18439,47 @@ mod tests {
         assert!(rows[0].owner.starts_with("trn1_"));
         assert_eq!(rows[0].unit, UnitId("test_unit".to_owned()));
         assert_eq!(rows[0].remaining, 7);
+    }
+
+    /// 125 AC5 (NIT 6): seeding past the cap still returns exactly `cap` rows, soonest-next-unit
+    /// first. One batch per village (the `one_active_training_per_building` constraint allows only
+    /// one active batch per village/building), so each row comes from its own account.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn active_training_in_world_caps_past_seed(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let now = crate::now();
+        const CAP: i64 = 3;
+        let mut ids = Vec::new();
+        for i in 0..(CAP + 2) {
+            let p = make_account(&repo, &template, &format!("trncap{i}")).await;
+            let v = repo.villages_of(p).await.unwrap().remove(0);
+            sqlx::query(
+                "INSERT INTO training_orders \
+                 (id, village_id, building, unit_id, count_total, count_done, per_unit_secs, \
+                  started_at, next_complete_at, status) \
+                 VALUES ($1, $2, 'barracks', 'test_unit', 10, 3, 60, now(), \
+                         to_timestamp($3::double precision / 1000.0), 'active')",
+            )
+            .bind(Uuid::new_v4())
+            .bind(Uuid::from_u128(v.id.0))
+            .bind((now.0 + 3_000 + i * 1_000) as f64)
+            .execute(&pool)
+            .await
+            .unwrap();
+            ids.push(v.id);
+        }
+
+        let rows = repo.active_training_in_world(CAP).await.unwrap();
+        assert_eq!(
+            rows.len(),
+            CAP as usize,
+            "capped even though more were seeded"
+        );
+        assert_eq!(
+            rows.iter().map(|r| r.village).collect::<Vec<_>>(),
+            ids[..CAP as usize],
+            "the CAP soonest-next-unit batches, in order"
+        );
     }
 
     /// 125 AC5: `recent_reports_in_world` merges battle + scout reports newest-first, with a cheap
@@ -18290,6 +18540,56 @@ mod tests {
         assert_eq!(rows[1].outcome, "attacker won");
     }
 
+    /// 125 AC5 (NIT 6): seeding past the cap still returns exactly `cap` rows, newest-first.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn recent_reports_in_world_caps_past_seed(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let p1 = make_account(&repo, &template, "repcap1").await;
+        let p2 = make_account(&repo, &template, "repcap2").await;
+        let v1 = repo.villages_of(p1).await.unwrap().remove(0);
+        let v2 = repo.villages_of(p2).await.unwrap().remove(0);
+        let now = crate::now();
+        const CAP: i64 = 3;
+        let mut ids = Vec::new();
+        for i in 0..(CAP + 2) {
+            let id = Uuid::new_v4();
+            // `i` seconds further back for the earliest row; the last one inserted (`i == CAP + 1`)
+            // is the newest.
+            let occurred_ms = now.0 - (CAP + 2 - i) * 1_000;
+            sqlx::query(
+                "INSERT INTO battle_reports \
+                 (id, occurred_at, kind, attacker_player, attacker_village, defender_player, \
+                  defender_village, attacker_won, luck, morale, wall_before, wall_after, \
+                  attacker_forces, attacker_losses, defender_forces, defender_losses) \
+                 VALUES ($1, to_timestamp($2::double precision / 1000.0), 'attack', $3, $4, $5, $6, \
+                         true, 0, 0, 0, 0, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)",
+            )
+            .bind(id)
+            .bind(occurred_ms as f64)
+            .bind(Uuid::from_u128(p1.0))
+            .bind(Uuid::from_u128(v1.id.0))
+            .bind(Uuid::from_u128(p2.0))
+            .bind(Uuid::from_u128(v2.id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+            ids.push(id.as_u128());
+        }
+        ids.reverse(); // newest-first, matching the read's ordering
+
+        let rows = repo.recent_reports_in_world(CAP).await.unwrap();
+        assert_eq!(
+            rows.len(),
+            CAP as usize,
+            "capped even though more were seeded"
+        );
+        assert_eq!(
+            rows.iter().map(|r| r.id).collect::<Vec<_>>(),
+            ids[..CAP as usize],
+            "the CAP newest reports, in order"
+        );
+    }
+
     /// 125 AC5: `spectate_player_index` orders by population descending and pages at `per_page`
     /// with no overlap between pages.
     #[sqlx::test(migrations = "../../migrations")]
@@ -18328,5 +18628,61 @@ mod tests {
         // Every seeded player appears exactly once across both pages.
         let all: Vec<_> = page1.iter().chain(page2.iter()).map(|r| r.player).collect();
         assert!(all.contains(&p1) && all.contains(&p2) && all.contains(&p3));
+    }
+
+    /// 125 SF2: `spectate_villages_of` returns every village for the requested owners in one
+    /// world-scoped query, ordered by owner, then capital first, then coordinate.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn spectate_villages_of_orders_capital_first_then_coordinate(pool: PgPool) {
+        let Setup {
+            repo,
+            template,
+            world,
+            ..
+        } = setup(pool.clone()).await;
+        let p1 = make_account(&repo, &template, "vill1").await;
+        let p2 = make_account(&repo, &template, "vill2").await;
+        let v1 = repo.villages_of(p1).await.unwrap().remove(0);
+        let v2 = repo.villages_of(p2).await.unwrap().remove(0);
+
+        // A second village for p1, inserted directly (test-only — the settling flow is exercised
+        // elsewhere) at a far, uncontested coordinate.
+        let world_uuid = Uuid::from_u128(world.id.0);
+        let v1b_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO villages (id, world_id, owner_id, x, y, tribe) \
+             VALUES ($1, $2, $3, -40, -40, 'gauls')",
+        )
+        .bind(v1b_id)
+        .bind(world_uuid)
+        .bind(Uuid::from_u128(p1.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        // v1 becomes p1's capital (direct UPDATE — the Palace flow is exercised elsewhere), so
+        // ordering can only be explained by the capital-first rule, not raw coordinate order.
+        sqlx::query("UPDATE villages SET is_capital = true WHERE id = $1")
+            .bind(Uuid::from_u128(v1.id.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let rows = repo.spectate_villages_of(&[p1, p2]).await.unwrap();
+        assert_eq!(rows.len(), 3, "both of p1's villages plus p2's one");
+
+        let p1_rows: Vec<_> = rows.iter().filter(|r| r.owner == p1).collect();
+        assert_eq!(p1_rows.len(), 2);
+        assert!(
+            p1_rows[0].is_capital,
+            "the capital sorts first for its owner"
+        );
+        assert_eq!(p1_rows[0].village, v1.id);
+        assert!(!p1_rows[1].is_capital);
+        assert_eq!(p1_rows[1].village, VillageId(v1b_id.as_u128()));
+
+        assert!(rows.iter().any(|r| r.owner == p2 && r.village == v2.id));
+
+        // An empty owner slice reads back empty rather than erroring on an empty `= ANY($1)`.
+        assert!(repo.spectate_villages_of(&[]).await.unwrap().is_empty());
     }
 }
