@@ -46,7 +46,7 @@ use crate::digest::MapWindow;
 use crate::executor::{Outcome, classify, execute_intents};
 use crate::manifest::{load_manifest, validate};
 use crate::persona::Persona;
-use crate::policy::plan_tick;
+use crate::policy::{BotTribe, plan_tick};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -93,7 +93,7 @@ pub struct RunnerConfig {
 struct BotState {
     username: String,
     persona: Persona,
-    tribe: String,
+    tribe: BotTribe,
     /// Shared across the scheduler and tick tasks; cloning the Arc is cheap.
     client: Arc<ApiClient>,
     /// Unix milliseconds at which this bot's next tick is due.
@@ -263,7 +263,7 @@ async fn run_tick(
     world: String,
     username: String,
     persona: Persona,
-    tribe: String,
+    tribe: BotTribe,
     dry_run: bool,
     cached_map: Option<MapWindow>,
     should_fetch_map: bool,
@@ -330,7 +330,7 @@ async fn run_tick(
     let map_ref = new_map.as_ref().or(cached_map.as_ref());
 
     let now_ms = digest.now_ms;
-    let intents = plan_tick(&digest, map_ref, &persona, now_ms, &tribe);
+    let intents = plan_tick(&digest, map_ref, &persona, now_ms, tribe);
 
     if intents.is_empty() {
         debug!(bot = %username, "no intents this tick");
@@ -448,6 +448,15 @@ async fn run_fleet_inner(cfg: RunnerConfig, shutdown: &mut (impl Future<Output =
                         // Stagger initial ticks by 500 ms per bot to avoid a
                         // startup thundering-herd.
                         let start_ms = now_ms() + (bots.len() as i64) * 500;
+                        // Strict tribe parse (no silent fallback): an unknown slug drops the
+                        // bot loudly, exactly like a dead key — the fleet continues.
+                        let tribe = match BotTribe::parse(&we.tribe) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                tracing::error!(bot = %entry.username, error = %e, "dropping bot");
+                                continue;
+                            }
+                        };
                         info!(
                             bot = %entry.username,
                             tribe = %we.tribe,
@@ -456,7 +465,7 @@ async fn run_fleet_inner(cfg: RunnerConfig, shutdown: &mut (impl Future<Output =
                         bots.push(BotState {
                             username: entry.username,
                             persona,
-                            tribe: we.tribe.clone(),
+                            tribe,
                             client,
                             next_tick_at_ms: start_ms,
                             tick_count: 0,
@@ -529,7 +538,7 @@ async fn run_fleet_inner(cfg: RunnerConfig, shutdown: &mut (impl Future<Output =
                 let client = Arc::clone(&bot.client);
                 let world = cfg.world.clone();
                 let persona = bot.persona.clone();
-                let tribe = bot.tribe.clone();
+                let tribe = bot.tribe;
                 let username = bot.username.clone();
                 let dry_run = cfg.dry_run;
                 let cached_map = bot.cached_map.clone();
@@ -648,7 +657,7 @@ mod tests {
                 aggression: 0,
                 raid_range: 8,
             },
-            tribe: "romans".to_owned(),
+            tribe: BotTribe::Romans,
             client,
             next_tick_at_ms: 0,
             tick_count: 0,
@@ -706,7 +715,7 @@ mod tests {
                 aggression: 0,
                 raid_range: 8,
             },
-            tribe: "romans".to_owned(),
+            tribe: BotTribe::Romans,
             client,
             next_tick_at_ms: 0,
             tick_count: 0,

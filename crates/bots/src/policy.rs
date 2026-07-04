@@ -138,21 +138,36 @@ fn find_building<'a>(
 
 /// Map a tribe slug to its tier-1 infantry unit slug.
 ///
-/// romans   → "legionnaire"
-/// teutons  → "clubswinger"
-/// gauls    → "phalanx"
-///
-/// Unknown tribes fall back to "legionnaire" (roman default) — noted for T4.
-fn tier1_unit(tribe: &str) -> &'static str {
+/// The bot's tribe, parsed ONCE at fleet startup from the wire slug (`/api/me` worlds[].tribe,
+/// which carries `Tribe::slug` — plural). Strict: an unknown slug is an ERROR the runner surfaces
+/// by dropping the bot (like a dead key) — never a silent fallback to some default tribe.
+/// (History: an earlier version defaulted unknown tribes to "legionnaire"; an e2e run caught the
+/// resulting surprise — every non-Roman bot trained the wrong unit and 409'd forever.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BotTribe {
+    Romans,
+    Teutons,
+    Gauls,
+}
+
+impl BotTribe {
+    /// Parse the wire slug. Only the server's own plural slugs are accepted.
+    pub fn parse(slug: &str) -> Result<Self, String> {
+        match slug {
+            "romans" => Ok(BotTribe::Romans),
+            "teutons" => Ok(BotTribe::Teutons),
+            "gauls" => Ok(BotTribe::Gauls),
+            other => Err(format!("unknown tribe slug from the server: {other:?}")),
+        }
+    }
+}
+
+/// Tier-1 infantry per tribe — exhaustive over [`BotTribe`]; no fallback arm can exist.
+fn tier1_unit(tribe: BotTribe) -> &'static str {
     match tribe {
-        // The wire truth: /api/me carries Tribe::slug — PLURAL ("romans"/"teutons"/"gauls").
-        // Singular forms tolerated as aliases. (An e2e run caught the original singular-only
-        // match: every bot fell back to legionnaire and non-Roman training 409'd.)
-        "romans" | "roman" => "legionnaire",
-        "teutons" | "teuton" => "clubswinger",
-        "gauls" | "gaul" => "phalanx",
-        // Unknown tribe defaults to roman tier-1; the runner logs a warning.
-        _ => "legionnaire",
+        BotTribe::Romans => "legionnaire",
+        BotTribe::Teutons => "clubswinger",
+        BotTribe::Gauls => "phalanx",
     }
 }
 
@@ -282,8 +297,9 @@ pub fn plan_tick(
     map: Option<&MapWindow>,
     p: &Persona,
     now_ms: i64,
-    // T4 passes tribe from /api/me worlds[].tribe; it is not in the Digest.
-    tribe: &str,
+    // Parsed once at fleet startup from /api/me worlds[].tribe (not in the Digest); an unknown
+    // slug never reaches here — the runner drops such a bot at validation.
+    tribe: BotTribe,
 ) -> Vec<Intent> {
     let mut intents: Vec<Intent> = Vec::new();
 
@@ -629,15 +645,21 @@ mod tests {
     // Fixture builders
     // -----------------------------------------------------------------------
 
-    // The wire slugs (plural — Tribe::slug) must map to the right tier-1 unit; the singular
-    // aliases stay tolerated. Regression pin for the e2e-caught fallback bug.
+    // The wire slugs (plural — Tribe::slug) parse strictly; anything else is an ERROR (no
+    // silent tribe fallback — regression pin for the e2e-caught legionnaire surprise).
     #[test]
-    fn tier1_unit_matches_wire_slugs() {
-        assert_eq!(tier1_unit("romans"), "legionnaire");
-        assert_eq!(tier1_unit("teutons"), "clubswinger");
-        assert_eq!(tier1_unit("gauls"), "phalanx");
-        assert_eq!(tier1_unit("teuton"), "clubswinger");
-        assert_eq!(tier1_unit("martians"), "legionnaire");
+    fn tribe_parses_wire_slugs_strictly() {
+        assert_eq!(BotTribe::parse("romans"), Ok(BotTribe::Romans));
+        assert_eq!(BotTribe::parse("teutons"), Ok(BotTribe::Teutons));
+        assert_eq!(BotTribe::parse("gauls"), Ok(BotTribe::Gauls));
+        assert!(
+            BotTribe::parse("teuton").is_err(),
+            "singular is not the wire"
+        );
+        assert!(BotTribe::parse("martians").is_err());
+        assert_eq!(tier1_unit(BotTribe::Teutons), "clubswinger");
+        assert_eq!(tier1_unit(BotTribe::Gauls), "phalanx");
+        assert_eq!(tier1_unit(BotTribe::Romans), "legionnaire");
     }
 
     fn persona(aggression: u8) -> Persona {
@@ -813,7 +835,7 @@ mod tests {
             arrive_at_ms: now_ms + 1_000,
         }];
 
-        let intents = plan_tick(&d, None, &p, now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
         // Expect exactly one Reinforce for v2 → v1.
         let reinforce = intents
             .iter()
@@ -844,7 +866,7 @@ mod tests {
             arrive_at_ms: now_ms + 1_000,
         }];
 
-        let intents = plan_tick(&d, None, &p, now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
         // Only one village → no evacuation, no reinforce.
         assert!(
             !intents
@@ -868,7 +890,7 @@ mod tests {
             arrive_at_ms: now_ms + 1_000,
         }];
 
-        let intents = plan_tick(&d, None, &p, now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
         // Empty garrison → no Reinforce emitted for v2.
         let reinforce_v2 = intents
             .iter()
@@ -899,7 +921,7 @@ mod tests {
             arrive_at_ms: now_ms + 10_000_000, // 10 000 s in the future
         }];
 
-        let intents = plan_tick(&d, None, &p, now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
         let reinforce_v2 = intents
             .iter()
             .any(|i| matches!(i, Intent::Reinforce { village, .. } if village == "v2"));
@@ -935,7 +957,7 @@ mod tests {
             arrive_at_ms: now_ms + 500,
         }];
 
-        let intents = plan_tick(&d, None, &p, now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
         // No Build for v2.
         let build_v2 = intents
             .iter()
@@ -971,7 +993,7 @@ mod tests {
             },
         }];
 
-        let intents = plan_tick(&d, None, &p, now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
         let recall = intents
             .iter()
             .find(|i| matches!(i, Intent::Recall { host, .. } if host == "v2"));
@@ -997,7 +1019,7 @@ mod tests {
             },
         }];
 
-        let intents = plan_tick(&d, None, &p, now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
         assert!(
             !intents.iter().any(|i| matches!(i, Intent::Recall { .. })),
             "foreign host should not trigger Recall: {intents:?}"
@@ -1015,7 +1037,7 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         let build = intents
             .iter()
@@ -1054,7 +1076,7 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         let build = intents
             .iter()
@@ -1099,7 +1121,7 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         let build = intents.iter().find(
             |i| matches!(i, Intent::Build { slot: 5, kind: Some(k), .. } if k == "warehouse"),
@@ -1115,7 +1137,7 @@ mod tests {
         let v = make_village("v1", 0, 0); // 50% resources
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         let storage_build = intents.iter().any(|i| {
             matches!(i, Intent::Build { kind: Some(k), .. } if k == "warehouse" || k == "granary")
@@ -1159,7 +1181,7 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         let any_build = intents.iter().any(|i| matches!(i, Intent::Build { .. }));
         assert!(
@@ -1201,7 +1223,7 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         let build = intents.iter().find(|i| {
             matches!(
@@ -1248,7 +1270,7 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         let build = intents.iter().find(|i| {
             matches!(
@@ -1285,7 +1307,7 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         // Should prefer the crop field despite its higher level.
         let build = intents.iter().find(|i| {
@@ -1325,7 +1347,7 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         let field_build = intents.iter().any(|i| {
             matches!(
@@ -1378,7 +1400,7 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         let build = intents.iter().find(
             |i| matches!(i, Intent::Build { slot: 0, kind: Some(k), .. } if k == "main_building"),
@@ -1422,7 +1444,7 @@ mod tests {
         v.resources.crop.rate = 50;
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
         assert!(
             intents
                 .iter()
@@ -1495,7 +1517,7 @@ mod tests {
         v.resources.crop.rate = 50;
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
         assert!(
             intents.iter().any(|i| matches!(
                 i,
@@ -1541,7 +1563,7 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         // Core building rule should not fire; field rule fires instead.
         let core_build = intents
@@ -1596,7 +1618,7 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         let build = intents
             .iter()
@@ -1646,7 +1668,7 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         // Only one build intent; it is for main_building, not barracks.
         let builds: Vec<_> = intents
@@ -1674,7 +1696,7 @@ mod tests {
         }]; // below 10
 
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         let train = intents
             .iter()
@@ -1696,7 +1718,7 @@ mod tests {
         v.garrison = vec![]; // garrison = 0, needed = 40
 
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         // tribe="roman" passed, so unit is legionnaire (not clubswinger)
         let train = intents.iter().find(|i| matches!(i, Intent::Train { .. }));
@@ -1713,7 +1735,7 @@ mod tests {
         v.garrison = vec![]; // garrison empty, needs training
 
         let d = single_village_digest(v.clone());
-        let intents_roman = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents_roman = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
         let train_roman = intents_roman
             .iter()
             .find(|i| matches!(i, Intent::Train { unit, .. } if unit == "legionnaire"));
@@ -1722,7 +1744,7 @@ mod tests {
             "roman gets legionnaire: {intents_roman:?}"
         );
 
-        let intents_teuton = plan_tick(&d, None, &p, d.now_ms, "teuton");
+        let intents_teuton = plan_tick(&d, None, &p, d.now_ms, BotTribe::Teutons);
         let train_teuton = intents_teuton
             .iter()
             .find(|i| matches!(i, Intent::Train { unit, .. } if unit == "clubswinger"));
@@ -1731,7 +1753,7 @@ mod tests {
             "teuton gets clubswinger: {intents_teuton:?}"
         );
 
-        let intents_gaul = plan_tick(&d, None, &p, d.now_ms, "gaul");
+        let intents_gaul = plan_tick(&d, None, &p, d.now_ms, BotTribe::Gauls);
         let train_gaul = intents_gaul
             .iter()
             .find(|i| matches!(i, Intent::Train { unit, .. } if unit == "phalanx"));
@@ -1748,7 +1770,7 @@ mod tests {
         }]; // exactly at floor
 
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         let train = intents.iter().any(|i| matches!(i, Intent::Train { .. }));
         assert!(!train, "garrison at floor → no training: {intents:?}");
@@ -1792,7 +1814,7 @@ mod tests {
         let mut d = single_village_digest(v);
         d.culture = culture_allows_more();
 
-        let intents = plan_tick(&d, None, &p, now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
         let ts = intents
             .iter()
             .find(|i| matches!(i, Intent::TrainSettlers { count: 3, .. }));
@@ -1813,7 +1835,7 @@ mod tests {
         let mut d = single_village_digest(v);
         d.culture = culture_allows_more();
 
-        let intents = plan_tick(&d, None, &p, now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
         let ts = intents
             .iter()
             .find(|i| matches!(i, Intent::TrainSettlers { count: 2, .. }));
@@ -1853,7 +1875,7 @@ mod tests {
         let mut d = single_village_digest(v);
         d.culture = culture_allows_more();
 
-        let intents = plan_tick(&d, Some(&map), &p, now_ms, "roman");
+        let intents = plan_tick(&d, Some(&map), &p, now_ms, BotTribe::Romans);
         let settle = intents
             .iter()
             .find(|i| matches!(i, Intent::Settle { x: 3, y: 4, .. }));
@@ -1872,7 +1894,7 @@ mod tests {
         let d = single_village_digest(v);
         // d.culture.villages_used == villages_allowed (both 1 from helper).
 
-        let intents = plan_tick(&d, None, &p, now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
         let settling = intents
             .iter()
             .any(|i| matches!(i, Intent::TrainSettlers { .. } | Intent::Settle { .. }));
@@ -1912,7 +1934,7 @@ mod tests {
         let map = map_with_inactive(3, 3);
         let now_ms = 1_700_000_000_000_i64;
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, Some(&map), &p, now_ms, "roman");
+        let intents = plan_tick(&d, Some(&map), &p, now_ms, BotTribe::Romans);
 
         let raid = intents
             .iter()
@@ -1940,7 +1962,7 @@ mod tests {
         let map = map_with_inactive(2, 2);
         let now_ms = 1_700_000_000_000_i64;
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, Some(&map), &p, now_ms, "roman");
+        let intents = plan_tick(&d, Some(&map), &p, now_ms, BotTribe::Romans);
 
         let raid = intents.iter().any(|i| matches!(i, Intent::Raid { .. }));
         assert!(
@@ -1961,7 +1983,7 @@ mod tests {
         let map = map_with_inactive(2, 2);
         let now_ms = 1_700_000_000_000_i64;
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, Some(&map), &p, now_ms, "roman");
+        let intents = plan_tick(&d, Some(&map), &p, now_ms, BotTribe::Romans);
 
         let raid = intents.iter().any(|i| matches!(i, Intent::Raid { .. }));
         assert!(!raid, "aggression=0 → no raids: {intents:?}");
@@ -1995,7 +2017,7 @@ mod tests {
             troops: Default::default(),
         }];
 
-        let intents = plan_tick(&d, Some(&map), &p, now_ms, "roman");
+        let intents = plan_tick(&d, Some(&map), &p, now_ms, BotTribe::Romans);
         let raid = intents
             .iter()
             .any(|i| matches!(i, Intent::Raid { x: 3, y: 3, .. }));
@@ -2022,7 +2044,7 @@ mod tests {
         let map = map_with_inactive(10, 0);
         let now_ms = 1_700_000_000_000_i64;
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, Some(&map), &p, now_ms, "roman");
+        let intents = plan_tick(&d, Some(&map), &p, now_ms, BotTribe::Romans);
 
         let raid = intents.iter().any(|i| matches!(i, Intent::Raid { .. }));
         assert!(!raid, "out-of-range target must be skipped: {intents:?}");
@@ -2079,7 +2101,7 @@ mod tests {
 
         let now_ms = 1_700_000_000_000_i64;
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, Some(&map), &p, now_ms, "roman");
+        let intents = plan_tick(&d, Some(&map), &p, now_ms, BotTribe::Romans);
 
         let raids: Vec<_> = intents
             .iter()
@@ -2122,7 +2144,7 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         // Storage (Granary) must win over field upgrade.
         let granary = intents
@@ -2239,7 +2261,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+            let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
             // Find the Build intent for a BUILDING (not a field).
             let build_result: Option<(String, u8)> = intents.iter().find_map(|i| {
@@ -2397,7 +2419,7 @@ mod tests {
 
         let now_ms = 1_700_000_000_000_i64;
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, Some(&map), &p, now_ms, "roman");
+        let intents = plan_tick(&d, Some(&map), &p, now_ms, BotTribe::Romans);
 
         let raids: Vec<_> = intents
             .iter()
@@ -2449,7 +2471,7 @@ mod tests {
         }];
 
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
 
         let train = intents.iter().any(|i| matches!(i, Intent::Train { .. }));
         assert!(
@@ -2478,7 +2500,7 @@ mod tests {
         let mut d = single_village_digest(v);
         d.culture = culture_allows_more();
 
-        let intents = plan_tick(&d, None, &p, now_ms, "roman");
+        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
         let ts = intents
             .iter()
             .any(|i| matches!(i, Intent::TrainSettlers { .. }));
@@ -2498,8 +2520,8 @@ mod tests {
         let p = persona(2);
         let d = single_village_digest(v);
 
-        let result1 = plan_tick(&d, None, &p, d.now_ms, "roman");
-        let result2 = plan_tick(&d, None, &p, d.now_ms, "roman");
+        let result1 = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let result2 = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
         assert_eq!(
             result1, result2,
             "identical inputs must yield identical intents"

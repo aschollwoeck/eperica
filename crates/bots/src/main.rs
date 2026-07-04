@@ -86,6 +86,8 @@ fn parse_config() -> Result<RunnerConfig, String> {
 
     let keys_path = flag_or_env("--keys", "EPB_KEYS").ok_or("--keys (or EPB_KEYS) is required")?;
 
+    let open_window = args.iter().any(|a| a == "--open-window")
+        || std::env::var("EPB_OPEN_WINDOW").is_ok_and(|v| v == "1" || v == "true");
     let dry_run = args.iter().any(|a| a == "--dry-run")
         || std::env::var("EPB_DRY_RUN")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -113,7 +115,7 @@ fn parse_config() -> Result<RunnerConfig, String> {
         dry_run,
         tick_scale,
         cap,
-        open_window: false, // production binary never bypasses the activity window
+        open_window, // --open-window: demo/ops override — every bot acts around the clock
     })
 }
 
@@ -131,6 +133,7 @@ Required:
 
 Options:
   --dry-run           Log intents but make no HTTP POST calls (env: EPB_DRY_RUN=1)
+  --open-window       Ignore persona activity windows — bots act 24/7 (demo/ops; env: EPB_OPEN_WINDOW=1)
   --tick-secs <N>     Fixed tick interval in seconds; disables persona jitter
                       (env: EPB_TICK_SECS) — for testing and demos only
   --cap <N>           Maximum concurrent bot ticks; default 4 (env: EPB_CAP)

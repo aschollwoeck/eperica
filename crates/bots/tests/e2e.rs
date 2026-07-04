@@ -241,7 +241,8 @@ async fn forced_tick_orders_appear(pool: sqlx::PgPool) {
     let world_entry = &me.worlds[0];
     let world = &world_entry.world;
 
-    let tribe = world_entry.tribe.clone();
+    let tribe =
+        eperica_bots::policy::BotTribe::parse(&world_entry.tribe).expect("wire tribe parses");
 
     // Fetch the full state digest (one call per tick, per the spec).
     let digest = client.state(world).await.expect("state() must succeed");
@@ -255,7 +256,7 @@ async fn forced_tick_orders_appear(pool: sqlx::PgPool) {
 
     // plan_tick is window-agnostic — the window check lives in the runner (which we do not invoke
     // here).  Call plan_tick directly to exercise the policy without the infinite fleet loop.
-    let intents = plan_tick(&digest, None, &persona, digest.now_ms, &tribe);
+    let intents = plan_tick(&digest, None, &persona, digest.now_ms, tribe);
     assert!(
         !intents.is_empty(),
         "plan_tick must produce intents: {intents:?}"
@@ -314,12 +315,13 @@ async fn dry_run_writes_nothing(pool: sqlx::PgPool) {
     assert!(!me.worlds.is_empty(), "bot must be enrolled in a world");
     let world_entry = &me.worlds[0];
     let world = &world_entry.world;
-    let tribe = world_entry.tribe.clone();
+    let tribe =
+        eperica_bots::policy::BotTribe::parse(&world_entry.tribe).expect("wire tribe parses");
 
     let digest = client.state(world).await.expect("state() must succeed");
     let persona = Persona::from_name(&user);
 
-    let intents = plan_tick(&digest, None, &persona, digest.now_ms, &tribe);
+    let intents = plan_tick(&digest, None, &persona, digest.now_ms, tribe);
     assert!(
         !intents.is_empty(),
         "plan_tick must produce intents: {intents:?}"
