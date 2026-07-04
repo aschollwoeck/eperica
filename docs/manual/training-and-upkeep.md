@@ -32,3 +32,8 @@ natural limit on army size.
 To avoid starvation: raise croplands, demolish nothing you need, or simply train fewer mouths.
 Watch the crop line on the village page — it turns into a warning when your net is zero or
 negative.
+
+> **Upkeep is not speed-scaled.** On a faster world your fields produce more crop per real-time
+> hour — but each unit eats exactly the same amount regardless of world speed. A large army is just
+> as hungry on a 3× world as on a 1× one. Plan your army size against your cropland output, not
+> the world speed.

@@ -12,7 +12,8 @@ Pick an **Order** on the Rally Point:
 - **Raid** — fight to plunder. **Both sides** take losses (the stronger side loses less) and survivors
   remain. Raiding is the low-commitment way to grind an enemy down.
 
-(Carrying off loot arrives in a later update — for now a raid is the fight and the casualties only.)
+Surviving troops also **carry off loot** — resources from the target village — up to their carry
+capacity. See **[Siege & loot](siege-and-loot.md)** for how looting, Crannies, and catapults work.
 
 To launch: choose the order, enter the target tile (`x`/`y`), set how many of each unit to send, and
 **Send**. The troops leave your garrison and travel; the battle happens the moment they arrive. Once
@@ -25,7 +26,17 @@ Your army's **attack** is weighed against the defender's **defence**. A few thin
 - **Unit types.** Each unit has separate **defence vs. infantry** and **vs. cavalry**; the defender's
   troops defend best against the unit class you bring most of. Mixing forces is a real choice.
 - **The Wall.** A defender's **Wall** multiplies their whole defence. **Rams** you bring smash the
-  Wall down — enough ram power levels it completely before the defence is even counted.
+  Wall down — enough ram power levels it completely before the defence is even counted. Each tribe's
+  Wall has a different character:
+
+  | Tribe | Bonus at level 10 | Ram durability |
+  |-------|-------------------|---------------|
+  | **Romans** | +34% | 90 (fragile — rams tear it down quickly) |
+  | **Gauls** | +27% | 130 (balanced) |
+  | **Teutons** | +22% | 180 (tough — expensive to demolish) |
+
+  Romans get the biggest defensive bonus but pay for it in vulnerability to rams; Teutons build the
+  hardest Wall to knock down, though it gives a smaller multiplier; Gauls sit between them on both counts.
 - **Morale.** If you're a much bigger player attacking a much smaller one, **morale** weakens your
   attack — newer players get some protection.
 - **Luck.** Every battle rolls a bounded **luck** factor (±25%). It's decided by the world's seed and

@@ -18,6 +18,21 @@ village page. CP **builds up over time** and is **never spent**; it's a threshol
 
 Your panel shows your current CP, how fast it's growing, and the CP needed for your **next** village.
 
+**Culture point thresholds** (cumulative CP needed to be allowed that village number):
+
+| Village # | CP needed |
+|-----------|-----------|
+| 1st | 0 (free) |
+| 2nd | 200 |
+| 3rd | 500 |
+| 4th | 1 000 |
+| 5th | 1 800 |
+| 6th | 3 000 |
+| 7th | 4 800 |
+| 8th | 7 400 |
+| 9th | 11 000 |
+| 10th | 16 000 |
+
 ## Expansion slots
 
 How many villages you may hold at once is the **smaller** of two limits:
@@ -26,6 +41,16 @@ How many villages you may hold at once is the **smaller** of two limits:
    second costs some CP, the third more, and so on).
 2. **Capacity** — your **Residence** or **Palace** buildings grant **expansion slots** by their level.
    Without a Residence or Palace you can't expand at all, no matter how much culture you have.
+
+   **Expansion slots by Residence/Palace level:**
+
+   | Level | Slots granted |
+   |-------|---------------|
+   | 1–4 | 1 |
+   | 5–9 | 2 |
+   | 10 | 3 |
+
+   Level 5 is the key upgrade — it opens your second expansion slot, letting you hold a third village.
 
 The panel shows this as **villages used / allowed** (e.g. *1 / 2*). When *used* is below *allowed*, you
 have a **free slot** and can found a new village.
@@ -43,8 +68,9 @@ A village holds **at most one** of the two.
 ## Training settlers
 
 Once a village has a **Residence or Palace**, train **settlers** there like any other troop batch
-(they're trained in the Residence/Palace). Settlers carry **no attack and give no defence** — they exist
-only to found villages — and they travel **slowly**, so a settling trip is long and vulnerable.
+(they're trained in the Residence/Palace). You need **3 settlers** to found a village — all three must
+be sent together. Settlers carry **no attack and give no defence** — they exist only to found villages —
+and they travel **slowly**, so a settling trip is long and vulnerable.
 
 ## Founding a new village
 
@@ -68,6 +94,6 @@ Build a **Palace** to make that village your **capital**:
 - The capital may raise its **resource fields beyond the normal cap**, so it can out-produce your other
   villages.
 - It is marked with a **★ Capital** badge on the village page and stands out on the **map**.
-- It cannot be conquered (conquest itself arrives in a later release).
+- It cannot be conquered. See [Conquest](conquest.md) for how village capture works on non-capital villages.
 
 Build a Palace in a **different** village and the capital **moves** there — you always have exactly one.

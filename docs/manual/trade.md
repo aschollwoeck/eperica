@@ -7,8 +7,8 @@ shift resources where you need them, or settle a trade you agreed.
 ## Building a Marketplace
 
 Build the **Marketplace** from your village page (it needs a Main Building first). Its **level sets how
-many merchants** your village has — the higher the level, the more shipments you can have on the road
-at once.
+many merchants** your village has — one merchant per level (level 1 = 1 merchant, level 10 = 10
+merchants), so a higher-level Marketplace lets you run more shipments on the road at once.
 
 ## Sending a shipment
 
@@ -31,9 +31,9 @@ can't send more than you have free.
 
 ### How long does it take?
 
-Travel time is the distance to the target divided by your **merchants' speed** (also a tribe trait —
-Gauls are fastest), scaled by the world's speed. The trip is one-way for the goods; your merchants then
-come back empty.
+Travel time is the distance to the target divided by your **merchants' speed** (a tribe trait, at
+world speed 1×): **Gauls are fastest at 24 fields/hour**, Romans at 16, Teutons at 12. The trip is
+one-way for the goods; your merchants then come back empty.
 
 ## Arriving and returning
 

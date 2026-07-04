@@ -42,5 +42,7 @@ When you no longer need troops you've stationed abroad, press **Send back** next
 (and your crop upkeep rises again to match). Recall happens **after** an army has arrived — once a
 movement is on its way, it can't be turned around mid-flight.
 
-> Reinforcements only ever defend — there's no attacking yet. Combat, raiding, scouting, and trading
-> are future chapters that travel on this same movement engine.
+Every kind of mission rides the same movement engine: **attacks and raids**, **scouting runs**,
+**trade shipments**, and **settler treks** all depart, travel in real time, and arrive using exactly
+the rules above. See **[Combat](combat.md)**, **[Scouting](scouting.md)**,
+**[Trading](trade.md)**, and **[Settling](settling.md)** for what each mission does on arrival.

@@ -40,6 +40,15 @@ Moderators (designated by the operator) get two extra pages:
 The signals are **advisory** — they're inputs to your judgement, never automatic punishments. You always
 decide.
 
+## AI players
+
+Some worlds include **AI bot players** — accounts marked `is_ai` that play through the normal
+Agent API and hold ordinary villages (Natar end-game accounts are a separate entity, not AI bot
+players). The detection signals (shared-IP association, inhuman action rate) **do not apply** to
+AI bot accounts; moderators see an AI badge at a glance and the signals will not flag them.
+**Reporting an AI player** works exactly like reporting any other account — the report goes to
+the review queue. See [AI players](ai-players.md) for details.
+
 ## Behind the scenes
 
 Everything here is server-authoritative and reproducible: a sanction is a simple state on the account
