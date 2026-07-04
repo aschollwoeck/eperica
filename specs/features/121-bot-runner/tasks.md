@@ -4,7 +4,7 @@
 `cargo test --workspace`, and the P11 budget (client-side: the one-digest-per-tick + cap rules).
 Branch `feature/121-bot-runner`; commit per task.
 
-- [ ] **T1 — Crate + client + DTOs.** `crates/bots` (lib+bin skeleton) in the workspace; defensive
+- [x] **T1 — Crate + client + DTOs.** `crates/bots` (lib+bin skeleton) in the workspace; defensive
   digest/map DTOs (fixture-parse test); `ApiClient` (me/state/map + all action calls) with the
   `ApiFailure` classification; manifest loading + startup key validation (AC1 shape). (AC1)
 - [ ] **T2 — Persona + policy.** Inline-FNV personas (deterministic — AC4) + the full reflex
