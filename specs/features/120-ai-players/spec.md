@@ -65,9 +65,10 @@ created) with per-bot **revoke** (disable) and a fleet-wide revoke.
   Moderators/admins still see `is_ai` on the account/mod views regardless of the world setting.
 
 - **AC5 — Detection carve-out (022).** AI accounts produce no shared-IP or inhuman-action-rate
-  signals: they neither appear in the moderator signal queue for those detectors nor cause a human
-  sharing their registration IP to be flagged *by association with the bot*. The mod account view
-  shows `is_ai` instead. Rate limiting (118 agent budget) is untouched.
+  signals: their own signal surface reads zeroed, and a human sharing their registration IP is
+  never flagged *by association with the bot*. The mod account view shows `is_ai` instead.
+  **Player-filed reports against bots still work** — refusing them would leak the disguise (AC4);
+  the moderator sees the badge and judges. Rate limiting (118 agent budget) is untouched.
 
 - **AC6 — Lifecycle carve-out (019).** The abandonment sweep never abandons an **enabled** bot,
   however stale its activity; a **disabled** bot (all keys revoked) follows the normal 019
