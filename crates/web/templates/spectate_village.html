@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
+{% block content %}
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Spectator · {{ owner }}'s village{% if is_capital %} · Capital{% endif %}</div>
+    <h1 class="phead__title">{{ owner }} <span class="vchip">{{ x }} | {{ y }}</span></h1>
+    <p class="phead__sub">Tribe: {{ tribe }} · Loyalty {{ loyalty }} / 100</p>
+    <a class="phead__back" href="/spectate/{{ world }}">← Feed</a>
+  </section>
+
+  {% include "_ribbon.html" %}
+
+  <div class="vrail" style="margin-top:16px">
+    <div class="bld-card">
+      <div class="bld-card__h"><h3>Build queue</h3><span class="meta">{{ builds.len() }}</span></div>
+      <div class="bld-card__b">
+        {% if builds.is_empty() %}<p class="bld-tip">Nothing building.</p>{% endif %}
+        {% for b in builds %}<div class="feed__row"><span class="feed__ico feed__ico--build"></span><span class="feed__main"><span class="feed__t">{{ b.label }} → {{ b.target_level }}</span></span><span class="feed__time countdown" data-deadline="{{ b.complete_ms }}">…</span></div>{% endfor %}
+      </div>
+    </div>
+
+    <div class="bld-card">
+      <div class="bld-card__h"><h3>Training</h3><span class="meta">{{ trainings.len() }}</span></div>
+      <div class="bld-card__b">
+        {% if trainings.is_empty() %}<p class="bld-tip">Nothing training.</p>{% endif %}
+        {% for t in trainings %}<div class="feed__row"><span class="feed__ico"></span><span class="feed__main"><span class="feed__t">{{ t.label }} <span class="muted">×{{ t.remaining }}</span></span></span><span class="feed__time countdown" data-deadline="{{ t.complete_ms }}">…</span></div>{% endfor %}
+      </div>
+    </div>
+
+    <div class="bld-card">
+      <div class="bld-card__h"><h3>Garrison</h3><span class="meta">Total upkeep: {{ garrison_upkeep }} crop/h</span></div>
+      <div class="bld-card__b">
+        {% if garrison.is_empty() %}<p class="bld-tip">No troops stationed.</p>{% endif %}
+        {% for g in garrison %}<div class="statline"><span>{{ g.name }}</span><b>{{ g.count }}</b></div>{% endfor %}
+      </div>
+    </div>
+
+    <div class="bld-card">
+      <div class="bld-card__h"><h3>Reinforcements stationed here</h3><span class="meta">{{ reinforcements.len() }}</span></div>
+      <div class="bld-card__b">
+        {% if reinforcements.is_empty() %}<p class="bld-tip">None.</p>{% endif %}
+        {% for r in reinforcements %}<div class="feed__row"><span class="feed__ico feed__ico--def"></span><span class="feed__main"><span class="feed__t">{{ r.owner }}</span><span class="feed__s">{{ r.coord }} · {{ r.troops }}</span></span></div>{% endfor %}
+      </div>
+    </div>
+
+    <div class="bld-card">
+      <div class="bld-card__h"><h3>Researched units</h3><span class="meta">{{ researched.len() }}</span></div>
+      <div class="bld-card__b">
+        {% if researched.is_empty() %}<p class="bld-tip">None researched yet.</p>{% endif %}
+        {% for u in researched %}<div class="statline"><span>{{ u }}</span></div>{% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

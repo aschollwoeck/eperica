@@ -53,7 +53,11 @@ async fn presence_touch(State(state): State<AppState>, req: Request, next: Next)
         || path == "/sitting/status"
         // the global `/me` and the world-scoped `/w/{world}/me` (115) tribe poll — both background JSON
         // probes. Invariant: no user-action route may end in `/me`, or it would be wrongly presence-exempt.
-        || path.ends_with("/me");
+        || path.ends_with("/me")
+        // 125 AC6: spectating has no activity side effects — reading any `/spectate…` page must not
+        // refresh the spectator's own `last_activity` (and touches no watched player at all, since these
+        // handlers never call `touch_activity` on anyone).
+        || path.starts_with("/spectate");
     if background {
         return next.run(req).await;
     }
@@ -485,6 +489,18 @@ pub fn router(state: AppState) -> Router {
         .route("/sitting/start", post(handlers::sitting_start))
         .route("/sitting/stop", post(handlers::sitting_stop))
         .route("/report", post(handlers::report_submit))
+        // The spectator dashboard (125) — session-gated, role-checked, read-only (GET-only: no mutating
+        // route exists on this surface, AC6). `{world}` is read by the `WorldScope` extractor the same way
+        // the public board routes read it, so it coexists with the `world_router()` nest below without
+        // conflict (this surface is NOT itself world-coupled at `/w/{world}/…` — it lives at `/spectate/…`
+        // so a spectator with no player anywhere can still reach it).
+        .route("/spectate", get(handlers::spectate_worlds))
+        .route("/spectate/{world}", get(handlers::spectate_feed))
+        .route("/spectate/{world}/players", get(handlers::spectate_players))
+        .route(
+            "/spectate/{world}/village/{id}",
+            get(handlers::spectate_village),
+        )
         .route("/admin", get(handlers::admin))
         .route("/admin/role", post(handlers::admin_role_submit))
         .route("/admin/world", post(handlers::admin_world_submit))

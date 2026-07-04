@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block head %}<meta http-equiv="refresh" content="15">{% endblock %}
+{% block body_class %}bld-page{% endblock %}
+{% block content %}
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Spectator</div>
+    <h1 class="phead__title">Live feed</h1>
+    <p class="phead__sub">Every movement, build, batch and battle in this world — refreshes every 15s.</p>
+    <a class="phead__back" href="/spectate">← Worlds</a>
+    <p><a href="/spectate/{{ world }}/players">Players →</a></p>
+  </section>
+
+  <div class="vrail">
+    <div class="bld-card">
+      <div class="bld-card__h"><h3>Movements in flight</h3><span class="meta">{{ movements.len() }}</span></div>
+      <div class="bld-card__b">
+        {% if movements.is_empty() %}<p class="bld-tip">None in flight.</p>{% endif %}
+        {% for m in movements %}
+        <div class="feed__row">
+          <span class="feed__ico"></span>
+          <span class="feed__main">
+            <span class="feed__t">{{ m.kind }}: <a href="{{ m.origin_href }}">{{ m.origin_label }}</a> →
+              {% match m.destination_href %}
+              {% when Some with (href) %}<a href="{{ href }}">{{ m.destination_label }}</a>
+              {% when None %}{{ m.destination_label }}
+              {% endmatch %}
+            </span>
+            <span class="feed__s">{{ m.troops }}</span>
+          </span>
+          <span class="feed__time countdown" data-deadline="{{ m.arrive_ms }}">…</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="bld-card">
+      <div class="bld-card__h"><h3>Shipments in transit</h3><span class="meta">{{ shipments.len() }}</span></div>
+      <div class="bld-card__b">
+        {% if shipments.is_empty() %}<p class="bld-tip">None in transit.</p>{% endif %}
+        {% for s in shipments %}
+        <div class="feed__row">
+          <span class="feed__ico"></span>
+          <span class="feed__main">
+            <span class="feed__t">{{ s.kind }}: <a href="{{ s.origin_href }}">{{ s.origin_label }}</a> → <a href="{{ s.destination_href }}">{{ s.destination_label }}</a></span>
+            <span class="feed__s">{{ s.contents }}</span>
+          </span>
+          <span class="feed__time countdown" data-deadline="{{ s.arrive_ms }}">…</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="bld-card">
+      <div class="bld-card__h"><h3>Builds completing soonest</h3><span class="meta">{{ builds.len() }}</span></div>
+      <div class="bld-card__b">
+        {% if builds.is_empty() %}<p class="bld-tip">Nothing building.</p>{% endif %}
+        {% for b in builds %}
+        <div class="feed__row">
+          <span class="feed__ico feed__ico--build"></span>
+          <span class="feed__main">
+            <span class="feed__t"><a href="{{ b.href }}">{{ b.owner }} ({{ b.coord }})</a> — {{ b.target }} → {{ b.target_level }}</span>
+          </span>
+          <span class="feed__time countdown" data-deadline="{{ b.complete_ms }}">…</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="bld-card">
+      <div class="bld-card__h"><h3>Training completing soonest</h3><span class="meta">{{ trainings.len() }}</span></div>
+      <div class="bld-card__b">
+        {% if trainings.is_empty() %}<p class="bld-tip">Nothing training.</p>{% endif %}
+        {% for t in trainings %}
+        <div class="feed__row">
+          <span class="feed__ico"></span>
+          <span class="feed__main">
+            <span class="feed__t"><a href="{{ t.href }}">{{ t.owner }} ({{ t.coord }})</a> — {{ t.unit }} <span class="muted">×{{ t.remaining }}</span></span>
+          </span>
+          <span class="feed__time countdown" data-deadline="{{ t.next_complete_ms }}">…</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="bld-card">
+      <div class="bld-card__h"><h3>Recent battles</h3><span class="meta">{{ reports.len() }}</span></div>
+      <div class="bld-card__b">
+        {% if reports.is_empty() %}<p class="bld-tip">No recent battles.</p>{% endif %}
+        {% for r in reports %}
+        <div class="feed__row">
+          <span class="feed__ico"></span>
+          <span class="feed__main">
+            <span class="feed__t">{{ r.kind }}: {{ r.attacker }} → {{ r.defender }}</span>
+            <span class="feed__s">{{ r.outcome }}</span>
+          </span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

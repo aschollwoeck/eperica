@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
+{% block content %}
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Spectator</div>
+    <h1 class="phead__title">Players</h1>
+    <a class="phead__back" href="/spectate/{{ world }}">← Feed</a>
+  </section>
+
+  {% if rows.is_empty() %}
+  <section class="panel"><p class="muted">No players yet.</p></section>
+  {% else %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Player</th>
+        <th>Tribe</th>
+        <th class="num">Population</th>
+        <th class="num">Villages</th>
+        <th>Alliance</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td><a href="{{ r.href }}">{{ r.username }}</a>{% if r.npc %} <span class="badge">NPC</span>{% endif %}</td>
+        <td>{{ r.tribe }}</td>
+        <td class="num">{{ r.population }}</td>
+        <td class="num">{{ r.villages }}</td>
+        <td class="muted">{{ r.alliance_tag }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <nav class="tabs" style="margin-top:12px">
+    {% if has_prev %}<a href="/spectate/{{ world }}/players?page={{ page - 1 }}">← Prev</a>{% endif %}
+    <span class="tab tab--active">Page {{ page }}</span>
+    {% if has_next %}<a href="/spectate/{{ world }}/players?page={{ page + 1 }}">Next →</a>{% endif %}
+  </nav>
+  {% endif %}
+</div>
+{% endblock %}
