@@ -715,7 +715,14 @@ async fn strategist_fleet_cycle_applies_and_messages(pool: sqlx::PgPool) {
     let scripted_reply = format!(
         r#"{{"focus":"military","aggression":3,"motto":"strike first","message":{{"to":"{target_user}","body":"Your fields look ripe, neighbour."}}}}"#
     );
-    let scripted = Arc::new(ScriptedBackend::new(vec![Ok(scripted_reply)]));
+    // The SECOND reply is a VALID strategy WITHOUT a message (S2: proves the runner never
+    // re-sends a previously parsed message and that a message-less cycle sends nothing);
+    // calls after that hit the exhaustion Err — the reject path.
+    let no_message_reply = r#"{"focus":"economy","motto":"count the grain"}"#.to_owned();
+    let scripted = Arc::new(ScriptedBackend::new(vec![
+        Ok(scripted_reply),
+        Ok(no_message_reply),
+    ]));
 
     // --- Write a temp manifest with bot A only ---
     let manifest_path =
@@ -772,7 +779,7 @@ async fn strategist_fleet_cycle_applies_and_messages(pool: sqlx::PgPool) {
 
     assert_eq!(
         dm_count, 1,
-        "exactly one DM must be sent (one scripted Ok cycle; exhausted backend prevents duplicates)"
+        "exactly one DM (one message-bearing cycle, then a VALID message-less cycle, then Errs)"
     );
 
     // --- (b) Assert: at least one training order for the bot's village ---
@@ -790,4 +797,82 @@ async fn strategist_fleet_cycle_applies_and_messages(pool: sqlx::PgPool) {
         "at least one training order must exist after military+agg3 strategy \
          (garrison 25 < floor 80): training_count={training_count}"
     );
+}
+/// 122 S3: a DRY-RUN strategist cycle logs but neither applies nor sends — zero DM rows and zero
+/// orders for the bot afterwards (the executor's dry-run already writes nothing; this pins the
+/// strategist's own dry path at fleet level).
+#[sqlx::test(migrations = "../../migrations")]
+async fn strategist_dry_run_applies_and_sends_nothing(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let bot_user = unique("s_dry");
+    let target_user = unique("dryt");
+    let token = seed_bot(&pool, &base, &bot_user, true).await;
+    let http = reqwest::Client::new();
+    http.post(format!("{base}/register"))
+        .form(&[
+            ("username", target_user.as_str()),
+            ("email", format!("{target_user}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "romans"),
+        ])
+        .send()
+        .await
+        .expect("target registration must succeed");
+
+    let client_bot = ApiClient::new(&base, &token);
+    let me = client_bot.me().await.expect("me() for the dry bot");
+    let world = me.worlds[0].world.clone();
+
+    let reply = format!(
+        r#"{{"focus":"military","aggression":3,"motto":"paper tiger","message":{{"to":"{target_user}","body":"This message must never send."}}}}"#
+    );
+    let scripted = Arc::new(ScriptedBackend::new(vec![Ok(reply)]));
+
+    let manifest_path = std::env::temp_dir().join(format!("eperica_dry_{}.json", unique("m")));
+    std::fs::write(
+        &manifest_path,
+        serde_json::json!([{"username": bot_user, "token": token}]).to_string(),
+    )
+    .expect("write temp manifest");
+
+    let cfg = RunnerConfig {
+        server: base.clone(),
+        world,
+        keys_path: manifest_path.to_string_lossy().into_owned(),
+        dry_run: true, // <- the point of the test
+        tick_scale: Some(1),
+        cap: 1,
+        open_window: true,
+        llm: Some(LlmConfig {
+            model: "scripted".to_owned(),
+            budget_per_hour: 10,
+            interval_secs: 1,
+        }),
+    };
+    run_fleet_until(
+        cfg,
+        tokio::time::sleep(Duration::from_secs(5)),
+        Some(scripted),
+    )
+    .await;
+
+    let dm_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM direct_messages \
+         WHERE sender_id = (SELECT id FROM users WHERE username = $1)",
+    )
+    .bind(&bot_user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(dm_count, 0, "dry-run must never send the scripted message");
+    let order_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM build_orders bo JOIN villages v ON v.id = bo.village_id \
+         WHERE v.owner_id = (SELECT id FROM users WHERE username = $1)",
+    )
+    .bind(&bot_user)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(order_count, 0, "dry-run must issue no orders at all");
+    let _ = std::fs::remove_file(&manifest_path);
 }

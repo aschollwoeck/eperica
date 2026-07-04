@@ -1,6 +1,6 @@
 # Plan — 122 the LLM strategist
 
-**Status:** Draft (spec approved)
+**Status:** Verified (built as planned; reviewer APPROVE)
 
 ## Constitution check
 

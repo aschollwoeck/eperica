@@ -1,6 +1,6 @@
 # Tasks — 122 the LLM strategist
 
-**Status:** Draft. Ordered; each gated by `cargo fmt --all -- --check`, `clippy --all-targets -- -D warnings`,
+**Status:** Verified (reviewer APPROVE, 2026-07-04 — the program capstone). Ordered; each gated by `cargo fmt --all -- --check`, `clippy --all-targets -- -D warnings`,
 `cargo test --workspace`. Branch `feature/122-llm-strategist`; commit per task.
 
 - [x] **T1 — Strategy overlay in the pure doctrine.** `strategy.rs` (Strategy/Focus, strict
@@ -15,7 +15,7 @@
   baseline; scripted DM lands once in the recipient's list. (AC6/AC7)
 - [x] **T5 — Docs.** README strategist section (env vars, budget, cost note); agent-api.md
   cross-note; ADR 0036 slice table → program complete. End-user docs: internal.
-- [ ] **T6 — Review & accept.** Gates green; `eperica-reviewer` → APPROVE (incl. the AC8 diff-stat
+- [x] **T6 — Review & accept.** Gates green; `eperica-reviewer` → APPROVE (incl. the AC8 diff-stat
   check); statuses flipped; PR ready to merge.
 
 ## Done when

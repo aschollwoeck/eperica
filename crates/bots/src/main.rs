@@ -156,6 +156,13 @@ fn parse_config() -> Result<(RunnerConfig, Option<Arc<dyn StrategistBackend>>), 
         .map(|v| {
             v.parse::<u64>()
                 .map_err(|_| format!("--llm-interval-secs must be a positive integer, got {v:?}"))
+                .and_then(|n: u64| {
+                    if n == 0 {
+                        Err("--llm-interval-secs must be at least 1".to_owned())
+                    } else {
+                        Ok(n)
+                    }
+                })
         })
         .transpose()?
         .unwrap_or(14400u64);

@@ -1225,14 +1225,24 @@ mod tests {
     fn strategist_jitter_differs_from_tick_jitter() {
         // Strategist jitter must use a different seed than tick jitter to avoid
         // the two schedules always aligning.
-        let hash = crate::persona::fnv1a_64(b"jitter_diff");
-        let tick_j = tick_jitter(hash, 0, 12960, 15840);
-        let strat_j = strategist_jitter(hash, 0, 14400);
-        // They CAN coincide by chance, but the seed construction (high-bit OR)
-        // makes it extremely unlikely on a 64-bit range.
-        // We just confirm the function runs without panicking; the actual
-        // values are tested for range above.
-        let _ = tick_j;
-        let _ = strat_j;
+        // Any single pair CAN coincide by chance, so assert the LANE property: across many
+        // (name, tick) seeds, at least one pair differs — i.e. the high-bit seed separation
+        // genuinely decorrelates the two schedules (an all-equal result would mean the lanes
+        // collapsed onto one another).
+        let mut any_differ = false;
+        for i in 0..64u64 {
+            let hash = crate::persona::fnv1a_64(format!("jitter_diff_{i}").as_bytes());
+            // Same interval band for both so the ranges overlap and equality is possible.
+            let tick_j = tick_jitter(hash, i, 12960, 15840);
+            let strat_j = strategist_jitter(hash, i, 14400);
+            if tick_j != strat_j {
+                any_differ = true;
+                break;
+            }
+        }
+        assert!(
+            any_differ,
+            "the two jitter lanes never diverged over 64 seeds"
+        );
     }
 }

@@ -1,6 +1,6 @@
 # Feature 122 — the LLM strategist: long-horizon goals & diplomacy for the bot fleet
 
-**Status:** Draft
+**Status:** Verified (built on feature/122-llm-strategist; reviewer APPROVE first round)
 **Depends on:** 121 (the runner: personas, pure reflex doctrine, executor, fleet loop), 119
 (messages endpoint), ADR 0036.
 **Roadmap:** slice 5 of 5 — the AI-players program capstone.
