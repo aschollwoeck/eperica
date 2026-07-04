@@ -10106,6 +10106,21 @@ async fn agent_api_military_sends(pool: sqlx::PgPool) {
         "second recall → nothing_stationed"
     );
     assert!(r.text().await.unwrap().contains("nothing_stationed"));
+
+    // A typo'd catapult_target is rejected outright (machine contract — never silently dropped).
+    let r = agent
+        .post(format!("{base}/api/w/{home}/village/{a_vid}/attack"))
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .body(
+            serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 2}, "mode": "attack", "catapult_target": "castle"})
+                .to_string(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 400);
+    assert!(r.text().await.unwrap().contains("invalid_catapult_target"));
 }
 
 /// 119 T2: trade & settle adapters over the agent API. Denial-class coverage per plan Decision #6.
@@ -11031,7 +11046,6 @@ async fn agent_api_scouting(pool: sqlx::PgPool) {
         404,
         "C (non-party) gets 404 for detected report"
     );
-    let _ = a_uuid;
 }
 
 /// 119 M2a: settle over the agent API — full success path mirroring

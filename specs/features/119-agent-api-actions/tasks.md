@@ -1,6 +1,6 @@
 # Tasks — 119 Agent API actions complete
 
-**Status:** Draft. Ordered; each gated by `cargo fmt --all -- --check`, `clippy --all-targets -- -D warnings`,
+**Status:** Verified (reviewer APPROVE, 2026-07-04). Ordered; each gated by `cargo fmt --all -- --check`, `clippy --all-targets -- -D warnings`,
 `cargo test --workspace`, and the P11 budget. Branch `feature/119-agent-api-actions`; commit per task.
 
 - [x] **T1 — Military sends.** `attack`/`scout`/`reinforce`/`return` adapters (units-map bodies,
@@ -22,7 +22,7 @@
   driving `process_due_combat`/`process_due_movements` for determinism. (AC8, AC9 spot-checks)
 - [x] **T7 — Docs.** docs/agent-api.md v0.2: all new endpoints/bodies/codes + digest additions;
   rustdoc on new public items.
-- [ ] **T8 — Review & accept.** Gates green; `eperica-reviewer` → APPROVE; statuses flipped; PR #137
+- [x] **T8 — Review & accept.** Gates green; `eperica-reviewer` → APPROVE; statuses flipped; PR #137
   ready to merge.
 
 ## Done when

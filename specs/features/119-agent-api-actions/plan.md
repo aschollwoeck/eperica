@@ -1,6 +1,6 @@
 # Plan — 119 Agent API actions complete
 
-**Status:** Draft (spec approved)
+**Status:** Verified (built as planned; wire/spec deviations back-patched per review)
 
 ## Constitution check
 

@@ -1,6 +1,6 @@
 # Feature 119 — Agent API actions complete (military, market, settle, research, messages)
 
-**Status:** Draft
+**Status:** Verified (built on feature/119-agent-api-actions; reviewer APPROVE)
 **Depends on:** 118 (Agent API core — auth, digest, error contract, rate budget, strict village
 addressing), ADR 0036 (program), and the use-cases this exposes: 007 (movement), 009 (combat),
 010 (scouting), 008 (trade), 013 (settling), 005/011 (research & smithy), 024 (messaging).
