@@ -261,8 +261,8 @@ can build something else there.
 Each demolish order:
 
 - Is **free** — no resource cost.
-- **Occupies the build lane** like a normal construction order, and takes roughly the build
-  time of the level below, scaled by your Main Building level.
+- **Occupies the build lane** like a normal construction order, and takes the removed level's
+  own build time (the time that level took to build), reduced by your Main Building level.
 - Is issued from the building's page (a "Demolish" button appears when the condition is met).
 
 To fully clear a building you need to demolish once per level — the game does not auto-continue.

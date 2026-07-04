@@ -39,4 +39,5 @@ quiet player. They may still appear as greyed/inactive on the map — the sweep 
 removal, not the inactive marker.
 
 **Natar accounts** — the synthetic accounts that hold end-game artifact villages — are a
-separate entity, fully excluded from the inactivity lifecycle and leaderboards.
+separate entity, excluded from the abandonment sweep and the leaderboards. (Their villages may
+still carry the map's "inactive" marker — that marker is derived purely from account activity.)
