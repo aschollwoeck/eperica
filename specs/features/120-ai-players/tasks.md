@@ -1,6 +1,6 @@
 # Tasks — 120 AI players
 
-**Status:** Draft. Ordered; each gated by `cargo fmt --all -- --check`, `clippy --all-targets -- -D warnings`,
+**Status:** Verified (reviewer APPROVE, 2026-07-04). Ordered; each gated by `cargo fmt --all -- --check`, `clippy --all-targets -- -D warnings`,
 `cargo test --workspace`, and the P11 budget. Branch `feature/120-ai-players`; commit per task.
 
 - [x] **T1 — Visibility plumbing.** Migration `0051_ai_visibility.sql` (worlds column, default
@@ -19,7 +19,7 @@
   per-bot/fleet revoke; non-admin fail-closed. Integration tests per plan. (AC1/AC2)
 - [x] **T6 — Technical docs.** Rustdoc; ADR 0036 slice table note; docs/agent-api.md pointer to the
   manifest as the runner key-file format. End-user docs: operator-facing — recorded internal.
-- [ ] **T7 — Review & accept.** Gates green; `eperica-reviewer` → APPROVE; statuses flipped; PR #138
+- [x] **T7 — Review & accept.** Gates green; `eperica-reviewer` → APPROVE; statuses flipped; PR #138
   ready to merge.
 
 ## Done when

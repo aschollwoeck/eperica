@@ -1,6 +1,6 @@
 # Feature 120 — AI players: seeding, visibility & carve-outs
 
-**Status:** Draft
+**Status:** Verified (built on feature/120-ai-players; reviewer APPROVE)
 **Depends on:** 118 (AI accounts + keys + admin mint), 119 (the full agent action surface),
 019 (protection & lifecycle), 022 (fair play), ADR 0035 (per-world config), ADR 0036 (program).
 **Roadmap:** slice 3 of the AI-players program (118–122).

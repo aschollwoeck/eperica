@@ -4502,13 +4502,10 @@ fn default_tribe_mix() -> String {
     "even".to_owned()
 }
 
-/// Percent-encode a JSON string for safe embedding in a `data:` URL href attribute.
-///
-/// Encodes the characters that would corrupt a data URL or break an HTML attribute:
-/// `%` (must be first), `"`, `#`, `<`, `>`, `&`, space, and ASCII control chars.
-/// Percent-encode a string for a `data:` URL: every byte outside the RFC 3986 unreserved set
-/// (`A-Za-z0-9 - _ . ~`) is `%XX`-encoded, byte-wise — so multi-byte UTF-8 survives round-trip
-/// (each byte encodes separately) and no HTML/URL-special character ever reaches the attribute raw.
+/// Percent-encode a string for a `data:` URL href attribute: every byte outside the RFC 3986
+/// unreserved set (`A-Za-z0-9 - _ . ~`) is `%XX`-encoded, byte-wise — so multi-byte UTF-8 survives
+/// round-trip (each byte encodes separately) and no HTML/URL-special character ever reaches the
+/// attribute raw.
 fn percent_encode_json(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3 / 2);
     for b in s.bytes() {

@@ -1,6 +1,6 @@
 # Plan — 120 AI players: seeding, visibility & carve-outs
 
-**Status:** Draft (spec approved)
+**Status:** Verified (built as planned; Decisions #6–#7 recorded during review)
 
 ## Constitution check
 
