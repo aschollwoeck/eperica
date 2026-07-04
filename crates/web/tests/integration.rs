@@ -11255,3 +11255,92 @@ async fn agent_api_settle_success(pool: sqlx::PgPool) {
         "digest shows 2 villages after settling"
     );
 }
+
+/// 120 AC4-mod / AC5 (disguise guard): the moderator account-inspect view shows an "AI" badge for
+/// an is_ai subject; and filing a report against an AI account still lands in the review queue
+/// (the report path is not gated by the disguise — AC4 outranks AC5).
+#[sqlx::test(migrations = "../../migrations")]
+async fn mod_account_ai_badge_and_report_against_ai(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    // Register three accounts: reporter, AI subject, moderator.
+    let reporter_name = unique("rpt");
+    let ai_name = unique("aibot");
+    let mod_name = unique("modai");
+
+    let register = async |name: &str| {
+        let c = client();
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", name),
+                ("email", &format!("{name}@example.com")),
+                ("password", "secret12"),
+                ("tribe", "gauls"),
+            ])
+            .send()
+            .await
+            .unwrap();
+        c
+    };
+    let _ = home.as_str(); // suppress unused warning — ensures world route is primed
+    let cr = register(&reporter_name).await;
+    let _ca = register(&ai_name).await;
+    let cm = register(&mod_name).await;
+
+    // Promote the moderator and mark the AI subject as is_ai.
+    let ai_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind(&ai_name)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_moderator = true WHERE username = $1")
+        .bind(&mod_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_ai = true WHERE id = $1")
+        .bind(ai_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The moderator views the AI account's inspect page — must show the "AI" badge.
+    let acct = cm
+        .get(format!("{base}/mod/account/{}", ai_id.as_u128()))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        acct.contains(r#"class="badge">AI<"#),
+        "AI badge present on mod account view for an is_ai subject"
+    );
+
+    // Disguise guard (AC4 / AC5): a player can still file a report against the AI account.
+    cr.post(format!("{base}/report"))
+        .form(&[
+            ("subject", ai_id.as_u128().to_string().as_str()),
+            ("reason", "botting"),
+            ("note", "suspicious"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // The report lands in the moderator queue.
+    let queue = cm
+        .get(format!("{base}/mod"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        queue.contains(&ai_name),
+        "the report against the AI account appears in the mod queue (disguise preserved)"
+    );
+}

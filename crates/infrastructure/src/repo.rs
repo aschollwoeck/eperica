@@ -6799,9 +6799,14 @@ impl LifecycleRepository for PgAccountRepository {
         // The live accounts idle past the period's cutoff (already-abandoned excluded — idempotent).
         // `FOR UPDATE` locks the rows so a concurrent `touch_activity` cannot make one active between
         // this read and the deletes below (it blocks until this transaction commits).
+        // 120 AC6: an enabled bot (is_ai with at least one unrevoked agent_key) is excluded from
+        // the victim set however stale — "enabled = holds an unrevoked key" stays derived. A bot
+        // whose last key was revoked has no carve-out and decays normally.
         let victims: Vec<Uuid> = sqlx::query_scalar(
             "SELECT id FROM users WHERE abandoned_at IS NULL AND is_npc = false \
-             AND last_activity < to_timestamp($1::double precision / 1000.0) FOR UPDATE",
+             AND last_activity < to_timestamp($1::double precision / 1000.0) \
+             AND NOT (is_ai AND EXISTS (SELECT 1 FROM agent_keys WHERE user_id = users.id AND revoked_at IS NULL)) \
+             FOR UPDATE",
         )
         .bind(cutoff.0)
         .fetch_all(&mut *tx)
@@ -7535,9 +7540,12 @@ impl ModerationRepository for PgAccountRepository {
     }
 
     async fn ip_association_count(&self, subject: PlayerId) -> Result<u32, RepoError> {
+        // 120 AC5: is_ai rows are excluded from the outer count so a bot fleet on the server IP
+        // never flags humans by association.
         let count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM users \
              WHERE registration_ip IS NOT NULL \
+               AND is_ai = false \
                AND registration_ip = (SELECT registration_ip FROM users WHERE id = $1)",
         )
         .bind(Uuid::from_u128(subject.0))
@@ -9476,6 +9484,85 @@ mod tests {
         assert!(sig.inhuman_action_rate, "the inhuman-rate flag trips");
     }
 
+    /// 120 AC5: `ip_association_count` excludes `is_ai` rows — a bot fleet on the server IP never
+    /// inflates the shared-IP signal for human accounts. Mirrors the setup of
+    /// `detection_signals_are_reproducible`.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn ip_association_count_excludes_ai_accounts(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let human_a = make_account(&repo, &template, "human_a").await;
+        let human_b = make_account(&repo, &template, "human_b").await;
+        let bot = make_account(&repo, &template, "bot_assoc").await;
+        // All three share one registration IP.
+        for p in [human_a, human_b, bot] {
+            sqlx::query("UPDATE users SET registration_ip = '198.51.100.1' WHERE id = $1")
+                .bind(Uuid::from_u128(p.0))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        // Mark the third account as an AI bot.
+        sqlx::query("UPDATE users SET is_ai = true WHERE id = $1")
+            .bind(Uuid::from_u128(bot.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        // The bot is excluded: human_a's count is 2 (only the two non-AI rows).
+        let count = repo.ip_association_count(human_a).await.unwrap();
+        assert_eq!(
+            count, 2,
+            "the AI row is excluded from the IP association count"
+        );
+    }
+
+    /// 120 AC5: `account_signals` for an is_ai subject short-circuits to zeroed signals — the two
+    /// detection ports are not called, consistent with plan Decision #2.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn account_signals_zeroed_for_ai_subject(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let rules = crate::fair_play_rules().unwrap();
+        let moderator = make_account(&repo, &template, "mod_aisig").await;
+        repo.set_moderator(moderator, true).await.unwrap();
+        let bot = make_account(&repo, &template, "bot_sig").await;
+        // Mark the bot as AI with a suspicious IP and a large action tally — both should be
+        // suppressed by the short-circuit.
+        sqlx::query(
+            "UPDATE users SET is_ai = true, registration_ip = '203.0.113.99' WHERE id = $1",
+        )
+        .bind(Uuid::from_u128(bot.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO rate_limits (subject, action, window_start, count) \
+             VALUES ($1, 'action', now(), 9999)",
+        )
+        .bind(bot.0.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let sig = eperica_application::account_signals(&repo, &repo, &rules, moderator, bot)
+            .await
+            .unwrap();
+        assert_eq!(
+            sig.ip_association_count, 0,
+            "IP association zeroed for AI subject"
+        );
+        assert!(
+            !sig.shared_ip_flagged,
+            "shared_ip_flagged false for AI subject"
+        );
+        assert_eq!(
+            sig.peak_action_count, 0,
+            "peak_action_count zeroed for AI subject"
+        );
+        assert!(
+            !sig.inhuman_action_rate,
+            "inhuman_action_rate false for AI subject"
+        );
+    }
+
     /// 019 AC2/AC3: a protected player cannot be attacked (no movement created); once a player attacks,
     /// their own protection ends. Drives the real `order_attack` use-case against the Pg repo.
     #[sqlx::test(migrations = "../../migrations")]
@@ -10673,6 +10760,67 @@ mod tests {
         // Idempotent: re-sweeping the recorded period is a no-op.
         assert_eq!(repo.sweep_abandoned(0, cutoff).await.unwrap(), 0);
         assert_eq!(repo.latest_swept_period().await.unwrap(), Some(0));
+    }
+
+    /// 120 AC6: the abandonment sweep spares an enabled bot (is_ai with an unrevoked agent_key row)
+    /// however stale; sweeps it once its key is revoked; and still sweeps a stale human in the same
+    /// run (the carve-out is bot-specific). Mirrors the setup of
+    /// `sweep_abandons_inactive_frees_map_and_is_idempotent`.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn sweep_spares_enabled_bot_and_sweeps_revoked(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let bot = make_account(&repo, &template, "bot").await;
+        let human = make_account(&repo, &template, "stale_human").await;
+        // Mark the bot as AI with an unrevoked agent key; set both to ancient last_activity.
+        sqlx::query("UPDATE users SET is_ai = true, last_activity = to_timestamp(1) WHERE id = $1")
+            .bind(Uuid::from_u128(bot.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO agent_keys (id, user_id, secret_hash) VALUES ('testkey120', $1, 'hash')",
+        )
+        .bind(Uuid::from_u128(bot.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE users SET last_activity = to_timestamp(1) WHERE id = $1")
+            .bind(Uuid::from_u128(human.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let cutoff = Timestamp(1_000_000);
+
+        // Period 0: the stale human is swept; the enabled bot is spared.
+        let count = repo.sweep_abandoned(0, cutoff).await.unwrap();
+        assert_eq!(count, 1, "only the stale human was swept");
+        assert!(
+            repo.find_user_by_id(human)
+                .await
+                .unwrap()
+                .unwrap()
+                .abandoned,
+            "the stale human is abandoned"
+        );
+        assert!(
+            !repo.find_user_by_id(bot).await.unwrap().unwrap().abandoned,
+            "the enabled bot survives the sweep"
+        );
+
+        // Revoke the bot's key — it is now disabled and eligible for the sweep.
+        sqlx::query("UPDATE agent_keys SET revoked_at = now() WHERE user_id = $1")
+            .bind(Uuid::from_u128(bot.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Period 1 (new period): the now-disabled bot is swept.
+        let count2 = repo.sweep_abandoned(1, cutoff).await.unwrap();
+        assert_eq!(count2, 1, "the revoked bot is swept after key revocation");
+        assert!(
+            repo.find_user_by_id(bot).await.unwrap().unwrap().abandoned,
+            "the revoked bot is abandoned"
+        );
     }
 
     /// 019 AC7/AC10: `process_due_lifecycle` settles every complete period once (watermark-driven) and

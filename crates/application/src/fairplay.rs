@@ -176,6 +176,12 @@ fn sanction_window(
 ///
 /// # Errors
 /// [`ModerationError::NotAuthorized`] for a non-moderator; otherwise a backend error.
+///
+/// **120 AC5, plan Decision #2:** when the subject is an `is_ai` account the function short-circuits
+/// to zeroed signals without calling the two detection ports. A bot fleet on the server IP would
+/// pollute the shared-IP signal for human accounts, and agent traffic never populates the `'action'`
+/// rate key used by the inhuman-rate detector. Player-filed reports against bot accounts remain
+/// possible (the disguise is preserved — AC4 outranks).
 pub async fn account_signals<A, M>(
     accounts: &A,
     moderation: &M,
@@ -188,6 +194,17 @@ where
     M: ModerationRepository,
 {
     require_moderator(accounts, actor).await?;
+    // 120 AC5: short-circuit for AI accounts — zeroed signals, no port calls.
+    if let Some(user) = accounts.find_user_by_id(subject).await?
+        && user.is_ai
+    {
+        return Ok(AccountSignals {
+            ip_association_count: 0,
+            shared_ip_flagged: false,
+            peak_action_count: 0,
+            inhuman_action_rate: false,
+        });
+    }
     let ip = moderation.ip_association_count(subject).await?;
     let peak = moderation.peak_action_count(subject).await?;
     Ok(AccountSignals {

@@ -1295,6 +1295,8 @@ pub struct ModAccountTemplate {
     /// The inspected account.
     pub subject_id: String,
     pub username: String,
+    /// 120 AC4-mod: whether this account is an AI bot — shown as a badge in the moderator view.
+    pub is_ai: bool,
     /// Current sanction status.
     pub banned: bool,
     pub suspended: bool,

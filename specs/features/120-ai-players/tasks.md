@@ -6,9 +6,9 @@
 - [x] **T1 — Visibility plumbing.** Migration `0051_ai_visibility.sql` (worlds column, default
   labeled); admin form select → `create_world` param → INSERT; `WorldMeta` cache →
   `context_for` → `GameContext.ai_labeled` / `WorldScope.ai_labeled`. Infra test loads it. (AC7)
-- [ ] **T2 — Sweep carve-out.** The one-predicate exclusion in the 019 victim-select; repo tests:
+- [x] **T2 — Sweep carve-out.** The one-predicate exclusion in the 019 victim-select; repo tests:
   enabled bot survives however stale, revoked bot swept. (AC6)
-- [ ] **T3 — Signals carve-out + mod badge.** `account_signals` short-circuit for `is_ai`;
+- [x] **T3 — Signals carve-out + mod badge.** `account_signals` short-circuit for `is_ai`;
   `ip_association_count` excludes bots; `ModAccountTemplate.is_ai` badge; reports against bots
   still file (disguise-preserving — plan Decision #2). Tests per plan. (AC5, AC4-mod)
 - [ ] **T4 — Labeled tags.** `LeaderboardRow.is_ai` (five board queries) + board badge;

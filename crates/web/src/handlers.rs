@@ -4134,6 +4134,7 @@ pub async fn mod_account(
     page(&ModAccountTemplate {
         subject_id: subject.0.to_string(),
         username: user.username,
+        is_ai: user.is_ai, // 120 AC4-mod: show AI badge in moderator view
         banned: user.banned_at.is_some(),
         suspended: user.suspended_until.is_some_and(|u| now.0 < u.0),
         ip_association_count: signals.ip_association_count,
