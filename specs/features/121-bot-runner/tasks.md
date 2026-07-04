@@ -7,7 +7,7 @@ Branch `feature/121-bot-runner`; commit per task.
 - [x] **T1 — Crate + client + DTOs.** `crates/bots` (lib+bin skeleton) in the workspace; defensive
   digest/map DTOs (fixture-parse test); `ApiClient` (me/state/map + all action calls) with the
   `ApiFailure` classification; manifest loading + startup key validation (AC1 shape). (AC1)
-- [ ] **T2 — Persona + policy.** Inline-FNV personas (deterministic — AC4) + the full reflex
+- [x] **T2 — Persona + policy.** Inline-FNV personas (deterministic — AC4) + the full reflex
   doctrine from plan §doctrine as pure `plan_tick`; unit tests for every rule + negative gates. (AC2/AC4)
 - [ ] **T3 — Executor.** Intents → API calls; pure `classify(status, body)` (Ok/RuleDenied/
   Backoff/RetireBot/Transient) unit-tested; per-tick behaviour per AC3 (no same-tick retries,

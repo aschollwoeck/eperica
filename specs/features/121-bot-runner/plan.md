@@ -39,11 +39,13 @@ Evaluated in order; the first section that yields intents ends economy planning 
    intent on a later tick once no attack is inbound.
 2. **Storage:** any resource `amount ≥ 90%·capacity` ⇒ build Warehouse (wood/clay/iron full) or
    Granary (crop full) — upgrade if present, place on a free slot otherwise.
-3. **Fields:** if crop net < a floor (25/h scaled by nothing — digest rates are already world-real)
-   ⇒ lowest-level crop field; else the lowest-level field overall (ties: wood>clay>iron>crop order).
-   Cap: stop at field level 10 (non-capital cap; the use-case would 409 anyway — don't burn the tick).
-4. **Core buildings** (once fields ≥ level 2 average): doctrine table in order — Main Building →3,
-   Barracks →1, Warehouse →3, Granary →3, Academy →1, Residence →10 (settler prerequisite chain).
+3./4. **Fields ⇄ core buildings (interleaved):** while average field level < 2 ⇒ fields only
+   (crop-net floor 25/h biases to the lowest crop field; else lowest field overall, ties
+   wood>clay>iron>crop; stop at level 10 — the non-capital cap). Once the average reaches 2, the
+   **core-building doctrine takes priority until complete** — Main Building →3, Barracks →1,
+   Warehouse →3, Granary →3, Academy →1, Residence →10 (the settler chain) — then fields resume to
+   the cap. (Clarified during build: the original "first section that yields ends planning" wording
+   made the avg-2 gate unreachable — fields would monopolize until all-18-at-10.)
 5. **Training:** garrison below `10 + 10·aggression` units ⇒ train the tribe's tier-1 infantry up
    to what ~25% of current resources afford (never drain the build budget).
 6. **Settling:** `villages_used < villages_allowed` AND Residence ≥10 ⇒ train settlers (3) when

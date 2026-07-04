@@ -15,3 +15,5 @@
 pub mod client;
 pub mod digest;
 pub mod manifest;
+pub mod persona;
+pub mod policy;
