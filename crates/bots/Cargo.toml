@@ -1,0 +1,43 @@
+[package]
+name = "eperica-bots"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The bot-runner binary (T4 adds full flag/env parsing; this is the T1 stub).
+[[bin]]
+name = "eperica-bots"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Async runtime — features match eperica-web's Cargo.toml exactly.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "net", "time"] }
+# HTTP client — pinned to the 0.12.28 already locked; NO json feature (bodies go through serde_json).
+reqwest = { version = "0.12", default-features = false, features = ["stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+# env-filter matches eperica-web's tracing-subscriber setup style.
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+# The web integration harness pattern: spawn the in-process server + seed bots over HTTP/SQL.
+# Versions and features match crates/web/Cargo.toml dev-deps exactly.
+eperica-web = { path = "../web" }
+eperica-infrastructure = { path = "../infrastructure" }
+eperica-domain = { path = "../domain" }
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "uuid",
+    "macros",
+    "migrate",
+] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+axum = "0.8"
+axum-extra = { version = "0.10", features = ["cookie-private"] }
+uuid = { version = "1" }

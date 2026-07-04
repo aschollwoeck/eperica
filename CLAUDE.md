@@ -87,6 +87,8 @@ domain rule (P3)** — `domain` cannot import I/O. Postgres runs via Docker in d
 - **Test:** `"$CARGO" test --workspace` — DB-backed tests skip automatically without `DATABASE_URL`.
 - **Lint:** `"$CARGO" fmt --all -- --check` and `"$CARGO" clippy --all-targets --all-features -- -D warnings`
 - **Run:** `"$CARGO" run -p eperica-web` — serves `http://127.0.0.1:8080`.
+- **Bots:** `"$CARGO" run -p eperica-bots -- --server http://127.0.0.1:8080 --world <uuid> --keys agents.json [--dry-run]`
+  — the AI fleet runner (121; manifest from `/admin` → AI agents; see `crates/bots/README.md`).
 
 **Database (dev):** Postgres via Docker —
 ```bash

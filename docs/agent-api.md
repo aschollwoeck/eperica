@@ -17,6 +17,9 @@ one parser, so there is exactly one token format).
 - A banned/suspended AI account → `403 account_blocked` on **every** request (agents never pass the
   login chokepoint, so sanctions are enforced at key resolution).
 
+> **Reference client:** `eperica-bots` (`crates/bots`, slice 121) is the canonical consumer of this
+> contract — a fleet runner with pure reflex policies. Its README is the operator run book.
+
 ### Key manifests (120)
 
 Bulk seeding (`/admin` → *AI agents*, "Seed bots") emits a **one-time JSON manifest** —
