@@ -1,9 +1,9 @@
-# The Agent API (v0 — slice 118, ADR 0036)
+# The Agent API (v0.2 — slices 118–119, ADR 0036)
 
 The JSON surface AI agents play Eperica through. Agents are **true clients**: everything here is a
 thin adapter over the same read models and use-cases the browser uses — an agent can never see or do
-more than a player (P4). This document is the contract for the bot runner (121) and any LLM agent;
-119 extends it with military/market/settle/message actions.
+more than a player (P4). This document is the contract for the bot runner (121) and any LLM agent.
+v0.2 (119) adds the full action surface: military sends, trade, settling, research, reports, DMs.
 
 ## Authentication
 
@@ -79,6 +79,53 @@ Body `{ "target": "field"|"building", "slot": n, "kind": "…" }` (`kind` for bu
 ### `POST /api/w/{world}/village/{village}/train`
 Body `{ "unit": "…", "count": n }` → `order_train`. Success:
 `{ ordered, village, batch: { unit, remaining, next_complete_at_ms } }`.
+
+### Actions (119) — all under `…/village/{village}/`, unit bundles as `{"<unit_id>": count}` maps
+
+| Endpoint | Body | Success echo |
+|---|---|---|
+| `POST …/attack` | `{x, y, units, mode: "attack"\|"raid", catapult_target?}` | `{ordered, movement}` |
+| `POST …/scout` | `{x, y, units, target: "resources"\|"defenses"}` | `{ordered, movement}` |
+| `POST …/reinforce` | `{x, y, units}` | `{ordered, movement}` |
+| `POST …/return` | `{host: "<village-uuid>"}` (a `host_village` from `reinforcements_abroad`) | `{ordered, movement}` |
+| `POST …/trade` | `{x, y, give: {wood, clay, iron, crop}}` | `{ordered, shipment}` |
+| `POST …/settle` | `{x, y}` (settlers implicit — 013 rules) | `{ordered, movement}` |
+| `POST …/research` | `{unit}` | `{ordered, order}` |
+| `POST …/smithy` | `{unit}` | `{ordered, order}` |
+
+`movement` = `{kind, dest_x, dest_y, arrive_at_ms, troops}`. On a read-back glitch the echo field
+(`movement`/`shipment`/`order`/`queue_entry`/`batch`) can be `null` while `ordered` is still `true`
+— the order **committed**; re-read the digest rather than retrying. Denial codes are the use-cases' own
+reasons: `empty_composition`, `not_all_scouts`, `same_tile`, `no_target`, `target_protected`,
+`invalid_catapult_target`, `nothing_stationed`, `no_marketplace`, `empty_bundle`,
+`not_enough_merchants`, `not_settler_group`, `no_slot`, `not_free_valley`, `in_progress`,
+`already_researched`, `requirements_unmet`, `no_smithy`, `max_level`, `smithy_level_too_low`, plus
+the 118 set.
+
+### Reports (119)
+
+- `GET /api/w/{w}/report/{id}` — the full battle report, **party-scoped** (non-party → `404`).
+- `GET /api/w/{w}/scout-report/{id}` — party-scoped; a scouted target receives the pre-redacted
+  view (no intel, no scout counts — 010's rule).
+- Digest report heads carry `kind`; `scout_reports` heads: `{id, occurred_at_ms, viewer_is_scouter,
+  detected}`.
+
+### Messages (119)
+
+Comms are **account-level** (cross-world, 024/045).
+
+- `POST /api/w/{w}/message` `{to: "<username>", body}` → `{sent, message_id, to}`; unknown player →
+  `404 recipient_unavailable`; `self_send`/`invalid` per 024.
+- `GET /api/w/{w}/messages` → conversation summaries; DM entries carry the partner's decimal
+  `account` id.
+- `GET /api/w/{w}/messages/{account}` → the DM history (newest last), **marks it read**.
+
+### Digest additions (119)
+
+Per player: `movements` (own in-flight, incl. returns), `reinforcements_abroad`
+(`{host_village, x, y, owner, troops}` — host-side coords), `scout_reports` heads. Per village:
+`reinforcements_here` (`{home_village, x, y, owner, troops}` — guest-side coords), `research`
+(`{researched, levels, active}`). All absolute-ms, all page truth.
 
 ## Village addressing (strict)
 

@@ -2005,6 +2005,420 @@ async fn agent_api_opening_loop(pool: sqlx::PgPool) {
     assert!(body.contains("\"error\":\"world_frozen\""), "got: {body}");
 }
 
+/// 119 T5 (AC6): agent DMs — send by username (account-id comms, 024/045), conversation list with
+/// unread + partner account id, history read marks read; self-send/unknown-recipient/empty-body
+/// denials are the use-case's own.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_messages(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    // Two AI agents, A and B.
+    let mut tokens = Vec::new();
+    let mut names = Vec::new();
+    for (prefix, tribe) in [("dm_a", "teutons"), ("dm_b", "gauls")] {
+        let user = unique(prefix);
+        let email = format!("{user}@example.com");
+        let c = client();
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", user.as_str()),
+                ("email", email.as_str()),
+                ("password", "secret12"),
+                ("tribe", tribe),
+            ])
+            .send()
+            .await
+            .unwrap();
+        sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+            .bind(&user)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (key, token) = apikey::generate();
+        sqlx::query(
+            "INSERT INTO agent_keys (id, user_id, secret_hash) \
+             VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+        )
+        .bind(&key.id)
+        .bind(&user)
+        .bind(apikey::secret_hash(&key.secret))
+        .execute(&pool)
+        .await
+        .unwrap();
+        tokens.push(token);
+        names.push(user);
+    }
+    let agent = client();
+    let (tok_a, tok_b) = (tokens[0].clone(), tokens[1].clone());
+    let (name_a, name_b) = (names[0].clone(), names[1].clone());
+
+    // A → B by username.
+    let r = agent
+        .post(format!("{base}/api/w/{home}/message"))
+        .header("Authorization", format!("Bearer {tok_a}"))
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"to": name_b, "body": "war council at dawn"}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let sent: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert!(sent["message_id"].as_str().unwrap().parse::<u128>().is_ok());
+
+    // B's conversation list: one DM, unread 1, carrying A's decimal account id.
+    let r = agent
+        .get(format!("{base}/api/w/{home}/messages"))
+        .header("Authorization", format!("Bearer {tok_b}"))
+        .send()
+        .await
+        .unwrap();
+    let list: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    let dm = list["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["key"].as_str().unwrap().starts_with("dm:"))
+        .expect("a dm conversation");
+    assert_eq!(dm["unread"].as_i64().unwrap(), 1);
+    assert_eq!(dm["title"].as_str().unwrap(), name_a);
+    let a_account = dm["account"].as_str().unwrap().to_owned();
+
+    // B reads the history (marks read) — the body is there, sender named.
+    let r = agent
+        .get(format!("{base}/api/w/{home}/messages/{a_account}"))
+        .header("Authorization", format!("Bearer {tok_b}"))
+        .send()
+        .await
+        .unwrap();
+    let hist: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    let msgs = hist["messages"].as_array().unwrap();
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0]["body"], "war council at dawn");
+    assert_eq!(msgs[0]["sender_name"].as_str().unwrap(), name_a);
+    // Unread cleared after the read (the page's own mark-read semantics).
+    let r = agent
+        .get(format!("{base}/api/w/{home}/messages"))
+        .header("Authorization", format!("Bearer {tok_b}"))
+        .send()
+        .await
+        .unwrap();
+    let list: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    let dm = list["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["key"].as_str().unwrap().starts_with("dm:"))
+        .unwrap();
+    assert_eq!(dm["unread"].as_i64().unwrap(), 0);
+
+    // Denials — the use-case's own rules: self-send, unknown recipient, empty body.
+    for (to, body, status, code) in [
+        (name_a.as_str(), "hi me", 400, "self_send"),
+        ("no_such_player_xyz", "hello?", 404, "recipient_unavailable"),
+        (name_b.as_str(), "", 400, "invalid"),
+    ] {
+        let r = agent
+            .post(format!("{base}/api/w/{home}/message"))
+            .header("Authorization", format!("Bearer {tok_a}"))
+            .header("Content-Type", "application/json")
+            .body(serde_json::json!({"to": to, "body": body}).to_string())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), status, "to={to}");
+        assert!(
+            r.text().await.unwrap().contains(code),
+            "expected {code} for to={to}"
+        );
+    }
+}
+
+/// 119 T6 (AC8): the full two-agent loop over pure JSON — A raids B (garrison drops, movement
+/// appears; B sees arrival-only), combat processes, BOTH parties read the SAME report id, A
+/// reinforces B (both digests show the group), A recalls, and after the due return both lists are
+/// clear and A's garrison is home again. No HTML anywhere.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_full_loop(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let repo = movement_repo(&pool).await;
+
+    // Two agents.
+    let user_a = unique("loop_a");
+    let user_b = unique("loop_b");
+    let c = client();
+    let mut tokens = Vec::new();
+    for (u, tribe) in [(&user_a, "teutons"), (&user_b, "gauls")] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", tribe),
+            ])
+            .send()
+            .await
+            .unwrap();
+        sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+            .bind(u)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (key, token) = apikey::generate();
+        sqlx::query(
+            "INSERT INTO agent_keys (id, user_id, secret_hash) \
+             VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+        )
+        .bind(&key.id)
+        .bind(u)
+        .bind(apikey::secret_hash(&key.secret))
+        .execute(&pool)
+        .await
+        .unwrap();
+        tokens.push(token);
+    }
+    let (tok_a, tok_b) = (tokens[0].clone(), tokens[1].clone());
+    clear_protection(&pool).await;
+    // A gets a garrison of 20 clubswingers.
+    let a_vid: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN users u ON u.id = v.owner_id WHERE u.username = $1",
+    )
+    .bind(&user_a)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'clubswinger', 20)",
+    )
+    .bind(a_vid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let agent = client();
+    let digest = |tok: String| {
+        let agent = agent.clone();
+        let base = base.clone();
+        let home = home.clone();
+        async move {
+            let r = agent
+                .get(format!("{base}/api/w/{home}/state"))
+                .header("Authorization", format!("Bearer {tok}"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status().as_u16(), 200);
+            let v: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+            v
+        }
+    };
+    let garrison_count = |d: &serde_json::Value, unit: &str| -> i64 {
+        d["villages"][0]["garrison"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["unit"] == unit)
+            .map_or(0, |g| g["count"].as_i64().unwrap())
+    };
+
+    // 1. A raids B with 5 clubswingers.
+    let da0 = digest(tok_a.clone()).await;
+    assert_eq!(garrison_count(&da0, "clubswinger"), 20);
+    let db0 = digest(tok_b.clone()).await;
+    let (bx, by) = (
+        db0["villages"][0]["x"].clone(),
+        db0["villages"][0]["y"].clone(),
+    );
+    let r = agent
+        .post(format!(
+            "{base}/api/w/{home}/village/{}/build",
+            da0["villages"][0]["id"].as_str().unwrap()
+        ))
+        .header("Authorization", format!("Bearer {tok_a}"))
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"target":"field","slot":0}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        200,
+        "sanity: economy still works mid-loop"
+    );
+    let a_vseg = da0["villages"][0]["id"].as_str().unwrap().to_owned();
+    let r = agent
+        .post(format!("{base}/api/w/{home}/village/{a_vseg}/attack"))
+        .header("Authorization", format!("Bearer {tok_a}"))
+        .header("Content-Type", "application/json")
+        .body(
+            serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 5}, "mode": "raid"})
+                .to_string(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+
+    // Garrison dropped, movement listed; B sees the incoming attack ARRIVAL-ONLY.
+    let da1 = digest(tok_a.clone()).await;
+    assert_eq!(
+        garrison_count(&da1, "clubswinger"),
+        15,
+        "5 left with the raid"
+    );
+    assert_eq!(da1["movements"].as_array().unwrap().len(), 1);
+    let db1 = digest(tok_b.clone()).await;
+    let inc = db1["incoming_attacks"].as_array().unwrap();
+    assert_eq!(inc.len(), 1);
+    let mut keys: Vec<&str> = inc[0]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(keys, vec!["arrive_at_ms", "village"], "arrival-only, §7.3");
+
+    // 2. Combat processes; both parties read the SAME report.
+    let future = Timestamp(now().0 + 10_000_000_000);
+    let econ = economy_rules().unwrap();
+    let units = unit_rules().unwrap();
+    let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+    let world = ensure_world(&pool, &config).await.unwrap();
+    let map = WorldMap::new(world.seed as u64, config.radius, map_rules().unwrap());
+    process_due_combat(
+        &repo,
+        &repo,
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        &combat_rules().unwrap(),
+        &scout_rules().unwrap(),
+        &culture_rules().unwrap(),
+        &loyalty_rules().unwrap(),
+        &ranking_rules().unwrap(),
+        &map,
+        GameSpeed::new(1.0).unwrap(),
+        world.seed as u64,
+        future,
+        100,
+        (3, 6, 10),
+    )
+    .await
+    .unwrap();
+    let da2 = digest(tok_a.clone()).await;
+    let report_id = da2["reports"].as_array().unwrap()[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(da2["reports"][0]["kind"], "raid");
+    let db2 = digest(tok_b.clone()).await;
+    assert!(
+        db2["reports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["id"].as_str().unwrap() == report_id),
+        "B's heads carry the SAME report id"
+    );
+    for tok in [&tok_a, &tok_b] {
+        let r = agent
+            .get(format!("{base}/api/w/{home}/report/{report_id}"))
+            .header("Authorization", format!("Bearer {tok}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 200, "both parties read the report");
+    }
+    // The raiders return home (the return leg is a due movement too).
+    process_due_movements(
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        GameSpeed::new(1.0).unwrap(),
+        Timestamp(now().0 + 20_000_000_000),
+        100,
+    )
+    .await
+    .unwrap();
+    let da3 = digest(tok_a.clone()).await;
+    assert_eq!(
+        garrison_count(&da3, "clubswinger"),
+        20,
+        "raiders home (undefended target, no losses)"
+    );
+
+    // 3. A reinforces B, both digests show the group, A recalls, lists clear.
+    let r = agent
+        .post(format!("{base}/api/w/{home}/village/{a_vseg}/reinforce"))
+        .header("Authorization", format!("Bearer {tok_a}"))
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 6}}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    process_due_movements(
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        GameSpeed::new(1.0).unwrap(),
+        Timestamp(now().0 + 30_000_000_000),
+        100,
+    )
+    .await
+    .unwrap();
+    let da4 = digest(tok_a.clone()).await;
+    let abroad = da4["reinforcements_abroad"].as_array().unwrap();
+    assert_eq!(abroad.len(), 1);
+    let host = abroad[0]["host_village"].as_str().unwrap().to_owned();
+    let db4 = digest(tok_b.clone()).await;
+    assert_eq!(
+        db4["villages"][0]["reinforcements_here"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let r = agent
+        .post(format!("{base}/api/w/{home}/village/{a_vseg}/return"))
+        .header("Authorization", format!("Bearer {tok_a}"))
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"host": host}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    process_due_movements(
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        GameSpeed::new(1.0).unwrap(),
+        Timestamp(now().0 + 40_000_000_000),
+        100,
+    )
+    .await
+    .unwrap();
+    let da5 = digest(tok_a.clone()).await;
+    assert_eq!(da5["reinforcements_abroad"].as_array().unwrap().len(), 0);
+    assert_eq!(garrison_count(&da5, "clubswinger"), 20, "everyone home");
+    let db5 = digest(tok_b.clone()).await;
+    assert_eq!(
+        db5["villages"][0]["reinforcements_here"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
 /// 055: the base-template background pollers must be visitor-safe — a logged-out caller gets the small
 /// expected body, never a redirect to the login HTML (which the sitting-banner JS would render as raw markup
 /// on the landing page). Guards the "huge HTML markup" regression.
@@ -9488,5 +9902,1298 @@ async fn admin_creates_ai_agent(pool: sqlx::PgPool) {
     assert!(
         me_body.contains(&bot_name),
         "GET /api/me returns the agent's username: {me_body}"
+    );
+}
+
+/// 119 T1 (AC5): four military send adapters — attack, scout, reinforce, return — over the agent
+/// API. Two agents: A (teutons) raids B (gauls). Denial class coverage per plan Decision #6.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_military_sends(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let repo = movement_repo(&pool).await;
+
+    // --- Register A (teutons, agent) and B (gauls, ordinary player). ---
+    let user_a = unique("mil_a");
+    let user_b = unique("mil_b");
+    let c = client();
+    for (u, tribe) in [(&user_a, "teutons"), (&user_b, "gauls")] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", tribe),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user_a)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user_a)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Village IDs and coordinates — using the reliable village_uuid helper + direct coord lookup.
+    let a_vid = village_uuid(&pool, &user_a).await;
+    let a_uuid = uuid::Uuid::parse_str(&a_vid).unwrap();
+    let (ax, ay): (i32, i32) = sqlx::query_as("SELECT x, y FROM villages WHERE id = $1")
+        .bind(a_uuid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let b_vid = village_uuid(&pool, &user_b).await;
+    let b_uuid = uuid::Uuid::parse_str(&b_vid).unwrap();
+    let (bx, by): (i32, i32) = sqlx::query_as("SELECT x, y FROM villages WHERE id = $1")
+        .bind(b_uuid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Seed A's garrison: 20 clubswinger (Teuton tier-1 infantry).
+    sqlx::query(
+        "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'clubswinger', 20)",
+    )
+    .bind(a_uuid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let agent = client();
+    let post = |leaf: String, body: serde_json::Value| {
+        agent
+            .post(format!("{base}/api/w/{home}/village/{a_vid}{leaf}"))
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+    };
+
+    // B is freshly registered → protected (019 AC2). Raid rejected with 409 target_protected.
+    let r = post(
+        "/attack".into(),
+        serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 5}, "mode": "raid"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 409, "protected defender → 409");
+    assert!(r.text().await.unwrap().contains("target_protected"));
+
+    // Lift protection then retry → 200 with a movement echo.
+    clear_protection(&pool).await;
+    let r = post(
+        "/attack".into(),
+        serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 5}, "mode": "raid"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "raid after clear_protection");
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["ordered"], true);
+    assert!(
+        body["movement"]["arrive_at_ms"].as_i64().unwrap() > 0,
+        "arrive_at_ms is set"
+    );
+    assert_eq!(body["movement"]["kind"], "raid");
+
+    // Empty unit bundle → 400 empty_composition.
+    let r = post(
+        "/attack".into(),
+        serde_json::json!({"x": bx, "y": by, "units": {}, "mode": "raid"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 400);
+    assert!(r.text().await.unwrap().contains("empty_composition"));
+
+    // Self-target (A's own coordinate) → 400 same_tile.
+    let r = post(
+        "/attack".into(),
+        serde_json::json!({"x": ax, "y": ay, "units": {"clubswinger": 1}, "mode": "raid"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 400);
+    assert!(r.text().await.unwrap().contains("same_tile"));
+
+    // Unknown unit → use-case denial (Insufficient: not in garrison). Just assert 4xx.
+    let r = post(
+        "/attack".into(),
+        serde_json::json!({"x": bx, "y": by, "units": {"nope": 3}, "mode": "raid"}),
+    )
+    .await
+    .unwrap();
+    let status = r.status().as_u16();
+    assert!(
+        (400..500).contains(&status),
+        "unknown unit → 4xx (got {status})"
+    );
+
+    // Scout with a non-scout unit (clubswinger is Teuton infantry, not Scout role)
+    // → 400 not_all_scouts.
+    let r = post(
+        "/scout".into(),
+        serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 1}, "target": "resources"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        400,
+        "non-scout unit in scout mission → 400"
+    );
+    assert!(r.text().await.unwrap().contains("not_all_scouts"));
+
+    // Reinforce B with 5 clubswingers → 200 with movement echo (kind = "reinforce").
+    let r = post(
+        "/reinforce".into(),
+        serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 5}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "reinforce order");
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["ordered"], true);
+    assert_eq!(body["movement"]["kind"], "reinforce");
+    assert!(body["movement"]["arrive_at_ms"].as_i64().unwrap() > 0);
+
+    // Drive the System: deliver the reinforce using a far-future timestamp (deterministic — no
+    // sleeps). process_due_movements only claims Reinforce/Return movements; the in-flight raid
+    // is a combat movement and is left untouched (claimed by process_due_combat, not here).
+    let future = Timestamp(now().0 + 10_000_000_000);
+    process_due_movements(
+        &repo,
+        &repo,
+        &economy_rules().unwrap(),
+        &unit_rules().unwrap(),
+        GameSpeed::new(1.0).unwrap(),
+        future,
+        100,
+    )
+    .await
+    .unwrap();
+
+    // First recall: A's troops are now stationed at B → order_return succeeds → 200.
+    let r = post("/return".into(), serde_json::json!({"host": b_vid}))
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "first recall");
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["ordered"], true);
+    assert_eq!(body["movement"]["kind"], "return");
+
+    // Second recall while the Return is in transit: the group is already gone from stationed_troops
+    // → order_return returns NothingStationed → 404 nothing_stationed. No further processing needed.
+    let r = post("/return".into(), serde_json::json!({"host": b_vid}))
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        404,
+        "second recall → nothing_stationed"
+    );
+    assert!(r.text().await.unwrap().contains("nothing_stationed"));
+
+    // A typo'd catapult_target is rejected outright (machine contract — never silently dropped).
+    let r = agent
+        .post(format!("{base}/api/w/{home}/village/{a_vid}/attack"))
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .body(
+            serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 2}, "mode": "attack", "catapult_target": "castle"})
+                .to_string(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 400);
+    assert!(r.text().await.unwrap().contains("invalid_catapult_target"));
+}
+
+/// 119 T2: trade & settle adapters over the agent API. Denial-class coverage per plan Decision #6.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_trade_and_settle(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    // Register A (teutons, agent) and B (gauls, ordinary player).
+    let user_a = unique("tr_a");
+    let user_b = unique("tr_b");
+    let c = client();
+    for (u, tribe) in [(&user_a, "teutons"), (&user_b, "gauls")] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", tribe),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user_a)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user_a)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let a_vid = village_uuid(&pool, &user_a).await;
+    let a_uuid = uuid::Uuid::parse_str(&a_vid).unwrap();
+    let b_vid = village_uuid(&pool, &user_b).await;
+    let b_uuid = uuid::Uuid::parse_str(&b_vid).unwrap();
+    let (bx, by): (i32, i32) = sqlx::query_as("SELECT x, y FROM villages WHERE id = $1")
+        .bind(b_uuid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let agent = client();
+    let post = |leaf: String, body: serde_json::Value| {
+        agent
+            .post(format!("{base}/api/w/{home}/village/{a_vid}{leaf}"))
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+    };
+
+    // --- Trade ---
+
+    // No marketplace yet → 409 no_marketplace.
+    let r = post(
+        "/trade".into(),
+        serde_json::json!({"x": bx, "y": by, "give": {"wood": 100}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 409, "no_marketplace → 409");
+    assert!(r.text().await.unwrap().contains("no_marketplace"));
+
+    // Seed a marketplace (level 1) and enough resources.
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         VALUES ($1, 10, 'marketplace', 1)",
+    )
+    .bind(a_uuid)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE village_resources SET wood = 5000, clay = 5000, iron = 5000, crop = 5000, \
+         updated_at = now() WHERE village_id = $1",
+    )
+    .bind(a_uuid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Valid trade to B's coordinates → 200 with shipment echo.
+    let r = post(
+        "/trade".into(),
+        serde_json::json!({"x": bx, "y": by, "give": {"wood": 100}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "trade to B → 200");
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["ordered"], true);
+    assert_eq!(body["shipment"]["dest_x"], bx);
+    assert_eq!(body["shipment"]["dest_y"], by);
+    assert!(
+        body["shipment"]["arrive_at_ms"].as_i64().unwrap() > 0,
+        "arrive_at_ms is set"
+    );
+    assert_eq!(body["shipment"]["give"]["wood"], 100);
+
+    // Empty give bundle → 400 empty_bundle.
+    let r = post(
+        "/trade".into(),
+        serde_json::json!({"x": bx, "y": by, "give": {}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 400, "empty give → 400");
+    assert!(r.text().await.unwrap().contains("empty_bundle"));
+
+    // --- Settle ---
+
+    // No settlers in garrison → 409 (insufficient or not_settler_group).
+    let r = post(
+        "/settle".into(),
+        // Use a coordinate offset from B that's likely a valley (test map).
+        // The exact tile doesn't matter for the denial we're testing here.
+        serde_json::json!({"x": bx + 3, "y": by + 3}),
+    )
+    .await
+    .unwrap();
+    let status = r.status().as_u16();
+    let text = r.text().await.unwrap();
+    assert_eq!(status, 409, "settle without settlers → 409 (got {status})");
+    // The use-case yields NotFreeValley before checking garrison for some tiles,
+    // or Insufficient / NotSettlerGroup if it reaches the garrison check.
+    // Assert 409 and that the error code is one of the expected denial codes.
+    assert!(
+        text.contains("insufficient")
+            || text.contains("not_settler_group")
+            || text.contains("not_free_valley")
+            || text.contains("no_slot"),
+        "settle denial code should be a settle error: {text}"
+    );
+}
+
+/// 119 T3: research & smithy adapters + digest research block over the agent API.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_research_and_smithy(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    // Register A (teutons, agent) — spearman requires academy L1 and is the first researchable unit.
+    let user_a = unique("res_a");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user_a.as_str()),
+            ("email", format!("{user_a}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "teutons"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user_a)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user_a)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let a_vid = village_uuid(&pool, &user_a).await;
+    let a_uuid = uuid::Uuid::parse_str(&a_vid).unwrap();
+
+    let agent = client();
+    let post = |leaf: String, body: serde_json::Value| {
+        agent
+            .post(format!("{base}/api/w/{home}/village/{a_vid}{leaf}"))
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+    };
+    let get = |path: String| {
+        agent
+            .get(format!("{base}/api/w/{home}{path}"))
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+    };
+
+    // --- Smithy: no smithy building → 409 no_smithy ---
+    // Use the tier-1 unit (clubswinger — researched by default, no Academy required) so the
+    // use-case reaches the NoSmithy check rather than aborting earlier on NotResearched.
+    let r = post("/smithy".into(), serde_json::json!({"unit": "clubswinger"}))
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 409, "no smithy → 409");
+    assert!(r.text().await.unwrap().contains("no_smithy"));
+
+    // --- Research: seed academy L1 + storage buildings, then fund resources ---
+    // spearman research cost: wood=970, clay=380, iron=880, crop=400 (classic preset).
+    // Default warehouse/granary capacity is only 800 (level 0), so we need level-1 storage
+    // (capacity = 1200) to hold the amounts above the default 800 cap.
+    for (slot, kind) in [(2_i16, "warehouse"), (3_i16, "granary"), (5_i16, "academy")] {
+        sqlx::query(
+            "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+             VALUES ($1, $2, $3, 1)",
+        )
+        .bind(a_uuid)
+        .bind(slot)
+        .bind(kind)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    // Set to 1100 — above all per-resource research costs but below level-1 capacity (1200).
+    sqlx::query(
+        "UPDATE village_resources SET wood = 1100, clay = 1100, iron = 1100, crop = 1100, \
+         updated_at = now() WHERE village_id = $1",
+    )
+    .bind(a_uuid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Research spearman → 200 with order echo.
+    // (spearman is the first Teuton unit with academy L1 requirement — classic/units.toml line 233)
+    let r = post("/research".into(), serde_json::json!({"unit": "spearman"}))
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "research spearman → 200");
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["ordered"], true);
+    assert_eq!(body["order"]["kind"], "research");
+    assert_eq!(body["order"]["unit"], "spearman");
+    assert!(
+        body["order"]["complete_at_ms"].as_i64().unwrap() > 0,
+        "complete_at_ms is set"
+    );
+
+    // Re-POST while in progress → 409 in_progress.
+    // The first research debited wood/iron; top up so the second call reaches the duplicate check.
+    sqlx::query(
+        "UPDATE village_resources SET wood = 1100, clay = 1100, iron = 1100, crop = 1100, \
+         updated_at = now() WHERE village_id = $1",
+    )
+    .bind(a_uuid)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let r = post("/research".into(), serde_json::json!({"unit": "spearman"}))
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        409,
+        "re-research while in progress → 409"
+    );
+    assert!(r.text().await.unwrap().contains("in_progress"));
+
+    // --- Digest research block ---
+    let r = get("/state".into()).await.unwrap();
+    assert_eq!(r.status().as_u16(), 200, "digest → 200");
+    let digest: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    let research = &digest["villages"][0]["research"];
+    // The active queue must contain the spearman research order.
+    let active = research["active"].as_array().unwrap();
+    assert_eq!(active.len(), 1, "one active research order in digest");
+    assert_eq!(active[0]["kind"], "research");
+    assert_eq!(active[0]["unit"], "spearman");
+    assert!(
+        active[0]["complete_at_ms"].as_i64().unwrap() > 0,
+        "complete_at_ms present in digest"
+    );
+
+    // --- Smithy success (M2b): seed a smithy (level 1, matching existing smithy tests at slot 6),
+    // then POST /smithy for clubswinger → 200 with order echo; digest research.active reflects it.
+    // The no_smithy assertion above already ran before this seeding (per instructions). Resources
+    // remain at 1100 from the earlier top-up (the duplicate-research 409 did not debit).
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         VALUES ($1, 6, 'smithy', 1)",
+    )
+    .bind(a_uuid)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let r = post("/smithy".into(), serde_json::json!({"unit": "clubswinger"}))
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "smithy upgrade clubswinger → 200");
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["ordered"], true);
+    assert_eq!(body["order"]["kind"], "smithy");
+    assert_eq!(body["order"]["unit"], "clubswinger");
+    assert!(
+        body["order"]["target_level"].as_i64().unwrap() > 0,
+        "target_level set in smithy order echo"
+    );
+    assert!(
+        body["order"]["complete_at_ms"].as_i64().unwrap() > 0,
+        "complete_at_ms set in smithy order echo"
+    );
+    // Digest: research.active now includes the smithy upgrade alongside the spearman research.
+    let r = get("/state".into()).await.unwrap();
+    assert_eq!(r.status().as_u16(), 200, "digest after smithy → 200");
+    let digest2: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    let active2 = digest2["villages"][0]["research"]["active"]
+        .as_array()
+        .unwrap();
+    assert!(
+        active2
+            .iter()
+            .any(|o| o["kind"] == "smithy" && o["unit"] == "clubswinger"),
+        "smithy order for clubswinger appears in digest research.active"
+    );
+}
+
+/// 119 T4: digest closure — movements/reinforcements/scout_reports in the digest, plus
+/// /report/{id} and /scout-report/{id} endpoints with party scoping.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_digest_closure(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let repo = movement_repo(&pool).await;
+
+    // --- Register A, B (both agents, both need keys), and C (third agent, non-party). ---
+    let user_a = unique("dc_a");
+    let user_b = unique("dc_b");
+    let user_c = unique("dc_c");
+    let c = client();
+    for (u, tribe) in [
+        (&user_a, "teutons"),
+        (&user_b, "gauls"),
+        (&user_c, "romans"),
+    ] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", tribe),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+    // Mark all three as AI agents.
+    for u in [&user_a, &user_b, &user_c] {
+        sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+            .bind(u)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    // Mint bearer keys for all three.
+    let (key_a, token_a) = apikey::generate();
+    let (key_b, token_b) = apikey::generate();
+    let (key_c, token_c) = apikey::generate();
+    for (key, user) in [(&key_a, &user_a), (&key_b, &user_b), (&key_c, &user_c)] {
+        sqlx::query(
+            "INSERT INTO agent_keys (id, user_id, secret_hash) \
+             VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+        )
+        .bind(&key.id)
+        .bind(user)
+        .bind(apikey::secret_hash(&key.secret))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // Village IDs and coordinates.
+    let a_vid = village_uuid(&pool, &user_a).await;
+    let a_uuid = uuid::Uuid::parse_str(&a_vid).unwrap();
+    let (ax, ay): (i32, i32) = sqlx::query_as("SELECT x, y FROM villages WHERE id = $1")
+        .bind(a_uuid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let b_vid = village_uuid(&pool, &user_b).await;
+    let b_uuid = uuid::Uuid::parse_str(&b_vid).unwrap();
+    let (bx, by): (i32, i32) = sqlx::query_as("SELECT x, y FROM villages WHERE id = $1")
+        .bind(b_uuid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Seed A's garrison: 20 clubswingers (Teuton tier-1) — enough for both reinforce and raid.
+    sqlx::query(
+        "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'clubswinger', 20)",
+    )
+    .bind(a_uuid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let agent_a = client();
+    let agent_b = client();
+
+    let post_a = |leaf: String, body: serde_json::Value| {
+        agent_a
+            .post(format!("{base}/api/w/{home}/village/{a_vid}{leaf}"))
+            .header("Authorization", format!("Bearer {token_a}"))
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+    };
+    let digest_a = || {
+        agent_a
+            .get(format!("{base}/api/w/{home}/state"))
+            .header("Authorization", format!("Bearer {token_a}"))
+            .send()
+    };
+    let digest_b = || {
+        agent_b
+            .get(format!("{base}/api/w/{home}/state"))
+            .header("Authorization", format!("Bearer {token_b}"))
+            .send()
+    };
+    let get_report = |token: &str, rid: &str| {
+        let url = format!("{base}/api/w/{home}/report/{rid}");
+        let tok = token.to_owned();
+        let ag = reqwest::Client::builder()
+            .cookie_store(true)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        async move {
+            ag.get(&url)
+                .header("Authorization", format!("Bearer {tok}"))
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+
+    // -----------------------------------------------------------------------
+    // Phase 1: A reinforces B → digest A shows a movements entry in-flight.
+    // -----------------------------------------------------------------------
+    let r = post_a(
+        "/reinforce".into(),
+        serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 5}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "reinforce order");
+
+    // A's digest should show the in-flight reinforce in "movements".
+    let d = digest_a().await.unwrap();
+    assert_eq!(d.status().as_u16(), 200);
+    let dv: serde_json::Value = serde_json::from_str(&d.text().await.unwrap()).unwrap();
+    let movements = dv["movements"].as_array().unwrap();
+    assert_eq!(movements.len(), 1, "one in-flight movement in A's digest");
+    assert_eq!(movements[0]["kind"], "reinforce");
+    assert_eq!(movements[0]["dest_x"], bx);
+    assert_eq!(movements[0]["dest_y"], by);
+    assert!(
+        movements[0]["arrive_at_ms"].as_i64().unwrap() > 0,
+        "arrive_at_ms set"
+    );
+    assert_eq!(movements[0]["troops"]["clubswinger"], 5);
+
+    // -----------------------------------------------------------------------
+    // Phase 2: drive due movements — the reinforce lands at B.
+    // -----------------------------------------------------------------------
+    let future = Timestamp(now().0 + 10_000_000_000);
+    process_due_movements(
+        &repo,
+        &repo,
+        &economy_rules().unwrap(),
+        &unit_rules().unwrap(),
+        GameSpeed::new(1.0).unwrap(),
+        future,
+        100,
+    )
+    .await
+    .unwrap();
+
+    // B's digest should now show reinforcements_here from A.
+    let d = digest_b().await.unwrap();
+    assert_eq!(d.status().as_u16(), 200);
+    let bv: serde_json::Value = serde_json::from_str(&d.text().await.unwrap()).unwrap();
+    let rhere = bv["villages"][0]["reinforcements_here"].as_array().unwrap();
+    assert_eq!(
+        rhere.len(),
+        1,
+        "B's village has one reinforcement group here"
+    );
+    assert_eq!(rhere[0]["x"], ax, "GUEST's home coord x = A's coord x");
+    assert_eq!(rhere[0]["y"], ay, "GUEST's home coord y = A's coord y");
+    assert_eq!(rhere[0]["owner"], user_a.as_str(), "GUEST owner = A");
+    assert_eq!(rhere[0]["troops"]["clubswinger"], 5);
+    // home_village of the group should be A's village.
+    assert_eq!(rhere[0]["home_village"], a_vid.as_str());
+
+    // A's digest should now show reinforcements_abroad with host = B's village.
+    let d = digest_a().await.unwrap();
+    let av2: serde_json::Value = serde_json::from_str(&d.text().await.unwrap()).unwrap();
+    let rabroad = av2["reinforcements_abroad"].as_array().unwrap();
+    assert_eq!(
+        rabroad.len(),
+        1,
+        "A has one group stationed abroad after delivery"
+    );
+    assert_eq!(rabroad[0]["host_village"], b_vid.as_str(), "host = B");
+    assert_eq!(rabroad[0]["x"], bx, "HOST coord x = B's coord x");
+    assert_eq!(rabroad[0]["y"], by, "HOST coord y = B's coord y");
+    assert_eq!(rabroad[0]["owner"], user_b.as_str(), "HOST owner = B");
+    assert_eq!(rabroad[0]["troops"]["clubswinger"], 5);
+
+    // Equality spot-check (M4 pattern): A's movements are clear now; abroad matches the stationed
+    // group the reinforce just created.  The digest field equals what reinforcements_of would return.
+    let movements_after = av2["movements"].as_array().unwrap();
+    assert!(
+        movements_after.is_empty(),
+        "A has no in-flight movements after delivery"
+    );
+
+    // -----------------------------------------------------------------------
+    // Phase 3: A raids B (clear protection first) → reports both gain kind "raid".
+    // -----------------------------------------------------------------------
+    clear_protection(&pool).await;
+
+    // Seed A with enough resources so the raid is not blocked by cost (attacks cost nothing,
+    // but ensure the garrison is large enough for the send after the 5 were reinforced out).
+    // A still has 15 clubswingers in garrison (20 - 5 reinforced away).
+    let r = post_a(
+        "/attack".into(),
+        serde_json::json!({"x": bx, "y": by, "units": {"clubswinger": 5}, "mode": "raid"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "raid after clear_protection");
+
+    // Drive combat resolution.
+    let econ = economy_rules().unwrap();
+    let units = unit_rules().unwrap();
+    let combat = combat_rules().unwrap();
+    let scout = scout_rules().unwrap();
+    let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+    let world = ensure_world(&pool, &config).await.unwrap();
+    let map = WorldMap::new(world.seed as u64, config.radius, map_rules().unwrap());
+    process_due_combat(
+        &repo,
+        &repo,
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        &combat,
+        &scout,
+        &culture_rules().unwrap(),
+        &loyalty_rules().unwrap(),
+        &ranking_rules().unwrap(),
+        &map,
+        GameSpeed::new(1.0).unwrap(),
+        world.seed as u64,
+        future,
+        100,
+        (3, 6, 10),
+    )
+    .await
+    .unwrap();
+
+    // A's digest reports heads must contain the raid (kind = "raid").
+    let d = digest_a().await.unwrap();
+    let av3: serde_json::Value = serde_json::from_str(&d.text().await.unwrap()).unwrap();
+    let a_reports = av3["reports"].as_array().unwrap();
+    assert!(
+        !a_reports.is_empty(),
+        "A has at least one report after the raid"
+    );
+    let raid_head = a_reports
+        .iter()
+        .find(|r| r["kind"] == "raid")
+        .expect("A's digest has a 'raid' report head");
+    let report_id = raid_head["id"].as_str().unwrap().to_owned();
+
+    // B's digest also shows the raid report.
+    let d = digest_b().await.unwrap();
+    let bv3: serde_json::Value = serde_json::from_str(&d.text().await.unwrap()).unwrap();
+    let b_reports = bv3["reports"].as_array().unwrap();
+    assert!(
+        b_reports.iter().any(|r| r["kind"] == "raid"),
+        "B's digest also has a 'raid' report head"
+    );
+
+    // -----------------------------------------------------------------------
+    // Phase 4: /report/{id} party scoping — A and B see it, C gets 404.
+    // -----------------------------------------------------------------------
+    let r = get_report(&token_a, &report_id).await;
+    assert_eq!(r.status().as_u16(), 200, "A (attacker) can read the report");
+    let report_a: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(report_a["id"], report_id.as_str());
+    assert_eq!(report_a["kind"], "raid");
+    // Verify the full shape is present (no fog beyond port scoping).
+    assert!(report_a["attacker_name"].is_string());
+    assert!(report_a["defender_name"].is_string());
+    assert!(report_a["attacker_forces"].is_object());
+    assert!(report_a["defender_forces"].is_object());
+    assert!(report_a["loot"].is_object());
+
+    let r = get_report(&token_b, &report_id).await;
+    assert_eq!(r.status().as_u16(), 200, "B (defender) can read the report");
+    let report_b: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(report_b["id"], report_id.as_str());
+    assert_eq!(report_b["kind"], "raid");
+
+    // C is not a party → 404 not_found.
+    let r = get_report(&token_c, &report_id).await;
+    assert_eq!(
+        r.status().as_u16(),
+        404,
+        "C (non-party) gets 404 on the report"
+    );
+    assert!(r.text().await.unwrap().contains("not_found"));
+}
+
+/// 119 M1: scout mission over the agent API — scouter happy-path, party scoping (detected and
+/// undetected branches), and non-party 404.
+///
+/// Detection rule from `scouting.rs resolve_scouting`: `detected = (attacker_loss_frac > 0)` iff
+/// `defender_power > 0` (deterministic, no seed). Two branches covered:
+///   • Undetected: B has no counter-espionage scouts → defender_power=0 → B is not a party (404).
+///   • Detected:  B has 1 gaul pathfinder (scouting=20, power=20) vs A's 3 teuton scouts
+///     (scouting=10 each, power=30) → frac=(20/30)^1.5 > 0 → detected=true → B sees the report
+///     but with a REDACTED view (intel null, scouts_sent empty — pre-redacted by the port, P4).
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_scouting(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let repo = movement_repo(&pool).await;
+
+    // Register A (teutons), B (gauls), C (romans); mark all as agents; mint bearer keys.
+    let user_a = unique("sca_a");
+    let user_b = unique("sca_b");
+    let user_c = unique("sca_c");
+    let c = client();
+    for (u, tribe) in [
+        (&user_a, "teutons"),
+        (&user_b, "gauls"),
+        (&user_c, "romans"),
+    ] {
+        c.post(format!("{base}/register"))
+            .form(&[
+                ("username", u.as_str()),
+                ("email", format!("{u}@example.com").as_str()),
+                ("password", "secret12"),
+                ("tribe", tribe),
+            ])
+            .send()
+            .await
+            .unwrap();
+    }
+    for u in [&user_a, &user_b, &user_c] {
+        sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+            .bind(u)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let (key_a, token_a) = apikey::generate();
+    let (key_b, token_b) = apikey::generate();
+    let (key_c, token_c) = apikey::generate();
+    for (key, user) in [(&key_a, &user_a), (&key_b, &user_b), (&key_c, &user_c)] {
+        sqlx::query(
+            "INSERT INTO agent_keys (id, user_id, secret_hash) \
+             VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+        )
+        .bind(&key.id)
+        .bind(user)
+        .bind(apikey::secret_hash(&key.secret))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    clear_protection(&pool).await;
+
+    // Village IDs and coordinates.
+    let a_vid = village_uuid(&pool, &user_a).await;
+    let a_uuid = uuid::Uuid::parse_str(&a_vid).unwrap();
+    let b_vid = village_uuid(&pool, &user_b).await;
+    let b_uuid = uuid::Uuid::parse_str(&b_vid).unwrap();
+    let (bx, by): (i32, i32) = sqlx::query_as("SELECT x, y FROM villages WHERE id = $1")
+        .bind(b_uuid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Seed A with 3 teuton scouts ("scout", scouting=10 each → attacker_power=30).
+    // B starts with no scouts — clean first mission (undetected, defender_power=0).
+    sqlx::query("INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'scout', 3)")
+        .bind(a_uuid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let agent_a = client();
+
+    // Reusable scout-report fetcher — creates a fresh client per call, matching the party-scoping
+    // pattern established in agent_api_digest_closure.
+    let get_scout_report = |token: &str, id: &str| {
+        let url = format!("{base}/api/w/{home}/scout-report/{id}");
+        let tok = token.to_owned();
+        let ag = reqwest::Client::builder()
+            .cookie_store(true)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        async move {
+            ag.get(&url)
+                .header("Authorization", format!("Bearer {tok}"))
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+
+    // Rules shared by both process_due_scouts / process_due_movements calls.
+    let econ = economy_rules().unwrap();
+    let units = unit_rules().unwrap();
+    let scout = scout_rules().unwrap();
+    let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+    let world = ensure_world(&pool, &config).await.unwrap();
+    let map = WorldMap::new(world.seed as u64, config.radius, map_rules().unwrap());
+
+    // -----------------------------------------------------------------------
+    // Phase 1: A scouts B (B undefended) — clean/undetected mission.
+    // -----------------------------------------------------------------------
+    let r = agent_a
+        .post(format!("{base}/api/w/{home}/village/{a_vid}/scout"))
+        .header("Authorization", format!("Bearer {token_a}"))
+        .header("Content-Type", "application/json")
+        .body(
+            serde_json::json!({
+                "x": bx, "y": by, "units": {"scout": 3}, "target": "resources"
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "scout order → 200");
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["ordered"], true, "ordered flag");
+    assert_eq!(
+        body["movement"]["kind"], "scout",
+        "movement echo kind = scout"
+    );
+
+    // Resolve the mission; then drive the survivors' return movement home (so the garrison is
+    // restored before the second mission — process_due_scouts schedules a return leg for survivors).
+    let future = Timestamp(now().0 + 10_000_000_000);
+    process_due_scouts(
+        &repo,
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        &scout,
+        &map,
+        GameSpeed::new(1.0).unwrap(),
+        future,
+        100,
+    )
+    .await
+    .unwrap();
+    process_due_movements(
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        GameSpeed::new(1.0).unwrap(),
+        Timestamp(now().0 + 15_000_000_000),
+        100,
+    )
+    .await
+    .unwrap();
+
+    // A's digest: scout_reports heads has 1 entry with the expected fields.
+    let d = agent_a
+        .get(format!("{base}/api/w/{home}/state"))
+        .header("Authorization", format!("Bearer {token_a}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(d.status().as_u16(), 200);
+    let av: serde_json::Value = serde_json::from_str(&d.text().await.unwrap()).unwrap();
+    let heads = av["scout_reports"].as_array().unwrap();
+    assert_eq!(heads.len(), 1, "one scout report head in A's digest");
+    assert_eq!(heads[0]["viewer_is_scouter"], true, "A is the scouter");
+    assert_eq!(heads[0]["detected"], false, "undetected — B has no scouts");
+    assert!(
+        heads[0]["occurred_at_ms"].as_i64().unwrap() > 0,
+        "occurred_at_ms set"
+    );
+    let report_id1 = heads[0]["id"].as_str().unwrap().to_owned();
+
+    // A GET full report → 200: scouter view (intel present, scouts_sent non-empty).
+    let r = get_scout_report(&token_a, &report_id1).await;
+    assert_eq!(r.status().as_u16(), 200, "A reads the scout report");
+    let rep: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(rep["viewer_is_scouter"], true);
+    assert!(
+        !rep["scouts_sent"].as_object().unwrap().is_empty(),
+        "scouts_sent non-empty for scouter"
+    );
+    assert!(
+        !rep["intel"].is_null(),
+        "intel present — scouts survived undetected"
+    );
+    assert_eq!(rep["detected"], false);
+
+    // B GET the undetected report → 404 (target is not a party when undetected, P4).
+    let r = get_scout_report(&token_b, &report_id1).await;
+    assert_eq!(r.status().as_u16(), 404, "B cannot see undetected report");
+
+    // C GET the first report → 404 (non-party).
+    let r = get_scout_report(&token_c, &report_id1).await;
+    assert_eq!(r.status().as_u16(), 404, "C (non-party) gets 404");
+
+    // -----------------------------------------------------------------------
+    // Phase 2: Seed B with 1 gaul pathfinder (scouting=20 → defender_power=20).
+    // A's 3 scouts returned home; send them again — attacker_power=30 > 20 → detected=true.
+    // resolve_scouting: frac=(20/30)^1.5 > 0 → detected iff defender_power > 0 (deterministic).
+    // -----------------------------------------------------------------------
+    sqlx::query(
+        "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'pathfinder', 1)",
+    )
+    .bind(b_uuid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let r = agent_a
+        .post(format!("{base}/api/w/{home}/village/{a_vid}/scout"))
+        .header("Authorization", format!("Bearer {token_a}"))
+        .header("Content-Type", "application/json")
+        .body(
+            serde_json::json!({
+                "x": bx, "y": by, "units": {"scout": 3}, "target": "resources"
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "second scout order → 200");
+
+    process_due_scouts(
+        &repo,
+        &repo,
+        &repo,
+        &econ,
+        &units,
+        &scout,
+        &map,
+        GameSpeed::new(1.0).unwrap(),
+        Timestamp(now().0 + 20_000_000_000),
+        100,
+    )
+    .await
+    .unwrap();
+
+    // A's digest: 2 scout report heads; identify the detected one.
+    let d = agent_a
+        .get(format!("{base}/api/w/{home}/state"))
+        .header("Authorization", format!("Bearer {token_a}"))
+        .send()
+        .await
+        .unwrap();
+    let av2: serde_json::Value = serde_json::from_str(&d.text().await.unwrap()).unwrap();
+    let heads2 = av2["scout_reports"].as_array().unwrap();
+    assert_eq!(
+        heads2.len(),
+        2,
+        "two scout report heads in A's digest after second mission"
+    );
+    let detected_head = heads2
+        .iter()
+        .find(|h| h["detected"].as_bool().unwrap_or(false))
+        .expect("detected scout report in A's digest");
+    assert_eq!(detected_head["viewer_is_scouter"], true);
+    let report_id2 = detected_head["id"].as_str().unwrap().to_owned();
+
+    // B GET the detected report → 200: target view (pre-redacted by port — intel null, scouts_sent empty).
+    let r = get_scout_report(&token_b, &report_id2).await;
+    assert_eq!(r.status().as_u16(), 200, "B sees the detected scout report");
+    let rep2: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(
+        rep2["viewer_is_scouter"], false,
+        "B is the target, not scouter"
+    );
+    assert!(
+        rep2["intel"].is_null(),
+        "intel null (redacted for target view)"
+    );
+    assert!(
+        rep2["scouts_sent"].as_object().unwrap().is_empty(),
+        "scouts_sent empty (pre-redacted for target view)"
+    );
+    assert_eq!(rep2["detected"], true);
+
+    // C GET the detected report → 404 (non-party).
+    let r = get_scout_report(&token_c, &report_id2).await;
+    assert_eq!(
+        r.status().as_u16(),
+        404,
+        "C (non-party) gets 404 for detected report"
+    );
+}
+
+/// 119 M2a: settle over the agent API — full success path mirroring
+/// `settling_culture_panel_switcher_and_capital_flow` exactly: Residence L1 + CP=1000 + 3 settlers
+/// → POST /settle → 200 with movement echo kind "settle" → process_due_settles → digest shows 2
+/// villages.
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_api_settle_success(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let repo = movement_repo(&pool).await;
+    let crules = culture_rules().unwrap();
+    let units = unit_rules().unwrap();
+    let template = starting_village().unwrap();
+    let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+    let world = ensure_world(&pool, &config).await.unwrap();
+    let map = WorldMap::new(world.seed as u64, config.radius, map_rules().unwrap());
+
+    // Register A (teutons) as an agent; mint key.
+    let user_a = unique("stl_a");
+    let c = client();
+    c.post(format!("{base}/register"))
+        .form(&[
+            ("username", user_a.as_str()),
+            ("email", format!("{user_a}@example.com").as_str()),
+            ("password", "secret12"),
+            ("tribe", "teutons"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE username = $1")
+        .bind(&user_a)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate();
+    sqlx::query(
+        "INSERT INTO agent_keys (id, user_id, secret_hash) \
+         VALUES ($1, (SELECT id FROM users WHERE username = $2), $3)",
+    )
+    .bind(&key.id)
+    .bind(&user_a)
+    .bind(apikey::secret_hash(&key.secret))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Fetch user_id (= player_id in home world) + village metadata via the same join the existing
+    // settle test uses (villages.owner_id = players.id = users.id in home world per ADR 0045).
+    let (user_id, vid, vx, vy): (uuid::Uuid, uuid::Uuid, i32, i32) = sqlx::query_as(
+        "SELECT u.id, v.id, v.x, v.y FROM villages v JOIN users u ON u.id = v.owner_id \
+         WHERE u.username = $1",
+    )
+    .bind(&user_a)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let a_vid = vid.to_string();
+    let village_coord = Coordinate::new(vx, vy);
+
+    // Mirror the existing settle test's seeding exactly: Residence slot 9 L1, CP = 1000, 3 settlers.
+    sqlx::query(
+        "INSERT INTO village_buildings (village_id, slot, building_type, level) \
+         VALUES ($1, 9, 'residence', 1)",
+    )
+    .bind(vid)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE player_culture SET value = 1000, updated_at = now() WHERE player_id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, $2, $3)")
+        .bind(vid)
+        .bind(&crules.settler_id)
+        .bind(i32::try_from(crules.settlers_per_village).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Find a free valley target — same approach as settling_culture_panel_switcher_and_capital_flow.
+    let occupied: std::collections::HashSet<(i32, i32)> =
+        sqlx::query_as::<_, (i32, i32)>("SELECT x, y FROM villages WHERE world_id = $1")
+            .bind(uuid::Uuid::from_u128(world.id.0))
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .collect();
+    let target = coordinates_within(config.radius)
+        .find(|coord| {
+            matches!(map.tile_at(*coord), Some(TileKind::Valley(_)))
+                && *coord != village_coord
+                && !occupied.contains(&(coord.x, coord.y))
+        })
+        .expect("a free valley exists within the world radius");
+
+    // POST /api/w/{home}/village/{a_vid}/settle → 200 with movement echo kind "settle".
+    let agent = client();
+    let r = agent
+        .post(format!("{base}/api/w/{home}/village/{a_vid}/settle"))
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({"x": target.x, "y": target.y}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "settle order → 200");
+    let body: serde_json::Value = serde_json::from_str(&r.text().await.unwrap()).unwrap();
+    assert_eq!(body["ordered"], true, "ordered flag");
+    assert_eq!(
+        body["movement"]["kind"], "settle",
+        "movement echo kind = settle"
+    );
+
+    // Drive settle resolution.
+    let future = Timestamp(now().0 + 10_000_000_000);
+    process_due_settles(
+        &repo,
+        &repo,
+        &repo,
+        &crules,
+        &units,
+        &template,
+        &map,
+        GameSpeed::new(1.0).unwrap(),
+        future,
+        100,
+    )
+    .await
+    .unwrap();
+
+    // A's digest must show 2 villages after founding.
+    let d = agent
+        .get(format!("{base}/api/w/{home}/state"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(d.status().as_u16(), 200, "digest → 200");
+    let dv: serde_json::Value = serde_json::from_str(&d.text().await.unwrap()).unwrap();
+    assert_eq!(
+        dv["villages"].as_array().unwrap().len(),
+        2,
+        "digest shows 2 villages after settling"
     );
 }
