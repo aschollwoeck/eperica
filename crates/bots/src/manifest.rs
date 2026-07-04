@@ -28,7 +28,17 @@ pub struct ManifestEntry {
 /// Returns an error string if the JSON is malformed or any entry is missing a
 /// required field (`username` or `token`).
 fn parse_manifest(s: &str) -> Result<Vec<ManifestEntry>, String> {
-    serde_json::from_str(s).map_err(|e| e.to_string())
+    let entries: Vec<ManifestEntry> = serde_json::from_str(s).map_err(|e| e.to_string())?;
+    // Duplicate usernames would cross-wire per-bot state in the runner (it keys results by name);
+    // 120-produced manifests are unique by construction, so a duplicate means a hand-edited or
+    // concatenated file — reject it outright.
+    let mut seen = std::collections::HashSet::new();
+    for e in &entries {
+        if !seen.insert(e.username.as_str()) {
+            return Err(format!("duplicate username in manifest: {}", e.username));
+        }
+    }
+    Ok(entries)
 }
 
 /// Read and parse the key manifest at `path`.
@@ -119,5 +129,13 @@ mod tests {
             parse_manifest(json).is_err(),
             "missing `username` field must be an error"
         );
+    }
+
+    #[test]
+    fn duplicate_usernames_rejected() {
+        let json =
+            r#"[{"username":"bot1","token":"epk_a_b"},{"username":"bot1","token":"epk_c_d"}]"#;
+        let err = parse_manifest(json).unwrap_err();
+        assert!(err.contains("duplicate username"), "got: {err}");
     }
 }

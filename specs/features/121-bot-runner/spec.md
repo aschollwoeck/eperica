@@ -1,6 +1,6 @@
 # Feature 121 — the bot runner (`eperica-bots`): rule-based reflexes on humanized cadence
 
-**Status:** Draft
+**Status:** Verified (built on feature/121-bot-runner; reviewer APPROVE)
 **Depends on:** 118–120 (the complete Agent API + fleet seeding/key manifests), ADR 0036.
 **Roadmap:** slice 4 of the AI-players program (118–122).
 

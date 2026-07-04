@@ -1,6 +1,6 @@
 # Tasks — 121 the bot runner
 
-**Status:** Draft. Ordered; each gated by `cargo fmt --all -- --check`, `clippy --all-targets -- -D warnings`,
+**Status:** Verified (reviewer APPROVE, 2026-07-04). Ordered; each gated by `cargo fmt --all -- --check`, `clippy --all-targets -- -D warnings`,
 `cargo test --workspace`, and the P11 budget (client-side: the one-digest-per-tick + cap rules).
 Branch `feature/121-bot-runner`; commit per task.
 
@@ -20,7 +20,7 @@ Branch `feature/121-bot-runner`; commit per task.
 - [x] **T6 — Docs.** `crates/bots/README.md` (run book: seed fleet → download manifest → run);
   CLAUDE.md commands section (`cargo run -p eperica-bots -- …`); docs/agent-api.md cross-link.
   End-user docs: operator-facing — recorded internal.
-- [ ] **T7 — Review & accept.** Gates green; `eperica-reviewer` → APPROVE; statuses flipped; PR
+- [x] **T7 — Review & accept.** Gates green; `eperica-reviewer` → APPROVE; statuses flipped; PR
   ready to merge.
 
 ## Done when

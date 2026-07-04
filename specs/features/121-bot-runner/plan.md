@@ -1,6 +1,6 @@
 # Plan — 121 the bot runner (`eperica-bots`)
 
-**Status:** Draft (spec approved)
+**Status:** Verified (built as planned; doctrine interleave + prereq table clarified during build/review)
 
 ## Constitution check
 
@@ -48,8 +48,9 @@ Evaluated in order; the first section that yields intents ends economy planning 
    verified in the walk test (`doctrine_table_walks_to_completion`). (Clarified during build: the
    original "first section that yields ends planning" wording made the avg-2 gate unreachable —
    fields would monopolize until all-18-at-10.)
-5. **Training:** garrison below `10 + 10·aggression` units ⇒ train the tribe's tier-1 infantry up
-   to what ~25% of current resources afford (never drain the build budget).
+5. **Training:** garrison (including units already in training) below `10 + 10·aggression` ⇒ train
+   the tribe's tier-1 infantry, `min(needed, 5)` per tick — affordability is the server's call
+   (409 `insufficient` is a normal outcome; no balance tables duplicated client-side).
 6. **Settling:** `villages_used < villages_allowed` AND Residence ≥10 ⇒ train settlers (3) when
    affordable; when the digest garrison holds 3 settlers ⇒ `Settle(nearest free valley)` from the
    map window.

@@ -309,6 +309,9 @@ pub fn plan_tick(
         .collect();
 
     // Recall: troops stationed at own villages that are not under imminent attack.
+    // Deferred doctrine polish (reviewer NIT): with ≥3 villages a recall can return troops toward
+    // a still-inbound attack on their home village — the 2-village case (the only one the evacuate
+    // rule produces today) defers correctly. Revisit if bots grow larger empires.
     // The issuer village is only strict path addressing — order_return matches the
     // stationed group by (owner, host), so any owned village may issue the recall.
     // We pick the first non-attacked own village that is not the host to avoid
@@ -2263,8 +2266,20 @@ mod tests {
             };
 
             // Prereq checks at emission time (before updating state):
+            //   barracks emission → main_building must be ≥3 (construction.toml: barracks prereq MB≥3)
             //   academy emission → barracks must be ≥3  (construction.toml: academy prereqs barracks≥3)
             //   residence emission → main_building must be ≥5  (construction.toml: residence prereq MB≥5)
+            if kind == "barracks" {
+                let mb_lvl = buildings
+                    .iter()
+                    .find(|b| b.kind == "main_building")
+                    .map(|b| b.level)
+                    .unwrap_or(0);
+                assert!(
+                    mb_lvl >= 3,
+                    "step {step_count}: barracks emitted before main_building≥3 (mb={mb_lvl}); seq={sequence:?}"
+                );
+            }
             if kind == "academy" {
                 let barracks_lvl = buildings
                     .iter()
