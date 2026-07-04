@@ -20,7 +20,10 @@ const FNV_PRIME: u64 = 1_099_511_628_211;
 
 /// Inline FNV-1a 64-bit hash.  Deterministic, const-seeded, byte-loop only.
 /// No std hash traits; no per-process randomness.
-fn fnv1a_64(bytes: &[u8]) -> u64 {
+///
+/// `pub(crate)` so `runner.rs` can seed its jitter from the same algorithm without
+/// duplicating the constants.
+pub(crate) fn fnv1a_64(bytes: &[u8]) -> u64 {
     let mut h = FNV_OFFSET;
     for &b in bytes {
         h ^= b as u64;

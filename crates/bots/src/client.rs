@@ -24,6 +24,9 @@ pub enum ApiFailure {
         code: String,
         /// Player-visible reason text.
         reason: String,
+        /// Present on 429 responses: the server-recommended back-off in seconds.
+        /// The executor uses this directly; absent means fall back to a default.
+        retry_after_secs: Option<u64>,
     },
     /// A transport-level failure (connection refused, timeout, DNS, etc.).
     Http(String),
@@ -38,8 +41,13 @@ impl std::fmt::Display for ApiFailure {
                 status,
                 code,
                 reason,
+                retry_after_secs,
             } => {
-                write!(f, "API {status} {code}: {reason}")
+                if let Some(secs) = retry_after_secs {
+                    write!(f, "API {status} {code}: {reason} (retry after {secs}s)")
+                } else {
+                    write!(f, "API {status} {code}: {reason}")
+                }
             }
             Self::Http(msg) => write!(f, "transport error: {msg}"),
             Self::BadBody(msg) => write!(f, "bad body: {msg}"),
@@ -354,17 +362,21 @@ async fn parse_response<T: serde::de::DeserializeOwned>(
         serde_json::from_str::<T>(&text)
             .map_err(|e| ApiFailure::BadBody(format!("{e} — body: {text}")))
     } else {
-        // Attempt to parse the standard `{error, reason}` shape.
+        // Attempt to parse the standard `{error, reason[, retry_after_secs]}` shape.
+        // `retry_after_secs` is optional — only 429 responses include it.
         #[derive(serde::Deserialize)]
         struct ErrorBody {
             error: String,
             reason: String,
+            #[serde(default)]
+            retry_after_secs: Option<u64>,
         }
         match serde_json::from_str::<ErrorBody>(&text) {
             Ok(e) => Err(ApiFailure::Api {
                 status,
                 code: e.error,
                 reason: e.reason,
+                retry_after_secs: e.retry_after_secs,
             }),
             Err(_) => Err(ApiFailure::BadBody(format!("HTTP {status}: {text}"))),
         }

@@ -1,0 +1,685 @@
+//! Fleet scheduler.
+//!
+//! [`run_fleet`] loads the bot manifest, validates keys, and runs the
+//! per-bot tick loop.  A single scheduler task sleeps until the next due bot,
+//! wakes up, and spawns per-tick tasks through a fleet-wide `Arc<Semaphore>`
+//! (cap = [`RunnerConfig::cap`]).
+//!
+//! # Jitter
+//!
+//! Next-tick delay = XorShift64(FNV-1a(name) XOR tick_count), remapped to
+//! `[tick_min_secs, tick_max_secs]`.
+//!
+//! Combining the deterministic name hash with the monotonic tick counter gives
+//! successive ticks for the same bot visibly different delays while keeping the
+//! sequence reproducible when both the name and the counter are known (e.g., in
+//! a test or replay).  Different bots with the same counter still get different
+//! jitter because their name hashes differ.  This is intentionally
+//! "reproducible-ish" rather than cryptographically unpredictable — the goal
+//! is avoiding thundering-herd startup, not security.
+//!
+//! When `--tick-secs` is set, jitter is disabled: all bots tick at that fixed
+//! interval.  Intended for test/demo use only.
+//!
+//! # Map TTL
+//!
+//! Each bot fetches a fresh map window at most once every [`MAP_TTL_TICKS`]
+//! ticks (default 5).  Between refreshes the cached window is reused.  If a
+//! fetch fails, the bot retries on the next tick (the TTL counter is not reset
+//! on failure).
+//!
+//! # Ctrl-C drain (AC5)
+//!
+//! On SIGINT the scheduler stops accepting new ticks and waits for all
+//! in-flight tick tasks to complete before exiting cleanly.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
+use tracing::{debug, error, info, warn};
+
+use crate::client::ApiClient;
+use crate::digest::MapWindow;
+use crate::executor::{Outcome, classify, execute_intents};
+use crate::manifest::{load_manifest, validate};
+use crate::persona::Persona;
+use crate::policy::plan_tick;
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/// How many ticks between map-window refreshes per bot (at most one fetch in
+/// any MAP_TTL_TICKS-tick window).
+pub const MAP_TTL_TICKS: u64 = 5;
+
+/// Radius (Chebyshev tiles) used when fetching a bot's map window.
+/// Covers the maximum persona raid range (15) with a 2-tile safety margin.
+const MAP_RADIUS: u32 = 17;
+
+// ---------------------------------------------------------------------------
+// RunnerConfig
+// ---------------------------------------------------------------------------
+
+/// Configuration for the fleet runner, parsed from flags and env in `main`.
+pub struct RunnerConfig {
+    /// Base URL of the Eperica server (trailing slash stripped on use).
+    pub server: String,
+    /// World UUID string identifying the target world.
+    pub world: String,
+    /// Filesystem path to the agent key manifest JSON produced by slice 120.
+    pub keys_path: String,
+    /// When `true`, log intents but make no HTTP POST calls.
+    pub dry_run: bool,
+    /// Override tick interval in seconds for ALL bots; disables jitter.
+    /// Intended for testing and demos only.
+    pub tick_scale: Option<u64>,
+    /// Maximum number of bot ticks executing concurrently (default: 4).
+    pub cap: usize,
+}
+
+// ---------------------------------------------------------------------------
+// Internal: bot state (lives only in the scheduler task)
+// ---------------------------------------------------------------------------
+
+struct BotState {
+    username: String,
+    persona: Persona,
+    tribe: String,
+    /// Shared across the scheduler and tick tasks; cloning the Arc is cheap.
+    client: Arc<ApiClient>,
+    /// Unix milliseconds at which this bot's next tick is due.
+    next_tick_at_ms: i64,
+    /// Monotonically increasing tick counter.  Seeded into the jitter hash.
+    tick_count: u64,
+    /// Ticks since the last successful map fetch.  Starts at MAP_TTL_TICKS to
+    /// force a fetch on the first tick.
+    map_ticks_since_fetch: u64,
+    /// Cached map window from the last successful fetch.
+    cached_map: Option<MapWindow>,
+    /// True while a tick task is executing for this bot.
+    /// A bot is never scheduled twice concurrently.
+    in_flight: bool,
+    /// True once a tick task has returned `retire = true`.
+    retired: bool,
+    /// FNV-1a(username) precomputed to avoid re-hashing every tick.
+    name_hash: u64,
+}
+
+// Result returned by a tick task to the scheduler.
+struct TickTaskResult {
+    username: String,
+    /// Some when a map fetch succeeded this tick.
+    new_map: Option<MapWindow>,
+    /// True when a map fetch was ATTEMPTED (success or failure).
+    /// Distinguishes "no fetch needed" from "fetch failed"; on failure the
+    /// scheduler does NOT advance map_ticks_since_fetch so the next tick retries.
+    map_was_attempted: bool,
+    /// Non-zero when the server responded 429.
+    backoff_secs: Option<u64>,
+    /// True when the server responded 401 (dead key).
+    retire: bool,
+}
+
+// ---------------------------------------------------------------------------
+// next_due — pure, unit-tested (AC5)
+// ---------------------------------------------------------------------------
+
+/// Return the indices of `bots` whose `next_tick_at_ms` is ≤ `now_ms`.
+///
+/// Input: slice of `(name, next_tick_at_ms)` pairs.  Output: ascending
+/// indices.  A bot is "due" when its scheduled time has arrived.
+pub fn next_due(bots: &[(String, i64)], now_ms: i64) -> Vec<usize> {
+    bots.iter()
+        .enumerate()
+        .filter(|(_, (_, t))| *t <= now_ms)
+        .map(|(i, _)| i)
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Jitter — XorShift64 seeded from FNV-1a(name) XOR tick_count
+// ---------------------------------------------------------------------------
+
+/// Compute the next-tick delay in seconds using XorShift64.
+///
+/// Seed = FNV-1a(name) XOR tick_count.  When the seed is zero (degenerate
+/// XorShift state), it is biased to 1 before the shift sequence.
+///
+/// Result is uniformly distributed in `[min_secs, max_secs]`.
+fn tick_jitter(name_hash: u64, tick_count: u64, min_secs: u32, max_secs: u32) -> u64 {
+    let mut x = name_hash ^ tick_count;
+    if x == 0 {
+        x = 1; // XorShift requires a non-zero seed
+    }
+    // XorShift64 triple: (13, 7, 17) — standard Marsaglia choice
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    let range = (max_secs - min_secs) as u64;
+    min_secs as u64 + (x % (range + 1))
+}
+
+// ---------------------------------------------------------------------------
+// Time helpers
+// ---------------------------------------------------------------------------
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
+fn utc_hour() -> u8 {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    ((secs / 3600) % 24) as u8
+}
+
+// ---------------------------------------------------------------------------
+// apply_tick_result — update bot state after a task completes
+// ---------------------------------------------------------------------------
+
+fn apply_tick_result(
+    bots: &mut [BotState],
+    join_result: Result<TickTaskResult, tokio::task::JoinError>,
+    cfg: &RunnerConfig,
+    at_ms: i64,
+) {
+    let r = match join_result {
+        Err(e) => {
+            // Task panicked — we don't know which bot, so log and hope for the best.
+            // The affected bot will be stuck in_flight=true for the rest of this run.
+            error!(error = ?e, "tick task panicked; one bot may be stuck until restart");
+            return;
+        }
+        Ok(r) => r,
+    };
+
+    let Some(bot) = bots.iter_mut().find(|b| b.username == r.username) else {
+        warn!(bot = %r.username, "tick result for unknown bot; ignoring");
+        return;
+    };
+
+    bot.in_flight = false;
+
+    if r.retire {
+        warn!(bot = %bot.username, "bot retired (key rejected)");
+        bot.retired = true;
+        return;
+    }
+
+    // Update map cache.
+    if let Some(m) = r.new_map {
+        bot.cached_map = Some(m);
+        bot.map_ticks_since_fetch = 0;
+    } else if !r.map_was_attempted {
+        // No fetch attempted: advance the TTL counter.
+        bot.map_ticks_since_fetch = bot.map_ticks_since_fetch.saturating_add(1);
+    }
+    // If a fetch was attempted but failed: leave map_ticks_since_fetch unchanged
+    // (it was already >= MAP_TTL_TICKS), so the next tick retries immediately.
+
+    // Schedule the next tick.
+    let delay_secs = if let Some(secs) = r.backoff_secs {
+        // 429 backoff overrides everything.
+        secs
+    } else if let Some(override_secs) = cfg.tick_scale {
+        // --tick-secs forces a fixed interval (no jitter).
+        override_secs
+    } else {
+        tick_jitter(
+            bot.name_hash,
+            bot.tick_count,
+            bot.persona.tick_min_secs,
+            bot.persona.tick_max_secs,
+        )
+    };
+
+    bot.next_tick_at_ms = at_ms + (delay_secs as i64) * 1_000;
+    bot.tick_count += 1;
+}
+
+// ---------------------------------------------------------------------------
+// run_tick — per-bot tick logic (runs inside a JoinSet task)
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+async fn run_tick(
+    client: Arc<ApiClient>,
+    world: String,
+    username: String,
+    persona: Persona,
+    tribe: String,
+    dry_run: bool,
+    cached_map: Option<MapWindow>,
+    should_fetch_map: bool,
+) -> TickTaskResult {
+    // Check activity window.
+    let hour = utc_hour();
+    if !persona.in_window(hour) {
+        debug!(bot = %username, hour, "outside activity window; skipping tick");
+        return TickTaskResult {
+            username,
+            new_map: None,
+            map_was_attempted: false,
+            backoff_secs: None,
+            retire: false,
+        };
+    }
+
+    // Fetch digest (one per tick).
+    let digest = match client.state(&world).await {
+        Ok(d) => d,
+        Err(e) => {
+            warn!(bot = %username, error = %e, "digest fetch failed");
+            let (backoff_secs, retire) = match classify(&e) {
+                Outcome::RetireBot => (None, true),
+                Outcome::Backoff { secs } => (Some(secs), false),
+                _ => (None, false),
+            };
+            return TickTaskResult {
+                username,
+                new_map: None,
+                map_was_attempted: false,
+                backoff_secs,
+                retire,
+            };
+        }
+    };
+
+    // Fetch map window when TTL has expired.
+    let (new_map, map_was_attempted) = if should_fetch_map {
+        match digest.villages.first() {
+            None => (None, false),
+            Some(v) => {
+                let result = client.map(&world, v.x, v.y, MAP_RADIUS).await;
+                match result {
+                    Ok(m) => {
+                        debug!(bot = %username, "map window refreshed");
+                        (Some(m), true)
+                    }
+                    Err(e) => {
+                        warn!(bot = %username, error = %e, "map fetch failed; reusing cache");
+                        (None, true) // attempted but failed
+                    }
+                }
+            }
+        }
+    } else {
+        (None, false) // not attempted
+    };
+
+    // Use freshly fetched map or fall back to the cached window.
+    let map_ref = new_map.as_ref().or(cached_map.as_ref());
+
+    let now_ms = digest.now_ms;
+    let intents = plan_tick(&digest, map_ref, &persona, now_ms, &tribe);
+
+    let span = tracing::info_span!("exec", bot = %username);
+    let _enter = span.enter();
+
+    if intents.is_empty() {
+        debug!(bot = %username, "no intents this tick");
+    } else {
+        info!(bot = %username, count = intents.len(), "executing intents");
+    }
+
+    let report = execute_intents(&client, &world, &intents, dry_run).await;
+
+    debug!(
+        bot = %username,
+        executed = report.executed,
+        denied = report.denied,
+        transient = report.transient,
+        "tick complete"
+    );
+
+    TickTaskResult {
+        username,
+        new_map,
+        map_was_attempted,
+        backoff_secs: report.backoff_secs,
+        retire: report.retire,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// run_fleet — public entry point
+// ---------------------------------------------------------------------------
+
+/// Start the bot fleet.
+///
+/// 1. Load and validate the key manifest (dead keys are logged and dropped).
+/// 2. For each live bot, check that it has a player in `cfg.world` (bots
+///    without a player in the target world are dropped with a warning).
+/// 3. Run the scheduler loop until Ctrl-C is received.
+/// 4. On Ctrl-C: stop spawning new ticks; drain all in-flight tasks; exit.
+pub async fn run_fleet(cfg: RunnerConfig) {
+    if cfg.cap == 0 {
+        warn!("cap=0; no bot ticks will ever run — exiting immediately");
+        return;
+    }
+
+    // -----------------------------------------------------------------------
+    // Fleet startup (AC1)
+    // -----------------------------------------------------------------------
+
+    let entries = match load_manifest(&cfg.keys_path) {
+        Ok(e) => e,
+        Err(e) => {
+            error!(error = %e, "failed to load key manifest");
+            return;
+        }
+    };
+
+    if entries.is_empty() {
+        warn!("manifest is empty — nothing to do");
+        return;
+    }
+
+    info!(
+        count = entries.len(),
+        "loaded key manifest; validating keys..."
+    );
+
+    let validated = validate(&cfg.server, entries).await;
+
+    let mut bots: Vec<BotState> = Vec::new();
+    for (entry, result) in validated {
+        match result {
+            Err(e) => {
+                warn!(bot = %entry.username, error = %e, "key invalid; dropping bot");
+            }
+            Ok(me) => {
+                // Confirm the bot has a player entry in the target world.
+                let world_entry = me.worlds.iter().find(|w| w.world == cfg.world);
+                match world_entry {
+                    None => {
+                        warn!(
+                            bot = %entry.username,
+                            world = %cfg.world,
+                            "bot has no player in target world; dropping"
+                        );
+                    }
+                    Some(we) => {
+                        let persona = Persona::from_name(&entry.username);
+                        let name_hash = crate::persona::fnv1a_64(entry.username.as_bytes());
+                        let client = Arc::new(ApiClient::new(&cfg.server, &entry.token));
+                        // Stagger initial ticks by 500 ms per bot to avoid a
+                        // startup thundering-herd.
+                        let start_ms = now_ms() + (bots.len() as i64) * 500;
+                        info!(
+                            bot = %entry.username,
+                            tribe = %we.tribe,
+                            "bot validated; added to fleet"
+                        );
+                        bots.push(BotState {
+                            username: entry.username,
+                            persona,
+                            tribe: we.tribe.clone(),
+                            client,
+                            next_tick_at_ms: start_ms,
+                            tick_count: 0,
+                            // Force a map fetch on the first tick.
+                            map_ticks_since_fetch: MAP_TTL_TICKS,
+                            cached_map: None,
+                            in_flight: false,
+                            retired: false,
+                            name_hash,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    if bots.is_empty() {
+        warn!("no live bots; exiting");
+        return;
+    }
+
+    info!(bots = bots.len(), dry_run = cfg.dry_run, "fleet started");
+
+    // -----------------------------------------------------------------------
+    // Scheduler loop (AC4/AC5)
+    // -----------------------------------------------------------------------
+
+    let semaphore = Arc::new(Semaphore::new(cfg.cap));
+    let mut join_set: JoinSet<TickTaskResult> = JoinSet::new();
+    let mut shutdown = false;
+
+    // Pin the ctrl_c future so we can select! on it repeatedly inside the loop
+    // while guarding with `if !shutdown` to prevent re-polling after resolution.
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(ctrl_c);
+
+    loop {
+        // Phase 1: drain any already-completed tick tasks.
+        while let Some(res) = join_set.try_join_next() {
+            apply_tick_result(&mut bots, res, &cfg, now_ms());
+        }
+
+        bots.retain(|b| !b.retired);
+
+        if bots.is_empty() {
+            info!("all bots have retired; exiting");
+            break;
+        }
+
+        if shutdown && join_set.is_empty() {
+            info!("drain complete; exiting");
+            break;
+        }
+
+        // Phase 2: spawn tick tasks for due bots (unless we are shutting down).
+        if !shutdown {
+            let now = now_ms();
+            for bot in bots.iter_mut() {
+                if bot.in_flight || bot.next_tick_at_ms > now {
+                    continue;
+                }
+
+                let should_fetch_map = bot.map_ticks_since_fetch >= MAP_TTL_TICKS;
+                bot.in_flight = true;
+
+                let client = Arc::clone(&bot.client);
+                let world = cfg.world.clone();
+                let persona = bot.persona.clone();
+                let tribe = bot.tribe.clone();
+                let username = bot.username.clone();
+                let dry_run = cfg.dry_run;
+                let cached_map = bot.cached_map.clone();
+                let tick_count = bot.tick_count;
+                let sem = Arc::clone(&semaphore);
+
+                join_set.spawn(async move {
+                    // Acquire a semaphore permit before doing any work.
+                    // The permit is released automatically when the task ends.
+                    let _permit = sem
+                        .acquire_owned()
+                        .await
+                        .expect("semaphore closed unexpectedly");
+
+                    let span = tracing::info_span!("bot_tick", bot = %username, tick = tick_count);
+                    let _enter = span.enter();
+
+                    run_tick(
+                        client,
+                        world,
+                        username,
+                        persona,
+                        tribe,
+                        dry_run,
+                        cached_map,
+                        should_fetch_map,
+                    )
+                    .await
+                });
+            }
+        }
+
+        // Phase 3: sleep until the next due bot or a task completes or Ctrl-C.
+
+        // Compute how long to sleep before the next (non-in-flight) bot is due.
+        let next_due_ms = bots
+            .iter()
+            .filter(|b| !b.in_flight)
+            .map(|b| b.next_tick_at_ms)
+            .min()
+            .unwrap_or_else(|| now_ms() + 5_000);
+
+        // When draining, poll frequently; otherwise sleep until the next due time.
+        let sleep_ms = if shutdown {
+            200u64
+        } else {
+            ((next_due_ms - now_ms()).max(1) as u64).min(5_000)
+        };
+
+        // Guard the join_next arm so that when join_set is empty the arm is
+        // disabled — otherwise tokio returns Poll::Ready(None) and busy-loops.
+        let js_nonempty = !join_set.is_empty();
+
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(sleep_ms)) => {}
+
+            res = join_set.join_next(), if js_nonempty => {
+                if let Some(r) = res {
+                    apply_tick_result(&mut bots, r, &cfg, now_ms());
+                    bots.retain(|b| !b.retired);
+                }
+            }
+
+            _ = &mut ctrl_c, if !shutdown => {
+                info!("Ctrl-C received; draining in-flight ticks...");
+                shutdown = true;
+            }
+        }
+    }
+
+    // Final drain (shouldn't be needed given the loop condition, but be safe).
+    while let Some(res) = join_set.join_next().await {
+        apply_tick_result(&mut bots, res, &cfg, now_ms());
+    }
+
+    info!("fleet stopped");
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // next_due — AC5 unit test surface
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn next_due_returns_indices_at_or_before_now() {
+        let now = 1_000i64;
+        let bots = vec![
+            ("alpha".to_owned(), 500i64),   // past → due
+            ("beta".to_owned(), 1_000i64),  // exactly now → due
+            ("gamma".to_owned(), 1_500i64), // future → not due
+        ];
+        let due = next_due(&bots, now);
+        assert_eq!(due, vec![0, 1], "indices 0 and 1 must be due");
+    }
+
+    #[test]
+    fn next_due_empty_when_all_in_future() {
+        let now = 500i64;
+        let bots = vec![
+            ("alpha".to_owned(), 1_000i64),
+            ("beta".to_owned(), 2_000i64),
+        ];
+        assert!(next_due(&bots, now).is_empty(), "none should be due");
+    }
+
+    #[test]
+    fn next_due_all_due_when_now_far_in_future() {
+        let now = 999_999i64;
+        let bots = vec![
+            ("a".to_owned(), 100i64),
+            ("b".to_owned(), 200i64),
+            ("c".to_owned(), 300i64),
+        ];
+        let due = next_due(&bots, now);
+        assert_eq!(due.len(), 3, "all three must be due");
+    }
+
+    #[test]
+    fn next_due_empty_fleet() {
+        assert!(
+            next_due(&[], 12345).is_empty(),
+            "empty fleet → empty due list"
+        );
+    }
+
+    #[test]
+    fn next_due_preserves_original_indices() {
+        // Index 1 is due; indices 0 and 2 are not.
+        let now = 500i64;
+        let bots = vec![
+            ("a".to_owned(), 1_000i64), // 0 — future
+            ("b".to_owned(), 100i64),   // 1 — past (due)
+            ("c".to_owned(), 2_000i64), // 2 — future
+        ];
+        let due = next_due(&bots, now);
+        assert_eq!(due, vec![1], "only index 1 is due");
+    }
+
+    // -----------------------------------------------------------------------
+    // tick_jitter — sanity checks
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn jitter_stays_within_range() {
+        let name_hash = crate::persona::fnv1a_64(b"test_bot");
+        for tick in 0u64..100 {
+            let j = tick_jitter(name_hash, tick, 180, 720);
+            assert!(j >= 180, "jitter {j} below min (tick {tick})");
+            assert!(j <= 720, "jitter {j} above max (tick {tick})");
+        }
+    }
+
+    #[test]
+    fn jitter_varies_across_ticks() {
+        let name_hash = crate::persona::fnv1a_64(b"another_bot");
+        let values: Vec<u64> = (0u64..10)
+            .map(|t| tick_jitter(name_hash, t, 0, 1_000))
+            .collect();
+        // With a 1001-wide range and 10 values, expect at least some variation.
+        let all_same = values.iter().all(|&v| v == values[0]);
+        assert!(!all_same, "all ticks produced identical jitter: {values:?}");
+    }
+
+    #[test]
+    fn jitter_differs_for_different_bots_same_tick() {
+        let h1 = crate::persona::fnv1a_64(b"bot_alpha");
+        let h2 = crate::persona::fnv1a_64(b"bot_beta");
+        let j1 = tick_jitter(h1, 0, 0, u32::MAX);
+        let j2 = tick_jitter(h2, 0, 0, u32::MAX);
+        assert_ne!(
+            j1, j2,
+            "different bots at the same tick must get different jitter"
+        );
+    }
+
+    #[test]
+    fn jitter_zero_seed_handled() {
+        // When name_hash XOR tick_count = 0 (the degenerate XorShift case),
+        // the seed is biased to 1. The result must still be in range.
+        let j = tick_jitter(42, 42, 100, 500); // 42 XOR 42 = 0 → bias to 1
+        assert!(j >= 100, "degenerate seed: jitter {j} below min");
+        assert!(j <= 500, "degenerate seed: jitter {j} above max");
+    }
+}

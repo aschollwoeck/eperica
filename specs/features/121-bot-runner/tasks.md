@@ -9,10 +9,10 @@ Branch `feature/121-bot-runner`; commit per task.
   `ApiFailure` classification; manifest loading + startup key validation (AC1 shape). (AC1)
 - [x] **T2 — Persona + policy.** Inline-FNV personas (deterministic — AC4) + the full reflex
   doctrine from plan §doctrine as pure `plan_tick`; unit tests for every rule + negative gates. (AC2/AC4)
-- [ ] **T3 — Executor.** Intents → API calls; pure `classify(status, body)` (Ok/RuleDenied/
+- [x] **T3 — Executor.** Intents → API calls; pure `classify(status, body)` (Ok/RuleDenied/
   Backoff/RetireBot/Transient) unit-tested; per-tick behaviour per AC3 (no same-tick retries,
   429 honours retry_after_secs, 401 retires). (AC3)
-- [ ] **T4 — Fleet loop + main.** Single scheduler + semaphore cap + jittered per-bot next_tick;
+- [x] **T4 — Fleet loop + main.** Single scheduler + semaphore cap + jittered per-bot next_tick;
   activity windows; ctrl-c drain; `main` flags/env + tracing; `--dry-run` (log intents, no POSTs);
   map-window TTL cache. (AC4/AC5/AC7-ops)
 - [ ] **T5 — E2E.** The forced-tick test against the spawned server (orders appear in the next
