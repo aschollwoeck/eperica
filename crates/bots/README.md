@@ -21,9 +21,8 @@ cargo run -p eperica-bots -- \
 
 Replace `<world-uuid>` with the UUID shown in the admin world list (or the `EPB_WORLD` env var).
 
-> **TLS note:** `reqwest` is built without a TLS backend (`default-features = false`, only the
-> `stream` feature).  Server URLs must use plain `http://`.  To use `https://`, add
-> `rustls-tls` to the `reqwest` features in `crates/bots/Cargo.toml`.
+> **TLS:** `reqwest` is built with `rustls-tls` (needed for the strategist's Anthropic API calls),
+> so both `http://` and `https://` server URLs work.
 
 ### 3. Verify with --dry-run
 
@@ -49,6 +48,23 @@ Dry-run logs all intents the bots would execute but makes no HTTP POST calls.
 | `--cap <N>`       | `EPB_CAP`      | 4       | Max concurrent bot ticks                 |
 
 Log level: `RUST_LOG=debug cargo run -p eperica-bots -- …`
+
+## The LLM strategist (slice 122)
+
+With an Anthropic API key configured, each bot periodically (default every 4 h, jittered) sends a
+compact, fog-honest summary of its situation to the LLM and receives a **strategy**: a focus
+(`economy` / `military` / `expansion`), an optional aggression override, raid/settle quadrant
+preferences, a motto — and optionally **one** in-character message to another player per cycle.
+The strategy biases the reflex doctrine between cycles; the reflexes keep playing regardless.
+
+- Enable: set `ANTHROPIC_API_KEY` (or `EPB_ANTHROPIC_KEY`). Without a key — or with `--no-llm` —
+  the runner behaves **exactly** like the reflex-only fleet.
+- `EPB_LLM_MODEL` — model id (default `claude-haiku-4-5-20251001`, the cheap tier).
+- `--llm-budget N` / `EPB_LLM_BUDGET` — fleet-wide LLM calls per rolling hour (default 12).
+- `--llm-interval-secs N` — per-bot strategist cadence (default 14400 = 4 h).
+- Invalid LLM replies (prose, fences, out-of-range values) are **rejected loudly** and the prior
+  strategy stays — no silent fallback, ever.
+- Cost: at the defaults, a fleet makes ≤ 12 haiku-tier calls/hour with ~1–2 KB prompts — cents/day.
 
 ## Stopping
 

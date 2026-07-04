@@ -5,24 +5,34 @@
 //!
 //! ## Flag / env reference
 //!
-//! | Flag            | Env var       | Default | Description                         |
-//! |-----------------|---------------|---------|-------------------------------------|
-//! | `--server <URL>`| `EPB_SERVER`  | —       | Eperica server base URL (required)  |
-//! | `--world <UUID>`| `EPB_WORLD`   | —       | World UUID to operate in (required) |
-//! | `--keys <PATH>` | `EPB_KEYS`    | —       | Agent key manifest JSON (required)  |
-//! | `--dry-run`     | `EPB_DRY_RUN` | false   | Log intents, make no HTTP POSTs     |
-//! | `--tick-secs <N>`| `EPB_TICK_SECS`| none  | Fixed tick interval; disables jitter|
-//! | `--cap <N>`     | `EPB_CAP`     | 4       | Max concurrent bot ticks            |
-//! | `--help`        | —             | —       | Print this help and exit            |
+//! | Flag                  | Env var              | Default                    | Description                                       |
+//! |-----------------------|----------------------|----------------------------|---------------------------------------------------|
+//! | `--server <URL>`      | `EPB_SERVER`         | —                          | Eperica server base URL (required)                |
+//! | `--world <UUID>`      | `EPB_WORLD`          | —                          | World UUID to operate in (required)               |
+//! | `--keys <PATH>`       | `EPB_KEYS`           | —                          | Agent key manifest JSON (required)                |
+//! | `--dry-run`           | `EPB_DRY_RUN`        | false                      | Log intents, make no HTTP POSTs                   |
+//! | `--tick-secs <N>`     | `EPB_TICK_SECS`      | none                       | Fixed tick interval; disables jitter              |
+//! | `--cap <N>`           | `EPB_CAP`            | 4                          | Max concurrent bot ticks                          |
+//! | `--no-llm`            | `EPB_NO_LLM=1`       | false                      | Disable strategist even if a key is configured    |
+//! | `--llm-budget <N>`    | `EPB_LLM_BUDGET`     | 12                         | Max strategist calls per rolling hour (fleet-wide)|
+//! | `--llm-interval-secs` | `EPB_LLM_INTERVAL_SECS`| 14400                   | Seconds between per-bot strategist calls          |
+//! |                       | `EPB_LLM_MODEL`      | `claude-haiku-4-5-20251001`| Anthropic model ID                                |
+//! |                       | `EPB_ANTHROPIC_KEY`  | —                          | Anthropic API key (preferred over ANTHROPIC_API_KEY)|
+//! |                       | `ANTHROPIC_API_KEY`  | —                          | Standard Anthropic key env var (fallback)         |
+//! | `--help`, `-h`        | —                    | —                          | Print this help and exit                          |
 
-use eperica_bots::runner::{RunnerConfig, run_fleet};
+use std::sync::Arc;
+
+use eperica_bots::runner::{LlmConfig, RunnerConfig, run_fleet};
+use eperica_bots::strategist::{AnthropicBackend, StrategistBackend};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 fn main() {
     init_tracing();
 
-    let cfg = match parse_config() {
-        Ok(c) => c,
+    let (cfg, backend) = match parse_config() {
+        Ok(pair) => pair,
         Err(e) => {
             eprintln!("error: {e}");
             eprintln!("Run with --help for usage.");
@@ -30,11 +40,19 @@ fn main() {
         }
     };
 
+    // Log startup mode — the API key is NEVER included in the log output.
+    if backend.is_some() {
+        let model = cfg.llm.as_ref().map(|l| l.model.as_str()).unwrap_or("?");
+        info!(model, "strategist enabled");
+    } else {
+        info!("strategist disabled (no API key or --no-llm)");
+    }
+
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("tokio runtime")
-        .block_on(run_fleet(cfg));
+        .block_on(run_fleet(cfg, backend));
 }
 
 // ---------------------------------------------------------------------------
@@ -50,10 +68,12 @@ fn init_tracing() {
 // Flag / env parsing
 // ---------------------------------------------------------------------------
 
-/// Parse `RunnerConfig` from command-line flags and environment variables.
+/// Parse `RunnerConfig` and an optional `StrategistBackend` from command-line
+/// flags and environment variables.
 ///
 /// Flags take precedence over environment variables.  Exits 0 on `--help`.
-fn parse_config() -> Result<RunnerConfig, String> {
+/// The API key is NEVER returned in an error string.
+fn parse_config() -> Result<(RunnerConfig, Option<Arc<dyn StrategistBackend>>), String> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.iter().any(|a| a == "--help" || a == "-h") {
@@ -108,7 +128,63 @@ fn parse_config() -> Result<RunnerConfig, String> {
         .transpose()?
         .unwrap_or(4);
 
-    Ok(RunnerConfig {
+    // ---------------------------------------------------------------------------
+    // LLM strategist flags
+    // ---------------------------------------------------------------------------
+
+    let no_llm = args.iter().any(|a| a == "--no-llm")
+        || std::env::var("EPB_NO_LLM").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+
+    // Key detection: EPB_ANTHROPIC_KEY takes priority over the standard name.
+    let api_key = std::env::var("EPB_ANTHROPIC_KEY")
+        .ok()
+        .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
+
+    // Model: env-only override (no flag — the model is a deployment-level detail).
+    let llm_model =
+        std::env::var("EPB_LLM_MODEL").unwrap_or_else(|_| "claude-haiku-4-5-20251001".to_owned());
+
+    let llm_budget = flag_or_env("--llm-budget", "EPB_LLM_BUDGET")
+        .map(|v| {
+            v.parse::<u32>()
+                .map_err(|_| format!("--llm-budget must be a non-negative integer, got {v:?}"))
+        })
+        .transpose()?
+        .unwrap_or(12u32);
+
+    let llm_interval_secs = flag_or_env("--llm-interval-secs", "EPB_LLM_INTERVAL_SECS")
+        .map(|v| {
+            v.parse::<u64>()
+                .map_err(|_| format!("--llm-interval-secs must be a positive integer, got {v:?}"))
+                .and_then(|n: u64| {
+                    if n == 0 {
+                        Err("--llm-interval-secs must be at least 1".to_owned())
+                    } else {
+                        Ok(n)
+                    }
+                })
+        })
+        .transpose()?
+        .unwrap_or(14400u64);
+
+    // Build the backend and LlmConfig when a key is present and --no-llm is not set.
+    let (llm, backend) = if !no_llm {
+        if let Some(key) = api_key {
+            let config = LlmConfig {
+                model: llm_model.clone(),
+                budget_per_hour: llm_budget,
+                interval_secs: llm_interval_secs,
+            };
+            let b: Arc<dyn StrategistBackend> = Arc::new(AnthropicBackend::new(key, &llm_model));
+            (Some(config), Some(b))
+        } else {
+            (None, None)
+        }
+    } else {
+        (None, None)
+    };
+
+    let cfg = RunnerConfig {
         server,
         world,
         keys_path,
@@ -116,7 +192,10 @@ fn parse_config() -> Result<RunnerConfig, String> {
         tick_scale,
         cap,
         open_window, // --open-window: demo/ops override — every bot acts around the clock
-    })
+        llm,
+    };
+
+    Ok((cfg, backend))
 }
 
 fn print_help() {
@@ -127,18 +206,30 @@ Usage:
   eperica-bots --server <URL> --world <UUID> --keys <PATH> [OPTIONS]
 
 Required:
-  --server <URL>      Eperica server base URL (env: EPB_SERVER)
-  --world <UUID>      World UUID to operate in (env: EPB_WORLD)
-  --keys <PATH>       Agent key manifest JSON file (env: EPB_KEYS)
+  --server <URL>        Eperica server base URL (env: EPB_SERVER)
+  --world <UUID>        World UUID to operate in (env: EPB_WORLD)
+  --keys <PATH>         Agent key manifest JSON file (env: EPB_KEYS)
 
 Options:
-  --dry-run           Log intents but make no HTTP POST calls (env: EPB_DRY_RUN=1)
-  --open-window       Ignore persona activity windows — bots act 24/7 (demo/ops; env: EPB_OPEN_WINDOW=1)
-  --tick-secs <N>     Fixed tick interval in seconds; disables persona jitter
-                      (env: EPB_TICK_SECS) — for testing and demos only
-  --cap <N>           Maximum concurrent bot ticks; default 4 (env: EPB_CAP)
-  --help, -h          Show this help and exit
+  --dry-run             Log intents but make no HTTP POST calls (env: EPB_DRY_RUN=1)
+  --open-window         Ignore persona activity windows — bots act 24/7 (demo/ops; env: EPB_OPEN_WINDOW=1)
+  --tick-secs <N>       Fixed tick interval in seconds; disables persona jitter
+                        (env: EPB_TICK_SECS) — for testing and demos only
+  --cap <N>             Maximum concurrent bot ticks; default 4 (env: EPB_CAP)
+  --no-llm              Disable the LLM strategist even if a key is configured
+                        (env: EPB_NO_LLM=1)
+  --llm-budget <N>      Max fleet-wide strategist calls per rolling hour; default 12
+                        (env: EPB_LLM_BUDGET)
+  --llm-interval-secs <N>  Seconds between per-bot strategist calls; default 14400 (4h)
+                        (env: EPB_LLM_INTERVAL_SECS)
+  --help, -h            Show this help and exit
 
+Environment-only LLM settings:
+  EPB_ANTHROPIC_KEY     Anthropic API key (takes priority over ANTHROPIC_API_KEY)
+  ANTHROPIC_API_KEY     Standard Anthropic API key env var (fallback)
+  EPB_LLM_MODEL         Anthropic model ID; default claude-haiku-4-5-20251001
+
+The API key is NEVER logged.
 Flags take precedence over environment variables.
 Log level is controlled by RUST_LOG (e.g. RUST_LOG=debug)."
     );
