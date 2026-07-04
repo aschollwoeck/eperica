@@ -1,6 +1,6 @@
 # Plan — 124 graceful SIGTERM
 
-**Status:** Draft (spec approved)
+**Status:** Verified (built as planned)
 
 `shutdown_signal` (crates/web/src/main.rs) becomes: on unix, `tokio::select!` over
 `signal::ctrl_c()` and `signal::unix::signal(SignalKind::terminate())`; else ctrl_c only.

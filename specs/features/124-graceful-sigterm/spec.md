@@ -1,6 +1,6 @@
 # Feature 124 — graceful shutdown on SIGTERM
 
-**Status:** Draft
+**Status:** Verified (gates green; in-loop acceptance review — reviewer agents unavailable: spend limit)
 **Depends on:** 001 (server bootstrap), 037 (world registry drain).
 **Origin:** documentation accuracy review of PR #141 — the binary handles only Ctrl-C (SIGINT),
 so the DEFAULT stop signal of systemd and Docker (SIGTERM) kills the process without draining
