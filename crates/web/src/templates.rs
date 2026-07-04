@@ -1116,6 +1116,8 @@ pub struct LeaderboardRowView {
     pub has_presence: bool,
     pub online: bool,
     pub presence_label: String,
+    /// 120 AC3: show the NPC badge — true only when the player is_ai AND the world is labeled.
+    pub npc: bool,
 }
 
 #[derive(Template)]
@@ -1182,6 +1184,8 @@ pub struct PlayerStatsTemplate {
     /// The viewed player's id (for the report action — 022 AC2).
     pub subject_id: String,
     pub name: String,
+    /// 120 AC3: show the NPC badge — true only when the player is_ai AND the world is labeled.
+    pub npc: bool,
     /// The player's profile bio (025; empty if unset).
     pub bio: String,
     /// Presence indicator (025): online flag + a human label.
@@ -1295,6 +1299,8 @@ pub struct ModAccountTemplate {
     /// The inspected account.
     pub subject_id: String,
     pub username: String,
+    /// 120 AC4-mod: whether this account is an AI bot — shown as a badge in the moderator view.
+    pub is_ai: bool,
     /// Current sanction status.
     pub banned: bool,
     pub suspended: bool,
@@ -1326,6 +1332,20 @@ pub struct AdminAccountRow {
     pub abandoned: bool,
     /// Whether this row is the viewing admin (hides the self-demote-admin control, AC3).
     pub is_self: bool,
+}
+
+/// One row in the admin fleet panel (120 AC2).
+pub struct AgentBotRow {
+    /// Decimal `u128` string of the user id (for the revoke form value).
+    pub user_id: String,
+    pub username: String,
+    /// Tribe slug (`"romans"` / `"teutons"` / `"gauls"`).
+    pub tribe: String,
+    /// Decimal `u128` string of the world id (for fleet revoke form).
+    pub world_id: String,
+    /// Unix-ms UTC — rendered by the client-side timestamp script.
+    pub created_at: i64,
+    pub enabled: bool,
 }
 
 #[derive(Template)]
@@ -1361,6 +1381,14 @@ pub struct AdminTemplate {
     /// One-time plaintext agent API key (118) — `Some` only immediately after a successful
     /// POST /admin/agent; `None` on every other render. Never persisted; shown to the admin ONCE.
     pub agent_key: Option<String>,
+    /// One-time JSON manifest of bulk-seeded agents (120 AC1) — `Some` only immediately after
+    /// POST /admin/agents; `None` on every other render. Never persisted; shown once.
+    pub agent_manifest: Option<String>,
+    /// Data-URL encoding of `agent_manifest` for the download link (AC1) — `Some` iff
+    /// `agent_manifest` is `Some`. Computed by the handler; never stored.
+    pub agent_manifest_data_url: Option<String>,
+    /// All AI accounts across all worlds, for the fleet management panel (120 AC2).
+    pub bots: Vec<AgentBotRow>,
 }
 
 /// A row in the conversations list (024 AC3 / 060: aggregated across worlds).

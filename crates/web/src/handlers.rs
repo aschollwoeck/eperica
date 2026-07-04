@@ -7,22 +7,22 @@ use crate::auth::{
 use crate::state::AppState;
 use crate::templates::{
     AcademyRow, AcademyTemplate, AchievementRowView, ActiveView, AdminAccountRow, AdminTemplate,
-    AdminWorldRow, AllianceStatsTemplate, AllianceTemplate, AlliedVillageView, ArtifactRowView,
-    AuditRow, BuildMenuTemplate, BuildRow, ChatLineView, CompletedQuestView, ConversationRow,
-    ConversationTemplate, CurrentQuestView, DetailTemplate, DiploRowView, ForceRow, ForumPostRow,
-    ForumTemplate, ForumThreadRow, ForumThreadTemplate, GarrisonRow, HistoryPointView,
-    ImpressumTemplate, IncomingRow, IncomingView, IndexTemplate, JoinableWorldRow, JoinedWorldRow,
-    LandingWorldRow, LeaderboardRowView, LeaderboardTemplate, LoginTemplate, MapCellView,
-    MapTemplate, MarketTemplate, MedalRowView, MemberStatRow, MessagesTemplate, ModAccountTemplate,
-    ModQueueTemplate, ModReportRow, MovementRow, NotificationRowView, NotificationsTemplate,
-    OasisRow, OutgoingInviteView, PendingInviteView, PlayerStatsTemplate, PlotView,
-    PrivacyTemplate, ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow,
-    RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, ResourceRibbon,
-    RosterRowView, ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate,
-    SettingsTemplate, SettingsToggleRow, ShipmentRow, SitterRow, SittingTemplate, SmithyRow,
-    SmithyTemplate, StyleGuideTemplate, TermsTemplate, TrainRow, TroopsTemplate, VillageStatRow,
-    VillageSwitchRow, VillageTemplate, VillageTrainingRow, WonderStandingView, WonderTemplate,
-    WorldsTemplate,
+    AdminWorldRow, AgentBotRow, AllianceStatsTemplate, AllianceTemplate, AlliedVillageView,
+    ArtifactRowView, AuditRow, BuildMenuTemplate, BuildRow, ChatLineView, CompletedQuestView,
+    ConversationRow, ConversationTemplate, CurrentQuestView, DetailTemplate, DiploRowView,
+    ForceRow, ForumPostRow, ForumTemplate, ForumThreadRow, ForumThreadTemplate, GarrisonRow,
+    HistoryPointView, ImpressumTemplate, IncomingRow, IncomingView, IndexTemplate,
+    JoinableWorldRow, JoinedWorldRow, LandingWorldRow, LeaderboardRowView, LeaderboardTemplate,
+    LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MedalRowView, MemberStatRow,
+    MessagesTemplate, ModAccountTemplate, ModQueueTemplate, ModReportRow, MovementRow,
+    NotificationRowView, NotificationsTemplate, OasisRow, OutgoingInviteView, PendingInviteView,
+    PlayerStatsTemplate, PlotView, PrivacyTemplate, ProfileTemplate, QuestsTemplate, QueueView,
+    RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate,
+    ReportsTemplate, ResourceRibbon, RosterRowView, ScoutReportTemplate, ScoutResourceRow,
+    SearchHitRow, SearchTemplate, SettingsTemplate, SettingsToggleRow, ShipmentRow, SitterRow,
+    SittingTemplate, SmithyRow, SmithyTemplate, StyleGuideTemplate, TermsTemplate, TrainRow,
+    TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate, VillageTrainingRow,
+    WonderStandingView, WonderTemplate, WorldsTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -509,7 +509,7 @@ async fn route_after_register(
         Ok(ws) if ws.iter().any(|w| w.id == wid && w.won_ms.is_none()) => {}
         _ => return "/worlds".to_owned(),
     }
-    let Some((repo, _map, _speed, _radius, rules)) = state.world_registry.context_for(wid).await
+    let Some((repo, _map, _speed, _radius, rules, _)) = state.world_registry.context_for(wid).await
     else {
         return "/worlds".to_owned();
     };
@@ -823,7 +823,8 @@ pub async fn join_world(
     }
     // The world must be one the registry runs — `context_for` yields its (world-scoped) repo + rules for the
     // join, so the new village uses the **selected** world's starting template (its preset), not the home's.
-    let Some((repo, _map, _speed, _radius, rules)) = state.world_registry.context_for(world).await
+    let Some((repo, _map, _speed, _radius, rules, _)) =
+        state.world_registry.context_for(world).await
     else {
         return Redirect::to("/worlds").into_response();
     };
@@ -1786,6 +1787,7 @@ async fn map_for(ctx: GameContext, path_village: Option<String>, q: MapQuery) ->
         capital_coord,
         origin,
         acting_vid.as_deref(),
+        ctx.ai_labeled,
     );
 
     // 095/107: "recentre on home" targets the acting (selected) village.
@@ -1819,6 +1821,7 @@ pub(crate) fn map_cells(
     capital_coord: Option<Coordinate>,
     origin: Option<Coordinate>,
     acting_vid: Option<&str>,
+    ai_labeled: bool,
 ) -> Vec<Vec<MapCellView>> {
     viewport
         .rows
@@ -1873,12 +1876,17 @@ pub(crate) fn map_cells(
                             format!(" · {presence_label}")
                         };
                         label = format!(
-                            "{} — {}{}{}{}{} ({}|{})",
+                            "{} — {}{}{}{}{}{} ({}|{})",
                             base_label,
                             marker.owner_name,
                             tag,
                             if is_capital { " (capital)" } else { "" },
                             if inactive { " (inactive)" } else { "" },
+                            if marker.is_ai && ai_labeled {
+                                " (NPC)"
+                            } else {
+                                ""
+                            },
                             presence,
                             coord.x,
                             coord.y
@@ -2027,6 +2035,7 @@ pub async fn map_tiles(
         capital_coord,
         origin,
         acting_vid.as_deref(),
+        ctx.ai_labeled,
     );
     axum::Json(serde_json::json!({
         "center_x": center.x,
@@ -3808,6 +3817,7 @@ fn player_rows(
     rows: Vec<LeaderboardRow>,
     now: Timestamp,
     online_secs: i64,
+    ai_labeled: bool,
 ) -> Vec<LeaderboardRowView> {
     rows.into_iter()
         .enumerate()
@@ -3822,6 +3832,7 @@ fn player_rows(
                 has_presence: true,
                 online,
                 presence_label,
+                npc: r.is_ai && ai_labeled,
             }
         })
         .collect()
@@ -3841,6 +3852,7 @@ fn alliance_rows(world: WorldId, rows: Vec<AllianceLeaderboardRow>) -> Vec<Leade
             has_presence: false,
             online: false,
             presence_label: String::new(),
+            npc: false,
         })
         .collect()
 }
@@ -3880,7 +3892,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "attackers" => (
                 conflict_leaderboard(repo, rules, ConflictMetric::Attack, scope, window, now_ts)
                     .await
-                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs, world.ai_labeled)),
                 "Attack points",
                 false,
                 true,
@@ -3888,7 +3900,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "defenders" => (
                 conflict_leaderboard(repo, rules, ConflictMetric::Defense, scope, window, now_ts)
                     .await
-                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs, world.ai_labeled)),
                 "Defense points",
                 false,
                 true,
@@ -3896,7 +3908,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "raiders" => (
                 conflict_leaderboard(repo, rules, ConflictMetric::Raided, scope, window, now_ts)
                     .await
-                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs, world.ai_labeled)),
                 "Resources looted",
                 false,
                 true,
@@ -3904,7 +3916,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "climbers" => (
                 climbers_leaderboard(repo, rules, scope)
                     .await
-                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs, world.ai_labeled)),
                 "Population gained",
                 false,
                 false,
@@ -3950,7 +3962,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             _ => (
                 population_leaderboard(repo, econ, rules, scope)
                     .await
-                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs, world.ai_labeled)),
                 "Population",
                 false,
                 false,
@@ -4133,6 +4145,7 @@ pub async fn mod_account(
     page(&ModAccountTemplate {
         subject_id: subject.0.to_string(),
         username: user.username,
+        is_ai: user.is_ai, // 120 AC4-mod: show AI badge in moderator view
         banned: user.banned_at.is_some(),
         suspended: user.suspended_until.is_some_and(|u| now.0 < u.0),
         ip_association_count: signals.ip_association_count,
@@ -4221,7 +4234,7 @@ pub async fn admin(
     Query(q): Query<AdminQuery>,
 ) -> Response {
     let query = q.q.unwrap_or_default();
-    render_admin_page(&state, player, &query, None).await
+    render_admin_page(&state, player, &query, None, None).await
 }
 
 /// Assemble and render the admin console page. Shared between the GET `/admin` handler and the
@@ -4238,6 +4251,7 @@ async fn render_admin_page(
     player: PlayerId,
     query: &str,
     agent_key: Option<String>,
+    agent_manifest: Option<String>,
 ) -> Response {
     let trimmed = query.trim();
     let searched = !trimmed.is_empty();
@@ -4288,25 +4302,56 @@ async fn render_admin_page(
             is_self: a.id == player,
         })
         .collect();
-    let worlds =
+    let raw_worlds =
         match admin_list_worlds(state.accounts.as_ref(), state.accounts.as_ref(), player).await {
-            Ok(w) => w
-                .into_iter()
-                .map(|w| AdminWorldRow {
-                    id: w.id.0.to_string(),
-                    name: w.name,
-                    speed: w.speed,
-                    radius: w.radius,
-                    created_ms: w.created_ms,
-                    won: w.won_ms.is_some(),
-                    is_home: w.id == state.world_id,
-                })
-                .collect(),
+            Ok(w) => w,
             Err(e) => {
                 tracing::error!(error = %e, "admin worlds listing failed");
                 Vec::new()
             }
         };
+
+    // Collect all AI bots across all worlds for the fleet panel (120 AC2).
+    // NOTE: one list_agents query per world (N+1) — accepted; admin page is admin-rare.
+    let mut bots: Vec<AgentBotRow> = Vec::new();
+    for w in &raw_worlds {
+        match state.accounts.list_agents(w.id).await {
+            Ok(agents) => {
+                for a in agents {
+                    bots.push(AgentBotRow {
+                        user_id: a.user_id.0.to_string(),
+                        username: a.username,
+                        tribe: a.tribe.slug().to_owned(),
+                        world_id: a.world_id.0.to_string(),
+                        created_at: a.created_at,
+                        enabled: a.enabled,
+                    });
+                }
+            }
+            Err(e) => tracing::warn!(world = %w.id.0, error = %e, "list_agents failed"),
+        }
+    }
+
+    let worlds: Vec<AdminWorldRow> = raw_worlds
+        .into_iter()
+        .map(|w| AdminWorldRow {
+            id: w.id.0.to_string(),
+            name: w.name,
+            speed: w.speed,
+            radius: w.radius,
+            created_ms: w.created_ms,
+            won: w.won_ms.is_some(),
+            is_home: w.id == state.world_id,
+        })
+        .collect();
+    // Build a data-URL for the manifest download link (AC1): same one-time JSON, nothing extra
+    // stored. Computed here so the template stays logic-free.
+    let agent_manifest_data_url = agent_manifest.as_deref().map(|json| {
+        format!(
+            "data:application/json;charset=utf-8,{}",
+            percent_encode_json(json)
+        )
+    });
     page(&AdminTemplate {
         speed: overview.speed,
         radius: overview.radius,
@@ -4328,6 +4373,9 @@ async fn render_admin_page(
         searched,
         rows,
         agent_key,
+        agent_manifest,
+        agent_manifest_data_url,
+        bots,
     })
 }
 
@@ -4347,6 +4395,9 @@ pub struct CreateWorldForm {
     /// The world's display name (056) — shown to players in the lobby/nav.
     #[serde(default)]
     name: String,
+    /// AI visibility mode (120 Decision #3) — `"labeled"` or `"disguised"`; anything else/missing → `"labeled"`.
+    #[serde(default)]
+    ai_visibility: Option<String>,
 }
 
 /// Create a new world from the admin console and start it running live (041 AC1/AC2). Admin-gated on the
@@ -4379,6 +4430,12 @@ pub async fn admin_world_submit(
             Some("Unknown rule preset.".to_owned()),
         );
     }
+    // Normalize the AI visibility (120 Decision #3): only "disguised" is accepted as-is; anything else
+    // (including missing) is silently coerced to "labeled" at the edge — the use-case validates the value.
+    let ai_visibility = match form.ai_visibility.as_deref() {
+        Some("disguised") => "disguised",
+        _ => "labeled",
+    };
     match admin_create_world_uc(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
@@ -4389,6 +4446,7 @@ pub async fn admin_world_submit(
         wonder_offset,
         preset,
         form.name.trim(),
+        ai_visibility,
     )
     .await
     {
@@ -4413,6 +4471,82 @@ pub async fn admin_world_submit(
             )
         }
     }
+}
+
+/// A static name pool for bulk-seeded AI bots (120 Decision #5 / Decision #6: names are a
+/// web-layer constant, not balance/sim rules). Each seed picks from this pool, with a numeric
+/// discriminator suffix on collision.
+const AI_NAME_POOL: &[&str] = &[
+    "Aldric", "Berta", "Cedric", "Dagmar", "Eadric", "Freya", "Godwin", "Hilda", "Ingvar",
+    "Jorunn", "Knut", "Leofric", "Milda", "Norna", "Oswin", "Petra", "Ragnar", "Sigrid",
+    "Thorvald", "Ulfhild", "Valdis", "Wulfric", "Ymra", "Zara", "Alaric", "Brunhild", "Conrad",
+    "Dorothea", "Edmund", "Frigga", "Gunnar", "Hedwig", "Ivar", "Judith", "Leif", "Marta", "Niamh",
+    "Olaf", "Ragna", "Swanhild", "Thorkel",
+];
+
+/// The bulk-seed form (120 AC1): seed `count` AI bots into `world` with a given `tribe_mix`.
+#[derive(Deserialize)]
+pub struct BulkSeedForm {
+    world: String,
+    #[serde(default = "default_seed_count")]
+    count: u32,
+    #[serde(default = "default_tribe_mix")]
+    tribe_mix: String,
+}
+
+fn default_seed_count() -> u32 {
+    1
+}
+
+fn default_tribe_mix() -> String {
+    "even".to_owned()
+}
+
+/// Percent-encode a string for a `data:` URL href attribute: every byte outside the RFC 3986
+/// unreserved set (`A-Za-z0-9 - _ . ~`) is `%XX`-encoded, byte-wise — so multi-byte UTF-8 survives
+/// round-trip (each byte encodes separately) and no HTML/URL-special character ever reaches the
+/// attribute raw.
+fn percent_encode_json(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3 / 2);
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => {
+                use std::fmt::Write as _;
+                write!(out, "%{b:02X}").expect("write to String is infallible");
+            }
+        }
+    }
+    out
+}
+
+/// Generate a synthetic unusable password: 32 random bytes as a lowercase hex string.
+/// Argon2-hashed inside `register` — slow but this is an admin-only operation, not a hot path.
+fn synthetic_password() -> String {
+    use rand::RngCore as _;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes.iter().fold(String::with_capacity(64), |mut s, b| {
+        use std::fmt::Write as _;
+        write!(s, "{b:02x}").expect("write to String is infallible");
+        s
+    })
+}
+
+/// The per-bot revoke form (120 AC2): revoke all keys for a single user by id.
+#[derive(Deserialize)]
+pub struct RevokeAgentForm {
+    /// Decimal u128 user id.
+    user: String,
+}
+
+/// The fleet-wide revoke form (120 AC2): revoke all agent keys in a world.
+#[derive(Deserialize)]
+pub struct RevokeFleetForm {
+    /// Decimal u128 world id.
+    world: String,
 }
 
 /// The AI-agent bootstrap form (118 T6): `POST /admin/agent`.
@@ -4470,18 +4604,8 @@ pub async fn admin_create_agent(
     };
     let world = WorldId(world_raw);
 
-    // Synthesise an unusable random password (32 random bytes as hex; argon2-hashed inside
-    // `register` — slow but this is an admin-only operation, not a hot path).
-    let synthetic_password = {
-        use rand::RngCore as _;
-        let mut bytes = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut bytes);
-        bytes.iter().fold(String::with_capacity(64), |mut s, b| {
-            use std::fmt::Write as _;
-            write!(s, "{b:02x}").expect("write to String is infallible");
-            s
-        })
-    };
+    // Synthesise an unusable random password (argon2-hashed inside `register`).
+    let pw = synthetic_password();
 
     let username = form.username.trim().to_owned();
     let email = format!("{username}@ai.invalid");
@@ -4495,7 +4619,7 @@ pub async fn admin_create_agent(
         RegisterCommand {
             username: username.clone(),
             email,
-            password: synthetic_password,
+            password: pw,
             tribe: form.tribe.trim().to_owned(),
         },
     )
@@ -4525,7 +4649,7 @@ pub async fn admin_create_agent(
 
     // Step 2: if the chosen world is not the home world, also place the agent there.
     if world != state.world_id {
-        let Some((repo, _map, _speed, _radius, rules)) =
+        let Some((repo, _map, _speed, _radius, rules, _)) =
             state.world_registry.context_for(world).await
         else {
             // The world does not exist in the registry. The account row was already created;
@@ -4567,7 +4691,224 @@ pub async fn admin_create_agent(
 
     // Re-render the admin page with the one-time plaintext token. The operator must copy it now
     // — it is not stored and cannot be recovered (Decision #2, plan.md).
-    render_admin_page(&state, player, "", Some(token)).await
+    render_admin_page(&state, player, "", Some(token), None).await
+}
+
+/// Bulk-seed AI agent accounts into a world (120 AC1). Admin-gated fail-closed.
+///
+/// Loops the single-mint flow (118) up to `count` times (clamped to 1..=50) using names from the
+/// static pool + a numeric-suffix retry on collision. Returns a one-time JSON key manifest in the
+/// re-rendered admin page; only hashes are stored (118 rule).
+pub async fn admin_bulk_seed_agents(
+    State(state): State<AppState>,
+    RealUser(player): RealUser,
+    Form(form): Form<BulkSeedForm>,
+) -> Response {
+    // Gate: admin only — fail-closed (mints credentials).
+    if require_admin(state.accounts.as_ref(), player)
+        .await
+        .is_err()
+    {
+        return admin_forbidden();
+    }
+
+    // Parse and clamp count.
+    let count = form.count.clamp(1, 50);
+
+    // Parse world id.
+    let Ok(world_raw) = form.world.trim().parse::<u128>() else {
+        return with_flash(
+            Redirect::to("/admin").into_response(),
+            Some("Invalid world ID.".to_owned()),
+        );
+    };
+    let world = WorldId(world_raw);
+
+    // Prepare a tribe iterator based on tribe_mix.
+    // "even" → round-robin romans→teutons→gauls (deterministic, directly assertable — Decision #6);
+    // named-tribe values → fixed tribe for every bot.
+    let tribe_cycle: Vec<Tribe> = match form.tribe_mix.trim() {
+        "romans" => vec![Tribe::Romans],
+        "teutons" => vec![Tribe::Teutons],
+        "gauls" => vec![Tribe::Gauls],
+        _ => vec![Tribe::Romans, Tribe::Teutons, Tribe::Gauls], // "even" and any alias
+    };
+
+    // Hoist the cross-world registry look-up to BEFORE the seeding loop so that a bogus world
+    // id never partially creates accounts. If the world is the home world, no look-up is needed.
+    let cross_world_ctx = if world != state.world_id {
+        let ctx = state.world_registry.context_for(world).await;
+        if ctx.is_none() {
+            return with_flash(
+                Redirect::to("/admin").into_response(),
+                Some("No such world — no bots created.".to_owned()),
+            );
+        }
+        ctx
+    } else {
+        None
+    };
+
+    let mut manifest: Vec<serde_json::Value> = Vec::new();
+    let pool_len = AI_NAME_POOL.len();
+
+    // NOTE: a 50-bot seed argon2-hashes sequentially (one per bot). This is admin-rare and the
+    // count is capped at 50, so the sequential cost is accepted (P11 exemption for admin paths).
+    for i in 0..count as usize {
+        let base_name = AI_NAME_POOL[i % pool_len];
+        let tribe = tribe_cycle[i % tribe_cycle.len()];
+
+        // Try the base name, then with numeric suffix 2..=6 on Taken (attempts map to n+2 → 2..=6).
+        let mut user_opt = None;
+        'retry: for attempt in 0u32..5 {
+            let candidate = if attempt == 0 {
+                base_name.to_owned()
+            } else {
+                format!("{base_name}{}", attempt + 1)
+            };
+            let email = format!("{candidate}@ai.invalid");
+            match register(
+                state.accounts.as_ref(),
+                state.hasher.as_ref(),
+                &state.world_rules.starting_village,
+                false,
+                RegisterCommand {
+                    username: candidate.clone(),
+                    email,
+                    password: synthetic_password(),
+                    tribe: tribe.slug().to_owned(),
+                },
+            )
+            .await
+            {
+                Ok(u) => {
+                    user_opt = Some((u, candidate));
+                    break 'retry;
+                }
+                Err(RegisterError::Taken) => continue,
+                Err(RegisterError::WorldFull) => {
+                    tracing::warn!(bot_index = i, "bulk seed: home world full, stopping");
+                    break 'retry;
+                }
+                Err(RegisterError::Invalid(msg)) => {
+                    tracing::warn!(bot_index = i, msg = %msg, "bulk seed: invalid username");
+                    break 'retry;
+                }
+                Err(RegisterError::Backend(e)) => {
+                    tracing::error!(bot_index = i, error = %e, "bulk seed: register failed");
+                    break 'retry;
+                }
+            }
+        }
+
+        let Some((user, username)) = user_opt else {
+            continue;
+        };
+
+        // Place the bot in the target world if it differs from the home world.
+        // The context was already resolved (and validated) above the loop.
+        if let Some((ref repo, _, _, _, ref rules, _)) = cross_world_ctx
+            && let Err(e) = repo
+                .create_player_in_world(user.id, tribe, &rules.starting_village)
+                .await
+        {
+            tracing::error!(bot_index = i, error = %e, "bulk seed: create_player_in_world failed");
+            continue;
+        }
+
+        // Mark as AI.
+        if let Err(e) = state.accounts.set_is_ai(user.id).await {
+            tracing::error!(bot_index = i, error = %e, "bulk seed: set_is_ai failed");
+            continue;
+        }
+
+        // Issue key.
+        let (key, token) = crate::apikey::generate();
+        let secret_hash = crate::apikey::secret_hash(&key.secret);
+        if let Err(e) = state
+            .accounts
+            .create_agent_key(user.id, &key.id, &secret_hash)
+            .await
+        {
+            tracing::error!(bot_index = i, key_id = %key.id, error = %e, "bulk seed: create_agent_key failed");
+            continue;
+        }
+
+        manifest.push(serde_json::json!({ "username": username, "token": token }));
+    }
+
+    let created = manifest.len();
+    let manifest_json = serde_json::to_string_pretty(&manifest).unwrap_or_default();
+    let flash = format!("{created} bot(s) created.");
+    let resp = render_admin_page(&state, player, "", None, Some(manifest_json)).await;
+    with_flash(resp, Some(flash))
+}
+
+/// Per-bot revoke: revoke all keys for a single AI account (120 AC2). Admin-gated fail-closed.
+pub async fn admin_revoke_agent(
+    State(state): State<AppState>,
+    RealUser(player): RealUser,
+    Form(form): Form<RevokeAgentForm>,
+) -> Response {
+    if require_admin(state.accounts.as_ref(), player)
+        .await
+        .is_err()
+    {
+        return admin_forbidden();
+    }
+    let Ok(user_raw) = form.user.trim().parse::<u128>() else {
+        return Redirect::to("/admin").into_response();
+    };
+    let user = PlayerId(user_raw);
+    match state.accounts.revoke_keys_of(user).await {
+        Ok(n) => with_flash(
+            Redirect::to("/admin").into_response(),
+            Some(format!("{n} key(s) revoked.")),
+        ),
+        Err(e) => {
+            tracing::error!(error = %e, "admin_revoke_agent failed");
+            server_error()
+        }
+    }
+}
+
+/// Fleet-wide revoke: revoke all keys for every AI bot in a world (120 AC2). Admin-gated fail-closed.
+pub async fn admin_revoke_fleet(
+    State(state): State<AppState>,
+    RealUser(player): RealUser,
+    Form(form): Form<RevokeFleetForm>,
+) -> Response {
+    if require_admin(state.accounts.as_ref(), player)
+        .await
+        .is_err()
+    {
+        return admin_forbidden();
+    }
+    let Ok(world_raw) = form.world.trim().parse::<u128>() else {
+        return Redirect::to("/admin").into_response();
+    };
+    let world = WorldId(world_raw);
+    let bots = match state.accounts.list_agents(world).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!(error = %e, "admin_revoke_fleet: list_agents failed");
+            return server_error();
+        }
+    };
+    let mut total = 0u64;
+    for bot in &bots {
+        match state.accounts.revoke_keys_of(bot.user_id).await {
+            Ok(n) => total += n,
+            Err(e) => tracing::warn!(user = %bot.user_id.0, error = %e, "revoke_keys_of failed"),
+        }
+    }
+    with_flash(
+        Redirect::to("/admin").into_response(),
+        Some(format!(
+            "{total} key(s) revoked across {} bot(s).",
+            bots.len()
+        )),
+    )
 }
 
 /// The admin console search query (036 AC3).
@@ -4836,6 +5177,7 @@ pub async fn player_stats_page(
         world: world_id_str(world.world_id),
         subject_id: pid.to_string(),
         name: s.name,
+        npc: s.is_ai && world.ai_labeled,
         bio: profile.bio,
         online,
         presence_label,

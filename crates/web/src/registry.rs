@@ -21,6 +21,9 @@ pub struct WorldMeta {
     pub speed: GameSpeed,
     /// The world's resolved rule bundle (050) — the `rule_preset` (049) loaded once and shared.
     pub rules: Arc<WorldRules>,
+    /// Whether AI players are labeled as NPCs on this world (120 Decision #3). `true` when
+    /// `ai_visibility = 'labeled'`; `false` for `'disguised'`. Cached here — zero per-request queries.
+    pub ai_labeled: bool,
 }
 
 /// Holds the shared scheduler rules + the machinery to start a scheduler for any world.
@@ -85,9 +88,9 @@ impl WorldRegistry {
     }
 
     /// The selected world's game runtime (043): a freshly-built world-scoped `PgAccountRepository` + its
-    /// `WorldMap` + speed + radius, from the cached meta. The map is generate-on-read, so building the
-    /// runtime is cheap; the cache is populated on first access from the world row (one DB lookup), then
-    /// reused. `None` if the world does not exist or its speed is invalid.
+    /// `WorldMap` + speed + radius + resolved rule bundle + AI label flag, from the cached meta. The map is
+    /// generate-on-read, so building the runtime is cheap; the cache is populated on first access from the
+    /// world row (one DB lookup), then reused. `None` if the world does not exist or its speed is invalid.
     pub async fn context_for(
         &self,
         world_id: WorldId,
@@ -97,6 +100,7 @@ impl WorldRegistry {
         GameSpeed,
         u32,
         Arc<WorldRules>,
+        bool,
     )> {
         let cached = self.meta.lock().unwrap().get(&world_id).cloned();
         let meta = match cached {
@@ -108,6 +112,7 @@ impl WorldRegistry {
                     radius: world.radius,
                     speed: GameSpeed::new(world.speed).ok()?,
                     rules: self.rules_for(&world.rule_preset)?,
+                    ai_labeled: world.ai_visibility != "disguised",
                 };
                 self.meta.lock().unwrap().insert(world_id, m.clone());
                 m
@@ -127,7 +132,14 @@ impl WorldRegistry {
             self.beginner_secs,
             meta.speed,
         );
-        Some((repo, map, meta.speed, meta.radius, Arc::clone(&meta.rules)))
+        Some((
+            repo,
+            map,
+            meta.speed,
+            meta.radius,
+            Arc::clone(&meta.rules),
+            meta.ai_labeled,
+        ))
     }
 
     /// The world's repo + rule bundle **without** building its `WorldMap` (060) — for the account-level
@@ -148,6 +160,7 @@ impl WorldRegistry {
                     radius: world.radius,
                     speed: GameSpeed::new(world.speed).ok()?,
                     rules: self.rules_for(&world.rule_preset)?,
+                    ai_labeled: world.ai_visibility != "disguised",
                 };
                 self.meta.lock().unwrap().insert(world_id, m.clone());
                 m
@@ -215,6 +228,7 @@ impl WorldRegistry {
                 radius: world.radius,
                 speed,
                 rules: Arc::clone(&rules),
+                ai_labeled: world.ai_visibility != "disguised",
             },
         );
         let map = Arc::new(WorldMap::new(

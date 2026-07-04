@@ -4,7 +4,7 @@
 <div class="page">
   <section class="phead">
     <div class="phead__eyebrow">Moderation</div>
-    <h1 class="phead__title">{{ username }}</h1>
+    <h1 class="phead__title">{{ username }}{% if is_ai %} <span class="badge">AI</span>{% endif %}</h1>
     <a class="phead__back" href="/mod">← Review queue</a>
   </section>
 

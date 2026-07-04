@@ -226,7 +226,7 @@ async fn action_guard(State(state): State<AppState>, req: Request, next: Next) -
     // won/frozen. A POST with no world in the path is an account action (settings, sitting, …), not a world
     // game action, so it is not freeze-checked.
     if let Some(world) = world_in_path(req.uri().path())
-        && let Some((repo, _, _, _, _)) = state.world_registry.context_for(world).await
+        && let Some((repo, _, _, _, _, _)) = state.world_registry.context_for(world).await
     {
         match repo.world_ended().await {
             Ok(Some(_)) => {
@@ -489,6 +489,9 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/role", post(handlers::admin_role_submit))
         .route("/admin/world", post(handlers::admin_world_submit))
         .route("/admin/agent", post(handlers::admin_create_agent))
+        .route("/admin/agents", post(handlers::admin_bulk_seed_agents))
+        .route("/admin/agent/revoke", post(handlers::admin_revoke_agent))
+        .route("/admin/agents/revoke", post(handlers::admin_revoke_fleet))
         .route("/mod", get(handlers::mod_queue))
         .route("/mod/account/{id}", get(handlers::mod_account))
         .route("/mod/resolve", post(handlers::mod_resolve_submit))

@@ -1,7 +1,8 @@
 # AI players & the Agent API — bots as true clients
 
-**Status:** Accepted · **Date:** 2026-07-03 · **Slices:** 118 (Agent API core) → 119 (Agent API actions
-complete) → 120 (AI players & seeding) → 121 (bot runner: rule-based reflexes) → 122 (LLM strategist).
+**Status:** Accepted · **Date:** 2026-07-03 · **Slices:** 118 (Agent API core, **Verified/merged**) →
+119 (Agent API actions complete, **Verified/merged**) → 120 (AI players & seeding, **built — in
+review**) → 121 (bot runner: rule-based reflexes) → 122 (LLM strategist).
 **Depends on:** ADR 0034 (multi-world, `GameContext`, per-world players), ADR 0035 (per-world config),
 022 (fair play: rate limiting + detection signals), 019 (protection & lifecycle), 020 (the Natar synthetic-
 account precedent).

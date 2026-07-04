@@ -198,6 +198,9 @@ pub struct GameContext {
     pub radius: u32,
     /// The selected world's resolved rule bundle (050) — every per-world sim read keys on this preset.
     pub rules: std::sync::Arc<eperica_infrastructure::WorldRules>,
+    /// Whether AI players are labeled as NPCs on this world (120 Decision #3). Cached from WorldMeta —
+    /// zero extra DB queries per request. `true` → NPC badges shown; `false` → disguised (AC3/AC4).
+    pub ai_labeled: bool,
 }
 
 /// Why [`resolve_game_context`] could not produce a [`GameContext`]. The two callers map these
@@ -229,7 +232,8 @@ pub(crate) async fn resolve_game_context(
         Ok(Some(p)) => p,
         _ => return Err(WorldResolveFailure::NotJoined),
     };
-    let Some((accounts, map, speed, radius, rules)) = state.world_registry.context_for(world).await
+    let Some((accounts, map, speed, radius, rules, ai_labeled)) =
+        state.world_registry.context_for(world).await
     else {
         return Err(WorldResolveFailure::NotJoined);
     };
@@ -242,6 +246,7 @@ pub(crate) async fn resolve_game_context(
         speed,
         radius,
         rules,
+        ai_labeled,
     })
 }
 
@@ -275,6 +280,8 @@ pub struct WorldScope {
     pub radius: u32,
     /// The selected world's resolved rule bundle (050) — the public read pages key on this preset.
     pub rules: std::sync::Arc<eperica_infrastructure::WorldRules>,
+    /// Whether AI players are labeled as NPCs on this world (120 Decision #3). Cached from WorldMeta.
+    pub ai_labeled: bool,
 }
 
 impl FromRequestParts<AppState> for WorldScope {
@@ -288,7 +295,7 @@ impl FromRequestParts<AppState> for WorldScope {
         let Some(world) = world_from_path(parts).await else {
             return Err(Redirect::to("/worlds").into_response());
         };
-        let Some((accounts, map, speed, radius, rules)) =
+        let Some((accounts, map, speed, radius, rules, ai_labeled)) =
             state.world_registry.context_for(world).await
         else {
             return Err(Redirect::to("/worlds").into_response());
@@ -300,6 +307,7 @@ impl FromRequestParts<AppState> for WorldScope {
             speed,
             radius,
             rules,
+            ai_labeled,
         })
     }
 }

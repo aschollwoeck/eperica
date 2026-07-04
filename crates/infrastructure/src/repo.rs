@@ -3,23 +3,24 @@
 use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, AchievementRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder,
-    AdminAccount, AdminOverview, AdminRepository, AdminWorld, AgentKeyRecord, AllianceHit,
-    AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage, ArtifactRepository,
-    BattleApply, BattleReportView, BoardScope, BuildRepository, CombatRepository, CommsRepository,
-    ConflictMetric, ConquestRepository, ConversationSummary, CultureRepository, DefenderReport,
-    DiplomacyEntry, DueAttack, DueBuild, DueMovement, DueOasisAttack, DueOasisRegrow,
-    DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, ForumPost,
-    HeldArtifact, IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply, MedalAward,
-    MedalRepository, MedalSubjectKind, MedalView, Membership, MessageView, ModerationRepository,
-    MovementRepository, MovementView, NewBuildOrder, NewNotification, NewOasisReport,
-    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, NotificationRepository,
-    NotificationView, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository,
-    OasisState, OutgoingInvite, PendingInvite, PlayerHit, PlayerStats, PlayerWorld, ProfileView,
-    QuestRepository, RankingRepository, RazedBuilding, RepoError, ReportView, ResourceWrite,
-    RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply,
-    SettleOutcome, SettleRepository, SitterActionView, StarvationRepository, StationedGroup,
-    ThreadHead, ThreadSummary, TradeRepository, TradeView, TrainingRepository, UnitOrderKind,
-    UnitRepository, UserRecord, VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
+    AdminAccount, AdminOverview, AdminRepository, AdminWorld, AgentKeyRecord, AgentOverview,
+    AllianceHit, AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage,
+    ArtifactRepository, BattleApply, BattleReportView, BoardScope, BuildRepository,
+    CombatRepository, CommsRepository, ConflictMetric, ConquestRepository, ConversationSummary,
+    CultureRepository, DefenderReport, DiplomacyEntry, DueAttack, DueBuild, DueMovement,
+    DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining,
+    DueUnitOrder, ForumPost, HeldArtifact, IncomingAttack, LeaderboardRow, LifecycleRepository,
+    LoyaltyApply, MedalAward, MedalRepository, MedalSubjectKind, MedalView, Membership,
+    MessageView, ModerationRepository, MovementRepository, MovementView, NewBuildOrder,
+    NewNotification, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
+    NotificationRepository, NotificationView, OasisBattleApply, OasisOwnership,
+    OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PendingInvite, PlayerHit,
+    PlayerStats, PlayerWorld, ProfileView, QuestRepository, RankingRepository, RazedBuilding,
+    RepoError, ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
+    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, SitterActionView,
+    StarvationRepository, StationedGroup, ThreadHead, ThreadSummary, TradeRepository, TradeView,
+    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome,
+    WonderRepository, WonderStanding,
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactEffects,
@@ -864,7 +865,7 @@ impl AccountRepository for PgAccountRepository {
         // Exact match on the requested tiles via the (world_id, x, y) unique index.
         let rows = sqlx::query(
             "SELECT v.x, v.y, u.username, al.tag AS alliance_tag, \
-             (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity_ms \
+             (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity_ms, u.is_ai \
              FROM villages v JOIN players pu ON pu.id = v.owner_id JOIN users u ON u.id = pu.user_id \
              LEFT JOIN alliance_members am ON am.player_id = v.owner_id \
              LEFT JOIN alliances al ON al.id = am.alliance_id \
@@ -883,11 +884,13 @@ impl AccountRepository for PgAccountRepository {
                 let owner_name: String = r.try_get("username").map_err(backend)?;
                 let alliance_tag: Option<String> = r.try_get("alliance_tag").map_err(backend)?;
                 let last_activity_ms: i64 = r.try_get("last_activity_ms").map_err(backend)?;
+                let is_ai: bool = r.try_get("is_ai").map_err(backend)?;
                 Ok(VillageMarker {
                     coordinate: Coordinate::new(x, y),
                     owner_name,
                     alliance_tag,
                     owner_last_activity: Timestamp(last_activity_ms),
+                    is_ai,
                 })
             })
             .collect()
@@ -962,11 +965,21 @@ impl AccountRepository for PgAccountRepository {
     }
 
     async fn profile_of(&self, player: PlayerId) -> Result<Option<ProfileView>, RepoError> {
+        // 046: In the home world, players.id == users.id, so querying users directly works.
+        // For cross-world players (players.id ≠ users.id), resolve user_id through the players
+        // table first.  COALESCE tries the players join (correct for cross-world) and falls back
+        // to $1 directly (home world where the join returns $1 anyway).
         let row = sqlx::query(
-            "SELECT username, bio, (EXTRACT(EPOCH FROM last_activity) * 1000)::bigint AS last_ms \
-             FROM users WHERE id = $1",
+            "SELECT u.username, u.bio, \
+             (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_ms \
+             FROM users u \
+             WHERE u.id = COALESCE( \
+               (SELECT p.user_id FROM players p WHERE p.id = $1 AND p.world_id = $2), \
+               $1 \
+             )",
         )
         .bind(Uuid::from_u128(player.0))
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_optional(&self.pool)
         .await
         .map_err(backend)?;
@@ -1188,6 +1201,52 @@ impl AccountRepository for PgAccountRepository {
         .await
         .map_err(backend)?;
         Ok(())
+    }
+
+    async fn list_agents(&self, world: WorldId) -> Result<Vec<AgentOverview>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT u.id, u.username, p.tribe, \
+             (EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint AS created_at_ms, \
+             EXISTS(SELECT 1 FROM agent_keys k \
+                    WHERE k.user_id = u.id AND k.revoked_at IS NULL) AS enabled \
+             FROM users u \
+             JOIN players p ON p.user_id = u.id AND p.world_id = $1 \
+             WHERE u.is_ai = TRUE \
+             ORDER BY u.created_at, u.id",
+        )
+        .bind(Uuid::from_u128(world.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        rows.iter()
+            .map(|r| {
+                let id: Uuid = r.try_get("id").map_err(backend)?;
+                let tribe_slug: String = r.try_get("tribe").map_err(backend)?;
+                Ok(AgentOverview {
+                    user_id: PlayerId(id.as_u128()),
+                    username: r.try_get("username").map_err(backend)?,
+                    tribe: Tribe::from_slug(&tribe_slug).ok_or_else(|| {
+                        RepoError::Backend(format!("unknown tribe slug: {tribe_slug}"))
+                    })?,
+                    world_id: world,
+                    created_at: r.try_get("created_at_ms").map_err(backend)?,
+                    enabled: r.try_get("enabled").map_err(backend)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn revoke_keys_of(&self, user: PlayerId) -> Result<u64, RepoError> {
+        let result = sqlx::query(
+            "UPDATE agent_keys SET revoked_at = now() \
+             WHERE user_id = $1 AND revoked_at IS NULL",
+        )
+        .bind(Uuid::from_u128(user.0))
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(result.rows_affected())
     }
 }
 
@@ -5823,7 +5882,7 @@ fn population_board_sql(qf: &str) -> String {
             WHERE v.world_id = $1 GROUP BY v.owner_id \
          ) \
          SELECT p.id, u.username, (COALESCE(f.pop, 0) + COALESCE(b.pop, 0))::bigint AS total, \
-                (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity \
+                (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity, u.is_ai \
          FROM (SELECT oid FROM field_pop UNION SELECT oid FROM bldg_pop) owners \
          JOIN players p ON p.id = owners.oid \
          JOIN users u ON u.id = p.user_id \
@@ -5884,7 +5943,7 @@ impl RankingRepository for PgAccountRepository {
     ) -> Result<Vec<LeaderboardRow>, RepoError> {
         let (fields, kinds, levels, pops) = population_arrays(econ);
         let sql = population_board_sql(&quadrant_filter("p.id", "$6"));
-        let rows: Vec<(Uuid, String, i64, i64)> = sqlx::query_as(&sql)
+        let rows: Vec<(Uuid, String, i64, i64, bool)> = sqlx::query_as(&sql)
             .bind(Uuid::from_u128(self.world_id.0))
             .bind(&fields)
             .bind(&kinds)
@@ -5912,16 +5971,16 @@ impl RankingRepository for PgAccountRepository {
         // (battle tables carry no world_id) and resolves the name (`p.user_id → users`).
         let sql = format!(
             "SELECT p.id, u.username, COALESCE(SUM({val}), 0)::bigint AS total, \
-                    (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity \
+                    (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity, u.is_ai \
              FROM {table} JOIN players p ON p.id = {pid} AND p.world_id = $5 \
              JOIN users u ON u.id = p.user_id \
              WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
                AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) AND {qf} \
                AND u.abandoned_at IS NULL AND u.is_npc = false \
-             GROUP BY p.id, u.username, u.last_activity HAVING COALESCE(SUM({val}), 0) > 0 \
+             GROUP BY p.id, u.username, u.last_activity, u.is_ai HAVING COALESCE(SUM({val}), 0) > 0 \
              ORDER BY total DESC, p.id ASC LIMIT $4"
         );
-        let rows: Vec<(Uuid, String, i64, i64)> = sqlx::query_as(&sql)
+        let rows: Vec<(Uuid, String, i64, i64, bool)> = sqlx::query_as(&sql)
             .bind(since.map(|t| t.0 as f64))
             .bind(until.map(|t| t.0 as f64))
             .bind(scope_code(scope))
@@ -6012,8 +6071,9 @@ impl RankingRepository for PgAccountRepository {
         let pid = Uuid::from_u128(player.0);
         // 019 AC8: an abandoned account is hidden from its stat page (treated as not found). 046: the name
         // resolves through `players`, and a player not in this repo's world is treated as not found.
-        let Some(name): Option<String> = sqlx::query_scalar(
-            "SELECT u.username FROM players p JOIN users u ON u.id = p.user_id \
+        // 120 AC3: is_ai is read here (same join) so the handler can gate the NPC badge on ai_labeled.
+        let Some((name, is_ai)): Option<(String, bool)> = sqlx::query_as(
+            "SELECT u.username, u.is_ai FROM players p JOIN users u ON u.id = p.user_id \
              WHERE p.id = $1 AND p.world_id = $2 AND u.abandoned_at IS NULL AND u.is_npc = false",
         )
         .bind(pid)
@@ -6072,6 +6132,7 @@ impl RankingRepository for PgAccountRepository {
         Ok(Some(PlayerStats {
             player,
             name,
+            is_ai,
             population,
             villages,
             attack_points,
@@ -6173,13 +6234,16 @@ impl RankingRepository for PgAccountRepository {
     }
 }
 
-/// Map a `(id, name, value)` row to a [`LeaderboardRow`].
-fn leaderboard_row((id, name, value, last_activity): (Uuid, String, i64, i64)) -> LeaderboardRow {
+/// Map a `(id, name, value, last_activity, is_ai)` row to a [`LeaderboardRow`].
+fn leaderboard_row(
+    (id, name, value, last_activity, is_ai): (Uuid, String, i64, i64, bool),
+) -> LeaderboardRow {
     LeaderboardRow {
         player: PlayerId(id.as_u128()),
         name,
         value,
         last_activity: Timestamp(last_activity),
+        is_ai,
     }
 }
 
@@ -6499,7 +6563,7 @@ impl MedalRepository for PgAccountRepository {
         let delta = CLIMBER_DELTA;
         let sql = format!(
             "SELECT cur.player_id, u.username, {delta}::bigint AS delta, \
-                    (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity \
+                    (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity, u.is_ai \
              FROM population_snapshots cur \
              JOIN players p ON p.id = cur.player_id \
              JOIN users u ON u.id = p.user_id \
@@ -6509,7 +6573,7 @@ impl MedalRepository for PgAccountRepository {
                AND u.abandoned_at IS NULL AND u.is_npc = false \
              ORDER BY {delta} DESC, cur.player_id ASC LIMIT $5"
         );
-        let rows: Vec<(Uuid, String, i64, i64)> = sqlx::query_as(&sql)
+        let rows: Vec<(Uuid, String, i64, i64, bool)> = sqlx::query_as(&sql)
             .bind(Uuid::from_u128(self.world_id.0))
             .bind(prev)
             .bind(period)
@@ -6799,9 +6863,14 @@ impl LifecycleRepository for PgAccountRepository {
         // The live accounts idle past the period's cutoff (already-abandoned excluded — idempotent).
         // `FOR UPDATE` locks the rows so a concurrent `touch_activity` cannot make one active between
         // this read and the deletes below (it blocks until this transaction commits).
+        // 120 AC6: an enabled bot (is_ai with at least one unrevoked agent_key) is excluded from
+        // the victim set however stale — "enabled = holds an unrevoked key" stays derived. A bot
+        // whose last key was revoked has no carve-out and decays normally.
         let victims: Vec<Uuid> = sqlx::query_scalar(
             "SELECT id FROM users WHERE abandoned_at IS NULL AND is_npc = false \
-             AND last_activity < to_timestamp($1::double precision / 1000.0) FOR UPDATE",
+             AND last_activity < to_timestamp($1::double precision / 1000.0) \
+             AND NOT (is_ai AND EXISTS (SELECT 1 FROM agent_keys WHERE user_id = users.id AND revoked_at IS NULL)) \
+             FOR UPDATE",
         )
         .bind(cutoff.0)
         .fetch_all(&mut *tx)
@@ -7535,9 +7604,12 @@ impl ModerationRepository for PgAccountRepository {
     }
 
     async fn ip_association_count(&self, subject: PlayerId) -> Result<u32, RepoError> {
+        // 120 AC5: is_ai rows are excluded from the outer count so a bot fleet on the server IP
+        // never flags humans by association.
         let count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM users \
              WHERE registration_ip IS NOT NULL \
+               AND is_ai = false \
                AND registration_ip = (SELECT registration_ip FROM users WHERE id = $1)",
         )
         .bind(Uuid::from_u128(subject.0))
@@ -7728,6 +7800,7 @@ impl AdminRepository for PgAccountRepository {
         wonder_offset_secs: i64,
         rule_preset: &str,
         name: &str,
+        ai_visibility: &str,
     ) -> Result<WorldId, RepoError> {
         let config = WorldConfig::new(
             GameSpeed::new(speed).map_err(|e| RepoError::Backend(e.to_string()))?,
@@ -7740,6 +7813,7 @@ impl AdminRepository for PgAccountRepository {
             wonder_offset_secs,
             rule_preset,
             name,
+            ai_visibility,
         )
         .await
         .map_err(backend)?;
@@ -9474,6 +9548,85 @@ mod tests {
         assert!(sig.inhuman_action_rate, "the inhuman-rate flag trips");
     }
 
+    /// 120 AC5: `ip_association_count` excludes `is_ai` rows — a bot fleet on the server IP never
+    /// inflates the shared-IP signal for human accounts. Mirrors the setup of
+    /// `detection_signals_are_reproducible`.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn ip_association_count_excludes_ai_accounts(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let human_a = make_account(&repo, &template, "human_a").await;
+        let human_b = make_account(&repo, &template, "human_b").await;
+        let bot = make_account(&repo, &template, "bot_assoc").await;
+        // All three share one registration IP.
+        for p in [human_a, human_b, bot] {
+            sqlx::query("UPDATE users SET registration_ip = '198.51.100.1' WHERE id = $1")
+                .bind(Uuid::from_u128(p.0))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        // Mark the third account as an AI bot.
+        sqlx::query("UPDATE users SET is_ai = true WHERE id = $1")
+            .bind(Uuid::from_u128(bot.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        // The bot is excluded: human_a's count is 2 (only the two non-AI rows).
+        let count = repo.ip_association_count(human_a).await.unwrap();
+        assert_eq!(
+            count, 2,
+            "the AI row is excluded from the IP association count"
+        );
+    }
+
+    /// 120 AC5: `account_signals` for an is_ai subject short-circuits to zeroed signals — the two
+    /// detection ports are not called, consistent with plan Decision #2.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn account_signals_zeroed_for_ai_subject(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let rules = crate::fair_play_rules().unwrap();
+        let moderator = make_account(&repo, &template, "mod_aisig").await;
+        repo.set_moderator(moderator, true).await.unwrap();
+        let bot = make_account(&repo, &template, "bot_sig").await;
+        // Mark the bot as AI with a suspicious IP and a large action tally — both should be
+        // suppressed by the short-circuit.
+        sqlx::query(
+            "UPDATE users SET is_ai = true, registration_ip = '203.0.113.99' WHERE id = $1",
+        )
+        .bind(Uuid::from_u128(bot.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO rate_limits (subject, action, window_start, count) \
+             VALUES ($1, 'action', now(), 9999)",
+        )
+        .bind(bot.0.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let sig = eperica_application::account_signals(&repo, &repo, &rules, moderator, bot)
+            .await
+            .unwrap();
+        assert_eq!(
+            sig.ip_association_count, 0,
+            "IP association zeroed for AI subject"
+        );
+        assert!(
+            !sig.shared_ip_flagged,
+            "shared_ip_flagged false for AI subject"
+        );
+        assert_eq!(
+            sig.peak_action_count, 0,
+            "peak_action_count zeroed for AI subject"
+        );
+        assert!(
+            !sig.inhuman_action_rate,
+            "inhuman_action_rate false for AI subject"
+        );
+    }
+
     /// 019 AC2/AC3: a protected player cannot be attacked (no movement created); once a player attacks,
     /// their own protection ends. Drives the real `order_attack` use-case against the Pg repo.
     #[sqlx::test(migrations = "../../migrations")]
@@ -10671,6 +10824,67 @@ mod tests {
         // Idempotent: re-sweeping the recorded period is a no-op.
         assert_eq!(repo.sweep_abandoned(0, cutoff).await.unwrap(), 0);
         assert_eq!(repo.latest_swept_period().await.unwrap(), Some(0));
+    }
+
+    /// 120 AC6: the abandonment sweep spares an enabled bot (is_ai with an unrevoked agent_key row)
+    /// however stale; sweeps it once its key is revoked; and still sweeps a stale human in the same
+    /// run (the carve-out is bot-specific). Mirrors the setup of
+    /// `sweep_abandons_inactive_frees_map_and_is_idempotent`.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn sweep_spares_enabled_bot_and_sweeps_revoked(pool: PgPool) {
+        let Setup { repo, template, .. } = setup(pool.clone()).await;
+        let bot = make_account(&repo, &template, "bot").await;
+        let human = make_account(&repo, &template, "stale_human").await;
+        // Mark the bot as AI with an unrevoked agent key; set both to ancient last_activity.
+        sqlx::query("UPDATE users SET is_ai = true, last_activity = to_timestamp(1) WHERE id = $1")
+            .bind(Uuid::from_u128(bot.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO agent_keys (id, user_id, secret_hash) VALUES ('testkey120', $1, 'hash')",
+        )
+        .bind(Uuid::from_u128(bot.0))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE users SET last_activity = to_timestamp(1) WHERE id = $1")
+            .bind(Uuid::from_u128(human.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let cutoff = Timestamp(1_000_000);
+
+        // Period 0: the stale human is swept; the enabled bot is spared.
+        let count = repo.sweep_abandoned(0, cutoff).await.unwrap();
+        assert_eq!(count, 1, "only the stale human was swept");
+        assert!(
+            repo.find_user_by_id(human)
+                .await
+                .unwrap()
+                .unwrap()
+                .abandoned,
+            "the stale human is abandoned"
+        );
+        assert!(
+            !repo.find_user_by_id(bot).await.unwrap().unwrap().abandoned,
+            "the enabled bot survives the sweep"
+        );
+
+        // Revoke the bot's key — it is now disabled and eligible for the sweep.
+        sqlx::query("UPDATE agent_keys SET revoked_at = now() WHERE user_id = $1")
+            .bind(Uuid::from_u128(bot.0))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Period 1 (new period): the now-disabled bot is swept.
+        let count2 = repo.sweep_abandoned(1, cutoff).await.unwrap();
+        assert_eq!(count2, 1, "the revoked bot is swept after key revocation");
+        assert!(
+            repo.find_user_by_id(bot).await.unwrap().unwrap().abandoned,
+            "the revoked bot is abandoned"
+        );
     }
 
     /// 019 AC7/AC10: `process_due_lifecycle` settles every complete period once (watermark-driven) and
@@ -17271,5 +17485,48 @@ mod tests {
         assert_eq!(medals[0].category, MedalCategory::Climber);
         assert_eq!(medals[0].period, 1);
         assert_eq!(medals[0].rank, 1);
+    }
+
+    // 120 T1: ai_visibility plumbing — create_world and ensure_world paths.
+
+    /// Creating a world via the admin repo with ai_visibility="disguised" persists "disguised".
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn create_world_ai_visibility_persisted(pool: PgPool) {
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let a_secs = 90 * 24 * 60 * 60_i64;
+        let w_secs = 120 * 24 * 60 * 60_i64;
+        crate::world::create_world(
+            &pool,
+            &config,
+            a_secs,
+            w_secs,
+            "classic",
+            "Test",
+            "disguised",
+        )
+        .await
+        .expect("create world");
+        let vis: String =
+            sqlx::query_scalar("SELECT ai_visibility FROM worlds ORDER BY created_at DESC LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(vis, "disguised", "ai_visibility 'disguised' is stored");
+    }
+
+    /// The ensure_world path (boot world) relies on the DEFAULT — the column is 'labeled' without being
+    /// listed in the INSERT.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn ensure_world_defaults_to_labeled(pool: PgPool) {
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let vis: String =
+            sqlx::query_scalar("SELECT ai_visibility FROM worlds ORDER BY created_at ASC LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(vis, "labeled", "boot world defaults to 'labeled'");
     }
 }

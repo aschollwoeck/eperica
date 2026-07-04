@@ -27,6 +27,8 @@ pub struct VillageMarker {
     /// The owner's last activity (Unix-ms) — the map view derives the **inactive/farmable** flag from
     /// it via [`eperica_domain::is_inactive`] (019 AC6).
     pub owner_last_activity: Timestamp,
+    /// Whether the owner is an AI agent account (120 AC3).
+    pub is_ai: bool,
 }
 
 /// Details for a new account to be created.
@@ -406,6 +408,24 @@ pub trait AccountRepository: Send + Sync {
     async fn revoke_agent_key(&self, _key_id: &str) -> Result<(), RepoError> {
         Err(RepoError::Backend("agent keys not supported".into()))
     }
+
+    /// All AI accounts with a player in `world`, ordered by creation time (120 AC2).
+    /// Defaults to empty so non-agent fakes are untouched.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn list_agents(&self, _world: WorldId) -> Result<Vec<AgentOverview>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Revoke all unrevoked keys for `user` (120 AC2). Returns the number of rows updated.
+    /// Defaults to `Ok(0)` so non-agent fakes are untouched.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn revoke_keys_of(&self, _user: PlayerId) -> Result<u64, RepoError> {
+        Ok(0)
+    }
 }
 
 /// A public player search hit (028 AC1) — id + display name only.
@@ -435,6 +455,21 @@ pub struct AgentKeyRecord {
     pub secret_hash: String,
     /// Whether the key has been revoked (`revoked_at IS NOT NULL`).
     pub revoked: bool,
+}
+
+/// A summary of an AI bot account for the admin fleet panel (120 AC2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentOverview {
+    /// The user (account) id.
+    pub user_id: PlayerId,
+    pub username: String,
+    pub tribe: Tribe,
+    /// The world this bot has a player in.
+    pub world_id: WorldId,
+    /// Account creation time (Unix-ms UTC).
+    pub created_at: i64,
+    /// `true` while the account holds ≥1 unrevoked key (120 AC2).
+    pub enabled: bool,
 }
 
 /// A public alliance search hit (028 AC2) — id + name + tag.
@@ -2530,6 +2565,8 @@ pub struct LeaderboardRow {
     pub value: i64,
     /// The player's last activity (Unix-ms UTC) — feeds the 025 presence indicator on board rows.
     pub last_activity: Timestamp,
+    /// Whether the player is an AI agent account (120 AC3).
+    pub is_ai: bool,
 }
 
 /// One ranked alliance on a leaderboard (016 AC8): the alliance, its name + tag, and the aggregate.
@@ -2565,6 +2602,8 @@ pub struct DefenderReport {
 pub struct PlayerStats {
     pub player: PlayerId,
     pub name: String,
+    /// Whether the player is an AI agent account (120 AC3).
+    pub is_ai: bool,
     /// Total population across all the player's villages.
     pub population: i64,
     /// Public per-village breakdown: (village, coordinate, population) — villages are public by tile.
@@ -3226,6 +3265,7 @@ pub trait AdminRepository: Send + Sync {
     ///
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
+    #[allow(clippy::too_many_arguments)]
     async fn create_world(
         &self,
         _speed: f64,
@@ -3234,6 +3274,7 @@ pub trait AdminRepository: Send + Sync {
         _wonder_offset_secs: i64,
         _rule_preset: &str,
         _name: &str,
+        _ai_visibility: &str,
     ) -> Result<WorldId, RepoError> {
         Err(RepoError::Backend("create_world unimplemented".to_owned()))
     }
