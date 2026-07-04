@@ -29,6 +29,7 @@ ownership/in-game role must permit it on the *specific* target.
 | **Visitor** (Anonymous) | No | An unauthenticated user. | View public pages; register; log in. | Anything requiring an account (own no game state). |
 | **Player** | Yes | The core actor — a registered participant in a world. | Act on **their own** game assets (villages, troops, queues, trades) and use social features per their in-game roles. | Act on others' assets except through game mechanics (attack/trade/scout); access moderation or operator functions. |
 | **Moderator** | Yes (elevated) | Staff enforcing fair play (GDD §12.5). | Review reports, inspect flagged accounts, apply sanctions via moderation tools. | Configure or operate worlds; change game balance. |
+| **Spectator** | Yes (elevated) | An admin-granted **omniscient read-only observer** (125) — e.g. a caster, tournament referee, or researcher. | View the full state of any world through the `/spectate` dashboard and the spectator API (`spk_` keys): every village's economy/queues/garrison and all in-flight movements **with compositions**, unblinded by fog of war. | Mutate anything — the surface is read-only by construction (no game actions, no writes). **Caveat:** the role is additive, so a Spectator who also *plays* sees through fog everywhere, on every world; grant it to neutral observers, not competitors. |
 | **Administrator** (Operator) | Yes (elevated) | Runs the deployment and the worlds. | Create / configure / start / archive worlds (speed, map size, schedule); full operational control. | — (superset; bounded only by audit/accountability). |
 
 > **Elevated roles are additive to Player** where it makes sense (an Administrator can also play), but
@@ -70,3 +71,5 @@ behavior autonomously and authoritatively — P1/P4) is not a login role, but sp
 ## Changelog
 
 - **v1 (2026-06-10)** — Initial roles & permissions definition.
+- **2026-07-04** — Added the **Spectator** account role (slice 125): admin-granted omniscient
+  read-only observer with `spk_` keys and the fog caveat.

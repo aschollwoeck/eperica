@@ -492,6 +492,14 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/agents", post(handlers::admin_bulk_seed_agents))
         .route("/admin/agent/revoke", post(handlers::admin_revoke_agent))
         .route("/admin/agents/revoke", post(handlers::admin_revoke_fleet))
+        .route(
+            "/admin/spectator-key",
+            post(handlers::admin_spectator_key_submit),
+        )
+        .route(
+            "/admin/spectator-key/revoke",
+            post(handlers::admin_spectator_key_revoke),
+        )
         .route("/mod", get(handlers::mod_queue))
         .route("/mod/account/{id}", get(handlers::mod_account))
         .route("/mod/resolve", post(handlers::mod_resolve_submit))

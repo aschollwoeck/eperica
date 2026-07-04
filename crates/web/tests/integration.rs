@@ -2809,6 +2809,235 @@ async fn admin_console_gates_and_manages_roles(pool: sqlx::PgPool) {
     );
 }
 
+/// 125 AC1/AC2: the admin console grants and revokes the Spectator role via the existing
+/// `POST /admin/role` (no self-removal restriction, unlike admin), mints a one-time `spk_`
+/// spectator key, and revokes all of a user's keys. A non-admin is 403 on every one of these.
+#[sqlx::test(migrations = "../../migrations")]
+async fn admin_manages_spectator_role_and_keys(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let admin_name = unique("sadm");
+    let target_name = unique("spec");
+    let (ac, admin_id) = register_client(&base, &pool, &admin_name).await;
+    let (_tc, target_id) = register_client(&base, &pool, &target_name).await;
+    sqlx::query("UPDATE users SET is_admin = TRUE WHERE id = $1")
+        .bind(admin_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Grant the Spectator role via the shared role endpoint (AC1).
+    let r = ac
+        .post(format!("{base}/admin/role"))
+        .form(&[
+            ("target", target_id.as_u128().to_string().as_str()),
+            ("role", "spectator"),
+            ("grant", "true"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let is_spec: bool = sqlx::query_scalar("SELECT is_spectator FROM users WHERE id = $1")
+        .bind(target_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(is_spec, "spectator role granted");
+
+    // The console reflects the role (badge + toggle flips to Remove).
+    let body = ac
+        .get(format!("{base}/admin?q={target_name}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains("name=\"role\" value=\"spectator\""),
+        "spectator toggle rendered"
+    );
+
+    // Unlike Admin there is NO self-removal restriction: the admin grants themself the role and
+    // removes it again without a rejection.
+    for grant in ["true", "false"] {
+        let r = ac
+            .post(format!("{base}/admin/role"))
+            .form(&[
+                ("target", admin_id.as_u128().to_string().as_str()),
+                ("role", "spectator"),
+                ("grant", grant),
+            ])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 303, "self spectator toggle accepted");
+    }
+    let self_spec: bool = sqlx::query_scalar("SELECT is_spectator FROM users WHERE id = $1")
+        .bind(admin_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(!self_spec, "self-removal of spectator role succeeded");
+
+    // Mint a spectator key for the target (AC2): the plaintext spk_ token is shown exactly once
+    // in the re-rendered page; only the hash lands in spectator_keys.
+    let minted = ac
+        .post(format!("{base}/admin/spectator-key"))
+        .form(&[("username", target_name.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(minted.status().as_u16(), 200);
+    let minted_body = minted.text().await.unwrap();
+    assert!(
+        minted_body.contains("spk_"),
+        "one-time spk_ token shown on the admin page"
+    );
+    assert!(
+        !minted_body.contains("epk_"),
+        "no agent token leaks into the spectator mint response"
+    );
+    let key_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM spectator_keys WHERE user_id = $1")
+            .bind(target_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(key_count, 1, "one spectator_keys row created");
+    // The holders panel lists the account.
+    let page = ac
+        .get(format!("{base}/admin"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        page.contains("/admin/spectator-key/revoke"),
+        "holder revoke form rendered"
+    );
+
+    // Revoking the *role* deliberately does NOT delete or revoke the keys — a key dead-ends at
+    // auth time via the role re-check (T4), so no key hunt is needed on role revoke.
+    let r = ac
+        .post(format!("{base}/admin/role"))
+        .form(&[
+            ("target", target_id.as_u128().to_string().as_str()),
+            ("role", "spectator"),
+            ("grant", "false"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let live_keys: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM spectator_keys WHERE user_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(target_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(live_keys, 1, "role revoke leaves the key rows untouched");
+
+    // Explicit key revocation stamps revoked_at on all of the user's keys.
+    let r = ac
+        .post(format!("{base}/admin/spectator-key/revoke"))
+        .form(&[("user", target_id.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let live_keys: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM spectator_keys WHERE user_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(target_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(live_keys, 0, "all keys revoked");
+
+    // A non-admin is refused on every spectator admin surface (server-authoritative, P4).
+    let (plain, _pid) = register_client(&base, &pool, &unique("splain")).await;
+    let r = plain
+        .post(format!("{base}/admin/role"))
+        .form(&[
+            ("target", target_id.as_u128().to_string().as_str()),
+            ("role", "spectator"),
+            ("grant", "true"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403, "non-admin cannot grant the role");
+    let r = plain
+        .post(format!("{base}/admin/spectator-key"))
+        .form(&[("username", target_name.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403, "non-admin cannot mint keys");
+    let r = plain
+        .post(format!("{base}/admin/spectator-key/revoke"))
+        .form(&[("user", target_id.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403, "non-admin cannot revoke keys");
+}
+
+/// 125 AC2 (repo level): a spectator key round-trips through the `SpectatorRepository` port —
+/// insert → find returns the record (correct binding + hash, unrevoked) → revoke-all flips it to
+/// revoked (the lookup still returns it, exposing revocation exactly like agent keys do).
+#[sqlx::test(migrations = "../../migrations")]
+async fn spectator_key_repo_round_trip(pool: sqlx::PgPool) {
+    use eperica_application::SpectatorRepository;
+
+    let repo = movement_repo(&pool).await;
+    let base = spawn(pool.clone()).await;
+    let name = unique("skey");
+    let (_c, uid) = register_client(&base, &pool, &name).await;
+    let user = PlayerId(uid.as_u128());
+
+    let (key, token) = eperica_web::apikey::generate_spectator();
+    assert!(token.starts_with("spk_"), "spectator tokens are spk_");
+    let hash = eperica_web::apikey::secret_hash(&key.secret);
+
+    repo.insert_spectator_key(user, &key.id, &hash)
+        .await
+        .unwrap();
+    let rec = repo
+        .find_spectator_key(&key.id)
+        .await
+        .unwrap()
+        .expect("inserted key is found");
+    assert_eq!(rec.user, user, "key bound to the right account");
+    assert_eq!(rec.secret_hash, hash, "only the hash is stored");
+    assert!(!rec.revoked, "fresh key is unrevoked");
+
+    // Revoke all of the user's keys; the record stays findable but flagged revoked.
+    let n = repo.revoke_spectator_keys(user).await.unwrap();
+    assert_eq!(n, 1, "one key revoked");
+    let rec = repo
+        .find_spectator_key(&key.id)
+        .await
+        .unwrap()
+        .expect("revoked key still findable");
+    assert!(rec.revoked, "revocation exposed on the record");
+    // Idempotent: nothing left to revoke.
+    let n = repo.revoke_spectator_keys(user).await.unwrap();
+    assert_eq!(n, 0, "second revoke is a no-op");
+
+    // An unknown id is None, not an error.
+    assert!(
+        repo.find_spectator_key("00000000deadbeef")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
 /// 041: an admin creates a world from the console; it is persisted, started live (registry), and listed.
 /// A non-admin cannot create one, and invalid parameters are rejected.
 #[sqlx::test(migrations = "../../migrations")]

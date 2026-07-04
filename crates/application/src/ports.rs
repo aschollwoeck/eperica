@@ -83,6 +83,9 @@ pub struct UserRecord {
     /// Whether this is a synthetic **AI agent** account (118) — created by an operator, not a human
     /// registrant; agent API keys may only be bound to `is_ai` accounts.
     pub is_ai: bool,
+    /// Whether the account holds the **Spectator** role (125) — admin-granted, additive to other
+    /// roles; lets the account observe the full server state read-only with no game agency.
+    pub is_spectator: bool,
     /// When the account was permanently **banned** (022), or `None`. A ban always blocks.
     pub banned_at: Option<Timestamp>,
     /// The instant a temporary **suspension** lifts (022), or `None`. Blocks while `now` is before it.
@@ -3209,6 +3212,8 @@ pub struct AdminAccount {
     pub username: String,
     pub is_moderator: bool,
     pub is_admin: bool,
+    /// Whether the account holds the Spectator role (125).
+    pub is_spectator: bool,
     pub abandoned: bool,
 }
 
@@ -3278,6 +3283,75 @@ pub trait AdminRepository: Send + Sync {
     ) -> Result<WorldId, RepoError> {
         Err(RepoError::Backend("create_world unimplemented".to_owned()))
     }
+}
+
+/// Persistence for spectator keys (125). Default errors so fakes that don't support spectator keys
+/// get a clear "not supported" rather than silent success — mirrors the agent-key pattern (118).
+#[async_trait]
+pub trait SpectatorRepository: Send + Sync {
+    /// Set (or clear) the Spectator role on an account (125 AC1). Idempotent.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn set_spectator(&self, _user: PlayerId, _granted: bool) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// Look up a spectator key by its public id (125 AC2). Returns `None` if no key exists.
+    ///
+    /// The return type reuses [`AgentKeyRecord`] — its shape is identical (`user`, `secret_hash`,
+    /// `revoked`). The separation between agent and spectator credentials is enforced at the DB-
+    /// table level (distinct `spectator_keys` vs `agent_keys` tables) and at the parse/token level
+    /// (`spk_` vs `epk_`); the shared struct carries no ambiguity (AC2 Decision, plan.md).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn find_spectator_key(&self, _key_id: &str) -> Result<Option<AgentKeyRecord>, RepoError> {
+        Err(RepoError::Backend("spectator keys not supported".into()))
+    }
+
+    /// Store a new spectator key for an account (125). `key_id` is the public hex id;
+    /// `secret_hash` is `sha256(secret)` hex — the plaintext is never stored.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn insert_spectator_key(
+        &self,
+        _user: PlayerId,
+        _key_id: &str,
+        _secret_hash: &str,
+    ) -> Result<(), RepoError> {
+        Err(RepoError::Backend("spectator keys not supported".into()))
+    }
+
+    /// Revoke all unrevoked spectator keys for `user` (125 AC2). Returns the number of rows
+    /// updated. Revoking the Spectator role does NOT call this — dead-ending happens at auth time
+    /// when the role check fails (T4), so existing keys need not be hunted down on role revoke.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn revoke_spectator_keys(&self, _user: PlayerId) -> Result<u64, RepoError> {
+        Ok(0)
+    }
+
+    /// All accounts with at least one active (unrevoked) spectator key, for the admin panel
+    /// (125). Ordered by username. Defaults to empty.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn list_spectator_key_holders(&self) -> Result<Vec<SpectatorKeyHolder>, RepoError> {
+        Ok(Vec::new())
+    }
+}
+
+/// One row in the admin spectator-key panel (125): an account that holds ≥1 active spectator key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpectatorKeyHolder {
+    /// The user (account) id.
+    pub user_id: PlayerId,
+    pub username: String,
+    /// `true` while the account holds ≥1 unrevoked spectator key.
+    pub has_active_key: bool,
 }
 
 /// One message line in a conversation (024) — a DM line or a channel line.

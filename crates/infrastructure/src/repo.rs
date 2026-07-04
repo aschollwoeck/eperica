@@ -18,9 +18,9 @@ use eperica_application::{
     PlayerStats, PlayerWorld, ProfileView, QuestRepository, RankingRepository, RazedBuilding,
     RepoError, ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
     ScoutRepository, SettleApply, SettleOutcome, SettleRepository, SitterActionView,
-    StarvationRepository, StationedGroup, ThreadHead, ThreadSummary, TradeRepository, TradeView,
-    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome,
-    WonderRepository, WonderStanding,
+    SpectatorKeyHolder, SpectatorRepository, StarvationRepository, StationedGroup, ThreadHead,
+    ThreadSummary, TradeRepository, TradeView, TrainingRepository, UnitOrderKind, UnitRepository,
+    UserRecord, VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactEffects,
@@ -497,6 +497,7 @@ fn row_to_user(r: &PgRow) -> Result<UserRecord, RepoError> {
         is_moderator: r.try_get("is_moderator").map_err(backend)?,
         is_admin: r.try_get("is_admin").map_err(backend)?,
         is_ai: r.try_get("is_ai").map_err(backend)?,
+        is_spectator: r.try_get("is_spectator").map_err(backend)?,
         banned_at: r
             .try_get::<Option<i64>, _>("banned_ms")
             .map_err(backend)?
@@ -571,6 +572,7 @@ impl AccountRepository for PgAccountRepository {
             is_moderator: false,
             is_admin: false,
             is_ai: false,
+            is_spectator: false,
             banned_at: None,
             suspended_until: None,
         })
@@ -579,7 +581,7 @@ impl AccountRepository for PgAccountRepository {
     async fn find_user_by_username(&self, username: &str) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
             "SELECT id, username, email, password_hash, email_confirmed, tribe, \
-             (abandoned_at IS NOT NULL) AS abandoned, is_moderator, is_admin, is_ai, \
+             (abandoned_at IS NOT NULL) AS abandoned, is_moderator, is_admin, is_ai, is_spectator, \
              (EXTRACT(EPOCH FROM banned_at) * 1000)::bigint AS banned_ms, \
              (EXTRACT(EPOCH FROM suspended_until) * 1000)::bigint AS suspended_ms \
              FROM users WHERE username = $1",
@@ -594,7 +596,7 @@ impl AccountRepository for PgAccountRepository {
     async fn find_user_by_id(&self, id: PlayerId) -> Result<Option<UserRecord>, RepoError> {
         let row = sqlx::query(
             "SELECT id, username, email, password_hash, email_confirmed, tribe, \
-             (abandoned_at IS NOT NULL) AS abandoned, is_moderator, is_admin, is_ai, \
+             (abandoned_at IS NOT NULL) AS abandoned, is_moderator, is_admin, is_ai, is_spectator, \
              (EXTRACT(EPOCH FROM banned_at) * 1000)::bigint AS banned_ms, \
              (EXTRACT(EPOCH FROM suspended_until) * 1000)::bigint AS suspended_ms \
              FROM users WHERE id = $1",
@@ -7673,7 +7675,7 @@ impl ModerationRepository for PgAccountRepository {
     }
 }
 
-/// Map a row to an admin-console account listing entry (036).
+/// Map a row to an admin-console account listing entry (036/125).
 fn row_to_admin_account(r: &PgRow) -> Result<AdminAccount, RepoError> {
     let id: Uuid = r.try_get("id").map_err(backend)?;
     Ok(AdminAccount {
@@ -7681,6 +7683,7 @@ fn row_to_admin_account(r: &PgRow) -> Result<AdminAccount, RepoError> {
         username: r.try_get("username").map_err(backend)?,
         is_moderator: r.try_get("is_moderator").map_err(backend)?,
         is_admin: r.try_get("is_admin").map_err(backend)?,
+        is_spectator: r.try_get("is_spectator").map_err(backend)?,
         abandoned: r.try_get("abandoned").map_err(backend)?,
     })
 }
@@ -7744,7 +7747,8 @@ impl AdminRepository for PgAccountRepository {
 
     async fn recent_accounts(&self, limit: i64) -> Result<Vec<AdminAccount>, RepoError> {
         let rows = sqlx::query(
-            "SELECT id, username, is_moderator, is_admin, (abandoned_at IS NOT NULL) AS abandoned \
+            "SELECT id, username, is_moderator, is_admin, is_spectator, \
+             (abandoned_at IS NOT NULL) AS abandoned \
              FROM users ORDER BY created_at DESC LIMIT $1",
         )
         .bind(limit)
@@ -7756,7 +7760,8 @@ impl AdminRepository for PgAccountRepository {
 
     async fn admin_account(&self, player: PlayerId) -> Result<Option<AdminAccount>, RepoError> {
         let row = sqlx::query(
-            "SELECT id, username, is_moderator, is_admin, (abandoned_at IS NOT NULL) AS abandoned \
+            "SELECT id, username, is_moderator, is_admin, is_spectator, \
+             (abandoned_at IS NOT NULL) AS abandoned \
              FROM users WHERE id = $1",
         )
         .bind(Uuid::from_u128(player.0))
@@ -7818,6 +7823,95 @@ impl AdminRepository for PgAccountRepository {
         .await
         .map_err(backend)?;
         Ok(world.id)
+    }
+}
+
+#[async_trait]
+impl SpectatorRepository for PgAccountRepository {
+    async fn set_spectator(&self, user: PlayerId, granted: bool) -> Result<(), RepoError> {
+        sqlx::query("UPDATE users SET is_spectator = $2 WHERE id = $1")
+            .bind(Uuid::from_u128(user.0))
+            .bind(granted)
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn find_spectator_key(&self, key_id: &str) -> Result<Option<AgentKeyRecord>, RepoError> {
+        // AgentKeyRecord is reused: the shape is identical (`user`, `secret_hash`, `revoked`).
+        // AC2 is enforced by querying `spectator_keys` (not `agent_keys`): a leaked spk_ token
+        // can never match an epk_ row because the tables are separate.
+        let row = sqlx::query(
+            "SELECT user_id, secret_hash, (revoked_at IS NOT NULL) AS revoked \
+             FROM spectator_keys WHERE id = $1",
+        )
+        .bind(key_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+        row.as_ref()
+            .map(|r| {
+                let user_id: Uuid = r.try_get("user_id").map_err(backend)?;
+                Ok(AgentKeyRecord {
+                    user: PlayerId(user_id.as_u128()),
+                    secret_hash: r.try_get("secret_hash").map_err(backend)?,
+                    revoked: r.try_get("revoked").map_err(backend)?,
+                })
+            })
+            .transpose()
+    }
+
+    async fn insert_spectator_key(
+        &self,
+        user: PlayerId,
+        key_id: &str,
+        secret_hash: &str,
+    ) -> Result<(), RepoError> {
+        sqlx::query("INSERT INTO spectator_keys (id, user_id, secret_hash) VALUES ($1, $2, $3)")
+            .bind(key_id)
+            .bind(Uuid::from_u128(user.0))
+            .bind(secret_hash)
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    async fn revoke_spectator_keys(&self, user: PlayerId) -> Result<u64, RepoError> {
+        let result = sqlx::query(
+            "UPDATE spectator_keys SET revoked_at = now() \
+             WHERE user_id = $1 AND revoked_at IS NULL",
+        )
+        .bind(Uuid::from_u128(user.0))
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(result.rows_affected())
+    }
+
+    async fn list_spectator_key_holders(&self) -> Result<Vec<SpectatorKeyHolder>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT DISTINCT ON (u.id) u.id, u.username, \
+             EXISTS(SELECT 1 FROM spectator_keys sk \
+                    WHERE sk.user_id = u.id AND sk.revoked_at IS NULL) AS has_active_key \
+             FROM users u \
+             JOIN spectator_keys sk2 ON sk2.user_id = u.id \
+             ORDER BY u.id, u.username",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let id: Uuid = r.try_get("id").map_err(backend)?;
+                Ok(SpectatorKeyHolder {
+                    user_id: PlayerId(id.as_u128()),
+                    username: r.try_get("username").map_err(backend)?,
+                    has_active_key: r.try_get("has_active_key").map_err(backend)?,
+                })
+            })
+            .collect()
     }
 }
 

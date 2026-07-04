@@ -2,7 +2,7 @@
 
 **Status:** Draft. Gates per task: fmt, clippy -D warnings, cargo test --workspace.
 
-- [ ] **T1 — Role, keys, migration.** `0052_spectator.sql` (is_spectator + spectator_keys);
+- [x] **T1 — Role, keys, migration.** `0052_spectator.sql` (is_spectator + spectator_keys);
   `spk_` token support; ports + repo (set/find/insert/revoke); admin console: role toggle +
   key mint/revoke; roles.md Spectator row (with the fog caveat). Tests: toggle round-trip,
   mint/verify/revoke, role-revoke dead-ends keys. (AC1, AC2)

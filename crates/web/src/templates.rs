@@ -1323,15 +1323,24 @@ pub struct AdminWorldRow {
     pub is_home: bool,
 }
 
-/// One account row in the admin console listing (036 AC3).
+/// One account row in the admin console listing (036/125 AC3/AC1).
 pub struct AdminAccountRow {
     pub id: String,
     pub username: String,
     pub is_moderator: bool,
     pub is_admin: bool,
+    /// Whether the account holds the Spectator role (125).
+    pub is_spectator: bool,
     pub abandoned: bool,
     /// Whether this row is the viewing admin (hides the self-demote-admin control, AC3).
     pub is_self: bool,
+}
+
+/// One row in the admin spectator-key panel (125 AC2): an account holding ≥1 active spectator key.
+pub struct SpectatorHolderRow {
+    /// Decimal `u128` string of the user id (for the revoke form value).
+    pub user_id: String,
+    pub username: String,
 }
 
 /// One row in the admin fleet panel (120 AC2).
@@ -1389,6 +1398,11 @@ pub struct AdminTemplate {
     pub agent_manifest_data_url: Option<String>,
     /// All AI accounts across all worlds, for the fleet management panel (120 AC2).
     pub bots: Vec<AgentBotRow>,
+    /// One-time plaintext spectator key (125 AC2) — `Some` only immediately after a successful
+    /// POST /admin/spectator-key; `None` on every other render. Never persisted; shown ONCE.
+    pub spectator_key: Option<String>,
+    /// Accounts holding at least one active (unrevoked) spectator key (125 AC2 panel).
+    pub spectator_holders: Vec<SpectatorHolderRow>,
 }
 
 /// A row in the conversations list (024 AC3 / 060: aggregated across worlds).

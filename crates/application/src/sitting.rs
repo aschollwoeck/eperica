@@ -197,6 +197,7 @@ mod tests {
             is_moderator: false,
             is_admin: false,
             is_ai: false,
+            is_spectator: false,
             banned_at: if banned { Some(Timestamp(1)) } else { None },
             suspended_until: None,
         }

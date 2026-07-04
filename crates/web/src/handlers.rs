@@ -20,9 +20,9 @@ use crate::templates::{
     RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate,
     ReportsTemplate, ResourceRibbon, RosterRowView, ScoutReportTemplate, ScoutResourceRow,
     SearchHitRow, SearchTemplate, SettingsTemplate, SettingsToggleRow, ShipmentRow, SitterRow,
-    SittingTemplate, SmithyRow, SmithyTemplate, StyleGuideTemplate, TermsTemplate, TrainRow,
-    TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate, VillageTrainingRow,
-    WonderStandingView, WonderTemplate, WorldsTemplate,
+    SittingTemplate, SmithyRow, SmithyTemplate, SpectatorHolderRow, StyleGuideTemplate,
+    TermsTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate,
+    VillageTrainingRow, WonderStandingView, WonderTemplate, WorldsTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -37,16 +37,17 @@ use eperica_application::{
     DiplomacyCommand, ElevatedRole, ForumError, LeaderboardRow, LoginError, MedalRepository,
     MedalSubjectKind, ModerationError, ModerationRepository, MovementRepository, OasisRepository,
     PlayerHit, QuestRepository, RegisterCommand, RegisterError, RepoError, ScoutIntel,
-    ScoutReportView, ScoutRepository, TradeRepository, TrainingRepository, UnitOrderKind,
-    UnitRepository, Viewport, Window, WonderRepository, account_signals, admin_overview,
-    alliance_conflict_leaderboard, alliance_population_leaderboard, alliance_statistics,
-    alliance_view, authenticate, authorize_sit, climbers_leaderboard, conflict_leaderboard,
-    conversation_list, create_world as admin_create_world_uc, disband_alliance, dm_key,
-    dm_pair_key, edit_bio, end_protection_if_established, evaluate_achievements, evaluate_quests,
-    expel_member, file_report, found_alliance, grant_sitter, invite_player, leave_alliance,
-    list_accounts as admin_list_accounts, list_forum, list_notifications_for_account, list_sitters,
-    list_sitting_for, list_worlds as admin_list_worlds, load_culture, load_economy,
-    map_viewport_rect, mark_notifications_read_for_account, notif_key, notification_settings,
+    ScoutReportView, ScoutRepository, SpectatorRepository, TradeRepository, TrainingRepository,
+    UnitOrderKind, UnitRepository, Viewport, Window, WonderRepository, account_signals,
+    admin_overview, alliance_conflict_leaderboard, alliance_population_leaderboard,
+    alliance_statistics, alliance_view, authenticate, authorize_sit, climbers_leaderboard,
+    conflict_leaderboard, conversation_list, create_world as admin_create_world_uc,
+    disband_alliance, dm_key, dm_pair_key, edit_bio, end_protection_if_established,
+    evaluate_achievements, evaluate_quests, expel_member, file_report, found_alliance,
+    grant_sitter, invite_player, leave_alliance, list_accounts as admin_list_accounts, list_forum,
+    list_notifications_for_account, list_sitters, list_sitting_for,
+    list_worlds as admin_list_worlds, load_culture, load_economy, map_viewport_rect,
+    mark_notifications_read_for_account, notif_key, notification_settings,
     notification_unread_for_account, open_chat, open_dm, open_thread, order_attack, order_build,
     order_demolish, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
     order_reinforcement, order_research, order_return, order_scout, order_settle,
@@ -4234,7 +4235,7 @@ pub async fn admin(
     Query(q): Query<AdminQuery>,
 ) -> Response {
     let query = q.q.unwrap_or_default();
-    render_admin_page(&state, player, &query, None, None).await
+    render_admin_page(&state, player, &query, None, None, None).await
 }
 
 /// Assemble and render the admin console page. Shared between the GET `/admin` handler and the
@@ -4243,6 +4244,8 @@ pub async fn admin(
 /// * `query`     — the current search string; empty for non-search renders.
 /// * `agent_key` — the one-time plaintext bearer token (118); `None` on every render except the
 ///   immediate success of an agent-create POST.
+/// * `spectator_key` — the one-time plaintext spectator token (125); `None` on every render except
+///   the immediate success of a spectator-key mint POST.
 ///
 /// Authorization is implicitly enforced: `admin_overview` (the first call) returns
 /// `AdminError::NotAuthorized` for non-admins, which maps to a 403 here.
@@ -4252,6 +4255,7 @@ async fn render_admin_page(
     query: &str,
     agent_key: Option<String>,
     agent_manifest: Option<String>,
+    spectator_key: Option<String>,
 ) -> Response {
     let trimmed = query.trim();
     let searched = !trimmed.is_empty();
@@ -4298,6 +4302,7 @@ async fn render_admin_page(
             username: a.username,
             is_moderator: a.is_moderator,
             is_admin: a.is_admin,
+            is_spectator: a.is_spectator,
             abandoned: a.abandoned,
             is_self: a.id == player,
         })
@@ -4331,6 +4336,23 @@ async fn render_admin_page(
             Err(e) => tracing::warn!(world = %w.id.0, error = %e, "list_agents failed"),
         }
     }
+
+    // Accounts holding active spectator keys, for the spectator-key panel (125 AC2).
+    let spectator_holders: Vec<SpectatorHolderRow> =
+        match state.accounts.list_spectator_key_holders().await {
+            Ok(holders) => holders
+                .into_iter()
+                .filter(|h| h.has_active_key)
+                .map(|h| SpectatorHolderRow {
+                    user_id: h.user_id.0.to_string(),
+                    username: h.username,
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "list_spectator_key_holders failed");
+                Vec::new()
+            }
+        };
 
     let worlds: Vec<AdminWorldRow> = raw_worlds
         .into_iter()
@@ -4376,6 +4398,8 @@ async fn render_admin_page(
         agent_manifest,
         agent_manifest_data_url,
         bots,
+        spectator_key,
+        spectator_holders,
     })
 }
 
@@ -4691,7 +4715,7 @@ pub async fn admin_create_agent(
 
     // Re-render the admin page with the one-time plaintext token. The operator must copy it now
     // — it is not stored and cannot be recovered (Decision #2, plan.md).
-    render_admin_page(&state, player, "", Some(token), None).await
+    render_admin_page(&state, player, "", Some(token), None, None).await
 }
 
 /// Bulk-seed AI agent accounts into a world (120 AC1). Admin-gated fail-closed.
@@ -4840,7 +4864,7 @@ pub async fn admin_bulk_seed_agents(
     let created = manifest.len();
     let manifest_json = serde_json::to_string_pretty(&manifest).unwrap_or_default();
     let flash = format!("{created} bot(s) created.");
-    let resp = render_admin_page(&state, player, "", None, Some(manifest_json)).await;
+    let resp = render_admin_page(&state, player, "", None, Some(manifest_json), None).await;
     with_flash(resp, Some(flash))
 }
 
@@ -4918,11 +4942,11 @@ pub struct AdminQuery {
     q: Option<String>,
 }
 
-/// The admin role-change form (036 AC3): grant/revoke Moderator or Administrator on a target account.
+/// The admin role-change form (036 AC3 / 125 AC1): grant/revoke an elevated role on a target account.
 #[derive(Deserialize)]
 pub struct AdminRoleForm {
     target: String,
-    /// `"moderator"` or `"admin"`.
+    /// `"moderator"`, `"admin"`, or `"spectator"` (125).
     role: String,
     grant: bool,
 }
@@ -4948,6 +4972,7 @@ pub async fn admin_role_submit(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
         state.accounts.as_ref(),
+        state.accounts.as_ref(),
         player,
         PlayerId(target),
         role,
@@ -4963,6 +4988,102 @@ pub async fn admin_role_submit(
                 Redirect::to("/admin").into_response(),
                 Some(user_msg(e.to_string())),
             )
+        }
+    }
+}
+
+/// The spectator-key mint form (125 AC2): `POST /admin/spectator-key`.
+#[derive(Deserialize)]
+pub struct SpectatorKeyForm {
+    /// The target account's username (any existing account; the role gate applies at auth time).
+    username: String,
+}
+
+/// The spectator-key revoke form (125 AC2): revoke ALL of a user's spectator keys by id.
+#[derive(Deserialize)]
+pub struct SpectatorKeyRevokeForm {
+    /// Decimal u128 user id.
+    user: String,
+}
+
+/// Mint a spectator key for an existing account (125 AC2). Admin-gated on the real human,
+/// FAIL-CLOSED like the agent-key mint (this mints credentials).
+///
+/// Only `sha256(secret)` is stored; the plaintext `spk_` token is re-rendered into the admin page
+/// exactly once and never logged (118 Decision #2, reused). Minting does not require the account
+/// to already hold the Spectator role — the role is re-checked at auth time (plan.md Key
+/// decisions), so a key minted early simply dead-ends until the role is granted.
+pub async fn admin_spectator_key_submit(
+    State(state): State<AppState>,
+    RealUser(player): RealUser,
+    Form(form): Form<SpectatorKeyForm>,
+) -> Response {
+    if require_admin(state.accounts.as_ref(), player)
+        .await
+        .is_err()
+    {
+        return admin_forbidden();
+    }
+    let username = form.username.trim();
+    let user = match state.accounts.find_user_by_username(username).await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            return with_flash(
+                Redirect::to("/admin").into_response(),
+                Some("No account with that username.".to_owned()),
+            );
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "admin_spectator_key: user lookup failed");
+            return server_error();
+        }
+    };
+    // Generate a spk_ key and persist only the SHA-256 hash. The plaintext token is NEVER logged
+    // — only `key.id` (the public half) may appear in traces.
+    let (key, token) = crate::apikey::generate_spectator();
+    let secret_hash = crate::apikey::secret_hash(&key.secret);
+    if let Err(e) = state
+        .accounts
+        .insert_spectator_key(user.id, &key.id, &secret_hash)
+        .await
+    {
+        tracing::error!(key_id = %key.id, error = %e, "admin_spectator_key: insert failed");
+        return server_error();
+    }
+    // Re-render the admin page with the one-time plaintext token (shown ONCE, not recoverable).
+    render_admin_page(&state, player, "", None, None, Some(token)).await
+}
+
+/// Revoke all spectator keys of an account (125 AC2). Admin-gated on the real human.
+pub async fn admin_spectator_key_revoke(
+    State(state): State<AppState>,
+    RealUser(player): RealUser,
+    Form(form): Form<SpectatorKeyRevokeForm>,
+) -> Response {
+    if require_admin(state.accounts.as_ref(), player)
+        .await
+        .is_err()
+    {
+        return admin_forbidden();
+    }
+    let Ok(user_raw) = form.user.trim().parse::<u128>() else {
+        return with_flash(
+            Redirect::to("/admin").into_response(),
+            Some("Invalid user ID.".to_owned()),
+        );
+    };
+    match state
+        .accounts
+        .revoke_spectator_keys(PlayerId(user_raw))
+        .await
+    {
+        Ok(n) => with_flash(
+            Redirect::to("/admin").into_response(),
+            Some(format!("{n} spectator key(s) revoked.")),
+        ),
+        Err(e) => {
+            tracing::error!(error = %e, "admin_spectator_key_revoke failed");
+            server_error()
         }
     }
 }

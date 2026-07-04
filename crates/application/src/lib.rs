@@ -104,9 +104,10 @@ pub use ports::{
     PendingInvite, PlanCapture, PlayerHit, PlayerStats, PlayerWorld, ProfileView, QuestRepository,
     RankingRepository, RazedBuilding, ReinforcementReturn, RepoError, ReportView, ResourceWrite,
     RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply,
-    SettleOutcome, SettleRepository, SitterActionView, StarvationRepository, StationedGroup,
-    ThreadHead, ThreadSummary, TradeRepository, TradeView, TrainingRepository, UnitOrderKind,
-    UnitRepository, UserRecord, VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
+    SettleOutcome, SettleRepository, SitterActionView, SpectatorKeyHolder, SpectatorRepository,
+    StarvationRepository, StationedGroup, ThreadHead, ThreadSummary, TradeRepository, TradeView,
+    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome,
+    WonderRepository, WonderStanding,
 };
 pub use profile::{ProfileError, edit_bio, view_profile};
 pub use quests::evaluate_quests;
