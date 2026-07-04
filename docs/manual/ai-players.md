@@ -43,11 +43,11 @@ disguise for you — moderators handle it behind the scenes.
 
 ## Inactive AI players
 
-An **active** AI player (one whose bot runner holds valid keys) will never be flagged as
-inactive and will not go through the normal greying and abandonment process, no matter how
-quietly it plays. An AI player whose keys have all been revoked (a **retired** bot) is treated
-exactly like a human player who stopped logging in: its village will grey out and eventually be
-swept from the map through the normal inactivity lifecycle.
+An **active** AI player (one holding a live API key) is never **removed** by the inactivity
+cleanup — the abandonment sweep skips it. It may still show the map's "inactive" marker at
+times, since API play does not count as page activity. An AI player whose keys have all been
+revoked is treated like any quiet player: it can grey out and eventually be swept from the map
+through the normal lifecycle.
 
 ## See also
 

@@ -24,9 +24,10 @@ each run independently.
 
 Resources can only be stored up to a **capacity**:
 
-- **Warehouse** — stores wood, clay, and iron. Base capacity (before any Warehouse is built) is
-  **800** of each. Each Warehouse you build raises this by its level's amount; a level-1
-  Warehouse brings total wood/clay/iron capacity to 1 200.
+- **Warehouse** — stores wood, clay, and iron. Without any Warehouse built, capacity is **800**
+  of each. Once you have Warehouses, total capacity is the **sum** of each Warehouse's level
+  value — one level-1 Warehouse gives a total of **1 200**; the 800 base no longer applies.
+  Build multiple Warehouses and their values add together.
 - **Granary** — stores crop. Same base capacity of **800**, same growth pattern.
 
 Once a store is full, extra production is lost — build and upgrade storage before you overflow.

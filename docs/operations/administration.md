@@ -29,7 +29,8 @@ A new world's scheduler starts **live** — no restart. Players join it from the
 choosing a tribe per world.
 
 Archiving = the world freezing machinery (a won world stops accepting game actions); there is no
-separate archive button — the Wonder victory or operator-level intervention freezes a world.
+separate archive button — the Wonder victory or direct database intervention (no admin UI for
+this) freezes a world.
 
 ### Account administration
 

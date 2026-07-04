@@ -94,6 +94,6 @@ Build a **Palace** to make that village your **capital**:
 - The capital may raise its **resource fields beyond the normal cap**, so it can out-produce your other
   villages.
 - It is marked with a **★ Capital** badge on the village page and stands out on the **map**.
-- It cannot be conquered (conquest itself arrives in a later release).
+- It cannot be conquered. See [Conquest](conquest.md) for how village capture works on non-capital villages.
 
 Build a Palace in a **different** village and the capital **moves** there — you always have exactly one.

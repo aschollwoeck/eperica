@@ -4,8 +4,10 @@
 
 ## Choosing your tribe
 
-You choose a **tribe when you join a world** — not when you create your account. Each world you
-play in can have its own tribe. The three tribes are:
+You choose your **first tribe at registration** — that becomes your tribe for the home world.
+Every additional world you join from the lobby gets its own tribe choice; you pick it inline on
+the join row before pressing Join. Each world you play in can have its own tribe. The three
+tribes are:
 
 - **Romans** — balanced, high-quality troops. More expensive and slower to train than the
   others, but they have the strongest cavalry in the late game and a unique economic advantage:

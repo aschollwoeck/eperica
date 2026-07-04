@@ -21,12 +21,13 @@ After logging in you always land at the **worlds lobby** (`/worlds`), also reach
 
 ## Joining a world
 
-When you click **Join** on a joinable world you will be asked to pick your **tribe** — Romans,
-Teutons, or Gauls. This choice is **specific to that world**; you can play Gauls on one world
-and Romans on another simultaneously.
+Your home-world tribe is chosen at registration. For every additional world in the joinable
+list, select your **tribe** — Romans, Teutons, or Gauls — using the inline selector on the join
+row, then click **Join**. This choice is **specific to that world**; you can play Gauls on one
+world and Romans on another simultaneously.
 
-After you confirm your tribe, the server creates your starting village on that world's map and
-redirects you to it. You are now playing in that world.
+The server creates your starting village on that world's map and redirects you to it. You are
+now playing in that world.
 
 ## Switching between worlds
 

@@ -24,8 +24,9 @@ game rules — a bot can never see or do more than a human player (ADR 0036).
   report heads, research state. Everything a page shows the player, nothing more.
 - **Rate budget**: 120 API requests/minute per key (429 + `retry_after_secs` beyond).
 - **Carve-outs** (so fleets don't break the meta): detection signals skip AI accounts (moderators
-  see the AI badge instead; humans are never flagged by IP-association with bots); the inactivity
-  sweep spares **enabled** bots (revoke keys ⇒ the bot decays like a quit player); beginner
+  see the AI badge instead; humans are never flagged by IP-association with bots); the
+  **abandonment sweep** spares **enabled** bots (bots may still show the map's "inactive" marker
+  — only removal is prevented; revoke keys ⇒ the bot decays like a quit player); beginner
   protection applies normally; bots are full ranking/medal participants.
 - **Visibility** is per world: `labeled` (NPC tags) or `disguised` (indistinguishable).
 

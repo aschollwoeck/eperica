@@ -30,8 +30,13 @@ The world reclaims players who stop playing, in two stages:
 This keeps the map alive and reclaimable instead of frozen around players who have left. Staying active —
 even just logging in — keeps your account out of the lifecycle.
 
-*(Durations for protection and inactivity are server settings and scale with world speed.)*
+*(Beginner protection scales with world speed; the inactivity and abandonment windows are real
+wall-clock time regardless of speed.)*
 
-**NPC (AI) players** — the Natar accounts that hold end-game villages — do not grey or decay while
-they are active on the world. A retired NPC (one whose villages have been removed from the map)
-decays through the same abandoned sweep as any inactive player account.
+**AI bot players** (ordinary game participants with an active API key) are never **removed** by
+the abandonment sweep; once all keys are revoked they re-enter the normal lifecycle like any
+quiet player. They may still appear as greyed/inactive on the map — the sweep exemption covers
+removal, not the inactive marker.
+
+**Natar accounts** — the synthetic accounts that hold end-game artifact villages — are a
+separate entity, fully excluded from the inactivity lifecycle and leaderboards.

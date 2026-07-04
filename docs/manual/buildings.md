@@ -34,9 +34,10 @@ six croplands. Each can be upgraded up to level 10 (level 20 in your **capital**
 
 ## Building roster
 
-Every building can be upgraded to a **maximum of level 10**. Prerequisites are listed as the
-minimum level of another building required before construction can start. "None" means you can
-build it on any empty slot from the start.
+Every building can be upgraded to a **maximum of level 10** (the Wonder of the World is the
+exception, reaching level 100). Prerequisites are listed as the minimum level of another
+building required before construction can start. "None" means you can build it on any empty
+slot from the start.
 
 ### Main Building
 
@@ -122,8 +123,10 @@ you can send and receive goods.
 
 ### Embassy
 
-**Purpose:** Required to found or join an **alliance**. Level determines how many members the
-alliance may hold (in the founding village). See [Alliances & diplomacy](alliances.md).
+**Purpose:** Required to found or join an **alliance**. Level 1 lets you join an alliance;
+level 3 lets you found one. The level that counts is your **highest** Embassy across all your
+villages. The alliance member cap (60 by default) is a fixed world setting — not controlled by
+Embassy level. See [Alliances & diplomacy](alliances.md).
 
 **Prerequisites:** Main Building level 1.
 
@@ -190,8 +193,7 @@ equivalents). Rams smash Walls; Catapults destroy buildings.
 ### Town Hall
 
 **Purpose:** Generates **culture points** (CP), which determine how many villages you may
-found or hold. Higher levels produce more CP per hour and unlock the Celebration event for a
-burst of CP.
+found or hold. Higher levels produce more CP per hour.
 
 **Prerequisites:** Main Building level 5, Academy level 10.
 
@@ -259,8 +261,8 @@ can build something else there.
 Each demolish order:
 
 - Is **free** — no resource cost.
-- **Occupies the build lane** like a normal construction order, and takes time equal to that
-  level's normal build time.
+- **Occupies the build lane** like a normal construction order, and takes roughly the build
+  time of the level below, scaled by your Main Building level.
 - Is issued from the building's page (a "Demolish" button appears when the condition is met).
 
 To fully clear a building you need to demolish once per level — the game does not auto-continue.

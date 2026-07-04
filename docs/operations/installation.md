@@ -55,7 +55,7 @@ A `.env` file in the working directory is loaded automatically. Copy `.env.examp
 | `WORLD_SPEED` | `1` | Home world speed multiplier (created on first boot) |
 | `WORLD_RADIUS` | `200` | Home world map radius |
 | `ARTIFACT_RELEASE_DELAY_SECS` | `7776000` (90 d) | Home-world artifact release offset |
-| `WONDER_RELEASE_DELAY_SECS` | `10368000` (120 d) | Home-world Wonder release offset (must exceed the artifact offset) |
+| `WONDER_RELEASE_DELAY_SECS` | `10368000` (120 d) | Home-world Wonder release offset (should exceed the artifact offset) |
 | `TRUST_PROXY` | `false` | Trust `X-Forwarded-For`/`X-Real-IP` for client IPs. **Only** enable behind a proxy you control — otherwise rate-limit/detection keying becomes spoofable. |
 | `REQUIRE_EMAIL_CONFIRMATION` | `false` | ⚠ Enforcement stub: registration demands confirmation and blocks login, but **no mailer exists** — no email is sent. Leave off unless you wire delivery yourself. |
 | `MODERATORS` | – | Comma-separated usernames granted the Moderator role at startup (idempotent) |
@@ -71,7 +71,7 @@ A `.env` file in the working directory is loaded automatically. Copy `.env.examp
 4. `MODERATORS`/`ADMINS` roles granted.
 5. Chat + notification LISTEN hubs start; a **scheduler task per world** starts (lazy, event-driven —
    no global tick).
-6. HTTP serves on `BIND_ADDR`. Ctrl-C/SIGTERM drains in-flight scheduler work before exit.
+6. HTTP serves on `BIND_ADDR`. Ctrl-C (**SIGINT**) drains in-flight scheduler work before exit — SIGTERM is not handled, so the default systemd/container stop signal skips the drain.
 
 ## Reverse proxy & TLS
 
@@ -95,10 +95,16 @@ WorkingDirectory=/opt/eperica            # contains crates/web/static + .env
 ExecStart=/opt/eperica/eperica-web
 Restart=on-failure
 Environment=RUST_LOG=info
+KillSignal=SIGINT                        # required — the binary only handles SIGINT (Ctrl-C)
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+> **Signal note:** the binary handles **SIGINT only**. Without `KillSignal=SIGINT` (systemd) or
+> `STOPSIGNAL SIGINT` (Docker/Podman), the runtime sends SIGTERM, the drain is bypassed, and
+> the process is killed after the stop timeout. Always set the appropriate signal for a clean
+> shutdown.
 
 ## Logs, backup, maintenance
 
@@ -106,8 +112,9 @@ WantedBy=multi-user.target
   file sink or rotation in the app.
 - **Backup:** no built-in tooling — all state lives in Postgres, so standard `pg_dump`/PITR
   practice applies. The binary is stateless; restoring the database restores the game.
-- **Upgrades:** stop the service, deploy the new binary (+ static dir), start — migrations apply
-  themselves. Schedulers catch up on any backlog deterministically (due-event design, ADR 0002).
+- **Upgrades:** stop the service **with SIGINT** for a clean scheduler drain, deploy the new
+  binary (+ static dir), start — migrations apply themselves. Schedulers catch up on any backlog
+  deterministically (due-event design, ADR 0002).
 - **Sessions across restarts:** guaranteed only with a persistent `SESSION_SECRET`.
 
 ## First steps after install

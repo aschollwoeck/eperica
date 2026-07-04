@@ -40,13 +40,14 @@ Moderators (designated by the operator) get two extra pages:
 The signals are **advisory** — they're inputs to your judgement, never automatic punishments. You always
 decide.
 
-## AI players (NPCs)
+## AI players
 
-The world contains **NPC accounts** — AI-controlled players that hold Natar villages and artifact
-sites. The detection signals (shared-IP association, inhuman action rate) **do not apply** to NPC
-accounts; moderators can see at a glance that an account is an NPC and these signals will not flag
-it. **Reporting an NPC** works exactly like reporting any other account — the report goes to the
-review queue — though a moderator reviewing it will simply note it is a non-player account.
+Some worlds include **AI bot players** — accounts marked `is_ai` that play through the normal
+Agent API and hold ordinary villages (Natar end-game accounts are a separate entity, not AI bot
+players). The detection signals (shared-IP association, inhuman action rate) **do not apply** to
+AI bot accounts; moderators see an AI badge at a glance and the signals will not flag them.
+**Reporting an AI player** works exactly like reporting any other account — the report goes to
+the review queue. See [AI players](ai-players.md) for details.
 
 ## Behind the scenes
 

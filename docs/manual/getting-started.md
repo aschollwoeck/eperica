@@ -6,10 +6,12 @@
 
 1. Open the site and choose **Create account**.
 2. Enter a **username**, your **email address**, and a **password** (at least 8 characters).
-3. Submit the form.
+3. Choose your **tribe** — Romans, Teutons, or Gauls. This becomes your tribe for the home world.
+4. Submit the form.
 
-Your account is created. If the world requires email confirmation you'll be asked to verify
-your address before your first login — check your inbox.
+Your account is created and your first (home-world) village is placed on the map with the tribe
+you chose. If the server requires email confirmation, login is gated until your address is
+verified — no confirmation email is sent automatically unless the operator has wired up a mailer.
 
 ## The worlds lobby
 
@@ -22,13 +24,14 @@ After you log in you land at the **worlds lobby** (`/worlds`). It shows two list
 
 The lobby is also where you **switch** between worlds if you play in more than one.
 
-## Joining a world
+## Joining additional worlds
 
-Click **Join** next to any world in the joinable list. You will be asked to choose your
-**tribe** — Romans, Teutons, or Gauls. Your tribe is specific to **this world**: you can play a
-different tribe on another world.
+Your home world is already set up after registration. For any other world in the joinable list,
+select your **tribe** — Romans, Teutons, or Gauls — using the inline selector on the join row,
+then click **Join**. Your tribe choice is specific to that world and can differ from your other
+worlds.
 
-After you choose, the server creates your starting village and drops you straight into it.
+After you join, the server creates your starting village and drops you straight into it.
 
 ## Your starting village
 
@@ -68,7 +71,7 @@ village by the time it ends.
 1. Choose **Log in**.
 2. Enter your **username** and **password**.
 
-You arrive at your last active village. Use **Log out** when you're done; everything is saved on
+You arrive at the **worlds lobby**. Use **Log out** when you're done; everything is saved on
 the server and will be exactly as you left it — including any buildings that finished while you
 were away.
 
