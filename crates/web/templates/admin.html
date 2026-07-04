@@ -75,6 +75,13 @@
     {% when Some with (manifest) %}
     <div class="notice notice--warn" style="margin-bottom:12px">
       <strong>One-time key manifest — copy now, it cannot be recovered.</strong>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:12px">
+        {% match agent_manifest_data_url %}
+        {% when Some with (data_url) %}
+        <a href="{{ data_url }}" download="agents.json" class="btn btn--small btn--secondary">Download agents.json</a>
+        {% when None %}
+        {% endmatch %}
+      </div>
       <textarea class="agent-key" rows="8" style="display:block;width:100%;margin-top:8px;font-family:monospace;font-size:0.85em" readonly>{{ manifest }}</textarea>
     </div>
     {% when None %}
@@ -99,7 +106,7 @@
       <label>Count <input type="number" name="count" min="1" max="50" value="5" required style="width:5em"></label>
       <label>Tribe mix
         <select name="tribe_mix">
-          <option value="random">Random (round-robin)</option>
+          <option value="even">Even mix (round-robin)</option>
           <option value="romans">All Romans</option>
           <option value="teutons">All Teutons</option>
           <option value="gauls">All Gauls</option>
@@ -137,7 +144,7 @@
         <tr>
           <td>{{ b.username }}</td>
           <td>{{ b.tribe }}</td>
-          <td><span class="muted">{{ b.world_id }}</span></td>
+          <td>{% for w in worlds %}{% if w.id == b.world_id %}{{ w.name }}{% endif %}{% endfor %}<span class="muted" style="font-size:0.8em;margin-left:4px">({{ b.world_id }})</span></td>
           <td><span data-ts="{{ b.created_at }}">—</span></td>
           <td>{% if b.enabled %}<span class="badge">Enabled</span>{% else %}<span class="muted">Disabled</span>{% endif %}</td>
           <td>

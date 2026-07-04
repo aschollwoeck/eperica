@@ -11262,7 +11262,6 @@ async fn agent_api_settle_success(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn mod_account_ai_badge_and_report_against_ai(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
-    let home = home_world(&pool).await;
 
     // Register three accounts: reporter, AI subject, moderator.
     let reporter_name = unique("rpt");
@@ -11283,7 +11282,6 @@ async fn mod_account_ai_badge_and_report_against_ai(pool: sqlx::PgPool) {
             .unwrap();
         c
     };
-    let _ = home.as_str(); // suppress unused warning — ensures world route is primed
     let cr = register(&reporter_name).await;
     let _ca = register(&ai_name).await;
     let cm = register(&mod_name).await;
@@ -11569,6 +11567,11 @@ async fn ai_npc_tags_by_world_visibility(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
+    // Positive anchor: bot must appear on the board (guards against a regressed error page passing vacuously).
+    assert!(
+        disg_board.contains(disg_bot_name.as_str()),
+        "bot appears on the disguised world leaderboard (positive anchor)"
+    );
     assert!(
         !disg_board.contains(r#"class="badge">NPC<"#),
         "leaderboard shows no NPC badge for bot on disguised world"
@@ -11586,6 +11589,11 @@ async fn ai_npc_tags_by_world_visibility(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
+    // Positive anchor: stats page must contain the bot's name.
+    assert!(
+        disg_bot_stats.contains(disg_bot_name.as_str()),
+        "stats page contains bot name on disguised world (positive anchor)"
+    );
     assert!(
         !disg_bot_stats.contains(r#"class="badge">NPC<"#),
         "player stats page shows no NPC badge for bot on disguised world"
@@ -11603,6 +11611,11 @@ async fn ai_npc_tags_by_world_visibility(pool: sqlx::PgPool) {
         .text()
         .await
         .unwrap();
+    // Positive anchor: bot's name must appear in the tile label JSON.
+    assert!(
+        disg_tiles.contains(disg_bot_name.as_str()),
+        "map tile JSON contains bot name on disguised world (positive anchor)"
+    );
     assert!(
         !disg_tiles.contains("(NPC)"),
         "map tile label has no (NPC) for bot's tile in disguised world"
@@ -11630,12 +11643,30 @@ async fn admin_bulk_seeds_agents(pool: sqlx::PgPool) {
         .form(&[
             ("world", home.as_str()),
             ("count", "3"),
-            ("tribe_mix", "random"),
+            ("tribe_mix", "even"),
         ])
         .send()
         .await
         .unwrap();
-    assert_eq!(r.status().as_u16(), 403, "non-admin denied");
+    assert_eq!(r.status().as_u16(), 403, "non-admin denied bulk seed");
+
+    // Non-admin POST /admin/agent/revoke → 403.
+    let r = plain
+        .post(format!("{base}/admin/agent/revoke"))
+        .form(&[("user", "1")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403, "non-admin denied per-bot revoke");
+
+    // Non-admin POST /admin/agents/revoke → 403.
+    let r = plain
+        .post(format!("{base}/admin/agents/revoke"))
+        .form(&[("world", home.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403, "non-admin denied fleet revoke");
 
     // Promote admin.
     sqlx::query("UPDATE users SET is_admin = TRUE WHERE username = $1")
@@ -11644,13 +11675,85 @@ async fn admin_bulk_seeds_agents(pool: sqlx::PgPool) {
         .await
         .unwrap();
 
-    // Bulk seed 3 bots.
+    // Bulk seed into a bogus world id → no accounts created (orphan-account guard, SHOULD #4).
+    let users_before: i64 = sqlx::query_scalar("SELECT count(*) FROM users")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let bogus_world = "99999999999999999999999999999999"; // decimal u128 that does not exist
+    let r = ac
+        .post(format!("{base}/admin/agents"))
+        .form(&[
+            ("world", bogus_world),
+            ("count", "2"),
+            ("tribe_mix", "even"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    // Should redirect with a flash rather than 500.
+    assert!(
+        r.status().as_u16() == 302 || r.status().as_u16() == 303 || r.status().as_u16() == 200,
+        "bogus world seed returns without 500"
+    );
+    let users_after_bogus: i64 = sqlx::query_scalar("SELECT count(*) FROM users")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        users_before, users_after_bogus,
+        "bogus world seed created no new users"
+    );
+
+    // tribe_mix=teutons → all 3 bots are Teutons.
     let r = ac
         .post(format!("{base}/admin/agents"))
         .form(&[
             ("world", home.as_str()),
             ("count", "3"),
-            ("tribe_mix", "random"),
+            ("tribe_mix", "teutons"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "teutons seed succeeded");
+    let teuton_body = r.text().await.unwrap();
+    // Parse manifest to get names.
+    let ta_start = teuton_body
+        .find("readonly>")
+        .expect("teuton manifest textarea");
+    let after_ta = &teuton_body[ta_start + "readonly>".len()..];
+    let ta_end = after_ta.find("</textarea>").expect("closing textarea");
+    let teuton_json = after_ta[..ta_end]
+        .replace("&quot;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&");
+    let teuton_manifest: Vec<serde_json::Value> =
+        serde_json::from_str(&teuton_json).expect("teuton manifest is valid JSON");
+    assert_eq!(teuton_manifest.len(), 3, "3 teuton bots created");
+    for entry in &teuton_manifest {
+        let name = entry["username"].as_str().unwrap();
+        let tribe: String =
+            sqlx::query_scalar("SELECT p.tribe FROM players p JOIN users u ON u.id = p.user_id WHERE u.username = $1 LIMIT 1")
+                .bind(name)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            tribe, "teutons",
+            "bot {name} should be teutons, got {tribe}"
+        );
+    }
+
+    // Bulk seed 3 bots with tribe_mix=even.
+    let r = ac
+        .post(format!("{base}/admin/agents"))
+        .form(&[
+            ("world", home.as_str()),
+            ("count", "3"),
+            ("tribe_mix", "even"),
         ])
         .send()
         .await
@@ -11688,6 +11791,29 @@ async fn admin_bulk_seeds_agents(pool: sqlx::PgPool) {
     // Distinct usernames.
     let unique_names: std::collections::HashSet<_> = names.iter().collect();
     assert_eq!(unique_names.len(), 3, "3 distinct bot usernames");
+
+    // tribe_mix=even → the 3 bots have exactly {romans, teutons, gauls} (round-robin — Decision #6).
+    {
+        let mut even_tribes: Vec<String> = Vec::new();
+        for name in &names {
+            let tribe: String = sqlx::query_scalar(
+                "SELECT p.tribe FROM players p JOIN users u ON u.id = p.user_id \
+                 WHERE u.username = $1 LIMIT 1",
+            )
+            .bind(name)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            even_tribes.push(tribe);
+        }
+        let mut sorted = even_tribes.clone();
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            vec!["gauls", "romans", "teutons"],
+            "even mix produces exactly {{romans, teutons, gauls}}: got {even_tribes:?}"
+        );
+    }
 
     // Verify DB: is_ai = true, villages exist, keys exist.
     for name in &names {

@@ -4312,6 +4312,7 @@ async fn render_admin_page(
         };
 
     // Collect all AI bots across all worlds for the fleet panel (120 AC2).
+    // NOTE: one list_agents query per world (N+1) — accepted; admin page is admin-rare.
     let mut bots: Vec<AgentBotRow> = Vec::new();
     for w in &raw_worlds {
         match state.accounts.list_agents(w.id).await {
@@ -4343,6 +4344,14 @@ async fn render_admin_page(
             is_home: w.id == state.world_id,
         })
         .collect();
+    // Build a data-URL for the manifest download link (AC1): same one-time JSON, nothing extra
+    // stored. Computed here so the template stays logic-free.
+    let agent_manifest_data_url = agent_manifest.as_deref().map(|json| {
+        format!(
+            "data:application/json;charset=utf-8,{}",
+            percent_encode_json(json)
+        )
+    });
     page(&AdminTemplate {
         speed: overview.speed,
         radius: overview.radius,
@@ -4365,6 +4374,7 @@ async fn render_admin_page(
         rows,
         agent_key,
         agent_manifest,
+        agent_manifest_data_url,
         bots,
     })
 }
@@ -4489,7 +4499,44 @@ fn default_seed_count() -> u32 {
 }
 
 fn default_tribe_mix() -> String {
-    "random".to_owned()
+    "even".to_owned()
+}
+
+/// Percent-encode a JSON string for safe embedding in a `data:` URL href attribute.
+///
+/// Encodes the characters that would corrupt a data URL or break an HTML attribute:
+/// `%` (must be first), `"`, `#`, `<`, `>`, `&`, space, and ASCII control chars.
+fn percent_encode_json(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3 / 2);
+    for b in s.bytes() {
+        match b {
+            b'%' => out.push_str("%25"),
+            b'"' => out.push_str("%22"),
+            b'#' => out.push_str("%23"),
+            b'<' => out.push_str("%3C"),
+            b'>' => out.push_str("%3E"),
+            b'&' => out.push_str("%26"),
+            b' ' => out.push_str("%20"),
+            b'\n' => out.push_str("%0A"),
+            b'\r' => out.push_str("%0D"),
+            b'\t' => out.push_str("%09"),
+            _ => out.push(b as char),
+        }
+    }
+    out
+}
+
+/// Generate a synthetic unusable password: 32 random bytes as a lowercase hex string.
+/// Argon2-hashed inside `register` — slow but this is an admin-only operation, not a hot path.
+fn synthetic_password() -> String {
+    use rand::RngCore as _;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes.iter().fold(String::with_capacity(64), |mut s, b| {
+        use std::fmt::Write as _;
+        write!(s, "{b:02x}").expect("write to String is infallible");
+        s
+    })
 }
 
 /// The per-bot revoke form (120 AC2): revoke all keys for a single user by id.
@@ -4561,18 +4608,8 @@ pub async fn admin_create_agent(
     };
     let world = WorldId(world_raw);
 
-    // Synthesise an unusable random password (32 random bytes as hex; argon2-hashed inside
-    // `register` — slow but this is an admin-only operation, not a hot path).
-    let synthetic_password = {
-        use rand::RngCore as _;
-        let mut bytes = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut bytes);
-        bytes.iter().fold(String::with_capacity(64), |mut s, b| {
-            use std::fmt::Write as _;
-            write!(s, "{b:02x}").expect("write to String is infallible");
-            s
-        })
-    };
+    // Synthesise an unusable random password (argon2-hashed inside `register`).
+    let pw = synthetic_password();
 
     let username = form.username.trim().to_owned();
     let email = format!("{username}@ai.invalid");
@@ -4586,7 +4623,7 @@ pub async fn admin_create_agent(
         RegisterCommand {
             username: username.clone(),
             email,
-            password: synthetic_password,
+            password: pw,
             tribe: form.tribe.trim().to_owned(),
         },
     )
@@ -4692,38 +4729,46 @@ pub async fn admin_bulk_seed_agents(
     let world = WorldId(world_raw);
 
     // Prepare a tribe iterator based on tribe_mix.
-    // "random" → cycle romans/teutons/gauls; others → fixed.
+    // "even" → round-robin romans→teutons→gauls (deterministic, directly assertable — Decision #6);
+    // named-tribe values → fixed tribe for every bot.
     let tribe_cycle: Vec<Tribe> = match form.tribe_mix.trim() {
         "romans" => vec![Tribe::Romans],
         "teutons" => vec![Tribe::Teutons],
         "gauls" => vec![Tribe::Gauls],
-        _ => vec![Tribe::Romans, Tribe::Teutons, Tribe::Gauls],
+        _ => vec![Tribe::Romans, Tribe::Teutons, Tribe::Gauls], // "even" and any alias
+    };
+
+    // Hoist the cross-world registry look-up to BEFORE the seeding loop so that a bogus world
+    // id never partially creates accounts. If the world is the home world, no look-up is needed.
+    let cross_world_ctx = if world != state.world_id {
+        let ctx = state.world_registry.context_for(world).await;
+        if ctx.is_none() {
+            return with_flash(
+                Redirect::to("/admin").into_response(),
+                Some("No such world — no bots created.".to_owned()),
+            );
+        }
+        ctx
+    } else {
+        None
     };
 
     let mut manifest: Vec<serde_json::Value> = Vec::new();
     let pool_len = AI_NAME_POOL.len();
 
+    // NOTE: a 50-bot seed argon2-hashes sequentially (one per bot). This is admin-rare and the
+    // count is capped at 50, so the sequential cost is accepted (P11 exemption for admin paths).
     for i in 0..count as usize {
         let base_name = AI_NAME_POOL[i % pool_len];
         let tribe = tribe_cycle[i % tribe_cycle.len()];
 
-        // Try the base name, then with numeric suffix 2..=6 on Taken.
+        // Try the base name, then with numeric suffix 2..=6 on Taken (attempts map to n+2 → 2..=6).
         let mut user_opt = None;
         'retry: for attempt in 0u32..5 {
             let candidate = if attempt == 0 {
                 base_name.to_owned()
             } else {
                 format!("{base_name}{}", attempt + 1)
-            };
-            let synthetic_password = {
-                use rand::RngCore as _;
-                let mut bytes = [0u8; 32];
-                rand::thread_rng().fill_bytes(&mut bytes);
-                bytes.iter().fold(String::with_capacity(64), |mut s, b| {
-                    use std::fmt::Write as _;
-                    write!(s, "{b:02x}").expect("write to String is infallible");
-                    s
-                })
             };
             let email = format!("{candidate}@ai.invalid");
             match register(
@@ -4734,7 +4779,7 @@ pub async fn admin_bulk_seed_agents(
                 RegisterCommand {
                     username: candidate.clone(),
                     email,
-                    password: synthetic_password,
+                    password: synthetic_password(),
                     tribe: tribe.slug().to_owned(),
                 },
             )
@@ -4765,20 +4810,14 @@ pub async fn admin_bulk_seed_agents(
         };
 
         // Place the bot in the target world if it differs from the home world.
-        if world != state.world_id {
-            let Some((repo, _map, _speed, _radius, rules, _)) =
-                state.world_registry.context_for(world).await
-            else {
-                tracing::warn!(bot_index = i, "bulk seed: world not in registry");
-                continue;
-            };
-            if let Err(e) = repo
+        // The context was already resolved (and validated) above the loop.
+        if let Some((ref repo, _, _, _, ref rules, _)) = cross_world_ctx
+            && let Err(e) = repo
                 .create_player_in_world(user.id, tribe, &rules.starting_village)
                 .await
-            {
-                tracing::error!(bot_index = i, error = %e, "bulk seed: create_player_in_world failed");
-                continue;
-            }
+        {
+            tracing::error!(bot_index = i, error = %e, "bulk seed: create_player_in_world failed");
+            continue;
         }
 
         // Mark as AI.

@@ -965,11 +965,21 @@ impl AccountRepository for PgAccountRepository {
     }
 
     async fn profile_of(&self, player: PlayerId) -> Result<Option<ProfileView>, RepoError> {
+        // 046: In the home world, players.id == users.id, so querying users directly works.
+        // For cross-world players (players.id ≠ users.id), resolve user_id through the players
+        // table first.  COALESCE tries the players join (correct for cross-world) and falls back
+        // to $1 directly (home world where the join returns $1 anyway).
         let row = sqlx::query(
-            "SELECT username, bio, (EXTRACT(EPOCH FROM last_activity) * 1000)::bigint AS last_ms \
-             FROM users WHERE id = $1",
+            "SELECT u.username, u.bio, \
+             (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_ms \
+             FROM users u \
+             WHERE u.id = COALESCE( \
+               (SELECT p.user_id FROM players p WHERE p.id = $1 AND p.world_id = $2), \
+               $1 \
+             )",
         )
         .bind(Uuid::from_u128(player.0))
+        .bind(Uuid::from_u128(self.world_id.0))
         .fetch_optional(&self.pool)
         .await
         .map_err(backend)?;
@@ -1202,7 +1212,7 @@ impl AccountRepository for PgAccountRepository {
              FROM users u \
              JOIN players p ON p.user_id = u.id AND p.world_id = $1 \
              WHERE u.is_ai = TRUE \
-             ORDER BY u.created_at",
+             ORDER BY u.created_at, u.id",
         )
         .bind(Uuid::from_u128(world.0))
         .fetch_all(&self.pool)

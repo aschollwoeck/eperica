@@ -1384,6 +1384,9 @@ pub struct AdminTemplate {
     /// One-time JSON manifest of bulk-seeded agents (120 AC1) — `Some` only immediately after
     /// POST /admin/agents; `None` on every other render. Never persisted; shown once.
     pub agent_manifest: Option<String>,
+    /// Data-URL encoding of `agent_manifest` for the download link (AC1) — `Some` iff
+    /// `agent_manifest` is `Some`. Computed by the handler; never stored.
+    pub agent_manifest_data_url: Option<String>,
     /// All AI accounts across all worlds, for the fleet management panel (120 AC2).
     pub bots: Vec<AgentBotRow>,
 }

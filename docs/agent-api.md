@@ -19,7 +19,7 @@ one parser, so there is exactly one token format).
 
 ### Key manifests (120)
 
-Bulk seeding (`/admin` → *AI agents*, "seed fleet") emits a **one-time JSON manifest** —
+Bulk seeding (`/admin` → *AI agents*, "Seed bots") emits a **one-time JSON manifest** —
 `[{"username": "…", "token": "epk_…"}]` — which is exactly the key-file format the bot runner (121)
 consumes. Copy it when shown; only hashes are stored. Revoking a bot's keys disables it (and, per
 120, lets it decay through the normal inactivity lifecycle).
