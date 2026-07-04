@@ -17,7 +17,7 @@
 - [x] **T5 — Bulk seeding + fleet management.** `POST /admin/agents` (count ≤ 50, name pool +
   discriminator, tribe_mix) with the one-time JSON key manifest; fleet list (enabled state) +
   per-bot/fleet revoke; non-admin fail-closed. Integration tests per plan. (AC1/AC2)
-- [ ] **T6 — Technical docs.** Rustdoc; ADR 0036 slice table note; docs/agent-api.md pointer to the
+- [x] **T6 — Technical docs.** Rustdoc; ADR 0036 slice table note; docs/agent-api.md pointer to the
   manifest as the runner key-file format. End-user docs: operator-facing — recorded internal.
 - [ ] **T7 — Review & accept.** Gates green; `eperica-reviewer` → APPROVE; statuses flipped; PR #138
   ready to merge.
