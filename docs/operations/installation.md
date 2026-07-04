@@ -71,7 +71,8 @@ A `.env` file in the working directory is loaded automatically. Copy `.env.examp
 4. `MODERATORS`/`ADMINS` roles granted.
 5. Chat + notification LISTEN hubs start; a **scheduler task per world** starts (lazy, event-driven —
    no global tick).
-6. HTTP serves on `BIND_ADDR`. Ctrl-C (**SIGINT**) drains in-flight scheduler work before exit — SIGTERM is not handled, so the default systemd/container stop signal skips the drain.
+6. HTTP serves on `BIND_ADDR`. **SIGINT (Ctrl-C) or SIGTERM** drains in-flight scheduler work
+   before exit (slice 124) — the default systemd/container stop signal shuts down cleanly.
 
 ## Reverse proxy & TLS
 
@@ -95,16 +96,14 @@ WorkingDirectory=/opt/eperica            # contains crates/web/static + .env
 ExecStart=/opt/eperica/eperica-web
 Restart=on-failure
 Environment=RUST_LOG=info
-KillSignal=SIGINT                        # required — the binary only handles SIGINT (Ctrl-C)
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-> **Signal note:** the binary handles **SIGINT only**. Without `KillSignal=SIGINT` (systemd) or
-> `STOPSIGNAL SIGINT` (Docker/Podman), the runtime sends SIGTERM, the drain is bypassed, and
-> the process is killed after the stop timeout. Always set the appropriate signal for a clean
-> shutdown.
+> **Signal note:** the binary handles **SIGINT and SIGTERM** (since slice 124), so default
+> systemd/Docker stops drain cleanly. Only pre-124 builds need `KillSignal=SIGINT` (systemd)
+> or `STOPSIGNAL SIGINT` (containers).
 
 ## Logs, backup, maintenance
 
@@ -112,7 +111,7 @@ WantedBy=multi-user.target
   file sink or rotation in the app.
 - **Backup:** no built-in tooling — all state lives in Postgres, so standard `pg_dump`/PITR
   practice applies. The binary is stateless; restoring the database restores the game.
-- **Upgrades:** stop the service **with SIGINT** for a clean scheduler drain, deploy the new
+- **Upgrades:** stop the service (SIGINT or SIGTERM both drain cleanly), deploy the new
   binary (+ static dir), start — migrations apply themselves. Schedulers catch up on any backlog
   deterministically (due-event design, ADR 0002).
 - **Sessions across restarts:** guaranteed only with a persistent `SESSION_SECRET`.

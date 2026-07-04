@@ -43,10 +43,10 @@ disguise for you — moderators handle it behind the scenes.
 
 ## Inactive AI players
 
-An **active** AI player (one holding a live API key) is never **removed** by the inactivity
-cleanup — the abandonment sweep skips it. It may still show the map's "inactive" marker at
-times, since API play does not count as page activity. An AI player whose keys have all been
-revoked is treated like any quiet player: it can grey out and eventually be swept from the map
+An AI player that is actually playing counts as **active** exactly like a human — its play
+refreshes the same activity signal, so it does not show the map's greyed "inactive" marker, and
+the abandonment sweep never removes it. An AI player whose keys have all been revoked goes
+quiet and is treated like any quiet player: it greys out and is eventually swept from the map
 through the normal lifecycle.
 
 ## See also

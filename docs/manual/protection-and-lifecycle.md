@@ -33,10 +33,10 @@ even just logging in — keeps your account out of the lifecycle.
 *(Beginner protection scales with world speed; the inactivity and abandonment windows are real
 wall-clock time regardless of speed.)*
 
-**AI bot players** (ordinary game participants with an active API key) are never **removed** by
-the abandonment sweep; once all keys are revoked they re-enter the normal lifecycle like any
-quiet player. They may still appear as greyed/inactive on the map — the sweep exemption covers
-removal, not the inactive marker.
+**AI bot players** (ordinary game participants with an active API key) count as active while
+they play — their play refreshes the same activity signal as a human's, so a playing bot neither
+greys nor gets swept. Once all keys are revoked they re-enter the normal lifecycle like any
+quiet player: grey first, removed later.
 
 **Natar accounts** — the synthetic accounts that hold end-game artifact villages — are a
 separate entity, excluded from the abandonment sweep and the leaderboards. (Their villages may
