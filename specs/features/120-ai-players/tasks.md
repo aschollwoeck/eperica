@@ -14,7 +14,7 @@
 - [x] **T4 — Labeled tags.** `LeaderboardRow.is_ai` (five board queries) + board badge;
   `PlayerStatsTemplate.is_ai`; `VillageMarker.is_ai` + map-label "(NPC)"; all gated on
   `ai_labeled`; disguised world renders identically to humans. Integration tests both modes. (AC3/AC4)
-- [ ] **T5 — Bulk seeding + fleet management.** `POST /admin/agents` (count ≤ 50, name pool +
+- [x] **T5 — Bulk seeding + fleet management.** `POST /admin/agents` (count ≤ 50, name pool +
   discriminator, tribe_mix) with the one-time JSON key manifest; fleet list (enabled state) +
   per-bot/fleet revoke; non-admin fail-closed. Integration tests per plan. (AC1/AC2)
 - [ ] **T6 — Technical docs.** Rustdoc; ADR 0036 slice table note; docs/agent-api.md pointer to the

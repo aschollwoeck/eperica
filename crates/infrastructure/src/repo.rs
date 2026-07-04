@@ -3,23 +3,24 @@
 use async_trait::async_trait;
 use eperica_application::{
     AccountRepository, AchievementRepository, ActiveBuild, ActiveTraining, ActiveUnitOrder,
-    AdminAccount, AdminOverview, AdminRepository, AdminWorld, AgentKeyRecord, AllianceHit,
-    AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage, ArtifactRepository,
-    BattleApply, BattleReportView, BoardScope, BuildRepository, CombatRepository, CommsRepository,
-    ConflictMetric, ConquestRepository, ConversationSummary, CultureRepository, DefenderReport,
-    DiplomacyEntry, DueAttack, DueBuild, DueMovement, DueOasisAttack, DueOasisRegrow,
-    DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining, DueUnitOrder, ForumPost,
-    HeldArtifact, IncomingAttack, LeaderboardRow, LifecycleRepository, LoyaltyApply, MedalAward,
-    MedalRepository, MedalSubjectKind, MedalView, Membership, MessageView, ModerationRepository,
-    MovementRepository, MovementView, NewBuildOrder, NewNotification, NewOasisReport,
-    NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser, NotificationRepository,
-    NotificationView, OasisBattleApply, OasisOwnership, OasisReinforceOutcome, OasisRepository,
-    OasisState, OutgoingInvite, PendingInvite, PlayerHit, PlayerStats, PlayerWorld, ProfileView,
-    QuestRepository, RankingRepository, RazedBuilding, RepoError, ReportView, ResourceWrite,
-    RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply,
-    SettleOutcome, SettleRepository, SitterActionView, StarvationRepository, StationedGroup,
-    ThreadHead, ThreadSummary, TradeRepository, TradeView, TrainingRepository, UnitOrderKind,
-    UnitRepository, UserRecord, VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
+    AdminAccount, AdminOverview, AdminRepository, AdminWorld, AgentKeyRecord, AgentOverview,
+    AllianceHit, AllianceLeaderboardRow, AllianceRepository, AllianceStats, AlliedVillage,
+    ArtifactRepository, BattleApply, BattleReportView, BoardScope, BuildRepository,
+    CombatRepository, CommsRepository, ConflictMetric, ConquestRepository, ConversationSummary,
+    CultureRepository, DefenderReport, DiplomacyEntry, DueAttack, DueBuild, DueMovement,
+    DueOasisAttack, DueOasisRegrow, DueOasisReinforce, DueScout, DueSettle, DueTrade, DueTraining,
+    DueUnitOrder, ForumPost, HeldArtifact, IncomingAttack, LeaderboardRow, LifecycleRepository,
+    LoyaltyApply, MedalAward, MedalRepository, MedalSubjectKind, MedalView, Membership,
+    MessageView, ModerationRepository, MovementRepository, MovementView, NewBuildOrder,
+    NewNotification, NewOasisReport, NewScoutReport, NewTrainingOrder, NewUnitOrder, NewUser,
+    NotificationRepository, NotificationView, OasisBattleApply, OasisOwnership,
+    OasisReinforceOutcome, OasisRepository, OasisState, OutgoingInvite, PendingInvite, PlayerHit,
+    PlayerStats, PlayerWorld, ProfileView, QuestRepository, RankingRepository, RazedBuilding,
+    RepoError, ReportView, ResourceWrite, RosterEntry, ScoutApply, ScoutIntel, ScoutReportView,
+    ScoutRepository, SettleApply, SettleOutcome, SettleRepository, SitterActionView,
+    StarvationRepository, StationedGroup, ThreadHead, ThreadSummary, TradeRepository, TradeView,
+    TrainingRepository, UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome,
+    WonderRepository, WonderStanding,
 };
 use eperica_domain::{
     AchievementDef, AchievementId, AllianceId, AllianceRole, ArtifactDef, ArtifactEffects,
@@ -1190,6 +1191,52 @@ impl AccountRepository for PgAccountRepository {
         .await
         .map_err(backend)?;
         Ok(())
+    }
+
+    async fn list_agents(&self, world: WorldId) -> Result<Vec<AgentOverview>, RepoError> {
+        let rows = sqlx::query(
+            "SELECT u.id, u.username, p.tribe, \
+             (EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint AS created_at_ms, \
+             EXISTS(SELECT 1 FROM agent_keys k \
+                    WHERE k.user_id = u.id AND k.revoked_at IS NULL) AS enabled \
+             FROM users u \
+             JOIN players p ON p.user_id = u.id AND p.world_id = $1 \
+             WHERE u.is_ai = TRUE \
+             ORDER BY u.created_at",
+        )
+        .bind(Uuid::from_u128(world.0))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        rows.iter()
+            .map(|r| {
+                let id: Uuid = r.try_get("id").map_err(backend)?;
+                let tribe_slug: String = r.try_get("tribe").map_err(backend)?;
+                Ok(AgentOverview {
+                    user_id: PlayerId(id.as_u128()),
+                    username: r.try_get("username").map_err(backend)?,
+                    tribe: Tribe::from_slug(&tribe_slug).ok_or_else(|| {
+                        RepoError::Backend(format!("unknown tribe slug: {tribe_slug}"))
+                    })?,
+                    world_id: world,
+                    created_at: r.try_get("created_at_ms").map_err(backend)?,
+                    enabled: r.try_get("enabled").map_err(backend)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn revoke_keys_of(&self, user: PlayerId) -> Result<u64, RepoError> {
+        let result = sqlx::query(
+            "UPDATE agent_keys SET revoked_at = now() \
+             WHERE user_id = $1 AND revoked_at IS NULL",
+        )
+        .bind(Uuid::from_u128(user.0))
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(result.rows_affected())
     }
 }
 

@@ -69,7 +69,17 @@
   </div>
 
   <div class="psec">
-    <div class="bld-cols__head"><h2>AI agents (118)</h2><span class="bld-cols__rule"></span></div>
+    <div class="bld-cols__head"><h2>AI agents (118/120)</h2><span class="bld-cols__rule"></span><span class="sub">{{ bots.len() }} bots</span></div>
+
+    {% match agent_manifest %}
+    {% when Some with (manifest) %}
+    <div class="notice notice--warn" style="margin-bottom:12px">
+      <strong>One-time key manifest — copy now, it cannot be recovered.</strong>
+      <textarea class="agent-key" rows="8" style="display:block;width:100%;margin-top:8px;font-family:monospace;font-size:0.85em" readonly>{{ manifest }}</textarea>
+    </div>
+    {% when None %}
+    {% endmatch %}
+
     {% match agent_key %}
     {% when Some with (token) %}
     <div class="notice notice--warn" style="margin-bottom:12px">
@@ -78,6 +88,27 @@
     </div>
     {% when None %}
     {% endmatch %}
+
+    <h3 style="margin-top:16px">Bulk seed</h3>
+    <form method="post" action="/admin/agents" class="inline-form">
+      <label>World
+        <select name="world" required>
+          {% for w in worlds %}<option value="{{ w.id }}">{{ w.name }}{% if w.is_home %} (home){% endif %}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Count <input type="number" name="count" min="1" max="50" value="5" required style="width:5em"></label>
+      <label>Tribe mix
+        <select name="tribe_mix">
+          <option value="random">Random (round-robin)</option>
+          <option value="romans">All Romans</option>
+          <option value="teutons">All Teutons</option>
+          <option value="gauls">All Gauls</option>
+        </select>
+      </label>
+      <button type="submit" class="btn btn--primary">Seed bots</button>
+    </form>
+
+    <h3 style="margin-top:16px">Single agent</h3>
     <form method="post" action="/admin/agent" class="inline-form">
       <label>Username <input type="text" name="username" maxlength="32" placeholder="e.g. bot1" required></label>
       <label>World
@@ -94,7 +125,41 @@
       </label>
       <button type="submit" class="btn btn--primary">Create AI agent</button>
     </form>
-    <p class="bld-tip">Creates an <code>is_ai</code> account, places it in the chosen world, and issues an API key shown once.</p>
+
+    {% if bots.is_empty() %}
+    <p class="bld-tip muted">No AI bots yet.</p>
+    {% else %}
+    <h3 style="margin-top:16px">Fleet</h3>
+    <table class="table">
+      <thead><tr><th>Username</th><th>Tribe</th><th>World</th><th>Created</th><th>Status</th><th>Action</th></tr></thead>
+      <tbody>
+        {% for b in bots %}
+        <tr>
+          <td>{{ b.username }}</td>
+          <td>{{ b.tribe }}</td>
+          <td><span class="muted">{{ b.world_id }}</span></td>
+          <td><span data-ts="{{ b.created_at }}">—</span></td>
+          <td>{% if b.enabled %}<span class="badge">Enabled</span>{% else %}<span class="muted">Disabled</span>{% endif %}</td>
+          <td>
+            <form method="post" action="/admin/agent/revoke" class="inline">
+              <input type="hidden" name="user" value="{{ b.user_id }}">
+              <button type="submit" class="btn btn--small btn--secondary">Revoke keys</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div style="margin-top:8px">
+      {% for w in worlds %}
+      <form method="post" action="/admin/agents/revoke" class="inline" style="margin-right:8px">
+        <input type="hidden" name="world" value="{{ w.id }}">
+        <button type="submit" class="btn btn--small btn--secondary">Revoke all in {{ w.name }}</button>
+      </form>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <p class="bld-tip">Creates <code>is_ai</code> accounts, places them in the chosen world, and issues API keys shown once.</p>
   </div>
 
   <div class="psec">

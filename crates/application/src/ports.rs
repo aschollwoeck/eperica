@@ -408,6 +408,24 @@ pub trait AccountRepository: Send + Sync {
     async fn revoke_agent_key(&self, _key_id: &str) -> Result<(), RepoError> {
         Err(RepoError::Backend("agent keys not supported".into()))
     }
+
+    /// All AI accounts with a player in `world`, ordered by creation time (120 AC2).
+    /// Defaults to empty so non-agent fakes are untouched.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn list_agents(&self, _world: WorldId) -> Result<Vec<AgentOverview>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Revoke all unrevoked keys for `user` (120 AC2). Returns the number of rows updated.
+    /// Defaults to `Ok(0)` so non-agent fakes are untouched.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn revoke_keys_of(&self, _user: PlayerId) -> Result<u64, RepoError> {
+        Ok(0)
+    }
 }
 
 /// A public player search hit (028 AC1) — id + display name only.
@@ -437,6 +455,21 @@ pub struct AgentKeyRecord {
     pub secret_hash: String,
     /// Whether the key has been revoked (`revoked_at IS NOT NULL`).
     pub revoked: bool,
+}
+
+/// A summary of an AI bot account for the admin fleet panel (120 AC2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentOverview {
+    /// The user (account) id.
+    pub user_id: PlayerId,
+    pub username: String,
+    pub tribe: Tribe,
+    /// The world this bot has a player in.
+    pub world_id: WorldId,
+    /// Account creation time (Unix-ms UTC).
+    pub created_at: i64,
+    /// `true` while the account holds ≥1 unrevoked key (120 AC2).
+    pub enabled: bool,
 }
 
 /// A public alliance search hit (028 AC2) — id + name + tag.

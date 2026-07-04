@@ -11608,3 +11608,202 @@ async fn ai_npc_tags_by_world_visibility(pool: sqlx::PgPool) {
         "map tile label has no (NPC) for bot's tile in disguised world"
     );
 }
+
+/// 120 T5 (AC1/AC2): bulk-seed N bots, verify manifest, fleet list, and revoke.
+#[sqlx::test(migrations = "../../migrations")]
+async fn admin_bulk_seeds_agents(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home_uuid: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM worlds ORDER BY created_at, id LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let home = home_uuid.as_u128().to_string();
+
+    let admin_name = unique("bsadm");
+    let (ac, _admin_id) = register_client(&base, &pool, &admin_name).await;
+    let (plain, _plain_id) = register_client(&base, &pool, &unique("bsplain")).await;
+
+    // Non-admin POST /admin/agents → 403.
+    let r = plain
+        .post(format!("{base}/admin/agents"))
+        .form(&[
+            ("world", home.as_str()),
+            ("count", "3"),
+            ("tribe_mix", "random"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403, "non-admin denied");
+
+    // Promote admin.
+    sqlx::query("UPDATE users SET is_admin = TRUE WHERE username = $1")
+        .bind(&admin_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Bulk seed 3 bots.
+    let r = ac
+        .post(format!("{base}/admin/agents"))
+        .form(&[
+            ("world", home.as_str()),
+            ("count", "3"),
+            ("tribe_mix", "random"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "bulk seed succeeded");
+
+    let body = r.text().await.unwrap();
+
+    // Manifest textarea must be present and contain a JSON array.
+    assert!(body.contains("<textarea"), "manifest textarea in response");
+    let ta_start = body.find("readonly>").expect("textarea readonly attr");
+    let after_ta = &body[ta_start + "readonly>".len()..];
+    let ta_end = after_ta.find("</textarea>").expect("closing textarea");
+    // Askama HTML-escapes the JSON inside the textarea — unescape before parsing.
+    let manifest_json = after_ta[..ta_end]
+        .replace("&quot;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&");
+    let manifest: Vec<serde_json::Value> =
+        serde_json::from_str(&manifest_json).expect("manifest is valid JSON");
+    assert_eq!(manifest.len(), 3, "manifest has 3 entries");
+
+    // Extract usernames and tokens.
+    let mut names: Vec<String> = Vec::new();
+    let mut tokens: Vec<String> = Vec::new();
+    for entry in &manifest {
+        let name = entry["username"].as_str().unwrap().to_owned();
+        let token = entry["token"].as_str().unwrap().to_owned();
+        assert!(token.starts_with("epk_"), "token starts with epk_: {token}");
+        names.push(name);
+        tokens.push(token);
+    }
+    // Distinct usernames.
+    let unique_names: std::collections::HashSet<_> = names.iter().collect();
+    assert_eq!(unique_names.len(), 3, "3 distinct bot usernames");
+
+    // Verify DB: is_ai = true, villages exist, keys exist.
+    for name in &names {
+        let is_ai: bool = sqlx::query_scalar("SELECT is_ai FROM users WHERE username = $1")
+            .bind(name)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(is_ai, "bot {name} has is_ai=true");
+
+        let vcount: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM villages v \
+             JOIN players p ON p.id = v.owner_id \
+             JOIN users u ON u.id = p.user_id \
+             WHERE u.username = $1",
+        )
+        .bind(name)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(vcount > 0, "bot {name} has a village");
+    }
+
+    // All 3 tokens work via GET /api/me.
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    for (name, token) in names.iter().zip(tokens.iter()) {
+        let r = anon
+            .get(format!("{base}/api/me"))
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            r.status().as_u16(),
+            200,
+            "token for {name} works on /api/me"
+        );
+        let me = r.text().await.unwrap();
+        assert!(me.contains(name.as_str()), "/api/me body contains {name}");
+    }
+
+    // GET /admin → fleet list shows 3 enabled bots, no manifest textarea.
+    let admin_page = ac
+        .get(format!("{base}/admin"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    for name in &names {
+        assert!(
+            admin_page.contains(name.as_str()),
+            "fleet list shows bot {name}"
+        );
+    }
+    assert!(
+        !admin_page.contains("<textarea"),
+        "no manifest textarea on subsequent GET /admin"
+    );
+
+    // Per-bot revoke: revoke the first bot's key.
+    let first_user_id: String =
+        sqlx::query_scalar("SELECT id::text FROM users WHERE username = $1")
+            .bind(&names[0])
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    // Convert UUID string to decimal u128 for the form.
+    let first_uuid = uuid::Uuid::parse_str(&first_user_id).unwrap();
+    let first_user_decimal = first_uuid.as_u128().to_string();
+
+    let r = ac
+        .post(format!("{base}/admin/agent/revoke"))
+        .form(&[("user", first_user_decimal.as_str())])
+        .send()
+        .await
+        .unwrap();
+    // Should redirect back to /admin.
+    assert!(
+        r.status().as_u16() == 302 || r.status().as_u16() == 303,
+        "revoke redirects"
+    );
+
+    // First bot's token is now 401.
+    let r = anon
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {}", tokens[0]))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 401, "revoked token is rejected");
+
+    // Fleet revoke (world): revoke remaining bots in the home world.
+    let r = ac
+        .post(format!("{base}/admin/agents/revoke"))
+        .form(&[("world", home.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        r.status().as_u16() == 302 || r.status().as_u16() == 303,
+        "fleet revoke redirects"
+    );
+
+    // Remaining tokens (1 and 2) are now 401.
+    for token in &tokens[1..] {
+        let r = anon
+            .get(format!("{base}/api/me"))
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 401, "fleet-revoked token is rejected");
+    }
+}

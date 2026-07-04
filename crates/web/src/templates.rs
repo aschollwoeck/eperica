@@ -1334,6 +1334,20 @@ pub struct AdminAccountRow {
     pub is_self: bool,
 }
 
+/// One row in the admin fleet panel (120 AC2).
+pub struct AgentBotRow {
+    /// Decimal `u128` string of the user id (for the revoke form value).
+    pub user_id: String,
+    pub username: String,
+    /// Tribe slug (`"romans"` / `"teutons"` / `"gauls"`).
+    pub tribe: String,
+    /// Decimal `u128` string of the world id (for fleet revoke form).
+    pub world_id: String,
+    /// Unix-ms UTC — rendered by the client-side timestamp script.
+    pub created_at: i64,
+    pub enabled: bool,
+}
+
 #[derive(Template)]
 #[template(path = "admin.html")]
 pub struct AdminTemplate {
@@ -1367,6 +1381,11 @@ pub struct AdminTemplate {
     /// One-time plaintext agent API key (118) — `Some` only immediately after a successful
     /// POST /admin/agent; `None` on every other render. Never persisted; shown to the admin ONCE.
     pub agent_key: Option<String>,
+    /// One-time JSON manifest of bulk-seeded agents (120 AC1) — `Some` only immediately after
+    /// POST /admin/agents; `None` on every other render. Never persisted; shown once.
+    pub agent_manifest: Option<String>,
+    /// All AI accounts across all worlds, for the fleet management panel (120 AC2).
+    pub bots: Vec<AgentBotRow>,
 }
 
 /// A row in the conversations list (024 AC3 / 060: aggregated across worlds).
