@@ -11,7 +11,7 @@
 - [x] **T3 — Runner integration.** Per-bot strategist cadence (4h ± jitter, in-window) + fleet
   `LlmBudget` (rolling hour, pure + tested); apply-or-reject; the optional DM (one per cycle);
   `--no-llm` / key detection / `EPB_LLM_MODEL` / `--llm-budget`; dry-run coverage. (AC1/AC5/AC6)
-- [ ] **T4 — E2E with ScriptedBackend.** Military-strategy-vs-baseline intents; invalid reply →
+- [x] **T4 — E2E with ScriptedBackend.** Military-strategy-vs-baseline intents; invalid reply →
   baseline; scripted DM lands once in the recipient's list. (AC6/AC7)
 - [ ] **T5 — Docs.** README strategist section (env vars, budget, cost note); agent-api.md
   cross-note; ADR 0036 slice table → program complete. End-user docs: internal.
