@@ -43,10 +43,11 @@ player-facing multi-world layer: per-request world context, handler migration, j
 world-scoped boards/stat pages/search) are all built and Verified. The dependency-ordered roadmap
 (001–046) is **complete**; further work (e.g. visual theming/imagery) starts as a fresh slice. The
 **AI players & Agent API** program ([ADR 0036](docs/architecture/0036-ai-players-and-agent-api.md),
-slices 118–122) is in progress: a bearer-key JSON surface under `/api` (contract:
-[docs/agent-api.md](docs/agent-api.md)) through which AI agents play as **true clients** — state digest +
-actions as thin adapters over the existing use-cases — to be driven by an `eperica-bots` runner
-(rule-based reflexes + a periodic LLM strategist).
+slices 118–122) is **complete**: a bearer-key JSON surface under `/api` (contract:
+[docs/agent-api.md](docs/agent-api.md)) through which AI agents play as **true clients**; admin fleet
+seeding with per-world labeled/disguised visibility and fair-play/lifecycle carve-outs; and the
+`eperica-bots` runner (`crates/bots/README.md`) — pure reflex doctrine on humanized personas, plus an
+optional Anthropic-API strategist layer (long-horizon goals + diplomacy, off ⇒ byte-identical).
 
 ## Read the specs first — they are the source of truth
 

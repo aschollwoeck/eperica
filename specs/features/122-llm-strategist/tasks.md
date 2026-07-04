@@ -13,7 +13,7 @@
   `--no-llm` / key detection / `EPB_LLM_MODEL` / `--llm-budget`; dry-run coverage. (AC1/AC5/AC6)
 - [x] **T4 — E2E with ScriptedBackend.** Military-strategy-vs-baseline intents; invalid reply →
   baseline; scripted DM lands once in the recipient's list. (AC6/AC7)
-- [ ] **T5 — Docs.** README strategist section (env vars, budget, cost note); agent-api.md
+- [x] **T5 — Docs.** README strategist section (env vars, budget, cost note); agent-api.md
   cross-note; ADR 0036 slice table → program complete. End-user docs: internal.
 - [ ] **T6 — Review & accept.** Gates green; `eperica-reviewer` → APPROVE (incl. the AC8 diff-stat
   check); statuses flipped; PR ready to merge.
