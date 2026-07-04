@@ -635,12 +635,19 @@ dependencies = [
 name = "eperica-bots"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "axum-extra",
+ "eperica-domain",
+ "eperica-infrastructure",
+ "eperica-web",
  "reqwest",
  "serde",
  "serde_json",
+ "sqlx",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

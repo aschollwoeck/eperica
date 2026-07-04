@@ -145,10 +145,13 @@ fn find_building<'a>(
 /// Unknown tribes fall back to "legionnaire" (roman default) — noted for T4.
 fn tier1_unit(tribe: &str) -> &'static str {
     match tribe {
-        "roman" => "legionnaire",
-        "teuton" => "clubswinger",
-        "gaul" => "phalanx",
-        // Unknown tribe defaults to roman tier-1; T4 should log a warning.
+        // The wire truth: /api/me carries Tribe::slug — PLURAL ("romans"/"teutons"/"gauls").
+        // Singular forms tolerated as aliases. (An e2e run caught the original singular-only
+        // match: every bot fell back to legionnaire and non-Roman training 409'd.)
+        "romans" | "roman" => "legionnaire",
+        "teutons" | "teuton" => "clubswinger",
+        "gauls" | "gaul" => "phalanx",
+        // Unknown tribe defaults to roman tier-1; the runner logs a warning.
         _ => "legionnaire",
     }
 }
@@ -567,6 +570,17 @@ mod tests {
     // -----------------------------------------------------------------------
     // Fixture builders
     // -----------------------------------------------------------------------
+
+    // The wire slugs (plural — Tribe::slug) must map to the right tier-1 unit; the singular
+    // aliases stay tolerated. Regression pin for the e2e-caught fallback bug.
+    #[test]
+    fn tier1_unit_matches_wire_slugs() {
+        assert_eq!(tier1_unit("romans"), "legionnaire");
+        assert_eq!(tier1_unit("teutons"), "clubswinger");
+        assert_eq!(tier1_unit("gauls"), "phalanx");
+        assert_eq!(tier1_unit("teuton"), "clubswinger");
+        assert_eq!(tier1_unit("martians"), "legionnaire");
+    }
 
     fn persona(aggression: u8) -> Persona {
         Persona {
