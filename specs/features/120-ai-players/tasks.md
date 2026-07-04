@@ -11,7 +11,7 @@
 - [x] **T3 — Signals carve-out + mod badge.** `account_signals` short-circuit for `is_ai`;
   `ip_association_count` excludes bots; `ModAccountTemplate.is_ai` badge; reports against bots
   still file (disguise-preserving — plan Decision #2). Tests per plan. (AC5, AC4-mod)
-- [ ] **T4 — Labeled tags.** `LeaderboardRow.is_ai` (five board queries) + board badge;
+- [x] **T4 — Labeled tags.** `LeaderboardRow.is_ai` (five board queries) + board badge;
   `PlayerStatsTemplate.is_ai`; `VillageMarker.is_ai` + map-label "(NPC)"; all gated on
   `ai_labeled`; disguised world renders identically to humans. Integration tests both modes. (AC3/AC4)
 - [ ] **T5 — Bulk seeding + fleet management.** `POST /admin/agents` (count ≤ 50, name pool +

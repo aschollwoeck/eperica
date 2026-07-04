@@ -864,7 +864,7 @@ impl AccountRepository for PgAccountRepository {
         // Exact match on the requested tiles via the (world_id, x, y) unique index.
         let rows = sqlx::query(
             "SELECT v.x, v.y, u.username, al.tag AS alliance_tag, \
-             (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity_ms \
+             (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity_ms, u.is_ai \
              FROM villages v JOIN players pu ON pu.id = v.owner_id JOIN users u ON u.id = pu.user_id \
              LEFT JOIN alliance_members am ON am.player_id = v.owner_id \
              LEFT JOIN alliances al ON al.id = am.alliance_id \
@@ -883,11 +883,13 @@ impl AccountRepository for PgAccountRepository {
                 let owner_name: String = r.try_get("username").map_err(backend)?;
                 let alliance_tag: Option<String> = r.try_get("alliance_tag").map_err(backend)?;
                 let last_activity_ms: i64 = r.try_get("last_activity_ms").map_err(backend)?;
+                let is_ai: bool = r.try_get("is_ai").map_err(backend)?;
                 Ok(VillageMarker {
                     coordinate: Coordinate::new(x, y),
                     owner_name,
                     alliance_tag,
                     owner_last_activity: Timestamp(last_activity_ms),
+                    is_ai,
                 })
             })
             .collect()
@@ -5823,7 +5825,7 @@ fn population_board_sql(qf: &str) -> String {
             WHERE v.world_id = $1 GROUP BY v.owner_id \
          ) \
          SELECT p.id, u.username, (COALESCE(f.pop, 0) + COALESCE(b.pop, 0))::bigint AS total, \
-                (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity \
+                (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity, u.is_ai \
          FROM (SELECT oid FROM field_pop UNION SELECT oid FROM bldg_pop) owners \
          JOIN players p ON p.id = owners.oid \
          JOIN users u ON u.id = p.user_id \
@@ -5884,7 +5886,7 @@ impl RankingRepository for PgAccountRepository {
     ) -> Result<Vec<LeaderboardRow>, RepoError> {
         let (fields, kinds, levels, pops) = population_arrays(econ);
         let sql = population_board_sql(&quadrant_filter("p.id", "$6"));
-        let rows: Vec<(Uuid, String, i64, i64)> = sqlx::query_as(&sql)
+        let rows: Vec<(Uuid, String, i64, i64, bool)> = sqlx::query_as(&sql)
             .bind(Uuid::from_u128(self.world_id.0))
             .bind(&fields)
             .bind(&kinds)
@@ -5912,16 +5914,16 @@ impl RankingRepository for PgAccountRepository {
         // (battle tables carry no world_id) and resolves the name (`p.user_id → users`).
         let sql = format!(
             "SELECT p.id, u.username, COALESCE(SUM({val}), 0)::bigint AS total, \
-                    (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity \
+                    (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity, u.is_ai \
              FROM {table} JOIN players p ON p.id = {pid} AND p.world_id = $5 \
              JOIN users u ON u.id = p.user_id \
              WHERE ($1::double precision IS NULL OR {occ} >= to_timestamp($1 / 1000.0)) \
                AND ($2::double precision IS NULL OR {occ} < to_timestamp($2 / 1000.0)) AND {qf} \
                AND u.abandoned_at IS NULL AND u.is_npc = false \
-             GROUP BY p.id, u.username, u.last_activity HAVING COALESCE(SUM({val}), 0) > 0 \
+             GROUP BY p.id, u.username, u.last_activity, u.is_ai HAVING COALESCE(SUM({val}), 0) > 0 \
              ORDER BY total DESC, p.id ASC LIMIT $4"
         );
-        let rows: Vec<(Uuid, String, i64, i64)> = sqlx::query_as(&sql)
+        let rows: Vec<(Uuid, String, i64, i64, bool)> = sqlx::query_as(&sql)
             .bind(since.map(|t| t.0 as f64))
             .bind(until.map(|t| t.0 as f64))
             .bind(scope_code(scope))
@@ -6012,8 +6014,9 @@ impl RankingRepository for PgAccountRepository {
         let pid = Uuid::from_u128(player.0);
         // 019 AC8: an abandoned account is hidden from its stat page (treated as not found). 046: the name
         // resolves through `players`, and a player not in this repo's world is treated as not found.
-        let Some(name): Option<String> = sqlx::query_scalar(
-            "SELECT u.username FROM players p JOIN users u ON u.id = p.user_id \
+        // 120 AC3: is_ai is read here (same join) so the handler can gate the NPC badge on ai_labeled.
+        let Some((name, is_ai)): Option<(String, bool)> = sqlx::query_as(
+            "SELECT u.username, u.is_ai FROM players p JOIN users u ON u.id = p.user_id \
              WHERE p.id = $1 AND p.world_id = $2 AND u.abandoned_at IS NULL AND u.is_npc = false",
         )
         .bind(pid)
@@ -6072,6 +6075,7 @@ impl RankingRepository for PgAccountRepository {
         Ok(Some(PlayerStats {
             player,
             name,
+            is_ai,
             population,
             villages,
             attack_points,
@@ -6173,13 +6177,16 @@ impl RankingRepository for PgAccountRepository {
     }
 }
 
-/// Map a `(id, name, value)` row to a [`LeaderboardRow`].
-fn leaderboard_row((id, name, value, last_activity): (Uuid, String, i64, i64)) -> LeaderboardRow {
+/// Map a `(id, name, value, last_activity, is_ai)` row to a [`LeaderboardRow`].
+fn leaderboard_row(
+    (id, name, value, last_activity, is_ai): (Uuid, String, i64, i64, bool),
+) -> LeaderboardRow {
     LeaderboardRow {
         player: PlayerId(id.as_u128()),
         name,
         value,
         last_activity: Timestamp(last_activity),
+        is_ai,
     }
 }
 
@@ -6499,7 +6506,7 @@ impl MedalRepository for PgAccountRepository {
         let delta = CLIMBER_DELTA;
         let sql = format!(
             "SELECT cur.player_id, u.username, {delta}::bigint AS delta, \
-                    (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity \
+                    (EXTRACT(EPOCH FROM u.last_activity) * 1000)::bigint AS last_activity, u.is_ai \
              FROM population_snapshots cur \
              JOIN players p ON p.id = cur.player_id \
              JOIN users u ON u.id = p.user_id \
@@ -6509,7 +6516,7 @@ impl MedalRepository for PgAccountRepository {
                AND u.abandoned_at IS NULL AND u.is_npc = false \
              ORDER BY {delta} DESC, cur.player_id ASC LIMIT $5"
         );
-        let rows: Vec<(Uuid, String, i64, i64)> = sqlx::query_as(&sql)
+        let rows: Vec<(Uuid, String, i64, i64, bool)> = sqlx::query_as(&sql)
             .bind(Uuid::from_u128(self.world_id.0))
             .bind(prev)
             .bind(period)

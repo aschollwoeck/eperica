@@ -27,6 +27,8 @@ pub struct VillageMarker {
     /// The owner's last activity (Unix-ms) — the map view derives the **inactive/farmable** flag from
     /// it via [`eperica_domain::is_inactive`] (019 AC6).
     pub owner_last_activity: Timestamp,
+    /// Whether the owner is an AI agent account (120 AC3).
+    pub is_ai: bool,
 }
 
 /// Details for a new account to be created.
@@ -2530,6 +2532,8 @@ pub struct LeaderboardRow {
     pub value: i64,
     /// The player's last activity (Unix-ms UTC) — feeds the 025 presence indicator on board rows.
     pub last_activity: Timestamp,
+    /// Whether the player is an AI agent account (120 AC3).
+    pub is_ai: bool,
 }
 
 /// One ranked alliance on a leaderboard (016 AC8): the alliance, its name + tag, and the aggregate.
@@ -2565,6 +2569,8 @@ pub struct DefenderReport {
 pub struct PlayerStats {
     pub player: PlayerId,
     pub name: String,
+    /// Whether the player is an AI agent account (120 AC3).
+    pub is_ai: bool,
     /// Total population across all the player's villages.
     pub population: i64,
     /// Public per-village breakdown: (village, coordinate, population) — villages are public by tile.

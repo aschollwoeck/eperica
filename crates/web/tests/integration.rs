@@ -11344,3 +11344,267 @@ async fn mod_account_ai_badge_and_report_against_ai(pool: sqlx::PgPool) {
         "the report against the AI account appears in the mod queue (disguise preserved)"
     );
 }
+
+/// 120 AC3/AC4: NPC tag surfaces (leaderboard, player-stats page, map tile label) show on a labeled
+/// world and are absent (byte-identical to human) on a disguised world. A human player never gets
+/// the NPC badge on either world.
+#[sqlx::test(migrations = "../../migrations")]
+async fn ai_npc_tags_by_world_visibility(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    // ──── Labeled (home) world ────────────────────────────────────────────────────────────────
+
+    // Accounts: admin (to mint bots), human, and the home-world bot.
+    let admin_name = unique("npcadm");
+    let human_name = unique("npchuman");
+    let bot_name = unique("npcbot");
+
+    let (ac, _) = register_client(&base, &pool, &admin_name).await;
+    sqlx::query("UPDATE users SET is_admin = TRUE WHERE username = $1")
+        .bind(&admin_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (hc, human_id) = register_client(&base, &pool, &human_name).await;
+    let human_vid = village_uuid(&pool, &human_name).await;
+
+    // Mint the bot in the home world (decimal u128 as the form expects).
+    let home_uuid: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM worlds ORDER BY created_at, id LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let home_dec = home_uuid.as_u128().to_string();
+
+    ac.post(format!("{base}/admin/agent"))
+        .form(&[
+            ("username", bot_name.as_str()),
+            ("world", home_dec.as_str()),
+            ("tribe", "romans"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // In the home world players.id == users.id (037 invariant).
+    let bot_user_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind(&bot_name)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Find the bot's village coordinate for map-tile centering.
+    let (bot_x, bot_y): (i32, i32) = sqlx::query_as(
+        "SELECT v.x, v.y FROM villages v \
+         JOIN players p ON p.id = v.owner_id \
+         JOIN users u ON u.id = p.user_id \
+         WHERE u.username = $1 LIMIT 1",
+    )
+    .bind(&bot_name)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let visitor = client();
+
+    // (a) Leaderboard shows NPC badge for bot on the labeled home world.
+    let board = visitor
+        .get(format!("{base}/w/{home}/leaderboard"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        board.contains(&bot_name),
+        "bot appears on the population leaderboard"
+    );
+    assert!(
+        board.contains(r#"class="badge">NPC<"#),
+        "leaderboard shows NPC badge for bot on labeled world"
+    );
+
+    // Human player row must NOT carry the NPC badge — verify human appears but badge count is
+    // attributable to the bot: check the human's own stats page directly.
+    assert!(
+        board.contains(&human_name),
+        "human also appears on the leaderboard"
+    );
+
+    // (b) Player stats page shows NPC badge for bot on the labeled world.
+    let bot_stats = visitor
+        .get(format!(
+            "{base}/w/{home}/stats/player/{}",
+            bot_user_id.as_u128()
+        ))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        bot_stats.contains(r#"class="badge">NPC<"#),
+        "player stats page shows NPC badge for bot on labeled world"
+    );
+
+    // Human's stats page must have no NPC badge.
+    let human_stats = visitor
+        .get(format!(
+            "{base}/w/{home}/stats/player/{}",
+            human_id.as_u128()
+        ))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !human_stats.contains(r#"class="badge">NPC<"#),
+        "human player stats page has no NPC badge"
+    );
+
+    // (c) Map tile label contains "(NPC)" for the bot's tile on the labeled world.
+    let tiles_json = hc
+        .get(format!(
+            "{base}/w/{home}/village/{human_vid}/map/tiles?cx={bot_x}&cy={bot_y}&hx=1&hy=1"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        tiles_json.contains("(NPC)"),
+        "map tile label contains (NPC) for bot's tile on labeled world"
+    );
+
+    // ──── Disguised world ─────────────────────────────────────────────────────────────────────
+
+    // Create a world with ai_visibility=disguised.
+    let r = ac
+        .post(format!("{base}/admin/world"))
+        .form(&[
+            ("name", "ShadowRealm"),
+            ("speed", "1"),
+            ("radius", "40"),
+            ("ai_visibility", "disguised"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303, "disguised world created");
+
+    // Newest world row is the disguised one.
+    let disg_uuid: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM worlds ORDER BY created_at DESC, id DESC LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let disg_world = disg_uuid.to_string(); // UUID form for URLs
+    let disg_dec = disg_uuid.as_u128().to_string(); // decimal for form
+
+    // Mint a bot in the disguised world. Keep the prefix ≤10 chars so the unique suffix (≈22 chars) stays ≤32.
+    let disg_bot_name = unique("npcbd");
+    let mint_resp = ac
+        .post(format!("{base}/admin/agent"))
+        .form(&[
+            ("username", disg_bot_name.as_str()),
+            ("world", disg_dec.as_str()),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        mint_resp.status().as_u16(),
+        200,
+        "bot mint in disguised world succeeded"
+    );
+
+    // The bot's players.id in the disguised world differs from users.id (multi-world context).
+    let disg_bot_player_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT p.id FROM players p \
+         JOIN users u ON u.id = p.user_id \
+         WHERE u.username = $1 AND p.world_id = $2",
+    )
+    .bind(&disg_bot_name)
+    .bind(disg_uuid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Bot's village coordinate in the disguised world.
+    let (disg_bot_x, disg_bot_y): (i32, i32) = sqlx::query_as(
+        "SELECT v.x, v.y FROM villages v \
+         JOIN players p ON p.id = v.owner_id \
+         JOIN users u ON u.id = p.user_id \
+         WHERE u.username = $1 AND p.world_id = $2 LIMIT 1",
+    )
+    .bind(&disg_bot_name)
+    .bind(disg_uuid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Human joins the disguised world so they can access map tiles there.
+    hc.post(format!("{base}/worlds/join"))
+        .form(&[("world", disg_dec.as_str()), ("tribe", "gauls")])
+        .send()
+        .await
+        .unwrap();
+    let disg_human_vid = vid_via(&hc, &base, &disg_world).await;
+
+    // (a) Leaderboard in disguised world has NO NPC badge.
+    let disg_board = visitor
+        .get(format!("{base}/w/{disg_world}/leaderboard"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !disg_board.contains(r#"class="badge">NPC<"#),
+        "leaderboard shows no NPC badge for bot on disguised world"
+    );
+
+    // (b) Player stats page in disguised world has no NPC badge.
+    let disg_bot_stats = visitor
+        .get(format!(
+            "{base}/w/{disg_world}/stats/player/{}",
+            disg_bot_player_id.as_u128()
+        ))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !disg_bot_stats.contains(r#"class="badge">NPC<"#),
+        "player stats page shows no NPC badge for bot on disguised world"
+    );
+
+    // (c) Map tile label has no "(NPC)" for the bot's tile in the disguised world.
+    let disg_tiles = hc
+        .get(format!(
+            "{base}/w/{disg_world}/village/{disg_human_vid}/map/tiles\
+             ?cx={disg_bot_x}&cy={disg_bot_y}&hx=1&hy=1"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !disg_tiles.contains("(NPC)"),
+        "map tile label has no (NPC) for bot's tile in disguised world"
+    );
+}

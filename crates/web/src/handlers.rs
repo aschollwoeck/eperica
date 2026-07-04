@@ -1787,6 +1787,7 @@ async fn map_for(ctx: GameContext, path_village: Option<String>, q: MapQuery) ->
         capital_coord,
         origin,
         acting_vid.as_deref(),
+        ctx.ai_labeled,
     );
 
     // 095/107: "recentre on home" targets the acting (selected) village.
@@ -1820,6 +1821,7 @@ pub(crate) fn map_cells(
     capital_coord: Option<Coordinate>,
     origin: Option<Coordinate>,
     acting_vid: Option<&str>,
+    ai_labeled: bool,
 ) -> Vec<Vec<MapCellView>> {
     viewport
         .rows
@@ -1874,12 +1876,17 @@ pub(crate) fn map_cells(
                             format!(" · {presence_label}")
                         };
                         label = format!(
-                            "{} — {}{}{}{}{} ({}|{})",
+                            "{} — {}{}{}{}{}{} ({}|{})",
                             base_label,
                             marker.owner_name,
                             tag,
                             if is_capital { " (capital)" } else { "" },
                             if inactive { " (inactive)" } else { "" },
+                            if marker.is_ai && ai_labeled {
+                                " (NPC)"
+                            } else {
+                                ""
+                            },
                             presence,
                             coord.x,
                             coord.y
@@ -2028,6 +2035,7 @@ pub async fn map_tiles(
         capital_coord,
         origin,
         acting_vid.as_deref(),
+        ctx.ai_labeled,
     );
     axum::Json(serde_json::json!({
         "center_x": center.x,
@@ -3809,6 +3817,7 @@ fn player_rows(
     rows: Vec<LeaderboardRow>,
     now: Timestamp,
     online_secs: i64,
+    ai_labeled: bool,
 ) -> Vec<LeaderboardRowView> {
     rows.into_iter()
         .enumerate()
@@ -3823,6 +3832,7 @@ fn player_rows(
                 has_presence: true,
                 online,
                 presence_label,
+                npc: r.is_ai && ai_labeled,
             }
         })
         .collect()
@@ -3842,6 +3852,7 @@ fn alliance_rows(world: WorldId, rows: Vec<AllianceLeaderboardRow>) -> Vec<Leade
             has_presence: false,
             online: false,
             presence_label: String::new(),
+            npc: false,
         })
         .collect()
 }
@@ -3881,7 +3892,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "attackers" => (
                 conflict_leaderboard(repo, rules, ConflictMetric::Attack, scope, window, now_ts)
                     .await
-                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs, world.ai_labeled)),
                 "Attack points",
                 false,
                 true,
@@ -3889,7 +3900,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "defenders" => (
                 conflict_leaderboard(repo, rules, ConflictMetric::Defense, scope, window, now_ts)
                     .await
-                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs, world.ai_labeled)),
                 "Defense points",
                 false,
                 true,
@@ -3897,7 +3908,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "raiders" => (
                 conflict_leaderboard(repo, rules, ConflictMetric::Raided, scope, window, now_ts)
                     .await
-                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs, world.ai_labeled)),
                 "Resources looted",
                 false,
                 true,
@@ -3905,7 +3916,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             "climbers" => (
                 climbers_leaderboard(repo, rules, scope)
                     .await
-                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs, world.ai_labeled)),
                 "Population gained",
                 false,
                 false,
@@ -3951,7 +3962,7 @@ pub async fn leaderboard(world: WorldScope, Query(q): Query<LeaderboardQuery>) -
             _ => (
                 population_leaderboard(repo, econ, rules, scope)
                     .await
-                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs)),
+                    .map(|r| player_rows(world.world_id, r, now_ts, online_secs, world.ai_labeled)),
                 "Population",
                 false,
                 false,
@@ -4848,6 +4859,7 @@ pub async fn player_stats_page(
         world: world_id_str(world.world_id),
         subject_id: pid.to_string(),
         name: s.name,
+        npc: s.is_ai && world.ai_labeled,
         bio: profile.bio,
         online,
         presence_label,

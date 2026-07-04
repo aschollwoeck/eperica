@@ -7,7 +7,7 @@
       {% if online %}· <span class="presence presence--online" title="Online">● online</span>
       {% else %}· <span class="presence presence--away" title="{{ presence_label }}">○ {{ presence_label }}</span>{% endif %}
     </div>
-    <h1 class="phead__title">{{ name }}</h1>
+    <h1 class="phead__title">{{ name }}{% if npc %} <span class="badge">NPC</span>{% endif %}</h1>
     {% if !bio.is_empty() %}<p class="bio-read">{{ bio }}</p>{% endif %}
     <a class="phead__back" href="/w/{{ world }}/leaderboard">← Leaderboards</a>
     · <a class="phead__back" href="/w/{{ world }}/messages/with/{{ subject_id }}">Message</a>

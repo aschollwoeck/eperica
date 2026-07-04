@@ -1116,6 +1116,8 @@ pub struct LeaderboardRowView {
     pub has_presence: bool,
     pub online: bool,
     pub presence_label: String,
+    /// 120 AC3: show the NPC badge — true only when the player is_ai AND the world is labeled.
+    pub npc: bool,
 }
 
 #[derive(Template)]
@@ -1182,6 +1184,8 @@ pub struct PlayerStatsTemplate {
     /// The viewed player's id (for the report action — 022 AC2).
     pub subject_id: String,
     pub name: String,
+    /// 120 AC3: show the NPC badge — true only when the player is_ai AND the world is labeled.
+    pub npc: bool,
     /// The player's profile bio (025; empty if unset).
     pub bio: String,
     /// Presence indicator (025): online flag + a human label.

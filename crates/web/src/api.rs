@@ -659,6 +659,7 @@ async fn map_window(
         capital_coord,
         origin,
         acting_vid.as_deref(),
+        ctx.ai_labeled,
     );
     Ok(Json(serde_json::json!({
         "center_x": center.x,
