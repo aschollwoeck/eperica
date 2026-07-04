@@ -10,6 +10,7 @@ manual grows as the game does.
 - [Getting started](getting-started.md) — create your account, join a world, find your first village, and read your status strip.
 - [Worlds & game modes](worlds.md) — the worlds lobby, joining and switching worlds, speed multipliers, and the classic and speed presets.
 - [AI players (NPCs)](ai-players.md) — bot players in the world: labeled vs disguised, how they participate, and what happens when they retire.
+- [Spectating](spectating.md) — the admin-granted, read-only observer role: what a spectator sees, what they can't do, and the live-feed dashboard.
 
 ### Your village
 

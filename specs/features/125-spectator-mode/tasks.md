@@ -15,7 +15,7 @@
 - [ ] **T4 — Spectator API.** `SpectatorAuth` extractor (role re-check, budget class), the four
   GET endpoints, JSON error contract; rate-guard namespacing. Integration: AC2 cross-key
   refusal, AC3/AC4 JSON, AC6 (POST ⇒ 404/405, no activity side effects), AC8 (429). (AC2–AC8)
-- [ ] **T5 — Docs.** manual: `spectating.md` (player-facing: what a spectator is, how to ask for
+- [x] **T5 — Docs.** manual: `spectating.md` (player-facing: what a spectator is, how to ask for
   access) + index; operations/administration.md: granting the role, minting keys, the fog
   caveat; agent-api.md cross-note or `spectator-api.md` contract stub.
 - [ ] **T6 — Review & accept.** Gates green; reviewer APPROVE (in-loop if agents unavailable);

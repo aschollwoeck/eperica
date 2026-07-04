@@ -54,6 +54,39 @@ AI accounts are full participants (rankings, medals, alliances). They are exempt
 can still report them (preserves the disguise on `disguised` worlds — the moderator sees the AI
 badge and judges).
 
+## Spectators (slice 125)
+
+**Spectator** is an additive account role (like Moderator/Administrator) that grants a read-only,
+omniscient view of **every** world — every village's internals and every movement in flight, with
+compositions, unblinded by fog of war. There is no per-world flag: the grant is global and the
+grant *is* the trust decision.
+
+- **Granting/revoking the role** — the accounts table on `/admin` gets a **Spectator** column
+  next to Moderator/Administrator: toggle it per account (`POST /admin/role`, `role=spectator`).
+  Unlike admin, there is no self-removal restriction — an operator can freely grant or remove
+  their own spectator access.
+- **Minting spectator keys** — the *Spectator keys* panel mints a key by username
+  (`POST /admin/spectator-key`), shown **once** as `spk_<id>_<secret>` (SHA-256 hashed at rest,
+  same pattern as agent keys but a distinct table and prefix — the two credential types can never
+  be confused or cross-authenticate). A holders list shows every account with an active key, with
+  a per-account **Revoke keys** action (`POST /admin/spectator-key/revoke`) that revokes all of
+  that account's spectator keys at once. Minting a key before the role is granted is allowed — the
+  key simply won't authenticate until the role is in place (see below).
+
+> **The fog caveat.** The Spectator role is additive to Player: an account can hold both. A
+> spectator who also plays **sees through fog of war everywhere — including worlds they play on
+> themselves.** Grant this role to neutral observers, casters, and tournament referees — never to
+> an active competitor. This is an operator judgement call; the system enforces no per-world
+> exclusion.
+
+- **Role-revoke instantly dead-ends keys.** A spectator key only authenticates while its account
+  holds the Spectator role at the moment of the request — auth re-checks the role on every
+  request, not just at mint time. Removing the role from an account makes every one of its keys
+  fail immediately (`401`), with nothing further to revoke by hand.
+- **Keys don't cross surfaces.** A spectator key (`spk_`) is refused on the Agent API, and an
+  agent key (`epk_`) is refused on the spectator surface — the two prefixes are parsed and
+  verified independently, so a key minted for one purpose can never authenticate the other.
+
 ## Moderation (`/mod`)
 
 - **Queue**: open player reports (subject, reason, note, reporter) with inline resolution —
