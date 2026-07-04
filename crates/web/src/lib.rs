@@ -226,7 +226,7 @@ async fn action_guard(State(state): State<AppState>, req: Request, next: Next) -
     // won/frozen. A POST with no world in the path is an account action (settings, sitting, …), not a world
     // game action, so it is not freeze-checked.
     if let Some(world) = world_in_path(req.uri().path())
-        && let Some((repo, _, _, _, _)) = state.world_registry.context_for(world).await
+        && let Some((repo, _, _, _, _, _)) = state.world_registry.context_for(world).await
     {
         match repo.world_ended().await {
             Ok(Some(_)) => {

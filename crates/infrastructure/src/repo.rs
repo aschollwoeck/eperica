@@ -7728,6 +7728,7 @@ impl AdminRepository for PgAccountRepository {
         wonder_offset_secs: i64,
         rule_preset: &str,
         name: &str,
+        ai_visibility: &str,
     ) -> Result<WorldId, RepoError> {
         let config = WorldConfig::new(
             GameSpeed::new(speed).map_err(|e| RepoError::Backend(e.to_string()))?,
@@ -7740,6 +7741,7 @@ impl AdminRepository for PgAccountRepository {
             wonder_offset_secs,
             rule_preset,
             name,
+            ai_visibility,
         )
         .await
         .map_err(backend)?;
@@ -17271,5 +17273,48 @@ mod tests {
         assert_eq!(medals[0].category, MedalCategory::Climber);
         assert_eq!(medals[0].period, 1);
         assert_eq!(medals[0].rank, 1);
+    }
+
+    // 120 T1: ai_visibility plumbing — create_world and ensure_world paths.
+
+    /// Creating a world via the admin repo with ai_visibility="disguised" persists "disguised".
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn create_world_ai_visibility_persisted(pool: PgPool) {
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        let a_secs = 90 * 24 * 60 * 60_i64;
+        let w_secs = 120 * 24 * 60 * 60_i64;
+        crate::world::create_world(
+            &pool,
+            &config,
+            a_secs,
+            w_secs,
+            "classic",
+            "Test",
+            "disguised",
+        )
+        .await
+        .expect("create world");
+        let vis: String =
+            sqlx::query_scalar("SELECT ai_visibility FROM worlds ORDER BY created_at DESC LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(vis, "disguised", "ai_visibility 'disguised' is stored");
+    }
+
+    /// The ensure_world path (boot world) relies on the DEFAULT — the column is 'labeled' without being
+    /// listed in the INSERT.
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn ensure_world_defaults_to_labeled(pool: PgPool) {
+        let config = WorldConfig::new(GameSpeed::new(1.0).unwrap(), 50);
+        crate::world::ensure_world(&pool, &config)
+            .await
+            .expect("ensure world");
+        let vis: String =
+            sqlx::query_scalar("SELECT ai_visibility FROM worlds ORDER BY created_at ASC LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(vis, "labeled", "boot world defaults to 'labeled'");
     }
 }

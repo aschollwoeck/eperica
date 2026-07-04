@@ -57,6 +57,12 @@
           {% for p in presets %}<option value="{{ p }}"{% if p.as_str() == default_preset.as_str() %} selected{% endif %}>{{ p }}</option>{% endfor %}
         </select>
       </label>
+      <label>AI visibility
+        <select name="ai_visibility">
+          <option value="labeled" selected>Labeled (NPC tags)</option>
+          <option value="disguised">Disguised</option>
+        </select>
+      </label>
       <button type="submit" class="btn btn--primary">Create world</button>
     </form>
     <p class="bld-tip">A new world starts running immediately (its scheduler is registered live, no restart).</p>

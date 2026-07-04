@@ -3226,6 +3226,7 @@ pub trait AdminRepository: Send + Sync {
     ///
     /// # Errors
     /// [`RepoError::Backend`] on storage failure.
+    #[allow(clippy::too_many_arguments)]
     async fn create_world(
         &self,
         _speed: f64,
@@ -3234,6 +3235,7 @@ pub trait AdminRepository: Send + Sync {
         _wonder_offset_secs: i64,
         _rule_preset: &str,
         _name: &str,
+        _ai_visibility: &str,
     ) -> Result<WorldId, RepoError> {
         Err(RepoError::Backend("create_world unimplemented".to_owned()))
     }

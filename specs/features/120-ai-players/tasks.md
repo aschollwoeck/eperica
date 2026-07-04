@@ -3,7 +3,7 @@
 **Status:** Draft. Ordered; each gated by `cargo fmt --all -- --check`, `clippy --all-targets -- -D warnings`,
 `cargo test --workspace`, and the P11 budget. Branch `feature/120-ai-players`; commit per task.
 
-- [ ] **T1 — Visibility plumbing.** Migration `0051_ai_visibility.sql` (worlds column, default
+- [x] **T1 — Visibility plumbing.** Migration `0051_ai_visibility.sql` (worlds column, default
   labeled); admin form select → `create_world` param → INSERT; `WorldMeta` cache →
   `context_for` → `GameContext.ai_labeled` / `WorldScope.ai_labeled`. Infra test loads it. (AC7)
 - [ ] **T2 — Sweep carve-out.** The one-predicate exclusion in the 019 victim-select; repo tests:

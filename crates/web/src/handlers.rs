@@ -509,7 +509,7 @@ async fn route_after_register(
         Ok(ws) if ws.iter().any(|w| w.id == wid && w.won_ms.is_none()) => {}
         _ => return "/worlds".to_owned(),
     }
-    let Some((repo, _map, _speed, _radius, rules)) = state.world_registry.context_for(wid).await
+    let Some((repo, _map, _speed, _radius, rules, _)) = state.world_registry.context_for(wid).await
     else {
         return "/worlds".to_owned();
     };
@@ -823,7 +823,8 @@ pub async fn join_world(
     }
     // The world must be one the registry runs — `context_for` yields its (world-scoped) repo + rules for the
     // join, so the new village uses the **selected** world's starting template (its preset), not the home's.
-    let Some((repo, _map, _speed, _radius, rules)) = state.world_registry.context_for(world).await
+    let Some((repo, _map, _speed, _radius, rules, _)) =
+        state.world_registry.context_for(world).await
     else {
         return Redirect::to("/worlds").into_response();
     };
@@ -4347,6 +4348,9 @@ pub struct CreateWorldForm {
     /// The world's display name (056) — shown to players in the lobby/nav.
     #[serde(default)]
     name: String,
+    /// AI visibility mode (120 Decision #3) — `"labeled"` or `"disguised"`; anything else/missing → `"labeled"`.
+    #[serde(default)]
+    ai_visibility: Option<String>,
 }
 
 /// Create a new world from the admin console and start it running live (041 AC1/AC2). Admin-gated on the
@@ -4379,6 +4383,12 @@ pub async fn admin_world_submit(
             Some("Unknown rule preset.".to_owned()),
         );
     }
+    // Normalize the AI visibility (120 Decision #3): only "disguised" is accepted as-is; anything else
+    // (including missing) is silently coerced to "labeled" at the edge — the use-case validates the value.
+    let ai_visibility = match form.ai_visibility.as_deref() {
+        Some("disguised") => "disguised",
+        _ => "labeled",
+    };
     match admin_create_world_uc(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
@@ -4389,6 +4399,7 @@ pub async fn admin_world_submit(
         wonder_offset,
         preset,
         form.name.trim(),
+        ai_visibility,
     )
     .await
     {
@@ -4525,7 +4536,7 @@ pub async fn admin_create_agent(
 
     // Step 2: if the chosen world is not the home world, also place the agent there.
     if world != state.world_id {
-        let Some((repo, _map, _speed, _radius, rules)) =
+        let Some((repo, _map, _speed, _radius, rules, _)) =
             state.world_registry.context_for(world).await
         else {
             // The world does not exist in the registry. The account row was already created;

@@ -2988,6 +2988,64 @@ async fn admin_world_creation_sets_endgame_schedule(pool: sqlx::PgPool) {
     );
 }
 
+/// 120 T1: POST /admin/world with ai_visibility=disguised stores 'disguised' in the worlds row.
+#[sqlx::test(migrations = "../../migrations")]
+async fn admin_world_ai_visibility_persisted(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let admin_name = unique("aivadm");
+    let (ac, _admin_id) = register_client(&base, &pool, &admin_name).await;
+    sqlx::query("UPDATE users SET is_admin = TRUE WHERE username = $1")
+        .bind(&admin_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Create a world with ai_visibility=disguised.
+    let r = ac
+        .post(format!("{base}/admin/world"))
+        .form(&[
+            ("name", "Stealth"),
+            ("speed", "1"),
+            ("radius", "40"),
+            ("ai_visibility", "disguised"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303, "world created (redirect)");
+
+    // The newest world row carries ai_visibility = 'disguised'.
+    let vis: String = sqlx::query_scalar(
+        "SELECT ai_visibility FROM worlds ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        vis, "disguised",
+        "ai_visibility 'disguised' is stored in the row"
+    );
+
+    // A world created without the field defaults to 'labeled'.
+    let r = ac
+        .post(format!("{base}/admin/world"))
+        .form(&[("name", "Open"), ("speed", "1"), ("radius", "40")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let vis2: String = sqlx::query_scalar(
+        "SELECT ai_visibility FROM worlds ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        vis2, "labeled",
+        "omitted ai_visibility defaults to 'labeled'"
+    );
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn map_view_shows_terrain_and_own_village(pool: sqlx::PgPool) {
     let base = spawn(pool.clone()).await;
@@ -7289,9 +7347,9 @@ async fn registry_serves_each_worlds_preset_bundle(pool: sqlx::PgPool) {
         Arc::clone(&boot),
     );
 
-    let (_r1, _m1, s_home, _rad1, rules_home) =
+    let (_r1, _m1, s_home, _rad1, rules_home, _ai1) =
         registry.context_for(home.id).await.expect("home context");
-    let (_r2, _m2, s_other, _rad2, rules_other) = registry
+    let (_r2, _m2, s_other, _rad2, rules_other, _ai2) = registry
         .context_for(WorldId(other.as_u128()))
         .await
         .expect("other context");
@@ -7354,9 +7412,9 @@ async fn classic_and_speed_worlds_are_served_divergent_rules(pool: sqlx::PgPool)
         Arc::clone(&boot),
     );
 
-    let (_r1, _m1, _s1, _rad1, home_rules) =
+    let (_r1, _m1, _s1, _rad1, home_rules, _ai1) =
         registry.context_for(home.id).await.expect("home context");
-    let (_r2, _m2, _s2, _rad2, speed_rules) = registry
+    let (_r2, _m2, _s2, _rad2, speed_rules, _ai2) = registry
         .context_for(WorldId(speed_id.as_u128()))
         .await
         .expect("speed context");

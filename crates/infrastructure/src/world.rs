@@ -27,9 +27,12 @@ pub struct World {
     pub rule_preset: String,
     /// The world's human display name (056) — shown in the lobby/nav/admin; the URL routes by the UUID.
     pub name: String,
+    /// Whether AI players are tagged as NPCs on this world (120, Decision #3). `'labeled'` shows NPC
+    /// badges on boards/map/stat pages; `'disguised'` renders AI villages byte-identically to humans.
+    pub ai_visibility: String,
 }
 
-const SELECT_COLS: &str = "id, speed, radius, seed, rule_preset, name, \
+const SELECT_COLS: &str = "id, speed, radius, seed, rule_preset, name, ai_visibility, \
     (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ms, \
     (EXTRACT(EPOCH FROM artifact_release_at) * 1000)::bigint AS artifact_ms, \
     (EXTRACT(EPOCH FROM wonder_release_at) * 1000)::bigint AS wonder_ms";
@@ -46,6 +49,7 @@ fn world_from_row(row: &sqlx::postgres::PgRow) -> Result<World, sqlx::Error> {
         wonder_release_at: row.try_get::<Option<i64>, _>("wonder_ms")?.map(Timestamp),
         rule_preset: row.try_get("rule_preset")?,
         name: row.try_get("name")?,
+        ai_visibility: row.try_get("ai_visibility")?,
     })
 }
 
@@ -88,14 +92,15 @@ pub async fn create_world(
     wonder_release_offset_secs: i64,
     rule_preset: &str,
     name: &str,
+    ai_visibility: &str,
 ) -> Result<World, sqlx::Error> {
     let id = Uuid::new_v4();
     let row = sqlx::query(&format!(
         "INSERT INTO worlds \
-           (id, speed, radius, seed, artifact_release_at, wonder_release_at, rule_preset, name) \
+           (id, speed, radius, seed, artifact_release_at, wonder_release_at, rule_preset, name, ai_visibility) \
          VALUES ($1, $2, $3, hashtextextended($1::text, 0), \
                  now() + make_interval(secs => $4::double precision), \
-                 now() + make_interval(secs => $5::double precision), $6, $7) \
+                 now() + make_interval(secs => $5::double precision), $6, $7, $8) \
          RETURNING {SELECT_COLS}"
     ))
     .bind(id)
@@ -105,6 +110,7 @@ pub async fn create_world(
     .bind(wonder_release_offset_secs as f64)
     .bind(rule_preset)
     .bind(name)
+    .bind(ai_visibility)
     .fetch_one(pool)
     .await?;
     world_from_row(&row)

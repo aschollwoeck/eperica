@@ -173,9 +173,11 @@ where
 /// `artifact_offset_secs`/`wonder_offset_secs` are the end-game release schedule (seconds after creation,
 /// 047) — the caller resolves them from the operator's input or the configured defaults.
 ///
+/// `ai_visibility` must be `"labeled"` or `"disguised"` (120 Decision #3).
+///
 /// # Errors
-/// [`AdminError::NotAuthorized`] for a non-admin; [`AdminError::InvalidWorld`] for a bad speed/radius or an
-/// invalid schedule (`0 < artifact < wonder`); otherwise a backend error.
+/// [`AdminError::NotAuthorized`] for a non-admin; [`AdminError::InvalidWorld`] for a bad speed/radius,
+/// an invalid schedule (`0 < artifact < wonder`), or an unknown `ai_visibility`; otherwise a backend error.
 // A validated pass-through: each parameter is a distinct, named world attribute the handler resolved from
 // the form. Bundling them into a struct would not add clarity over the flat, well-named list.
 #[allow(clippy::too_many_arguments)]
@@ -189,6 +191,7 @@ pub async fn create_world<A, D>(
     wonder_offset_secs: i64,
     rule_preset: &str,
     name: &str,
+    ai_visibility: &str,
 ) -> Result<WorldId, AdminError>
 where
     A: AccountRepository,
@@ -227,6 +230,12 @@ where
             "Wonder release must be later than the artifact release".to_owned(),
         ));
     }
+    // Validate the AI visibility mode (120 Decision #3) — only the two known values are accepted.
+    if !matches!(ai_visibility, "labeled" | "disguised") {
+        return Err(AdminError::InvalidWorld(
+            "ai_visibility must be 'labeled' or 'disguised'".to_owned(),
+        ));
+    }
     Ok(admin
         .create_world(
             speed,
@@ -235,6 +244,7 @@ where
             wonder_offset_secs,
             rule_preset,
             name,
+            ai_visibility,
         )
         .await?)
 }
@@ -266,8 +276,8 @@ mod tests {
     use eperica_domain::Tribe;
     use std::sync::Mutex;
 
-    /// A recorded `create_world` call: (speed, radius, artifact_offset, wonder_offset, rule_preset, name).
-    type CreatedWorld = (f64, u32, i64, i64, String, String);
+    /// A recorded `create_world` call: (speed, radius, artifact_offset, wonder_offset, rule_preset, name, ai_visibility).
+    type CreatedWorld = (f64, u32, i64, i64, String, String, String);
 
     /// A minimal account+admin fake: a roster of (id, is_moderator, is_admin) with recorded role writes.
     #[derive(Default)]
@@ -414,6 +424,7 @@ mod tests {
             wonder: i64,
             rule_preset: &str,
             name: &str,
+            ai_visibility: &str,
         ) -> Result<WorldId, RepoError> {
             let mut w = self.created_worlds.lock().unwrap();
             w.push((
@@ -423,6 +434,7 @@ mod tests {
                 wonder,
                 rule_preset.to_owned(),
                 name.to_owned(),
+                ai_visibility.to_owned(),
             ));
             Ok(WorldId(1000 + w.len() as u128))
         }
@@ -576,18 +588,54 @@ mod tests {
         let (a, w) = (90 * 86_400_i64, 120 * 86_400_i64);
         // A non-admin cannot create a world (gate runs first).
         assert_eq!(
-            create_world(&f, &f, PlayerId(2), 1.0, 50, a, w, "classic", "Arena").await,
+            create_world(
+                &f,
+                &f,
+                PlayerId(2),
+                1.0,
+                50,
+                a,
+                w,
+                "classic",
+                "Arena",
+                "labeled"
+            )
+            .await,
             Err(AdminError::NotAuthorized)
         );
         assert!(f.created_worlds.lock().unwrap().is_empty());
 
         // Invalid speed / radius are rejected (P4) — no row created.
         assert!(matches!(
-            create_world(&f, &f, PlayerId(1), 0.0, 50, a, w, "classic", "Arena").await,
+            create_world(
+                &f,
+                &f,
+                PlayerId(1),
+                0.0,
+                50,
+                a,
+                w,
+                "classic",
+                "Arena",
+                "labeled"
+            )
+            .await,
             Err(AdminError::InvalidWorld(_))
         ));
         assert!(matches!(
-            create_world(&f, &f, PlayerId(1), 1.0, 0, a, w, "classic", "Arena").await,
+            create_world(
+                &f,
+                &f,
+                PlayerId(1),
+                1.0,
+                0,
+                a,
+                w,
+                "classic",
+                "Arena",
+                "labeled"
+            )
+            .await,
             Err(AdminError::InvalidWorld(_))
         ));
         assert!(matches!(
@@ -600,40 +648,113 @@ mod tests {
                 a,
                 w,
                 "classic",
-                "Arena"
+                "Arena",
+                "labeled",
             )
             .await,
             Err(AdminError::InvalidWorld(_))
         ));
         // 047: an invalid end-game schedule is rejected — non-positive artifact, or Wonder ≤ artifact.
         assert!(matches!(
-            create_world(&f, &f, PlayerId(1), 1.0, 50, 0, w, "classic", "Arena").await,
+            create_world(
+                &f,
+                &f,
+                PlayerId(1),
+                1.0,
+                50,
+                0,
+                w,
+                "classic",
+                "Arena",
+                "labeled"
+            )
+            .await,
             Err(AdminError::InvalidWorld(_))
         ));
         assert!(matches!(
-            create_world(&f, &f, PlayerId(1), 1.0, 50, w, a, "classic", "Arena").await,
+            create_world(
+                &f,
+                &f,
+                PlayerId(1),
+                1.0,
+                50,
+                w,
+                a,
+                "classic",
+                "Arena",
+                "labeled"
+            )
+            .await,
             Err(AdminError::InvalidWorld(_))
         ));
         // 052: an empty preset is rejected (the web edge supplies a validated, allow-listed name).
         assert!(matches!(
-            create_world(&f, &f, PlayerId(1), 1.0, 50, a, w, "", "Arena").await,
+            create_world(&f, &f, PlayerId(1), 1.0, 50, a, w, "", "Arena", "labeled").await,
             Err(AdminError::InvalidWorld(_))
         ));
         // 056: an empty (or whitespace) world name is rejected.
         assert!(matches!(
-            create_world(&f, &f, PlayerId(1), 1.0, 50, a, w, "classic", "  ").await,
+            create_world(
+                &f,
+                &f,
+                PlayerId(1),
+                1.0,
+                50,
+                a,
+                w,
+                "classic",
+                "  ",
+                "labeled"
+            )
+            .await,
+            Err(AdminError::InvalidWorld(_))
+        ));
+        // 120: an unknown ai_visibility is rejected.
+        assert!(matches!(
+            create_world(
+                &f,
+                &f,
+                PlayerId(1),
+                1.0,
+                50,
+                a,
+                w,
+                "classic",
+                "Arena",
+                "unknown"
+            )
+            .await,
             Err(AdminError::InvalidWorld(_))
         ));
         assert!(f.created_worlds.lock().unwrap().is_empty());
 
-        // A valid request creates the world, propagating the schedule offsets + the chosen preset + name.
-        let id = create_world(&f, &f, PlayerId(1), 5.0, 100, a, w, "speed", "Blitz Arena")
-            .await
-            .unwrap();
+        // A valid request creates the world, propagating the schedule offsets + preset + name + visibility.
+        let id = create_world(
+            &f,
+            &f,
+            PlayerId(1),
+            5.0,
+            100,
+            a,
+            w,
+            "speed",
+            "Blitz Arena",
+            "disguised",
+        )
+        .await
+        .unwrap();
         assert_eq!(id, WorldId(1001));
         assert_eq!(
             *f.created_worlds.lock().unwrap(),
-            vec![(5.0, 100, a, w, "speed".to_owned(), "Blitz Arena".to_owned())]
+            vec![(
+                5.0,
+                100,
+                a,
+                w,
+                "speed".to_owned(),
+                "Blitz Arena".to_owned(),
+                "disguised".to_owned()
+            )]
         );
     }
 }
