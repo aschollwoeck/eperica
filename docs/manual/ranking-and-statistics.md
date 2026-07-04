@@ -45,7 +45,9 @@ When you **reinforce an ally** and their village is attacked, you get your **own
 reports inbox — showing what happened to *your* troops and the defence points you earned. (You see your
 own contribution, not the defender's full battle.)
 
-## Not yet
+## Medals, achievements & top climbers
 
-"Top climbers" (who grew fastest this week), population-over-time charts, **medals**, and **achievements**
-arrive in a later release.
+Players earn permanent **medals** (weekly population prizes, milestone trophies) and **achievements**
+for reaching key milestones — with resource and culture rewards. A **Top Climbers** board shows who
+grew fastest in the last week, and your **population-over-time** chart tracks your village history.
+See **[Medals & Achievements](medals-and-achievements.md)** for the full breakdown.

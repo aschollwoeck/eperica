@@ -65,9 +65,14 @@ Once you are in an alliance, the Alliance page shows:
 Reinforcing an ally uses the ordinary **Rally Point** — alliances simply make allied villages easy to
 find and their danger visible. Defending troops fight exactly as always.
 
-## What alliances do *not* do (yet)
+## Chat and the forum
 
-- **Chat, a forum, and report-sharing** are coming in a later update.
-- **Alliance-wide bonuses** and **war statistics / leaderboards** arrive later too.
+Alliance members can talk in real time via **[Communication](communication.md)** (the alliance
+chat channel), and post and discuss longer topics in the **[Alliance Forum](alliance-forum.md)** —
+both available from the Alliance page.
+
+## What alliances do *not* do
+
+- **Alliance-wide bonuses** and **war statistics / leaderboards** are not part of the alliance system.
 - Alliances add **no** change to battle math — an alliance is about coordination and visibility, not
   stronger troops.

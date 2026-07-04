@@ -1,8 +1,7 @@
 # Quests & onboarding — your first steps
 
 A new village starts slow. To get you going, the game gives you a short **guided quest chain** that
-walks you through the core loop and **rewards** you for each step — resources, culture points, and
-sometimes a few troops to get your army started.
+walks you through the core loop and **rewards** you for each step — resources and culture points.
 
 ## How quests work
 
@@ -25,7 +24,7 @@ The onboarding chain walks you through:
 5. **Grow your village** to 50 population — reward: culture points.
 
 Rewards in resources are delivered to your **capital** (up to its storage); culture points go to your
-account; any troop reward joins your capital's garrison.
+account.
 
 ## Where to see them
 

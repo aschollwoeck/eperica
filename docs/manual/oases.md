@@ -26,6 +26,18 @@ The **Outpost** is the building that lets you **hold** oases. Build and upgrade 
 its **level sets how many oases** your village may occupy at once. With **no Outpost** you can clear
 animals but **can't occupy** anything. Upgrade it to hold more.
 
+**Outpost capacity by level:**
+
+| Level | Oases held |
+|-------|------------|
+| 0 (none) | 0 |
+| 1–2 | 1 |
+| 3–4 | 2 |
+| 5–6 | 3 |
+| 7–8 | 4 |
+| 9 | 5 |
+| 10 | 6 |
+
 ## The production bonus
 
 Each oasis you hold adds its **bonus** (e.g. *+25% crop*) to your village's production, and **multiple

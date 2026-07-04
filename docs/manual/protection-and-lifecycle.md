@@ -31,3 +31,7 @@ This keeps the map alive and reclaimable instead of frozen around players who ha
 even just logging in — keeps your account out of the lifecycle.
 
 *(Durations for protection and inactivity are server settings and scale with world speed.)*
+
+**NPC (AI) players** — the Natar accounts that hold end-game villages — do not grey or decay while
+they are active on the world. A retired NPC (one whose villages have been removed from the map)
+decays through the same abandoned sweep as any inactive player account.

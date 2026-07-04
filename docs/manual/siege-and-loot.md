@@ -25,8 +25,9 @@ at their Warehouse to cripple their economy, their Smithy to weaken their troops
 **(random building)** to let your catapults pick. The **Wall** and **Rally Point** can't be
 catapulted — rams are what bring a Wall down.
 
-How much you wreck depends on how many catapults survive: enough firepower takes a building down
-several levels at once.
+How much you wreck depends on how many catapults survive: **levels razed = surviving catapult attack
+power ÷ 110** (rounded down). Enough firepower takes a building down several levels at once — send a
+lot of catapults to make sure.
 
 ## The Cranny — hiding from raiders
 

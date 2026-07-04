@@ -6,8 +6,10 @@ the source of truth; this folder does not duplicate it.)
 ```
 docs/
 ├── README.md            ← this file: documentation conventions + templates
-├── architecture/        ← technical notes (created when first needed)
-├── manual/              ← end-user (player) manual (created when first needed)
+├── architecture/        ← technical notes (one per slice/program + ADRs)
+├── manual/              ← end-user (player) manual (see manual/README.md for the index)
+├── operations/          ← operator manual: installation.md · administration.md · bots.md · perf-tooling.md
+├── agent-api.md         ← the Agent API wire contract (bots/LLM clients)
 └── eperica_concept.docx ← original concept (historical; superseded by specs/)
 ```
 

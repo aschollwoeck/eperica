@@ -10,9 +10,9 @@ Every village has a **loyalty** from 0 to 100. A fully loyal village (100) is fi
 falls, the village wavers; at **0** it can change hands. You can see each of your villages' loyalty in
 the **Culture & expansion** panel on its village page.
 
-Loyalty **regenerates over time** back toward 100 on its own. So an attacker who chips away at your
-loyalty but can't finish the job will see it **recover** — conquest takes sustained pressure, not a
-single lucky hit.
+Loyalty **regenerates over time** back toward 100 on its own — at **2 loyalty points per hour**
+(speed-scaled on faster worlds). So an attacker who chips away at your loyalty but can't finish the
+job will see it **recover** — conquest takes sustained pressure, not a single lucky hit.
 
 ## Administrators
 
@@ -20,7 +20,9 @@ Each tribe has an **administrator** unit — the Roman **Senator**, the Teuton *
 **Chieftain**. They're trained in the **Residence or Palace** (after a steep Academy/Rally-Point
 research), they're slow and expensive, and — unlike settlers — they **fight** in the battle. Their real
 job is to **lower an enemy village's loyalty**: each administrator that **survives a winning attack**
-knocks loyalty down by a chunk (a bit of luck decides exactly how much).
+knocks loyalty down by **20–30 points** (a seeded luck draw, independent for each surviving
+administrator). Send two administrators and each gets its own roll — their reductions add together.
+A freshly conquered village resets to **25 loyalty**, so it can't be instantly re-taken.
 
 ## Conquering a village
 

@@ -40,6 +40,14 @@ Moderators (designated by the operator) get two extra pages:
 The signals are **advisory** — they're inputs to your judgement, never automatic punishments. You always
 decide.
 
+## AI players (NPCs)
+
+The world contains **NPC accounts** — AI-controlled players that hold Natar villages and artifact
+sites. The detection signals (shared-IP association, inhuman action rate) **do not apply** to NPC
+accounts; moderators can see at a glance that an account is an NPC and these signals will not flag
+it. **Reporting an NPC** works exactly like reporting any other account — the report goes to the
+review queue — though a moderator reviewing it will simply note it is a non-player account.
+
 ## Behind the scenes
 
 Everything here is server-authoritative and reproducible: a sanction is a simple state on the account
