@@ -37,11 +37,13 @@ world and finds its fleet waiting.
 
 `POST /admin/agents` (extends the 118 single-mint): `{world, tribe_mix, count}` creates `count` AI
 accounts in one action — plausible generated usernames (name-pool + discriminator on collision),
-tribe per `tribe_mix` (`random` | a fixed tribe), each with a starting village via the normal join
-placement and one agent key. The response is a **one-time key manifest** (username → `epk_…`),
-rendered once in the console and downloadable as JSON for the runner's key file; only hashes are
-stored (118 rule). The admin console lists a world's bots (name, tribe, village count, enabled,
-created) with per-bot **revoke** (disable) and a fleet-wide revoke.
+tribe per `tribe_mix` (`even` — a deterministic round-robin mix — or a fixed tribe), each with a
+starting village via the normal join placement and one agent key. The response is a **one-time key
+manifest** (username → `epk_…`), rendered once in the console and downloadable as JSON for the
+runner's key file; only hashes are stored (118 rule). The admin console lists a world's bots (name,
+tribe, enabled, created) with per-bot **revoke** (disable) and a fleet-wide revoke. Seeding into a
+non-home world also places the bot's home-world player first (the 118 mint composes `register`);
+fleet revoke therefore disables the bot's **account** keys everywhere — the console says so.
 
 ## Acceptance criteria
 

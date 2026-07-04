@@ -50,7 +50,15 @@
    re-rendering never reveals keys (AC1). The console also lists the selected world's bots
    (name, tribe, enabled = unrevoked-key EXISTS, created) with per-bot revoke and fleet-wide
    revoke (POST /admin/agents/revoke).
-6. **`tribe_mix`**: `random` | `romans` | `teutons` | `gauls` — random draws uniformly per bot.
+6. **`tribe_mix`**: `even` (round-robin romans→teutons→gauls — deterministic, testable, guaranteed
+   mix; labeled "even mix" in the UI) | `romans` | `teutons` | `gauls`. (Originally "random uniform";
+   changed to round-robin during build for determinism — P6-friendly and directly assertable.)
+7. **Cross-world fleets (recorded semantics).** The 118 mint composes `register`, which always
+   places a home-world player+village before joining the target world. Consequences, accepted and
+   surfaced rather than hidden: a bot seeded into world X also exists (idle) in the home world and
+   appears in both worlds' fleet lists; **fleet revoke disables the bot's ACCOUNT keys** — its
+   presence in every world — so the button is labeled with that blast radius. A home-placement-free
+   mint would need a new account-creation path; deferred until a real multi-world fleet needs it.
 
 ## Test strategy
 
