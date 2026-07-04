@@ -117,6 +117,16 @@ async fn bearer_account(parts: &Parts, state: &AppState) -> Result<PlayerId, Api
             "Your account is suspended or banned for a fair-play violation.",
         ));
     }
+    // 123: a playing agent is an ACTIVE player — refresh last_activity exactly like the web
+    // presence middleware does (the port is throttled: at most one small write per window).
+    // Same posture as lib.rs: a failed touch is logged, never breaks the request (AC3).
+    if let Err(e) = state
+        .accounts
+        .touch_activity(key.user, Timestamp(now().0))
+        .await
+    {
+        tracing::error!(error = %e, "agent activity touch failed");
+    }
     Ok(key.user)
 }
 
