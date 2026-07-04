@@ -1,6 +1,6 @@
 # Plan — 123 agent activity
 
-**Status:** Draft (spec approved)
+**Status:** Verified (built as planned)
 
 One change at one chokepoint: `bearer_account` (crates/web/src/api.rs) — the shared resolution
 core of `AgentAccount` and `AgentGame` — gains a fire-and-log `touch_activity(key.user, now)`

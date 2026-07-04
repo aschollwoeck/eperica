@@ -1,6 +1,6 @@
 # Feature 123 — agent API activity counts as player activity
 
-**Status:** Draft
+**Status:** Verified (gates green — 669 workspace tests; in-loop acceptance review — reviewer agents unavailable: spend limit)
 **Depends on:** 118 (Agent API auth), 019 (lifecycle/`last_activity`), 027 (presence touch).
 **Origin:** documentation accuracy review of PR #141 — playing bots visibly grey as "(inactive)"
 on the map because nothing on the `/api` path ever touches `last_activity`; only the abandonment
