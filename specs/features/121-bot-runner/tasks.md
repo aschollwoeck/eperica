@@ -17,7 +17,7 @@ Branch `feature/121-bot-runner`; commit per task.
   map-window TTL cache. (AC4/AC5/AC7-ops)
 - [x] **T5 — E2E.** The forced-tick test against the spawned server (orders appear in the next
   digest), dry-run zero-writes, dead-key retirement. (AC1/AC6)
-- [ ] **T6 — Docs.** `crates/bots/README.md` (run book: seed fleet → download manifest → run);
+- [x] **T6 — Docs.** `crates/bots/README.md` (run book: seed fleet → download manifest → run);
   CLAUDE.md commands section (`cargo run -p eperica-bots -- …`); docs/agent-api.md cross-link.
   End-user docs: operator-facing — recorded internal.
 - [ ] **T7 — Review & accept.** Gates green; `eperica-reviewer` → APPROVE; statuses flipped; PR

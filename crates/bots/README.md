@@ -6,8 +6,9 @@ A headless bot fleet that plays Eperica using the agent API (docs/agent-api.md).
 
 ### 1. Seed bots in the admin panel
 
-Log in as an operator, go to **Admin → Bot fleet** and use **Seed bots** to create a set of
-bot accounts.  Download the resulting `agents.json` file — it contains username + API key pairs.
+Log in as an Administrator, go to **/admin → AI agents** and use **Seed bots** to create a fleet.
+Copy or download the one-time `agents.json` manifest — it contains username + API key pairs and is
+shown exactly once (only hashes are stored server-side).
 
 ### 2. Run the fleet
 
@@ -54,7 +55,8 @@ complete before exiting.
 
 Each bot derives a deterministic *persona* from its username (activity hours, tick cadence,
 aggression level, raid radius).  On each tick the bot fetches its state digest, computes a list of
-intents using the pure reflex doctrine (field upgrades → core buildings → training → settling →
-raiding), executes them via the agent API, and sleeps until the next tick.
+intents using the pure reflex doctrine (evacuate before incoming attacks → storage relief →
+fields ⇄ core buildings → training → settling → raiding inactives), executes them via the agent
+API (409 denials are normal — the server is the referee), and sleeps until the next tick.
 
 See `specs/features/121-bot-runner/plan.md` for the full doctrine and design.
