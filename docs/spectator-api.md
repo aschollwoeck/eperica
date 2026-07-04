@@ -1,4 +1,4 @@
-# The Spectator API (v0.1 — slice 125)
+# The Spectator API (v1.0 — slice 125)
 
 The read-only JSON surface behind the `/spectate` dashboard. It mirrors the dashboard exactly:
 everything a spectator can see in the browser, an external tool (an overlay, a caster's bot, a
@@ -29,10 +29,15 @@ Same shape as the Agent API, everywhere on this surface:
 { "error": "<machine_code>", "reason": "<human-readable text>" }
 ```
 
-Statuses: `401` auth (bad/expired/wrong-surface key), `403` scope (e.g. role lost mid-session),
-`404` unknown world/village ids, `429` rate-limited (adds `retry_after_secs`). A `POST` (or any
-other mutating method) to any path under this surface returns `404`/`405` — there is nothing to
-route it to.
+Statuses: `401` auth — missing/malformed/unknown/revoked key, **or** a key whose account lost the
+Spectator role (the role is re-checked on every request, not just at mint, so a role revoke
+dead-ends a key exactly like an unknown one — no separate "role lost" code); `403
+account_blocked` — a suspended/banned account, on **every** request (spectators never pass the
+login chokepoint); `404` unknown world/village ids, or an unknown `/spectator` path;
+`429` rate-limited (adds `retry_after_secs`). A `POST` (or any other mutating method) to a path this
+surface **does** recognise (e.g. `/spectator/w/{world}/feed`) is `405` — axum refuses it before any
+handler runs, since only `GET` is registered; a `POST` to a path it does **not** recognise is `404`
+via the same JSON fallback as an unknown `GET` path.
 
 ## Rate budget
 
@@ -45,44 +50,106 @@ no server-side push.
 
 ### `GET /spectator/me`
 
-Key introspection — confirms the key is live and which account it belongs to.
+Key introspection — confirms the key is live and which account it belongs to:
 
-> v0.1 — subject to the implementation; see integration tests for the exact shape. Expect
-> something in the spirit of `{ account, username }`.
+```json
+{ "account": "…", "username": "…", "is_spectator": true }
+```
 
 ### `GET /spectator/w/{world}/feed`
 
 The capped activity snapshot for the world — the same data the `/spectate/{world}` dashboard page
 renders. A **bounded snapshot assembled per request from existing state** (P1/P11): no new event
 store, no server-side polling loop. Each category is capped (N ≤ 50) and ordered by nearest
-deadline / most recent:
+deadline / most recent. All deadlines are absolute Unix-ms (agent-digest convention) — compute
+countdowns client-side.
 
-- **Movements in flight**, both directions — attacks, raids, reinforcements, returns, settlers,
-  merchant shipments — with kind, origin/destination, arrival time, and full **composition**.
-  Unlike a defender's own view (which only ever shows an arrival-only warning for an incoming
-  hostile movement), the spectator feed shows what's actually coming.
+- **Movements in flight**, both directions — attacks, raids, reinforcements, returns, scouts,
+  settlers, oasis attacks/reinforcements — with kind, origin/destination, arrival time, and full
+  **composition**. Unlike a defender's own view (which only ever shows an arrival-only warning for
+  an incoming hostile movement), the spectator feed shows what's actually coming.
+- **Merchant shipments**, either leg (deliver/return), with the carried bundle and merchant count.
 - **Build orders** completing soonest, world-wide.
 - **Training batches** completing soonest, world-wide.
-- **Recent battle reports** for the world.
+- **Recent battle/scout reports** for the world, each with a precomputed one-line `outcome`.
 
-> v0.1 — subject to the implementation; see integration tests for the exact JSON shape of each
-> category.
+```json
+{
+  "world": "…", "now_ms": 0,
+  "movements": [{
+    "id": "…", "kind": "attack|raid|reinforce|return|scout|settle|oasis_attack|oasis_reinforce",
+    "origin": { "village": "…", "x": 0, "y": 0, "owner": "…" },
+    "destination": { "village": "…"|null, "x": 0, "y": 0, "owner": "…"|null },
+    "arrive_at_ms": 0,
+    "troops": { "<unit_id>": 0 }
+  }],
+  "shipments": [{
+    "id": "…", "kind": "deliver|return",
+    "origin": { "village": "…", "x": 0, "y": 0, "owner": "…" },
+    "destination": { "village": "…", "x": 0, "y": 0, "owner": "…" },
+    "arrive_at_ms": 0,
+    "give": { "wood": 0, "clay": 0, "iron": 0, "crop": 0 },
+    "merchants": 0
+  }],
+  "builds": [{
+    "village": "…", "x": 0, "y": 0, "owner": "…",
+    "target": "field|building", "slot": 0, "kind": "…"|null,
+    "target_level": 0, "completes_at_ms": 0
+  }],
+  "trainings": [{
+    "village": "…", "x": 0, "y": 0, "owner": "…",
+    "unit": "…", "remaining": 0, "next_complete_at_ms": 0
+  }],
+  "reports": [{
+    "id": "…", "occurred_at_ms": 0, "kind": "attack|raid|scout",
+    "attacker": { "name": "…", "x": 0, "y": 0 },
+    "defender": { "name": "…", "x": 0, "y": 0 },
+    "outcome": "…"
+  }]
+}
+```
 
 ### `GET /spectator/w/{world}/players?page=`
 
-A paged index of every player in the world, ordered by population, **50 per page**. Expect
-population, village count, and alliance per row.
+A paged index of every player in the world, ordered by population descending, **50 per page**.
+`npc` is derived server-side as `is_ai && world.ai_labeled` — the raw `is_ai` truth is never itself
+serialized, on either a labeled or a disguised world (AC7).
 
-> v0.1 — subject to the implementation; see integration tests for the exact JSON shape.
+```json
+{
+  "world": "…", "page": 1, "has_next": false,
+  "players": [{
+    "player": "…", "username": "…", "tribe": "romans|teutons|gauls"|null,
+    "population": 0, "villages": 0, "alliance_tag": "…"|null, "npc": false
+  }]
+}
+```
 
 ### `GET /spectator/w/{world}/village/{id}`
 
 Full village internals — **equal to what the village's own owner sees**: resources (computed on
-read, P1), build queue with deadlines, training batches, garrison, stationed reinforcements,
-loyalty, research. No fog of war and no redaction; a spectator's view of a foreign village is the
-owner's view.
+read, P1), fields/buildings, build queue with deadlines, training batches, garrison, stationed
+reinforcements, loyalty, research. No fog of war and no redaction; a spectator's view of a foreign
+village is the owner's view — the handler reuses the exact owner-view read-model with the village's
+true owner substituted for the caller, so these numbers can never drift from the owner's own page.
 
-> v0.1 — subject to the implementation; see integration tests for the exact JSON shape.
+```json
+{
+  "world": "…", "village": "…", "owner": "…",
+  "x": 0, "y": 0, "capital": false, "tribe": "romans|teutons|gauls"|null,
+  "resources": { "wood|clay|iron|crop": { "amount": 0, "rate": 0, "capacity": 0 } },
+  "fields":    [{ "slot": 0, "kind": "wood|clay|iron|crop", "level": 0 }],
+  "buildings": [{ "slot": 0, "kind": "main_building|…", "level": 0 }],
+  "build_queue": [{ "target": "field|building", "slot": 0, "kind": "…"|null, "level": 0, "completes_at_ms": 0 }],
+  "training":  [{ "unit": "…", "remaining": 0, "next_complete_at_ms": 0 }],
+  "garrison":  [{ "unit": "…", "count": 0 }],
+  "reinforcements": [{ "home_village": "…", "x": 0, "y": 0, "owner": "…", "troops": { "<unit_id>": 0 } }],
+  "loyalty": 100,
+  "researched": ["…"]
+}
+```
+
+- `crop.rate` is the **net** rate (production − upkeep), same as the Agent API digest.
 
 ## Disguise rule (AC7)
 

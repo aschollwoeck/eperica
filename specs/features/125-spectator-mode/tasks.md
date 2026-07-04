@@ -12,7 +12,7 @@
 - [x] **T3 — Dashboard.** `/spectate` picker, feed page (four sections + countdowns +
   auto-refresh), players index, village drill-down; `require_spectator` 403 guard. Integration:
   AC1 web, AC3/AC4 web (incl. defender-view contrast), AC7. (AC1, AC3, AC4, AC6, AC7)
-- [ ] **T4 — Spectator API.** `SpectatorAuth` extractor (role re-check, budget class), the four
+- [x] **T4 — Spectator API.** `SpectatorAuth` extractor (role re-check, budget class), the four
   GET endpoints, JSON error contract; rate-guard namespacing. Integration: AC2 cross-key
   refusal, AC3/AC4 JSON, AC6 (POST ⇒ 404/405, no activity side effects), AC8 (429). (AC2–AC8)
 - [x] **T5 — Docs.** manual: `spectating.md` (player-facing: what a spectator is, how to ask for

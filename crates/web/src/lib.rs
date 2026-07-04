@@ -7,6 +7,7 @@ pub mod apikey;
 pub mod auth;
 pub mod handlers;
 pub mod registry;
+pub mod spectator_api;
 pub mod state;
 pub mod templates;
 
@@ -54,10 +55,13 @@ async fn presence_touch(State(state): State<AppState>, req: Request, next: Next)
         // the global `/me` and the world-scoped `/w/{world}/me` (115) tribe poll — both background JSON
         // probes. Invariant: no user-action route may end in `/me`, or it would be wrongly presence-exempt.
         || path.ends_with("/me")
-        // 125 AC6: spectating has no activity side effects — reading any `/spectate…` page must not
-        // refresh the spectator's own `last_activity` (and touches no watched player at all, since these
-        // handlers never call `touch_activity` on anyone).
-        || path.starts_with("/spectate");
+        // 125 AC6: spectating has no activity side effects — reading any `/spectate…` dashboard page or
+        // `/spectator…` API path must not refresh the spectator's own `last_activity` (and touches no
+        // watched player at all, since none of these handlers ever call `touch_activity` on anyone). The
+        // API path is exempted here too for belt-and-suspenders even though its bearer-only requests
+        // normally carry no session cookie for `effective_identity` to resolve anyway.
+        || path.starts_with("/spectate")
+        || path.starts_with("/spectator");
     if background {
         return next.run(req).await;
     }
@@ -150,25 +154,36 @@ async fn rate_limit_guard(State(state): State<AppState>, req: Request, next: Nex
     }
 }
 
-/// Agent API rate guard (118, plan Decision #5, P11): all HTTP methods to `/api/…` paths are
-/// counted per bearer key-id against the `agent_limit_per_window` budget. Non-`/api` requests pass
-/// straight through; missing or unparseable bearer tokens also pass through (the `AgentAccount`/
-/// `AgentGame` extractors will 401 them — nothing to key on). Subject is `agent:<keyid>` — the
-/// public half of the bearer token, extractable cheaply without any DB round-trip. Action `"agent"`
-/// sits in its own namespace alongside `"action"` and `"login"` so it never competes with the
-/// per-player action budget. On limit: JSON 429 with `retry_after_secs` (plan Decision #5).
+/// Agent + spectator API rate guard (118, 125, plan Decision #5, P11): all HTTP methods to `/api/…`
+/// **or** `/spectator/…` paths are counted per bearer key-id against the `agent_limit_per_window`
+/// budget — spectator-key traffic shares the exact same budget class as agent-key traffic (125 AC8),
+/// just in its own subject namespace so the two can never share (or steal from) one another's count.
+/// Requests to neither prefix pass straight through; missing or unparseable bearer tokens also pass
+/// through (the `AgentAccount`/`AgentGame`/`SpectatorAccount`/`SpectatorWorld` extractors will 401
+/// them — nothing to key on). Subject is `agent:<keyid>` or `spectator:<keyid>` — the public half of
+/// the bearer token, extractable cheaply without any DB round-trip. Action `"agent"` sits in its own
+/// namespace alongside `"action"` and `"login"` so it never competes with the per-player action
+/// budget. On limit: JSON 429 with `retry_after_secs` (plan Decision #5).
 async fn agent_rate_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
     use eperica_application::{ModerationError, check_rate_limit};
     let path = req.uri().path();
-    if !path.starts_with("/api/") {
+    let is_api = path.starts_with("/api/");
+    let is_spectator = path.starts_with("/spectator/");
+    if !is_api && !is_spectator {
         return next.run(req).await;
     }
     let (parts, body) = req.into_parts();
     // Extract the bearer key-id cheaply — no DB round-trip, no secret verify. Uses the SAME strict
-    // token parser as authentication (`api::bearer_token`), so a request that could authenticate can
-    // never slip past the budget (review M1); a non-token request 401s in the extractor anyway.
-    let subject =
-        crate::api::bearer_token(&parts.headers).map(|(id, _secret)| format!("agent:{id}"));
+    // token parser as authentication (`api::bearer_token` / `spectator_api::bearer_token`), so a
+    // request that could authenticate can never slip past the budget (review M1); a non-token request
+    // 401s in the extractor anyway. The two parsers reject each other's prefix (118/125 AC2), so a
+    // `spk_` token on an `/api/…` path (or vice versa) yields no subject here either — it 401s below.
+    let subject = if is_api {
+        crate::api::bearer_token(&parts.headers).map(|(id, _secret)| format!("agent:{id}"))
+    } else {
+        crate::spectator_api::bearer_token(&parts.headers)
+            .map(|(id, _secret)| format!("spectator:{id}"))
+    };
     let Some(subject) = subject else {
         // No parseable bearer token — pass through; the extractor will 401.
         return next.run(Request::from_parts(parts, body)).await;
@@ -457,6 +472,10 @@ pub fn router(state: AppState) -> Router {
         // The Agent API (118, ADR 0036) — bearer-key JSON surface for AI agents; world-scoped agent
         // routes live under `/api/w/{world}/…` so the freeze guard covers them too.
         .nest("/api", api::router())
+        // The Spectator API (125 T4) — bearer-key (`spk_`) JSON surface mirroring the `/spectate`
+        // dashboard, read-only by construction (no mutating route is registered on this router at
+        // all). Lives at `/spectator/…`, distinct from the session-gated dashboard at `/spectate/…`.
+        .nest("/spectator", spectator_api::router())
         // Bare landing routes (old links / nav fallbacks) bounce to the lobby — the URL is the sole world
         // authority, so without one we send the player to pick a world (056).
         // Bare game routes (no world) → the lobby (login-gated). Bare public boards → the home world, so a
