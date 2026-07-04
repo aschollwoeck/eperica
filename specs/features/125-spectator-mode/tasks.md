@@ -6,7 +6,7 @@
   `spk_` token support; ports + repo (set/find/insert/revoke); admin console: role toggle +
   key mint/revoke; roles.md Spectator row (with the fog caveat). Tests: toggle round-trip,
   mint/verify/revoke, role-revoke dead-ends keys. (AC1, AC2)
-- [ ] **T2 — Read aggregation.** World-scoped capped queries (movements, build orders, training,
+- [x] **T2 — Read aggregation.** World-scoped capped queries (movements, build orders, training,
   recent reports, player index) + `application/spectate.rs` (feed / players / village detail
   reusing the owner read-model). Repo tests: caps, ordering, world isolation. (AC3–AC5 backend)
 - [ ] **T3 — Dashboard.** `/spectate` picker, feed page (four sections + countdowns +

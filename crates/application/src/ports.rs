@@ -3621,3 +3621,176 @@ pub trait NotificationRepository: Send + Sync {
         Ok(())
     }
 }
+
+// ---- Spectator read aggregation (125 T2). The feed is a bounded snapshot assembled on read from
+// existing due-stamped state (P1) — never a new event store. Every query below is scoped to the
+// implementing repository's bound world and capped by the caller (P11 — no whole-world scan). ----
+
+/// One in-flight troop movement world-wide (125 AC4), with its **full composition regardless of
+/// direction** — unlike a player's own defence view (015 [`IncomingAttack`]), the spectator sees a
+/// hostile movement's troops too.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldMovement {
+    /// Movement identity (for stable dashboard row keys).
+    pub id: u128,
+    pub kind: MovementKind,
+    /// The village the troops departed from (movements always originate at a village).
+    pub origin_village: VillageId,
+    pub origin_coord: Coordinate,
+    pub origin_owner: String,
+    /// `None` when the movement targets a bare tile rather than a village (settlers founding,
+    /// oasis attack/reinforce, 012/013).
+    pub destination_village: Option<VillageId>,
+    pub destination_coord: Coordinate,
+    pub destination_owner: Option<String>,
+    pub arrive_at: Timestamp,
+    /// The composition — never redacted for the spectator (AC4).
+    pub troops: UnitCounts,
+}
+
+/// One in-flight merchant shipment world-wide (125 AC4), either leg (deliver/return).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldShipment {
+    pub id: u128,
+    pub kind: TradeKind,
+    pub origin_village: VillageId,
+    pub origin_coord: Coordinate,
+    pub origin_owner: String,
+    pub destination_village: VillageId,
+    pub destination_coord: Coordinate,
+    pub destination_owner: String,
+    pub arrive_at: Timestamp,
+    /// The carried bundle (all zero on a return leg).
+    pub bundle: ResourceAmounts,
+    pub merchants: u32,
+}
+
+/// One active build/upgrade order world-wide (125), for the feed's "builds completing soonest"
+/// section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldBuildOrder {
+    pub village: VillageId,
+    pub village_coord: Coordinate,
+    pub owner: String,
+    pub target: BuildTarget,
+    pub target_level: u8,
+    pub complete_at: Timestamp,
+}
+
+/// One active training batch world-wide (125), for the feed's "training completing soonest"
+/// section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldTrainingOrder {
+    pub village: VillageId,
+    pub village_coord: Coordinate,
+    pub owner: String,
+    pub unit: UnitId,
+    /// Units still owed by this batch (`count_total - count_done`).
+    pub remaining: u32,
+    /// When the next unit in the batch completes (Unix-ms UTC) — the ordering key.
+    pub next_complete_at: Timestamp,
+}
+
+/// One recent battle or scout report world-wide (125) — a **cheap** outcome summary only; the full
+/// forces/losses/intel bodies stay behind the existing per-player report pages (never parsed here).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldReportRow {
+    pub id: u128,
+    pub occurred_at: Timestamp,
+    /// `Attack`/`Raid` for a battle report, `Scout` for a scouting report.
+    pub kind: MovementKind,
+    pub attacker_name: String,
+    pub attacker_coord: Coordinate,
+    /// The defending player's name, or a synthetic label (e.g. an oasis's wild animals, 012).
+    pub defender_name: String,
+    pub defender_coord: Coordinate,
+    /// A short, precomputed outcome string (e.g. "attacker won" / "defender held" / "detected") —
+    /// never derived from the jsonb forces/losses/intel bodies (P11 — cheap per row).
+    pub outcome: String,
+}
+
+/// One player row in the world-wide spectator index (125 AC5), population descending.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpectatorPlayerRow {
+    pub player: PlayerId,
+    pub username: String,
+    pub tribe: Option<Tribe>,
+    pub population: i64,
+    pub village_count: i64,
+    /// `None` when the player belongs to no alliance.
+    pub alliance_tag: Option<String>,
+    /// Whether this is an AI agent account (120) — the disguise/label decision (AC7) is made by the
+    /// caller (web layer), not here: this is the raw truth.
+    pub is_ai: bool,
+}
+
+/// World-scoped, capped read queries backing the spectator feed/players/village-detail surfaces
+/// (125 AC3–AC5). Each method is scoped to the implementing repository's bound world; `cap`/
+/// `per_page` bound the result (≤ 50, AC5). Default empty so non-spectator fakes are untouched.
+#[async_trait]
+pub trait SpectateReadRepository: Send + Sync {
+    /// Every in-flight troop movement in this world (attacks, raids, reinforcements, returns,
+    /// scouts, settlers, oasis attacks/reinforcements — both directions), soonest-arrival first,
+    /// capped at `cap` (AC4/AC5).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn movements_in_world(&self, _cap: i64) -> Result<Vec<WorldMovement>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Every in-flight merchant shipment in this world (both legs), soonest-arrival first, capped
+    /// at `cap` (AC4/AC5).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn shipments_in_world(&self, _cap: i64) -> Result<Vec<WorldShipment>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Every active build/upgrade order in this world, soonest-completing first, capped at `cap`
+    /// (AC5).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn active_build_orders_in_world(
+        &self,
+        _cap: i64,
+    ) -> Result<Vec<WorldBuildOrder>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Every active training batch in this world, soonest-next-unit first, capped at `cap` (AC5).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn active_training_in_world(
+        &self,
+        _cap: i64,
+    ) -> Result<Vec<WorldTrainingOrder>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// The world's most recent battle/scout reports, newest first, capped at `cap` (AC5).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn recent_reports_in_world(&self, _cap: i64) -> Result<Vec<WorldReportRow>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Every player in this world, population descending, paged at `per_page` (AC5 — the players
+    /// index). `page` is 1-based; `econ` feeds the same population formula as the 016 boards
+    /// ([`RankingRepository::population_board`]).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn spectate_player_index(
+        &self,
+        _econ: &EconomyRules,
+        _page: i64,
+        _per_page: i64,
+    ) -> Result<Vec<SpectatorPlayerRow>, RepoError> {
+        Ok(Vec::new())
+    }
+}
