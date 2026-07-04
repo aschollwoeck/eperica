@@ -11778,6 +11778,38 @@ async fn admin_bulk_seeds_agents(pool: sqlx::PgPool) {
         serde_json::from_str(&manifest_json).expect("manifest is valid JSON");
     assert_eq!(manifest.len(), 3, "manifest has 3 entries");
 
+    // AC1 "downloadable as JSON": the download anchor exists and its data-URL round-trips to the
+    // EXACT textarea manifest (the runner's key file must never ship corrupted tokens).
+    assert!(
+        body.contains("download=\"agents.json\""),
+        "download anchor present"
+    );
+    let href_start = body
+        .find("data:application/json;charset=utf-8,")
+        .expect("data URL present");
+    let after_href = &body[href_start + "data:application/json;charset=utf-8,".len()..];
+    let href_end = after_href.find('"').expect("href closing quote");
+    let encoded = &after_href[..href_end];
+    // Percent-decode (the encoder is byte-wise %XX over non-unreserved bytes).
+    let mut decoded_bytes = Vec::with_capacity(encoded.len());
+    let eb = encoded.as_bytes();
+    let mut i = 0;
+    while i < eb.len() {
+        if eb[i] == b'%' {
+            let hex = std::str::from_utf8(&eb[i + 1..i + 3]).unwrap();
+            decoded_bytes.push(u8::from_str_radix(hex, 16).unwrap());
+            i += 3;
+        } else {
+            decoded_bytes.push(eb[i]);
+            i += 1;
+        }
+    }
+    let decoded = String::from_utf8(decoded_bytes).expect("decoded manifest is UTF-8");
+    assert_eq!(
+        decoded, manifest_json,
+        "data-URL round-trips byte-identically to the textarea manifest"
+    );
+
     // Extract usernames and tokens.
     let mut names: Vec<String> = Vec::new();
     let mut tokens: Vec<String> = Vec::new();
@@ -11876,6 +11908,11 @@ async fn admin_bulk_seeds_agents(pool: sqlx::PgPool) {
     assert!(
         !admin_page.contains("<textarea"),
         "no manifest textarea on subsequent GET /admin"
+    );
+    // The console states the fleet-revoke blast radius (account keys — every world), per the spec.
+    assert!(
+        admin_page.contains("disables their <strong>account</strong> keys"),
+        "fleet-revoke blast-radius note present"
     );
 
     // Per-bot revoke: revoke the first bot's key.

@@ -164,6 +164,7 @@
         <button type="submit" class="btn btn--small btn--secondary">Revoke all in {{ w.name }}</button>
       </form>
       {% endfor %}
+      <p class="bld-tip">Revoking selects bots by world but disables their <strong>account</strong> keys — a revoked bot stops playing in <em>every</em> world it inhabits (bots seeded elsewhere also hold a home-world presence).</p>
     </div>
     {% endif %}
     <p class="bld-tip">Creates <code>is_ai</code> accounts, places them in the chosen world, and issues API keys shown once.</p>

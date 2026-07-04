@@ -4506,21 +4506,20 @@ fn default_tribe_mix() -> String {
 ///
 /// Encodes the characters that would corrupt a data URL or break an HTML attribute:
 /// `%` (must be first), `"`, `#`, `<`, `>`, `&`, space, and ASCII control chars.
+/// Percent-encode a string for a `data:` URL: every byte outside the RFC 3986 unreserved set
+/// (`A-Za-z0-9 - _ . ~`) is `%XX`-encoded, byte-wise — so multi-byte UTF-8 survives round-trip
+/// (each byte encodes separately) and no HTML/URL-special character ever reaches the attribute raw.
 fn percent_encode_json(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3 / 2);
     for b in s.bytes() {
         match b {
-            b'%' => out.push_str("%25"),
-            b'"' => out.push_str("%22"),
-            b'#' => out.push_str("%23"),
-            b'<' => out.push_str("%3C"),
-            b'>' => out.push_str("%3E"),
-            b'&' => out.push_str("%26"),
-            b' ' => out.push_str("%20"),
-            b'\n' => out.push_str("%0A"),
-            b'\r' => out.push_str("%0D"),
-            b'\t' => out.push_str("%09"),
-            _ => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => {
+                use std::fmt::Write as _;
+                write!(out, "%{b:02X}").expect("write to String is infallible");
+            }
         }
     }
     out
