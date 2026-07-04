@@ -28,6 +28,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use crate::digest::{Digest, MapWindow, VillageDigest};
 use crate::persona::Persona;
+use crate::strategy::{Focus, Strategy};
 
 // ---------------------------------------------------------------------------
 // Intent
@@ -228,12 +229,19 @@ fn build_or_upgrade(
 
 /// Append `Raid` intents for targets reachable from village `v`, respecting
 /// the mutable party budget so the garrison floor is never breached.
+///
+/// `eff_agg` is the effective aggression after applying any strategy override
+/// (replaces `p.aggression` everywhere it would have been read).
+/// `strategy` is consulted for the Military party-cap bonus (+4) and the
+/// `raid_quadrant` preference (quadrant-match targets sorted before others).
 #[allow(clippy::too_many_arguments)]
 fn raid_targets(
     v: &VillageDigest,
     map_win: &MapWindow,
     in_flight: &HashSet<(i32, i32)>,
     p: &Persona,
+    eff_agg: u32,
+    strategy: &Strategy,
     garrison_sum: u32,
     raid_floor: u32,
     unit: &str,
@@ -241,10 +249,17 @@ fn raid_targets(
 ) {
     // How many units can leave without breaching the floor.
     let mut remaining = garrison_sum.saturating_sub(raid_floor);
-    let max_by_aggression = 8 + 4 * (p.aggression as u32);
+
+    // Military focus grants +4 to the party cap (8 + 4·agg + 4).
+    let military_extra: u32 = if matches!(strategy.focus, Focus::Military) {
+        4
+    } else {
+        0
+    };
+    let max_by_aggression = 8 + 4 * eff_agg + military_extra;
     let max_by_garrison = garrison_sum / 3;
 
-    // Collect inactive targets in range, sorted nearest-first.
+    // Collect inactive targets in range.
     let mut targets: Vec<_> = map_win
         .rows
         .iter()
@@ -256,9 +271,20 @@ fn raid_targets(
         })
         .collect();
 
-    targets.sort_by_key(|cell| chebyshev(v.x, v.y, cell.x, cell.y));
+    // Sort: quadrant-match first (0 = match, 1 = no-match), then nearest.
+    targets.sort_by_key(|cell| {
+        let dist = chebyshev(v.x, v.y, cell.x, cell.y);
+        let quad_pref: u8 = strategy.raid_quadrant.as_ref().map_or(0, |q| {
+            if crate::strategy::in_quadrant(cell.x - v.x, cell.y - v.y, q) {
+                0
+            } else {
+                1
+            }
+        });
+        (quad_pref, dist)
+    });
 
-    for cell in targets.iter().take(p.aggression as usize) {
+    for cell in targets.iter().take(eff_agg as usize) {
         let party = max_by_aggression.min(max_by_garrison).min(remaining);
         // Minimum viable raiding party: stop if we can't send at least 4.
         if party < 4 {
@@ -283,11 +309,12 @@ fn raid_targets(
 /// Derive a list of intents for the current tick from the player's digest.
 ///
 /// # Parameters
-/// - `d`       — full state digest (fetched once per tick).
-/// - `map`     — optional cached map window (may be `None` if unavailable).
-/// - `p`       — deterministic persona for this bot.
-/// - `now_ms`  — server clock at digest assembly time (`d.now_ms`).
-/// - `tribe`   — tribe slug from `/api/me` `worlds[].tribe`; T4 passes it.
+/// - `d`        — full state digest (fetched once per tick).
+/// - `map`      — optional cached map window (may be `None` if unavailable).
+/// - `p`        — deterministic persona for this bot.
+/// - `strategy` — LLM-derived strategy overlay; `Strategy::default()` biases nothing.
+/// - `now_ms`   — server clock at digest assembly time (`d.now_ms`).
+/// - `tribe`    — tribe slug from `/api/me` `worlds[].tribe`; T4 passes it.
 ///   Used to select the tier-1 infantry unit for training and raiding.
 ///
 /// # Determinism
@@ -296,12 +323,18 @@ pub fn plan_tick(
     d: &Digest,
     map: Option<&MapWindow>,
     p: &Persona,
+    strategy: &Strategy,
     now_ms: i64,
     // Parsed once at fleet startup from /api/me worlds[].tribe (not in the Digest); an unknown
     // slug never reaches here — the runner drops such a bot at validation.
     tribe: BotTribe,
 ) -> Vec<Intent> {
     let mut intents: Vec<Intent> = Vec::new();
+
+    // Effective aggression: strategy override wins, else fall back to persona.
+    // Replaces p.aggression at every read (training floor, raid gate, party size,
+    // target count) so the strategy knob is fully honoured.
+    let eff_agg = strategy.aggression.unwrap_or(p.aggression) as u32;
 
     let unit = tier1_unit(tribe);
 
@@ -442,6 +475,20 @@ pub fn plan_tick(
                 ("academy", 1),
                 ("residence", 10),
             ];
+            // Focus::Expansion shortcut: if a Residence exists at any level
+            // (but not yet at 10), it jumps to the front of the doctrine queue
+            // — evaluated before the remaining unmet core-doctrine entries.
+            if !build_emitted
+                && field_avg >= 2.0
+                && matches!(strategy.focus, Focus::Expansion)
+                && let Some(res) = find_building(&v.buildings, "residence")
+                && res.level < 10
+                && let Some(intent) = build_or_upgrade(&v.id, "residence", &v.buildings)
+            {
+                intents.push(intent);
+                build_emitted = true;
+            }
+
             // Rule 4 first when its gate holds and the table is unmet.
             if !build_emitted && field_avg >= 2.0 {
                 for &(kind, target_level) in DOCTRINE {
@@ -533,7 +580,14 @@ pub fn plan_tick(
                 .map(|t| t.remaining)
                 .sum();
             let effective_garrison = garrison_sum + in_training_tier1;
-            let floor = 10 + 10 * (p.aggression as u32);
+            // Base floor uses effective aggression (persona overridden by strategy if set).
+            // Military focus doubles the floor to accelerate army growth.
+            let base_floor = 10 + 10 * eff_agg;
+            let floor = if matches!(strategy.focus, Focus::Military) {
+                base_floor * 2
+            } else {
+                base_floor
+            };
             if effective_garrison < floor {
                 let needed = floor - effective_garrison;
                 let count = needed.min(TRAIN_CAP_PER_TICK);
@@ -576,15 +630,27 @@ pub fn plan_tick(
                         count: needed,
                     });
                 } else if let Some(map_win) = map {
-                    // Find nearest free valley (settle == true) by Chebyshev distance.
-                    let target = map_win
+                    // Find the best free valley (settle == true).
+                    // Ordering: settle_quadrant-match first (if set), then nearest.
+                    let mut valleys: Vec<_> = map_win
                         .rows
                         .iter()
                         .flatten()
                         .filter(|cell| cell.settle)
-                        .min_by_key(|cell| chebyshev(v.x, v.y, cell.x, cell.y));
+                        .collect();
+                    valleys.sort_by_key(|cell| {
+                        let dist = chebyshev(v.x, v.y, cell.x, cell.y);
+                        let quad_pref: u8 = strategy.settle_quadrant.as_ref().map_or(0, |q| {
+                            if crate::strategy::in_quadrant(cell.x - v.x, cell.y - v.y, q) {
+                                0
+                            } else {
+                                1
+                            }
+                        });
+                        (quad_pref, dist)
+                    });
 
-                    if let Some(cell) = target {
+                    if let Some(cell) = valleys.into_iter().next() {
                         intents.push(Intent::Settle {
                             village: v.id.clone(),
                             x: cell.x,
@@ -607,16 +673,25 @@ pub fn plan_tick(
         // early when the remaining budget falls below 4.  This prevents overdraw
         // across multiple simultaneous raids — the floor is always maintained.
         // -------------------------------------------------------------------
-        if p.aggression >= 1 {
-            let raid_floor = 15 + 5 * (p.aggression as u32);
-            if garrison_sum >= raid_floor
-                && let Some(map_win) = map
-            {
+        // Effective aggression governs whether raiding is attempted at all,
+        // the raid floor, and the target count (via raid_targets).
+        if eff_agg >= 1 {
+            let raid_floor = 15 + 5 * eff_agg;
+            // Economy focus requires a larger garrison buffer before raiding:
+            // garrison must be ≥ 2× the floor, not just ≥ floor.
+            let garrison_meets_raid = if matches!(strategy.focus, Focus::Economy) {
+                garrison_sum >= 2 * raid_floor
+            } else {
+                garrison_sum >= raid_floor
+            };
+            if garrison_meets_raid && let Some(map_win) = map {
                 raid_targets(
                     v,
                     map_win,
                     &in_flight,
                     p,
+                    eff_agg,
+                    strategy,
                     garrison_sum,
                     raid_floor,
                     unit,
@@ -640,6 +715,7 @@ mod tests {
         Culture, Digest, GarrisonEntry, Incoming, MapCell, MapWindow, MovementEntry, QueueEntry,
         ReinforcementAbroad, ResourceLine, Resources, SlotLevel, VillageDigest,
     };
+    use crate::strategy::{Focus, Quadrant, Strategy};
 
     // -----------------------------------------------------------------------
     // Fixture builders
@@ -835,7 +911,7 @@ mod tests {
             arrive_at_ms: now_ms + 1_000,
         }];
 
-        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(&d, None, &p, &Strategy::default(), now_ms, BotTribe::Romans);
         // Expect exactly one Reinforce for v2 → v1.
         let reinforce = intents
             .iter()
@@ -866,7 +942,7 @@ mod tests {
             arrive_at_ms: now_ms + 1_000,
         }];
 
-        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(&d, None, &p, &Strategy::default(), now_ms, BotTribe::Romans);
         // Only one village → no evacuation, no reinforce.
         assert!(
             !intents
@@ -890,7 +966,7 @@ mod tests {
             arrive_at_ms: now_ms + 1_000,
         }];
 
-        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(&d, None, &p, &Strategy::default(), now_ms, BotTribe::Romans);
         // Empty garrison → no Reinforce emitted for v2.
         let reinforce_v2 = intents
             .iter()
@@ -921,7 +997,7 @@ mod tests {
             arrive_at_ms: now_ms + 10_000_000, // 10 000 s in the future
         }];
 
-        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(&d, None, &p, &Strategy::default(), now_ms, BotTribe::Romans);
         let reinforce_v2 = intents
             .iter()
             .any(|i| matches!(i, Intent::Reinforce { village, .. } if village == "v2"));
@@ -957,7 +1033,7 @@ mod tests {
             arrive_at_ms: now_ms + 500,
         }];
 
-        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(&d, None, &p, &Strategy::default(), now_ms, BotTribe::Romans);
         // No Build for v2.
         let build_v2 = intents
             .iter()
@@ -993,7 +1069,7 @@ mod tests {
             },
         }];
 
-        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(&d, None, &p, &Strategy::default(), now_ms, BotTribe::Romans);
         let recall = intents
             .iter()
             .find(|i| matches!(i, Intent::Recall { host, .. } if host == "v2"));
@@ -1019,7 +1095,7 @@ mod tests {
             },
         }];
 
-        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(&d, None, &p, &Strategy::default(), now_ms, BotTribe::Romans);
         assert!(
             !intents.iter().any(|i| matches!(i, Intent::Recall { .. })),
             "foreign host should not trigger Recall: {intents:?}"
@@ -1037,7 +1113,14 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         let build = intents
             .iter()
@@ -1076,7 +1159,14 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         let build = intents
             .iter()
@@ -1121,7 +1211,14 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         let build = intents.iter().find(
             |i| matches!(i, Intent::Build { slot: 5, kind: Some(k), .. } if k == "warehouse"),
@@ -1137,7 +1234,14 @@ mod tests {
         let v = make_village("v1", 0, 0); // 50% resources
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         let storage_build = intents.iter().any(|i| {
             matches!(i, Intent::Build { kind: Some(k), .. } if k == "warehouse" || k == "granary")
@@ -1181,7 +1285,14 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         let any_build = intents.iter().any(|i| matches!(i, Intent::Build { .. }));
         assert!(
@@ -1223,7 +1334,14 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         let build = intents.iter().find(|i| {
             matches!(
@@ -1270,7 +1388,14 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         let build = intents.iter().find(|i| {
             matches!(
@@ -1307,7 +1432,14 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         // Should prefer the crop field despite its higher level.
         let build = intents.iter().find(|i| {
@@ -1347,7 +1479,14 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         let field_build = intents.iter().any(|i| {
             matches!(
@@ -1400,7 +1539,14 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         let build = intents.iter().find(
             |i| matches!(i, Intent::Build { slot: 0, kind: Some(k), .. } if k == "main_building"),
@@ -1444,7 +1590,14 @@ mod tests {
         v.resources.crop.rate = 50;
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
         assert!(
             intents
                 .iter()
@@ -1517,7 +1670,14 @@ mod tests {
         v.resources.crop.rate = 50;
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
         assert!(
             intents.iter().any(|i| matches!(
                 i,
@@ -1563,7 +1723,14 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         // Core building rule should not fire; field rule fires instead.
         let core_build = intents
@@ -1618,7 +1785,14 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         let build = intents
             .iter()
@@ -1668,7 +1842,14 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         // Only one build intent; it is for main_building, not barracks.
         let builds: Vec<_> = intents
@@ -1696,7 +1877,14 @@ mod tests {
         }]; // below 10
 
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         let train = intents
             .iter()
@@ -1718,7 +1906,14 @@ mod tests {
         v.garrison = vec![]; // garrison = 0, needed = 40
 
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         // tribe="roman" passed, so unit is legionnaire (not clubswinger)
         let train = intents.iter().find(|i| matches!(i, Intent::Train { .. }));
@@ -1735,7 +1930,14 @@ mod tests {
         v.garrison = vec![]; // garrison empty, needs training
 
         let d = single_village_digest(v.clone());
-        let intents_roman = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents_roman = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
         let train_roman = intents_roman
             .iter()
             .find(|i| matches!(i, Intent::Train { unit, .. } if unit == "legionnaire"));
@@ -1744,7 +1946,14 @@ mod tests {
             "roman gets legionnaire: {intents_roman:?}"
         );
 
-        let intents_teuton = plan_tick(&d, None, &p, d.now_ms, BotTribe::Teutons);
+        let intents_teuton = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Teutons,
+        );
         let train_teuton = intents_teuton
             .iter()
             .find(|i| matches!(i, Intent::Train { unit, .. } if unit == "clubswinger"));
@@ -1753,7 +1962,14 @@ mod tests {
             "teuton gets clubswinger: {intents_teuton:?}"
         );
 
-        let intents_gaul = plan_tick(&d, None, &p, d.now_ms, BotTribe::Gauls);
+        let intents_gaul = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Gauls,
+        );
         let train_gaul = intents_gaul
             .iter()
             .find(|i| matches!(i, Intent::Train { unit, .. } if unit == "phalanx"));
@@ -1770,7 +1986,14 @@ mod tests {
         }]; // exactly at floor
 
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         let train = intents.iter().any(|i| matches!(i, Intent::Train { .. }));
         assert!(!train, "garrison at floor → no training: {intents:?}");
@@ -1814,7 +2037,7 @@ mod tests {
         let mut d = single_village_digest(v);
         d.culture = culture_allows_more();
 
-        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(&d, None, &p, &Strategy::default(), now_ms, BotTribe::Romans);
         let ts = intents
             .iter()
             .find(|i| matches!(i, Intent::TrainSettlers { count: 3, .. }));
@@ -1835,7 +2058,7 @@ mod tests {
         let mut d = single_village_digest(v);
         d.culture = culture_allows_more();
 
-        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(&d, None, &p, &Strategy::default(), now_ms, BotTribe::Romans);
         let ts = intents
             .iter()
             .find(|i| matches!(i, Intent::TrainSettlers { count: 2, .. }));
@@ -1875,7 +2098,14 @@ mod tests {
         let mut d = single_village_digest(v);
         d.culture = culture_allows_more();
 
-        let intents = plan_tick(&d, Some(&map), &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            Some(&map),
+            &p,
+            &Strategy::default(),
+            now_ms,
+            BotTribe::Romans,
+        );
         let settle = intents
             .iter()
             .find(|i| matches!(i, Intent::Settle { x: 3, y: 4, .. }));
@@ -1894,7 +2124,7 @@ mod tests {
         let d = single_village_digest(v);
         // d.culture.villages_used == villages_allowed (both 1 from helper).
 
-        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(&d, None, &p, &Strategy::default(), now_ms, BotTribe::Romans);
         let settling = intents
             .iter()
             .any(|i| matches!(i, Intent::TrainSettlers { .. } | Intent::Settle { .. }));
@@ -1934,7 +2164,14 @@ mod tests {
         let map = map_with_inactive(3, 3);
         let now_ms = 1_700_000_000_000_i64;
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, Some(&map), &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            Some(&map),
+            &p,
+            &Strategy::default(),
+            now_ms,
+            BotTribe::Romans,
+        );
 
         let raid = intents
             .iter()
@@ -1962,7 +2199,14 @@ mod tests {
         let map = map_with_inactive(2, 2);
         let now_ms = 1_700_000_000_000_i64;
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, Some(&map), &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            Some(&map),
+            &p,
+            &Strategy::default(),
+            now_ms,
+            BotTribe::Romans,
+        );
 
         let raid = intents.iter().any(|i| matches!(i, Intent::Raid { .. }));
         assert!(
@@ -1983,7 +2227,14 @@ mod tests {
         let map = map_with_inactive(2, 2);
         let now_ms = 1_700_000_000_000_i64;
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, Some(&map), &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            Some(&map),
+            &p,
+            &Strategy::default(),
+            now_ms,
+            BotTribe::Romans,
+        );
 
         let raid = intents.iter().any(|i| matches!(i, Intent::Raid { .. }));
         assert!(!raid, "aggression=0 → no raids: {intents:?}");
@@ -2017,7 +2268,14 @@ mod tests {
             troops: Default::default(),
         }];
 
-        let intents = plan_tick(&d, Some(&map), &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            Some(&map),
+            &p,
+            &Strategy::default(),
+            now_ms,
+            BotTribe::Romans,
+        );
         let raid = intents
             .iter()
             .any(|i| matches!(i, Intent::Raid { x: 3, y: 3, .. }));
@@ -2044,7 +2302,14 @@ mod tests {
         let map = map_with_inactive(10, 0);
         let now_ms = 1_700_000_000_000_i64;
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, Some(&map), &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            Some(&map),
+            &p,
+            &Strategy::default(),
+            now_ms,
+            BotTribe::Romans,
+        );
 
         let raid = intents.iter().any(|i| matches!(i, Intent::Raid { .. }));
         assert!(!raid, "out-of-range target must be skipped: {intents:?}");
@@ -2101,7 +2366,14 @@ mod tests {
 
         let now_ms = 1_700_000_000_000_i64;
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, Some(&map), &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            Some(&map),
+            &p,
+            &Strategy::default(),
+            now_ms,
+            BotTribe::Romans,
+        );
 
         let raids: Vec<_> = intents
             .iter()
@@ -2144,7 +2416,14 @@ mod tests {
 
         let p = persona(0);
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         // Storage (Granary) must win over field upgrade.
         let granary = intents
@@ -2261,7 +2540,14 @@ mod tests {
                 ..Default::default()
             };
 
-            let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+            let intents = plan_tick(
+                &d,
+                None,
+                &p,
+                &Strategy::default(),
+                d.now_ms,
+                BotTribe::Romans,
+            );
 
             // Find the Build intent for a BUILDING (not a field).
             let build_result: Option<(String, u8)> = intents.iter().find_map(|i| {
@@ -2419,7 +2705,14 @@ mod tests {
 
         let now_ms = 1_700_000_000_000_i64;
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, Some(&map), &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            Some(&map),
+            &p,
+            &Strategy::default(),
+            now_ms,
+            BotTribe::Romans,
+        );
 
         let raids: Vec<_> = intents
             .iter()
@@ -2471,7 +2764,14 @@ mod tests {
         }];
 
         let d = single_village_digest(v);
-        let intents = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let intents = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
 
         let train = intents.iter().any(|i| matches!(i, Intent::Train { .. }));
         assert!(
@@ -2500,7 +2800,7 @@ mod tests {
         let mut d = single_village_digest(v);
         d.culture = culture_allows_more();
 
-        let intents = plan_tick(&d, None, &p, now_ms, BotTribe::Romans);
+        let intents = plan_tick(&d, None, &p, &Strategy::default(), now_ms, BotTribe::Romans);
         let ts = intents
             .iter()
             .any(|i| matches!(i, Intent::TrainSettlers { .. }));
@@ -2520,11 +2820,563 @@ mod tests {
         let p = persona(2);
         let d = single_village_digest(v);
 
-        let result1 = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
-        let result2 = plan_tick(&d, None, &p, d.now_ms, BotTribe::Romans);
+        let result1 = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
+        let result2 = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
         assert_eq!(
             result1, result2,
             "identical inputs must yield identical intents"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // AC1: Strategy::default() is a provable no-op
+    // -----------------------------------------------------------------------
+
+    /// AC1 no-op proof: `Strategy::default()` and an explicit Balanced/None
+    /// overlay must produce byte-identical `Vec<Intent>` for any digest.
+    #[test]
+    fn strategy_default_is_noop_vs_explicit_balanced() {
+        let mut v = make_village("v1", 0, 0);
+        v.garrison = vec![GarrisonEntry {
+            unit: "legionnaire".into(),
+            count: 30,
+        }];
+        let map = map_with_inactive(3, 3);
+        let p = Persona {
+            window_start_hour: 0,
+            window_len_hours: 24,
+            tick_min_secs: 300,
+            tick_max_secs: 720,
+            aggression: 2,
+            raid_range: 10,
+        };
+        let now_ms = 1_700_000_000_000_i64;
+        let mut d = single_village_digest(v);
+        d.culture = culture_allows_more();
+
+        let default_strat = Strategy::default();
+        let explicit_balanced = Strategy {
+            focus: Focus::Balanced,
+            aggression: None,
+            raid_quadrant: None,
+            settle_quadrant: None,
+            motto: String::new(),
+        };
+
+        let intents_default =
+            plan_tick(&d, Some(&map), &p, &default_strat, now_ms, BotTribe::Romans);
+        let intents_explicit = plan_tick(
+            &d,
+            Some(&map),
+            &p,
+            &explicit_balanced,
+            now_ms,
+            BotTribe::Romans,
+        );
+
+        assert_eq!(
+            intents_default, intents_explicit,
+            "Strategy::default() must be identical to explicit Balanced/None overlay"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // AC2: Bias rules — positive + negative tests per focus
+    // -----------------------------------------------------------------------
+
+    // --- Military: training floor ×2 ---
+
+    /// Garrison=25 with persona agg=1 → base floor=20.
+    /// Balanced: 25 ≥ 20 → no training.
+    /// Military: floor doubled to 40 → 25 < 40 → trains.
+    #[test]
+    fn strategy_military_doubles_training_floor() {
+        let mut v = make_village("v1", 0, 0);
+        let p = persona(1); // floor = 10 + 10 = 20
+        v.garrison = vec![GarrisonEntry {
+            unit: "legionnaire".into(),
+            count: 25,
+        }];
+        let d = single_village_digest(v);
+
+        // Balanced: garrison (25) ≥ floor (20) → no training.
+        let intents_balanced = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
+        assert!(
+            !intents_balanced
+                .iter()
+                .any(|i| matches!(i, Intent::Train { .. })),
+            "Balanced: garrison >= floor → no training; intents={intents_balanced:?}"
+        );
+
+        // Military: floor doubled to 40 → 25 < 40 → trains.
+        let military = Strategy {
+            focus: Focus::Military,
+            ..Strategy::default()
+        };
+        let intents_military = plan_tick(&d, None, &p, &military, d.now_ms, BotTribe::Romans);
+        assert!(
+            intents_military
+                .iter()
+                .any(|i| matches!(i, Intent::Train { .. })),
+            "Military: garrison < doubled floor → trains; intents={intents_military:?}"
+        );
+    }
+
+    // --- Military: raid party max +4 ---
+
+    /// garrison=60, agg=1, floor=20.
+    /// Balanced: max_by_agg = 8+4 = 12, party = min(12, 20, 40) = 12.
+    /// Military: max_by_agg = 8+4+4 = 16, party = min(16, 20, 40) = 16.
+    #[test]
+    fn strategy_military_increases_raid_party_cap() {
+        let mut v = make_village("v1", 0, 0);
+        let p = Persona {
+            window_start_hour: 0,
+            window_len_hours: 24,
+            tick_min_secs: 300,
+            tick_max_secs: 720,
+            aggression: 1,
+            raid_range: 10,
+        };
+        v.garrison = vec![GarrisonEntry {
+            unit: "legionnaire".into(),
+            count: 60,
+        }];
+        let map = map_with_inactive(3, 3);
+        let d = single_village_digest(v);
+
+        let intents_balanced = plan_tick(
+            &d,
+            Some(&map),
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
+        let party_balanced = intents_balanced.iter().find_map(|i| {
+            if let Intent::Raid { units, .. } = i {
+                Some(units.values().sum::<u32>())
+            } else {
+                None
+            }
+        });
+
+        let military = Strategy {
+            focus: Focus::Military,
+            ..Strategy::default()
+        };
+        let intents_military = plan_tick(&d, Some(&map), &p, &military, d.now_ms, BotTribe::Romans);
+        let party_military = intents_military.iter().find_map(|i| {
+            if let Intent::Raid { units, .. } = i {
+                Some(units.values().sum::<u32>())
+            } else {
+                None
+            }
+        });
+
+        assert_eq!(party_balanced, Some(12), "Balanced party should be 12");
+        assert_eq!(
+            party_military,
+            Some(16),
+            "Military party should be 16 (+4 bonus)"
+        );
+    }
+
+    // --- Economy: raiding blocked when garrison < 2×floor ---
+
+    /// garrison=30, agg=1 → raid_floor=20, doubled=40.
+    /// Balanced: 30 ≥ 20 → raids.
+    /// Economy: 30 < 40 → no raids.
+    #[test]
+    fn strategy_economy_blocks_raid_below_doubled_floor() {
+        let mut v = make_village("v1", 0, 0);
+        let p = Persona {
+            window_start_hour: 0,
+            window_len_hours: 24,
+            tick_min_secs: 300,
+            tick_max_secs: 720,
+            aggression: 1,
+            raid_range: 10,
+        };
+        // garrison=30; raid_floor=20; 2×floor=40
+        v.garrison = vec![GarrisonEntry {
+            unit: "legionnaire".into(),
+            count: 30,
+        }];
+        let map = map_with_inactive(3, 3);
+        let d = single_village_digest(v);
+
+        // Balanced: 30 ≥ 20 → raids.
+        let intents_balanced = plan_tick(
+            &d,
+            Some(&map),
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
+        assert!(
+            intents_balanced
+                .iter()
+                .any(|i| matches!(i, Intent::Raid { .. })),
+            "Balanced should raid when garrison >= floor; intents={intents_balanced:?}"
+        );
+
+        // Economy: 30 < 40 → no raids.
+        let economy = Strategy {
+            focus: Focus::Economy,
+            ..Strategy::default()
+        };
+        let intents_economy = plan_tick(&d, Some(&map), &p, &economy, d.now_ms, BotTribe::Romans);
+        assert!(
+            !intents_economy
+                .iter()
+                .any(|i| matches!(i, Intent::Raid { .. })),
+            "Economy should block raid when garrison < 2×floor; intents={intents_economy:?}"
+        );
+    }
+
+    /// Economy allows raiding when garrison ≥ 2×floor (positive case).
+    #[test]
+    fn strategy_economy_allows_raid_at_doubled_floor() {
+        let mut v = make_village("v1", 0, 0);
+        let p = Persona {
+            window_start_hour: 0,
+            window_len_hours: 24,
+            tick_min_secs: 300,
+            tick_max_secs: 720,
+            aggression: 1,
+            raid_range: 10,
+        };
+        // garrison=40; raid_floor=20; 2×floor=40 — exactly at threshold
+        v.garrison = vec![GarrisonEntry {
+            unit: "legionnaire".into(),
+            count: 40,
+        }];
+        let map = map_with_inactive(3, 3);
+        let d = single_village_digest(v);
+
+        let economy = Strategy {
+            focus: Focus::Economy,
+            ..Strategy::default()
+        };
+        let intents = plan_tick(&d, Some(&map), &p, &economy, d.now_ms, BotTribe::Romans);
+        assert!(
+            intents.iter().any(|i| matches!(i, Intent::Raid { .. })),
+            "Economy should raid when garrison >= 2×floor; intents={intents:?}"
+        );
+    }
+
+    // --- Expansion: residence jumps the doctrine queue ---
+
+    /// main_building=5 (all MB targets met), residence=1 (exists, level 1).
+    /// Balanced: next unmet is barracks.
+    /// Expansion: residence jumps to front.
+    #[test]
+    fn strategy_expansion_residence_jumps_queue() {
+        let mut v = make_village("v1", 0, 0);
+        // Fields at cap so rule 3 is dormant; avg=10 ≥ 2 (gate met).
+        v.fields = vec![
+            SlotLevel {
+                slot: 0,
+                kind: "wood".into(),
+                level: 10,
+            },
+            SlotLevel {
+                slot: 1,
+                kind: "clay".into(),
+                level: 10,
+            },
+        ];
+        // main_building=5 (both MB targets met); barracks absent; residence=1.
+        v.buildings = vec![
+            SlotLevel {
+                slot: 0,
+                kind: "main_building".into(),
+                level: 5,
+            },
+            SlotLevel {
+                slot: 1,
+                kind: "rally_point".into(),
+                level: 1,
+            },
+            SlotLevel {
+                slot: 5,
+                kind: "residence".into(),
+                level: 1,
+            },
+        ];
+        let p = persona(0);
+        let d = single_village_digest(v);
+
+        // Balanced: next unmet doctrine entry is barracks (MB≥3 done, barracks unmet).
+        let intents_balanced = plan_tick(
+            &d,
+            None,
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
+        assert!(
+            intents_balanced
+                .iter()
+                .any(|i| matches!(i, Intent::Build { kind: Some(k), .. } if k == "barracks")),
+            "Balanced: barracks is next unmet doctrine entry; intents={intents_balanced:?}"
+        );
+
+        // Expansion: residence exists at level 1 → jumps the queue.
+        let expansion = Strategy {
+            focus: Focus::Expansion,
+            ..Strategy::default()
+        };
+        let intents_expansion = plan_tick(&d, None, &p, &expansion, d.now_ms, BotTribe::Romans);
+        assert!(
+            intents_expansion
+                .iter()
+                .any(|i| matches!(i, Intent::Build { kind: Some(k), .. } if k == "residence")),
+            "Expansion: residence jumps the queue when it exists; intents={intents_expansion:?}"
+        );
+    }
+
+    /// Expansion without a Residence falls through to the normal doctrine.
+    #[test]
+    fn strategy_expansion_no_residence_falls_through_to_doctrine() {
+        let mut v = make_village("v1", 0, 0);
+        v.fields = vec![
+            SlotLevel {
+                slot: 0,
+                kind: "wood".into(),
+                level: 10,
+            },
+            SlotLevel {
+                slot: 1,
+                kind: "clay".into(),
+                level: 10,
+            },
+        ];
+        // No residence; MB=5 done; next is barracks.
+        v.buildings = vec![
+            SlotLevel {
+                slot: 0,
+                kind: "main_building".into(),
+                level: 5,
+            },
+            SlotLevel {
+                slot: 1,
+                kind: "rally_point".into(),
+                level: 1,
+            },
+        ];
+        let p = persona(0);
+        let d = single_village_digest(v);
+
+        let expansion = Strategy {
+            focus: Focus::Expansion,
+            ..Strategy::default()
+        };
+        let intents = plan_tick(&d, None, &p, &expansion, d.now_ms, BotTribe::Romans);
+        // Without a residence the shortcut does nothing; normal doctrine fires.
+        assert!(
+            intents
+                .iter()
+                .any(|i| matches!(i, Intent::Build { kind: Some(k), .. } if k == "barracks")),
+            "Expansion without residence: falls through to doctrine; intents={intents:?}"
+        );
+    }
+
+    // --- Quadrant preference reorders raid targets ---
+
+    /// Two targets: (2, -2) NE (dist=2) and (3, 3) SE (dist=3).
+    /// No preference → nearest wins (NE at dist=2).
+    /// SE preference → (3, 3) wins despite being farther.
+    #[test]
+    fn strategy_raid_quadrant_reorders_targets() {
+        let mut v = make_village("v1", 0, 0);
+        let p = Persona {
+            window_start_hour: 0,
+            window_len_hours: 24,
+            tick_min_secs: 300,
+            tick_max_secs: 720,
+            aggression: 1, // 1 target raided
+            raid_range: 15,
+        };
+        // garrison=60; raid_floor=20; both targets within range.
+        v.garrison = vec![GarrisonEntry {
+            unit: "legionnaire".into(),
+            count: 60,
+        }];
+        let map = MapWindow {
+            center_x: 0,
+            center_y: 0,
+            r: 15,
+            rows: vec![vec![
+                MapCell {
+                    cell_class: "".into(),
+                    label: "A (inactive) (2, -2)".into(), // NE (dx>0, dy<0)
+                    settle: false,
+                    x: 2,
+                    y: -2,
+                    href: None,
+                },
+                MapCell {
+                    cell_class: "".into(),
+                    label: "B (inactive) (3, 3)".into(), // SE (dx>0, dy>0)
+                    settle: false,
+                    x: 3,
+                    y: 3,
+                    href: None,
+                },
+            ]],
+        };
+        let d = single_village_digest(v);
+
+        // No preference → nearest (2, -2) at dist=2 wins.
+        let intents_default = plan_tick(
+            &d,
+            Some(&map),
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
+        let raid_default = intents_default.iter().find_map(|i| {
+            if let Intent::Raid { x, y, .. } = i {
+                Some((*x, *y))
+            } else {
+                None
+            }
+        });
+        assert_eq!(
+            raid_default,
+            Some((2, -2)),
+            "no preference: nearest target (2,-2) should win; intents={intents_default:?}"
+        );
+
+        // SE preference → (3, 3) wins despite being farther.
+        let se_strat = Strategy {
+            raid_quadrant: Some(Quadrant::SE),
+            ..Strategy::default()
+        };
+        let intents_se = plan_tick(&d, Some(&map), &p, &se_strat, d.now_ms, BotTribe::Romans);
+        let raid_se = intents_se.iter().find_map(|i| {
+            if let Intent::Raid { x, y, .. } = i {
+                Some((*x, *y))
+            } else {
+                None
+            }
+        });
+        assert_eq!(
+            raid_se,
+            Some((3, 3)),
+            "SE preference: (3,3) should win despite greater distance; intents={intents_se:?}"
+        );
+    }
+
+    // --- Aggression override changes party size and target count ---
+
+    /// persona agg=1 (party=12), strategy override agg=3 (party=20).
+    #[test]
+    fn strategy_aggression_override_changes_party_size() {
+        let mut v = make_village("v1", 0, 0);
+        let p = Persona {
+            window_start_hour: 0,
+            window_len_hours: 24,
+            tick_min_secs: 300,
+            tick_max_secs: 720,
+            aggression: 1, // base max_party = 8+4 = 12
+            raid_range: 10,
+        };
+        // garrison=60; base floor=20; remaining=40.
+        v.garrison = vec![GarrisonEntry {
+            unit: "legionnaire".into(),
+            count: 60,
+        }];
+        let map = map_with_inactive(3, 3);
+        let d = single_village_digest(v);
+
+        // Default (agg=1): party = min(8+4=12, 60/3=20, 60-20=40) = 12.
+        let intents_default = plan_tick(
+            &d,
+            Some(&map),
+            &p,
+            &Strategy::default(),
+            d.now_ms,
+            BotTribe::Romans,
+        );
+        let party_default = intents_default.iter().find_map(|i| {
+            if let Intent::Raid { units, .. } = i {
+                Some(units.values().sum::<u32>())
+            } else {
+                None
+            }
+        });
+
+        // Strategy override agg=3: raid_floor=15+15=30, remaining=30.
+        // max_by_agg = 8+12=20. party = min(20, 20, 30) = 20.
+        let strat_agg3 = Strategy {
+            aggression: Some(3),
+            ..Strategy::default()
+        };
+        let intents_agg3 = plan_tick(&d, Some(&map), &p, &strat_agg3, d.now_ms, BotTribe::Romans);
+        let party_agg3 = intents_agg3.iter().find_map(|i| {
+            if let Intent::Raid { units, .. } = i {
+                Some(units.values().sum::<u32>())
+            } else {
+                None
+            }
+        });
+
+        assert_eq!(party_default, Some(12), "default agg=1: party should be 12");
+        assert_eq!(party_agg3, Some(20), "override agg=3: party should be 20");
+        assert!(
+            party_agg3.unwrap() > party_default.unwrap(),
+            "higher aggression override must yield a larger party"
+        );
+    }
+
+    /// Strategy agg override=0 suppresses raiding even when persona agg=2.
+    #[test]
+    fn strategy_aggression_override_zero_suppresses_raiding() {
+        let mut v = make_village("v1", 0, 0);
+        let p = persona(2); // persona agg=2 would normally raid
+        v.garrison = vec![GarrisonEntry {
+            unit: "legionnaire".into(),
+            count: 100,
+        }];
+        let map = map_with_inactive(3, 3);
+        let d = single_village_digest(v);
+
+        // Strategy overrides aggression to 0 → no raiding.
+        let strat_agg0 = Strategy {
+            aggression: Some(0),
+            ..Strategy::default()
+        };
+        let intents = plan_tick(&d, Some(&map), &p, &strat_agg0, d.now_ms, BotTribe::Romans);
+        assert!(
+            !intents.iter().any(|i| matches!(i, Intent::Raid { .. })),
+            "aggression override=0 must suppress raiding; intents={intents:?}"
         );
     }
 }

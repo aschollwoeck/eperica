@@ -23,6 +23,7 @@ use eperica_bots::manifest::{ManifestEntry, validate};
 use eperica_bots::persona::Persona;
 use eperica_bots::policy::{Intent, plan_tick};
 use eperica_bots::runner::{RunnerConfig, run_fleet_until};
+use eperica_bots::strategy::Strategy;
 use eperica_domain::{GameSpeed, WorldConfig, WorldMap};
 use eperica_infrastructure::{
     Argon2Hasher, ChatHub, NotificationHub, PgAccountRepository, ensure_world, fair_play_rules,
@@ -256,7 +257,14 @@ async fn forced_tick_orders_appear(pool: sqlx::PgPool) {
 
     // plan_tick is window-agnostic — the window check lives in the runner (which we do not invoke
     // here).  Call plan_tick directly to exercise the policy without the infinite fleet loop.
-    let intents = plan_tick(&digest, None, &persona, digest.now_ms, tribe);
+    let intents = plan_tick(
+        &digest,
+        None,
+        &persona,
+        &Strategy::default(),
+        digest.now_ms,
+        tribe,
+    );
     assert!(
         !intents.is_empty(),
         "plan_tick must produce intents: {intents:?}"
@@ -321,7 +329,14 @@ async fn dry_run_writes_nothing(pool: sqlx::PgPool) {
     let digest = client.state(world).await.expect("state() must succeed");
     let persona = Persona::from_name(&user);
 
-    let intents = plan_tick(&digest, None, &persona, digest.now_ms, tribe);
+    let intents = plan_tick(
+        &digest,
+        None,
+        &persona,
+        &Strategy::default(),
+        digest.now_ms,
+        tribe,
+    );
     assert!(
         !intents.is_empty(),
         "plan_tick must produce intents: {intents:?}"

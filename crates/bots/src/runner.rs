@@ -330,7 +330,15 @@ async fn run_tick(
     let map_ref = new_map.as_ref().or(cached_map.as_ref());
 
     let now_ms = digest.now_ms;
-    let intents = plan_tick(&digest, map_ref, &persona, now_ms, tribe);
+    // T3 will wire real Strategy state; for now pass the default (no bias → 121 behaviour).
+    let intents = plan_tick(
+        &digest,
+        map_ref,
+        &persona,
+        &crate::strategy::Strategy::default(),
+        now_ms,
+        tribe,
+    );
 
     if intents.is_empty() {
         debug!(bot = %username, "no intents this tick");

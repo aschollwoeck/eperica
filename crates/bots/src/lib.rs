@@ -25,3 +25,4 @@ pub mod manifest;
 pub mod persona;
 pub mod policy;
 pub mod runner;
+pub mod strategy;

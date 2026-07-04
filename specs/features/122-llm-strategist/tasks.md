@@ -3,7 +3,7 @@
 **Status:** Draft. Ordered; each gated by `cargo fmt --all -- --check`, `clippy --all-targets -- -D warnings`,
 `cargo test --workspace`. Branch `feature/122-llm-strategist`; commit per task.
 
-- [ ] **T1 — Strategy overlay in the pure doctrine.** `strategy.rs` (Strategy/Focus, strict
+- [x] **T1 — Strategy overlay in the pure doctrine.** `strategy.rs` (Strategy/Focus, strict
   `parse_reply`, bounded `build_prompt`); `plan_tick(…, &Strategy, …)` with the five bias rules;
   `Strategy::default()` proven a no-op. Unit tests per AC1/AC2/AC3/AC4. (AC1–AC4)
 - [ ] **T2 — Backend seam.** `StrategistBackend` trait; `AnthropicBackend` (Messages API via
