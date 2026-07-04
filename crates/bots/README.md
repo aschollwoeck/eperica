@@ -21,6 +21,10 @@ cargo run -p eperica-bots -- \
 
 Replace `<world-uuid>` with the UUID shown in the admin world list (or the `EPB_WORLD` env var).
 
+> **TLS note:** `reqwest` is built without a TLS backend (`default-features = false`, only the
+> `stream` feature).  Server URLs must use plain `http://`.  To use `https://`, add
+> `rustls-tls` to the `reqwest` features in `crates/bots/Cargo.toml`.
+
 ### 3. Verify with --dry-run
 
 ```bash

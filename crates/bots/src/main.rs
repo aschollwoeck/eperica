@@ -113,6 +113,7 @@ fn parse_config() -> Result<RunnerConfig, String> {
         dry_run,
         tick_scale,
         cap,
+        open_window: false, // production binary never bypasses the activity window
     })
 }
 

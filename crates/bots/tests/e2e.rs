@@ -22,6 +22,7 @@ use eperica_bots::executor::execute_intents;
 use eperica_bots::manifest::{ManifestEntry, validate};
 use eperica_bots::persona::Persona;
 use eperica_bots::policy::{Intent, plan_tick};
+use eperica_bots::runner::{RunnerConfig, run_fleet_until};
 use eperica_domain::{GameSpeed, WorldConfig, WorldMap};
 use eperica_infrastructure::{
     Argon2Hasher, ChatHub, NotificationHub, PgAccountRepository, ensure_world, fair_play_rules,
@@ -32,6 +33,7 @@ use eperica_web::state::AppState;
 use eperica_web::{apikey, router};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 // ---------------------------------------------------------------------------
 // Trimmed copy of the web integration harness
@@ -216,11 +218,11 @@ async fn seed_bot(
 /// Seeding: teutons bot, Barracks level 1, resources 5 000 each, empty queues, empty garrison.
 ///
 /// Policy outcome (with the seeded state):
-/// - Rule 2 (Storage): resources 5 000 >> 90 % of 800-unit capacity → Build{granary}.
+/// - Rule 2 (Storage): resources 5 000 >> 90 % capacity → Build{granary} (storage first, per doctrine).
 /// - Rule 5 (Training): garrison 0 < floor (10 + 10 × aggression) → Train{clubswinger, N}.
 ///
 /// After executing both intents (dry_run = false), the next digest must show
-/// `build_queue.len() == 1` and `training.len() == 1`.
+/// a build order (granary) in `build_queue` and a training batch in `training`.
 ///
 #[sqlx::test(migrations = "../../migrations")]
 async fn forced_tick_orders_appear(pool: sqlx::PgPool) {
@@ -239,8 +241,6 @@ async fn forced_tick_orders_appear(pool: sqlx::PgPool) {
     let world_entry = &me.worlds[0];
     let world = &world_entry.world;
 
-    // Normalise tribe slug: API returns "teutons" / "romans" / "gauls" (plural);
-    // tier1_unit expects "teuton" / "roman" / "gaul" (singular).  T4 handles this in the runner.
     let tribe = world_entry.tribe.clone();
 
     // Fetch the full state digest (one call per tick, per the spec).
@@ -282,6 +282,13 @@ async fn forced_tick_orders_appear(pool: sqlx::PgPool) {
         v.build_queue.len(),
         1,
         "build queue must have exactly one entry after one tick: {v:?}"
+    );
+    // Storage is the first doctrine rule to fire on the seeded state (resources >> 90% of
+    // capacity) → a granary build order is placed (crop checked before non-crop).
+    assert_eq!(
+        v.build_queue[0].kind.as_deref(),
+        Some("granary"),
+        "build queue entry must be a granary (storage-first doctrine): {v:?}"
     );
     assert_eq!(
         v.training.len(),
@@ -340,6 +347,76 @@ async fn dry_run_writes_nothing(pool: sqlx::PgPool) {
         v.training.len(),
         0,
         "dry-run must not place training orders: {v:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// M4c — fleet loop ticks two bots through the cap=1 semaphore
+// ---------------------------------------------------------------------------
+
+/// M4c: `run_fleet_until` with two bots and cap=1 ticks both bots at least once.
+///
+/// The cap=1 semaphore serialises all tick tasks; with tick_scale=1 and a 6-second
+/// shutdown window, both bots have ample time to tick.  Exercises the scheduler
+/// (`next_due`), the semaphore cap, and the graceful drain on shutdown.
+#[sqlx::test(migrations = "../../migrations")]
+async fn fleet_loop_ticks_two_bots(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+
+    let user1 = unique("fleet_a");
+    let user2 = unique("fleet_b");
+    let token1 = seed_bot(&pool, &base, &user1, true).await;
+    let token2 = seed_bot(&pool, &base, &user2, true).await;
+
+    // Find the world UUID from the first bot's /api/me response.
+    let client1 = ApiClient::new(&base, &token1);
+    let me1 = client1.me().await.expect("me() for fleet_a");
+    assert!(
+        !me1.worlds.is_empty(),
+        "fleet_a must be enrolled in a world"
+    );
+    let world = me1.worlds[0].world.clone();
+
+    let client2 = ApiClient::new(&base, &token2);
+
+    // Write a temp manifest so run_fleet_until can load both bots.
+    let manifest_path =
+        std::env::temp_dir().join(format!("eperica_fleet_test_{}.json", unique("m")));
+    let manifest_json = serde_json::json!([
+        {"username": user1, "token": token1},
+        {"username": user2, "token": token2},
+    ])
+    .to_string();
+    std::fs::write(&manifest_path, &manifest_json).expect("write temp manifest");
+
+    let cfg = RunnerConfig {
+        server: base.clone(),
+        world: world.clone(),
+        keys_path: manifest_path.to_str().unwrap().to_owned(),
+        dry_run: false,
+        tick_scale: Some(1), // 1-second ticks to keep the test fast
+        cap: 1,              // serialise: exercises the semaphore
+        open_window: true,   // bypass activity-window check for determinism
+    };
+
+    // Run the fleet for 6 seconds (enough for each bot to tick several times).
+    run_fleet_until(cfg, tokio::time::sleep(Duration::from_secs(6))).await;
+
+    let _ = std::fs::remove_file(&manifest_path);
+
+    // Both bots must have ticked and placed build orders (granary via storage rule).
+    let d1 = client1.state(&world).await.expect("state for fleet_a");
+    let d2 = client2.state(&world).await.expect("state for fleet_b");
+
+    assert!(
+        !d1.villages[0].build_queue.is_empty(),
+        "fleet_a build queue must be non-empty after fleet run: {:?}",
+        d1.villages[0]
+    );
+    assert!(
+        !d2.villages[0].build_queue.is_empty(),
+        "fleet_b build queue must be non-empty after fleet run: {:?}",
+        d2.villages[0]
     );
 }
 

@@ -71,9 +71,9 @@ Structured per-bot logs (bot name, tick, intents, outcomes). Graceful shutdown o
   is per bot; the cap protects the process and the box). Ctrl-c drains cleanly.
 
 - **AC6 — End-to-end tick.** Against a spawned in-process server (the web crate's test harness):
-  a seeded bot's single forced tick reads the digest and produces real orders — a field upgrade
-  and a training batch appear in the next digest. `--dry-run` produces the same intents with zero
-  server writes.
+  a seeded bot's single forced tick reads the digest and produces real orders — a build order
+  (per doctrine — storage first on the seeded state: granary) and a training batch appear in the
+  next digest. `--dry-run` produces the same intents with zero server writes.
 
 - **AC7 — No server change.** The slice adds the `eperica-bots` crate only; the server workspace
   builds bit-identically (no migrations, no route changes, no balance changes).

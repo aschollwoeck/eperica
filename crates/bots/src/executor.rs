@@ -235,9 +235,6 @@ pub async fn execute_intents(
                 report.executed += 1;
             }
             Err(failure) => {
-                // Count as executed (reached the server) before classifying.
-                report.executed += 1;
-
                 match classify(&failure) {
                     Outcome::RuleDenied { code, reason } => {
                         debug!(
@@ -246,6 +243,7 @@ pub async fn execute_intents(
                             %reason,
                             "rule-denied; no retry this tick"
                         );
+                        report.executed += 1;
                         report.denied += 1;
                         // Do NOT retry — continue to the next intent.
                     }
@@ -266,6 +264,9 @@ pub async fn execute_intents(
                     Outcome::Transient(msg) => {
                         warn!(intent = %desc, error = %msg, "transient error; continuing");
                         report.transient += 1;
+                        // Transient errors are NOT counted as executed (the request
+                        // did not complete successfully — e.g. transport failure or
+                        // server 5xx before the server processed the intent).
                         // Continue to next intent.
                     }
                 }

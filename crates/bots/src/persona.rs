@@ -52,7 +52,8 @@ pub struct Persona {
     pub tick_max_secs: u32,
     /// Aggression level: 0 = passive / builds only; 3 = raids aggressively.
     pub aggression: u8,
-    /// Maximum raid radius in tiles, measured as Chebyshev distance.  6–15 inclusive.
+    /// Maximum raid radius in tiles, measured as Chebyshev distance.  5–10 inclusive.
+    /// Bounded by the map-window clamp (docs/agent-api.md r=10 maximum).
     pub raid_range: u8,
 }
 
@@ -70,7 +71,7 @@ impl Persona {
     /// - `tick_min_secs`     ← (h2 % 540) + 180 → 180..=719  \
     /// - `tick_max_secs`     ← (h3 % 181) + 720 → 720..=900  / split guarantees min < max
     /// - `aggression`        ← h4 % 4           → 0..=3
-    /// - `raid_range`        ← (h5 % 10) + 6    → 6..=15
+    /// - `raid_range`        ← (h5 % 6) + 5     → 5..=10 — the map-window clamp bounds it
     pub fn from_name(name: &str) -> Self {
         let h0 = fnv1a_64(name.as_bytes());
         let h1 = fnv1a_64(&h0.to_le_bytes());
@@ -87,7 +88,7 @@ impl Persona {
             tick_min_secs: ((h2 % 540) + 180) as u32,
             tick_max_secs: ((h3 % 181) + 720) as u32,
             aggression: (h4 % 4) as u8,
-            raid_range: ((h5 % 10) + 6) as u8,
+            raid_range: ((h5 % 6) + 5) as u8,
         }
     }
 
@@ -119,50 +120,39 @@ impl Persona {
 mod tests {
     use super::*;
 
-    // Re-implement FNV-1a inline in the test module so that pinned-value tests
-    // compare against the reference algorithm, not a circular self-call.
-    // If the implementation in persona.rs diverges from this reference, the
-    // pinned tests will fail — that is the desired regression gate.
-    fn ref_hash(bytes: &[u8]) -> u64 {
-        let mut h: u64 = 14_695_981_039_346_656_037;
-        for &b in bytes {
-            h ^= b as u64;
-            h = h.wrapping_mul(1_099_511_628_211);
-        }
-        h
-    }
-
-    fn ref_persona(name: &str) -> Persona {
-        let h0 = ref_hash(name.as_bytes());
-        let h1 = ref_hash(&h0.to_le_bytes());
-        let h2 = ref_hash(&h1.to_le_bytes());
-        let h3 = ref_hash(&h2.to_le_bytes());
-        let h4 = ref_hash(&h3.to_le_bytes());
-        let h5 = ref_hash(&h4.to_le_bytes());
-        Persona {
-            window_start_hour: (h0 % 24) as u8,
-            window_len_hours: ((h1 % 9) + 8) as u8,
-            tick_min_secs: ((h2 % 540) + 180) as u32,
-            tick_max_secs: ((h3 % 181) + 720) as u32,
-            aggression: (h4 % 4) as u8,
-            raid_range: ((h5 % 10) + 6) as u8,
-        }
-    }
-
-    /// Pin exact personas for 3 fixed names.
-    /// These assert that `from_name` matches the FNV-1a reference algorithm
-    /// field-for-field.  A change to the hash chain or derivation formula
-    /// causes this test to fail.
+    /// Pin exact personas for 3 fixed names using hardcoded literal values.
+    ///
+    /// Any change to the FNV-1a hash chain or derivation formula (field modulus, offset,
+    /// cast) will cause this test to fail — the literals must be updated intentionally.
+    /// Computed by running the inline FNV-1a reference outside the test harness.
     #[test]
     fn pinned_personas_match_reference() {
-        for name in ["alpha", "bravo_bot", "charlie_42"] {
-            let got = Persona::from_name(name);
-            let expected = ref_persona(name);
-            assert_eq!(
-                got, expected,
-                "persona mismatch for {name:?}: got {got:?}, expected {expected:?}"
-            );
-        }
+        let alpha = Persona::from_name("alpha");
+        assert_eq!(alpha.window_start_hour, 3, "alpha window_start_hour");
+        assert_eq!(alpha.window_len_hours, 14, "alpha window_len_hours");
+        assert_eq!(alpha.tick_min_secs, 582, "alpha tick_min_secs");
+        assert_eq!(alpha.tick_max_secs, 763, "alpha tick_max_secs");
+        assert_eq!(alpha.aggression, 2, "alpha aggression");
+        assert_eq!(alpha.raid_range, 7, "alpha raid_range");
+
+        let bravo = Persona::from_name("bravo_bot");
+        assert_eq!(bravo.window_start_hour, 9, "bravo_bot window_start_hour");
+        assert_eq!(bravo.window_len_hours, 9, "bravo_bot window_len_hours");
+        assert_eq!(bravo.tick_min_secs, 285, "bravo_bot tick_min_secs");
+        assert_eq!(bravo.tick_max_secs, 791, "bravo_bot tick_max_secs");
+        assert_eq!(bravo.aggression, 2, "bravo_bot aggression");
+        assert_eq!(bravo.raid_range, 8, "bravo_bot raid_range");
+
+        let charlie = Persona::from_name("charlie_42");
+        assert_eq!(
+            charlie.window_start_hour, 16,
+            "charlie_42 window_start_hour"
+        );
+        assert_eq!(charlie.window_len_hours, 10, "charlie_42 window_len_hours");
+        assert_eq!(charlie.tick_min_secs, 653, "charlie_42 tick_min_secs");
+        assert_eq!(charlie.tick_max_secs, 819, "charlie_42 tick_max_secs");
+        assert_eq!(charlie.aggression, 2, "charlie_42 aggression");
+        assert_eq!(charlie.raid_range, 6, "charlie_42 raid_range");
     }
 
     /// Different names must produce different personas (probabilistic; three pairs).
@@ -218,8 +208,8 @@ mod tests {
             );
             assert!(p.aggression <= 3, "{name}: aggression out of range");
             assert!(
-                p.raid_range >= 6 && p.raid_range <= 15,
-                "{name}: raid_range {}",
+                p.raid_range >= 5 && p.raid_range <= 10,
+                "{name}: raid_range {} (expected 5..=10)",
                 p.raid_range
             );
         }

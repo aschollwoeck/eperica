@@ -19,7 +19,7 @@
 |---|---|---|
 | `digest.rs` | serde DTOs mirroring docs/agent-api.md **partially and defensively** (`#[serde(default)]` everywhere) — additive server changes never break the runner | none |
 | `client.rs` | `ApiClient` (reqwest): `me`, `state`, `map`, and one thin call per action; returns `Result<Value-or-DTO, ApiFailure>` where `ApiFailure` classifies status + `{error, reason}` | HTTP |
-| `persona.rs` | `Persona::from_name(&str)` via an **inline FNV-1a** (std `DefaultHasher` is per-process-random — unusable for AC4 determinism): activity window (start hour, length), tick band (min/max secs), aggression (0..3), raid range | none |
+| `persona.rs` | `Persona::from_name(&str)` via an **inline FNV-1a** (std `DefaultHasher` is per-process-random — unusable for AC4 determinism): activity window (start hour, length), tick band (min/max secs), aggression (0..3), raid range 5..=10 — the map-window clamp bounds it | none |
 | `policy.rs` | `Intent` enum + `plan_tick(&Digest, Option<&MapWindow>, &Persona, now_ms) -> Vec<Intent>` — the doctrine below | none |
 | `executor.rs` | `execute(...)`: intents → API calls; a **pure** `classify(status, body) -> Outcome` (Ok / RuleDenied / Backoff(secs) / RetireBot / TransientError) unit-tested without HTTP | HTTP |
 | `runner.rs` | the fleet loop: single scheduler task; per-bot `next_tick` from persona + jitter; due bots tick through a `Semaphore` (in-flight cap); ctrl-c drain | HTTP |
@@ -42,10 +42,12 @@ Evaluated in order; the first section that yields intents ends economy planning 
 3./4. **Fields ⇄ core buildings (interleaved):** while average field level < 2 ⇒ fields only
    (crop-net floor 25/h biases to the lowest crop field; else lowest field overall, ties
    wood>clay>iron>crop; stop at level 10 — the non-capital cap). Once the average reaches 2, the
-   **core-building doctrine takes priority until complete** — Main Building →3, Barracks →1,
-   Warehouse →3, Granary →3, Academy →1, Residence →10 (the settler chain) — then fields resume to
-   the cap. (Clarified during build: the original "first section that yields ends planning" wording
-   made the avg-2 gate unreachable — fields would monopolize until all-18-at-10.)
+   **core-building doctrine takes priority until complete** — Main Building →3, Barracks →3,
+   Warehouse →3, Granary →3, Main Building →5, Academy →1, Residence →10 (the settler chain) —
+   then fields resume to the cap. The doctrine is prereq-consistent against the classic preset;
+   verified in the walk test (`doctrine_table_walks_to_completion`). (Clarified during build: the
+   original "first section that yields ends planning" wording made the avg-2 gate unreachable —
+   fields would monopolize until all-18-at-10.)
 5. **Training:** garrison below `10 + 10·aggression` units ⇒ train the tribe's tier-1 infantry up
    to what ~25% of current resources afford (never drain the build budget).
 6. **Settling:** `villages_used < villages_allowed` AND Residence ≥10 ⇒ train settlers (3) when

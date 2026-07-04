@@ -510,13 +510,13 @@ mod tests {
             "account": "1",
             "username": "bot_01",
             "is_ai": true,
-            "worlds": [{"world": "world-0001", "player": "42", "tribe": "roman"}]
+            "worlds": [{"world": "world-0001", "player": "42", "tribe": "romans"}]
         }"#;
 
         let me: MeResponse = serde_json::from_str(json).expect("me parses");
         assert_eq!(me.username, "bot_01");
         assert!(me.is_ai);
-        assert_eq!(me.worlds[0].tribe, "roman");
+        assert_eq!(me.worlds[0].tribe, "romans");
     }
 
     #[test]

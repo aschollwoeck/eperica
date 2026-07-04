@@ -33,12 +33,13 @@
 //! On SIGINT the scheduler stops accepting new ticks and waits for all
 //! in-flight tick tasks to complete before exiting cleanly.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
-use tracing::{debug, error, info, warn};
+use tracing::{Instrument, debug, error, info, warn};
 
 use crate::client::ApiClient;
 use crate::digest::MapWindow;
@@ -56,8 +57,9 @@ use crate::policy::plan_tick;
 pub const MAP_TTL_TICKS: u64 = 5;
 
 /// Radius (Chebyshev tiles) used when fetching a bot's map window.
-/// Covers the maximum persona raid range (15) with a 2-tile safety margin.
-const MAP_RADIUS: u32 = 17;
+/// Matches the documented server clamp of 10 (docs/agent-api.md); the persona
+/// raid range is bounded to 5..=10, so this covers the full possible range.
+const MAP_RADIUS: u32 = 10;
 
 // ---------------------------------------------------------------------------
 // RunnerConfig
@@ -78,6 +80,10 @@ pub struct RunnerConfig {
     pub tick_scale: Option<u64>,
     /// Maximum number of bot ticks executing concurrently (default: 4).
     pub cap: usize,
+    /// When `true`, skip the activity-window check so bots always tick
+    /// regardless of the UTC hour.  For deterministic tests only; never set
+    /// in production (the binary always sets this to `false`).
+    pub open_window: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -227,8 +233,10 @@ fn apply_tick_result(
 
     // Schedule the next tick.
     let delay_secs = if let Some(secs) = r.backoff_secs {
-        // 429 backoff overrides everything.
-        secs
+        // 429 backoff overrides everything, but never shorter than the persona minimum.
+        // A tiny retry_after (e.g. 30 s) must not schedule ticks faster than the bot's
+        // humanized cadence floor (180 s) — that would look inhuman and exhaust the budget.
+        secs.max(bot.persona.tick_min_secs as u64)
     } else if let Some(override_secs) = cfg.tick_scale {
         // --tick-secs forces a fixed interval (no jitter).
         override_secs
@@ -259,18 +267,21 @@ async fn run_tick(
     dry_run: bool,
     cached_map: Option<MapWindow>,
     should_fetch_map: bool,
+    open_window: bool,
 ) -> TickTaskResult {
-    // Check activity window.
-    let hour = utc_hour();
-    if !persona.in_window(hour) {
-        debug!(bot = %username, hour, "outside activity window; skipping tick");
-        return TickTaskResult {
-            username,
-            new_map: None,
-            map_was_attempted: false,
-            backoff_secs: None,
-            retire: false,
-        };
+    // Check activity window (skipped when open_window=true, e.g. in tests).
+    if !open_window {
+        let hour = utc_hour();
+        if !persona.in_window(hour) {
+            debug!(bot = %username, hour, "outside activity window; skipping tick");
+            return TickTaskResult {
+                username,
+                new_map: None,
+                map_was_attempted: false,
+                backoff_secs: None,
+                retire: false,
+            };
+        }
     }
 
     // Fetch digest (one per tick).
@@ -321,16 +332,17 @@ async fn run_tick(
     let now_ms = digest.now_ms;
     let intents = plan_tick(&digest, map_ref, &persona, now_ms, &tribe);
 
-    let span = tracing::info_span!("exec", bot = %username);
-    let _enter = span.enter();
-
     if intents.is_empty() {
         debug!(bot = %username, "no intents this tick");
     } else {
         info!(bot = %username, count = intents.len(), "executing intents");
     }
 
-    let report = execute_intents(&client, &world, &intents, dry_run).await;
+    // Use .instrument() rather than span.enter() to avoid holding the span guard
+    // across the await point (tracing best practice for async contexts).
+    let report = execute_intents(&client, &world, &intents, dry_run)
+        .instrument(tracing::info_span!("exec", bot = %username))
+        .await;
 
     debug!(
         bot = %username,
@@ -350,17 +362,39 @@ async fn run_tick(
 }
 
 // ---------------------------------------------------------------------------
-// run_fleet — public entry point
+// run_fleet_until / run_fleet — public entry points
 // ---------------------------------------------------------------------------
 
-/// Start the bot fleet.
+/// Start the bot fleet and run until `shutdown` resolves.
 ///
 /// 1. Load and validate the key manifest (dead keys are logged and dropped).
 /// 2. For each live bot, check that it has a player in `cfg.world` (bots
 ///    without a player in the target world are dropped with a warning).
-/// 3. Run the scheduler loop until Ctrl-C is received.
-/// 4. On Ctrl-C: stop spawning new ticks; drain all in-flight tasks; exit.
+/// 3. Run the scheduler loop until `shutdown` resolves.
+/// 4. On shutdown: stop spawning new ticks; drain all in-flight tasks; exit.
+///
+/// Callers that want Ctrl-C shutdown should use [`run_fleet`]; pass an explicit
+/// future (e.g. `tokio::time::sleep(…)`) here for time-bounded or test runs.
+pub async fn run_fleet_until<F>(cfg: RunnerConfig, shutdown: F)
+where
+    F: Future<Output = ()> + Send,
+{
+    tokio::pin!(shutdown);
+    run_fleet_inner(cfg, &mut shutdown).await;
+}
+
+/// Start the bot fleet and run until Ctrl-C is received.
+///
+/// Thin wrapper around [`run_fleet_until`] that supplies `tokio::signal::ctrl_c`
+/// as the shutdown signal.
 pub async fn run_fleet(cfg: RunnerConfig) {
+    run_fleet_until(cfg, async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await;
+}
+
+async fn run_fleet_inner(cfg: RunnerConfig, shutdown: &mut (impl Future<Output = ()> + Unpin)) {
     if cfg.cap == 0 {
         warn!("cap=0; no bot ticks will ever run — exiting immediately");
         return;
@@ -452,12 +486,8 @@ pub async fn run_fleet(cfg: RunnerConfig) {
 
     let semaphore = Arc::new(Semaphore::new(cfg.cap));
     let mut join_set: JoinSet<TickTaskResult> = JoinSet::new();
-    let mut shutdown = false;
-
-    // Pin the ctrl_c future so we can select! on it repeatedly inside the loop
-    // while guarding with `if !shutdown` to prevent re-polling after resolution.
-    let ctrl_c = tokio::signal::ctrl_c();
-    tokio::pin!(ctrl_c);
+    let mut shutdown_flag = false;
+    let open_window = cfg.open_window;
 
     loop {
         // Phase 1: drain any already-completed tick tasks.
@@ -472,17 +502,25 @@ pub async fn run_fleet(cfg: RunnerConfig) {
             break;
         }
 
-        if shutdown && join_set.is_empty() {
+        if shutdown_flag && join_set.is_empty() {
             info!("drain complete; exiting");
             break;
         }
 
         // Phase 2: spawn tick tasks for due bots (unless we are shutting down).
-        if !shutdown {
+        // Use next_due to find which bots' scheduled times have arrived.
+        if !shutdown_flag {
             let now = now_ms();
-            for bot in bots.iter_mut() {
-                if bot.in_flight || bot.next_tick_at_ms > now {
-                    continue;
+            let schedule: Vec<(String, i64)> = bots
+                .iter()
+                .map(|b| (b.username.clone(), b.next_tick_at_ms))
+                .collect();
+            let due_indices = next_due(&schedule, now);
+
+            for i in due_indices {
+                let bot = &mut bots[i];
+                if bot.in_flight {
+                    continue; // Already executing; will be rescheduled when it completes.
                 }
 
                 let should_fetch_map = bot.map_ticks_since_fetch >= MAP_TTL_TICKS;
@@ -501,14 +539,22 @@ pub async fn run_fleet(cfg: RunnerConfig) {
                 join_set.spawn(async move {
                     // Acquire a semaphore permit before doing any work.
                     // The permit is released automatically when the task ends.
-                    let _permit = sem
-                        .acquire_owned()
-                        .await
-                        .expect("semaphore closed unexpectedly");
+                    let _permit = match sem.acquire_owned().await {
+                        Ok(p) => p,
+                        Err(e) => {
+                            error!(error = ?e, bot = %username, "semaphore closed; aborting tick");
+                            return TickTaskResult {
+                                username,
+                                new_map: None,
+                                map_was_attempted: false,
+                                backoff_secs: None,
+                                retire: false,
+                            };
+                        }
+                    };
 
+                    // Use .instrument() so the span is not held across await points.
                     let span = tracing::info_span!("bot_tick", bot = %username, tick = tick_count);
-                    let _enter = span.enter();
-
                     run_tick(
                         client,
                         world,
@@ -518,13 +564,15 @@ pub async fn run_fleet(cfg: RunnerConfig) {
                         dry_run,
                         cached_map,
                         should_fetch_map,
+                        open_window,
                     )
+                    .instrument(span)
                     .await
                 });
             }
         }
 
-        // Phase 3: sleep until the next due bot or a task completes or Ctrl-C.
+        // Phase 3: sleep until the next due bot or a task completes or shutdown.
 
         // Compute how long to sleep before the next (non-in-flight) bot is due.
         let next_due_ms = bots
@@ -535,7 +583,7 @@ pub async fn run_fleet(cfg: RunnerConfig) {
             .unwrap_or_else(|| now_ms() + 5_000);
 
         // When draining, poll frequently; otherwise sleep until the next due time.
-        let sleep_ms = if shutdown {
+        let sleep_ms = if shutdown_flag {
             200u64
         } else {
             ((next_due_ms - now_ms()).max(1) as u64).min(5_000)
@@ -555,9 +603,9 @@ pub async fn run_fleet(cfg: RunnerConfig) {
                 }
             }
 
-            _ = &mut ctrl_c, if !shutdown => {
-                info!("Ctrl-C received; draining in-flight ticks...");
-                shutdown = true;
+            _ = &mut *shutdown, if !shutdown_flag => {
+                info!("shutdown signal received; draining in-flight ticks...");
+                shutdown_flag = true;
             }
         }
     }
@@ -577,6 +625,125 @@ pub async fn run_fleet(cfg: RunnerConfig) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -----------------------------------------------------------------------
+    // M3: apply_tick_result — backoff respects persona tick_min_secs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn apply_tick_result_backoff_floored_to_tick_min() {
+        // A 429 with retry_after_secs=30 on a bot with tick_min_secs=180 must
+        // schedule the next tick at least 180 s away, not 30 s.
+        let client = Arc::new(crate::client::ApiClient::new(
+            "http://localhost:0",
+            "epk_0000000000000000_testtoken",
+        ));
+        let mut bots = vec![BotState {
+            username: "testbot".to_owned(),
+            persona: crate::persona::Persona {
+                window_start_hour: 0,
+                window_len_hours: 24,
+                tick_min_secs: 180,
+                tick_max_secs: 720,
+                aggression: 0,
+                raid_range: 8,
+            },
+            tribe: "romans".to_owned(),
+            client,
+            next_tick_at_ms: 0,
+            tick_count: 0,
+            map_ticks_since_fetch: 0,
+            cached_map: None,
+            in_flight: true,
+            retired: false,
+            name_hash: crate::persona::fnv1a_64(b"testbot"),
+        }];
+
+        let cfg = RunnerConfig {
+            server: "http://localhost:0".to_owned(),
+            world: "world-test".to_owned(),
+            keys_path: "".to_owned(),
+            dry_run: false,
+            tick_scale: None,
+            cap: 1,
+            open_window: false,
+        };
+
+        let at_ms = 1_000_000_000_000_i64;
+        let result = TickTaskResult {
+            username: "testbot".to_owned(),
+            new_map: None,
+            map_was_attempted: false,
+            backoff_secs: Some(30), // 30 s < tick_min_secs (180 s)
+            retire: false,
+        };
+
+        apply_tick_result(&mut bots, Ok(result), &cfg, at_ms);
+
+        // delay must be max(30, 180) = 180 s
+        assert_eq!(
+            bots[0].next_tick_at_ms,
+            at_ms + 180 * 1_000,
+            "backoff=30s must be floored to tick_min_secs=180s"
+        );
+    }
+
+    #[test]
+    fn apply_tick_result_backoff_larger_than_tick_min_used_verbatim() {
+        // A 429 with retry_after_secs=300 on a bot with tick_min_secs=180 must
+        // schedule 300 s out (the backoff is larger, so it wins).
+        let client = Arc::new(crate::client::ApiClient::new(
+            "http://localhost:0",
+            "epk_0000000000000000_testtoken",
+        ));
+        let mut bots = vec![BotState {
+            username: "testbot2".to_owned(),
+            persona: crate::persona::Persona {
+                window_start_hour: 0,
+                window_len_hours: 24,
+                tick_min_secs: 180,
+                tick_max_secs: 720,
+                aggression: 0,
+                raid_range: 8,
+            },
+            tribe: "romans".to_owned(),
+            client,
+            next_tick_at_ms: 0,
+            tick_count: 0,
+            map_ticks_since_fetch: 0,
+            cached_map: None,
+            in_flight: true,
+            retired: false,
+            name_hash: crate::persona::fnv1a_64(b"testbot2"),
+        }];
+
+        let cfg = RunnerConfig {
+            server: "http://localhost:0".to_owned(),
+            world: "world-test".to_owned(),
+            keys_path: "".to_owned(),
+            dry_run: false,
+            tick_scale: None,
+            cap: 1,
+            open_window: false,
+        };
+
+        let at_ms = 1_000_000_000_000_i64;
+        let result = TickTaskResult {
+            username: "testbot2".to_owned(),
+            new_map: None,
+            map_was_attempted: false,
+            backoff_secs: Some(300), // 300 s > tick_min_secs (180 s)
+            retire: false,
+        };
+
+        apply_tick_result(&mut bots, Ok(result), &cfg, at_ms);
+
+        assert_eq!(
+            bots[0].next_tick_at_ms,
+            at_ms + 300 * 1_000,
+            "backoff=300s > tick_min=180s; should use 300s verbatim"
+        );
+    }
 
     // -----------------------------------------------------------------------
     // next_due — AC5 unit test surface

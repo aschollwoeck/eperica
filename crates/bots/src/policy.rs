@@ -16,8 +16,8 @@
 //! 2. **Storage** — any resource ≥ 90 % capacity → build/upgrade Warehouse or Granary.
 //! 3. **Fields** — upgrade the lowest-level field (crop-biased when crop net < 25/h;
 //!    cap at level 10).
-//! 4. **Core buildings** — Main Building→3, Barracks→1, Warehouse→3, Granary→3,
-//!    Academy→1, Residence→10; gated on fields ≥ average level 2.
+//! 4. **Core buildings** — Main Building→3, Barracks→3, Warehouse→3, Granary→3,
+//!    Main Building→5, Academy→1, Residence→10; gated on fields ≥ average level 2.
 //! 5. **Training** — garrison below floor (10 + 10·aggression) → train up to 5 units.
 //! 6. **Settling** — culture allows more villages + Residence ≥ 10 → train settlers
 //!    or send them to the nearest free valley.
@@ -185,10 +185,9 @@ fn build_or_upgrade(
     kind: &str,
     buildings: &[crate::digest::SlotLevel],
 ) -> Option<Intent> {
-    // Look for the highest-leveled instance to upgrade (for multi-instance
-    // buildings we want to upgrade the best existing one, but "upgrade existing
-    // slot if present" per spec — simplest: pick the first match).
-    // For single-instance buildings there is at most one.
+    // Upgrade the existing instance if present (first match — for single-instance buildings
+    // there is at most one; for multi-instance buildings we upgrade whichever appears first
+    // in the buildings list, which is consistent with how the server orders them).
     if let Some(b) = find_building(buildings, kind) {
         Some(Intent::Build {
             village: village_id.to_owned(),
@@ -205,6 +204,60 @@ fn build_or_upgrade(
             slot,
             kind: Some(kind.to_owned()),
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Raid helper (extracted to avoid clippy::collapsible_if)
+// ---------------------------------------------------------------------------
+
+/// Append `Raid` intents for targets reachable from village `v`, respecting
+/// the mutable party budget so the garrison floor is never breached.
+#[allow(clippy::too_many_arguments)]
+fn raid_targets(
+    v: &VillageDigest,
+    map_win: &MapWindow,
+    in_flight: &HashSet<(i32, i32)>,
+    p: &Persona,
+    garrison_sum: u32,
+    raid_floor: u32,
+    unit: &str,
+    intents: &mut Vec<Intent>,
+) {
+    // How many units can leave without breaching the floor.
+    let mut remaining = garrison_sum.saturating_sub(raid_floor);
+    let max_by_aggression = 8 + 4 * (p.aggression as u32);
+    let max_by_garrison = garrison_sum / 3;
+
+    // Collect inactive targets in range, sorted nearest-first.
+    let mut targets: Vec<_> = map_win
+        .rows
+        .iter()
+        .flatten()
+        .filter(|cell| {
+            cell.label.contains("(inactive)")
+                && !in_flight.contains(&(cell.x, cell.y))
+                && chebyshev(v.x, v.y, cell.x, cell.y) <= p.raid_range as u32
+        })
+        .collect();
+
+    targets.sort_by_key(|cell| chebyshev(v.x, v.y, cell.x, cell.y));
+
+    for cell in targets.iter().take(p.aggression as usize) {
+        let party = max_by_aggression.min(max_by_garrison).min(remaining);
+        // Minimum viable raiding party: stop if we can't send at least 4.
+        if party < 4 {
+            break;
+        }
+        remaining -= party;
+        let mut units = BTreeMap::new();
+        units.insert(unit.to_owned(), party);
+        intents.push(Intent::Raid {
+            village: v.id.clone(),
+            x: cell.x,
+            y: cell.y,
+            units,
+        });
     }
 }
 
@@ -256,12 +309,12 @@ pub fn plan_tick(
         .collect();
 
     // Recall: troops stationed at own villages that are not under imminent attack.
-    // We emit a Recall from the source village most likely to be correct: the
-    // first non-attacked own village that is *not* the host.  The executor will
-    // receive a 409 if the source is wrong (the server knows the true sender);
-    // we accept that outcome rather than duplicating server-side bookkeeping.
-    // Interpretation choice: Recall is emitted once per host entry (not once per
-    // iteration of the village loop) to avoid duplicate intents.
+    // The issuer village is only strict path addressing — order_return matches the
+    // stationed group by (owner, host), so any owned village may issue the recall.
+    // We pick the first non-attacked own village that is not the host to avoid
+    // issuing from the attacked village itself.
+    // Recall is emitted once per host entry (not once per iteration of the village
+    // loop) to avoid duplicate intents.
     for abroad in &d.reinforcements_abroad {
         if own_ids.contains(abroad.host_village.as_str()) {
             // Find a suitable source village to issue the recall from.
@@ -356,11 +409,17 @@ pub fn plan_tick(
             } else {
                 v.fields.iter().map(|f| f.level as f64).sum::<f64>() / v.fields.len() as f64
             };
+            // Prereq-consistent against the classic preset (specs/balance/presets/classic/construction.toml):
+            //   barracks  prereq main_building≥3  → raise MB to 3 first
+            //   academy   prereq barracks≥3        → raise barracks to 3 before academy
+            //   residence prereq main_building≥5   → raise MB to 5 before residence
+            // Duplicate kinds are intentional: the first entry that is unmet wins.
             const DOCTRINE: &[(&str, u8)] = &[
                 ("main_building", 3),
-                ("barracks", 1),
+                ("barracks", 3),
                 ("warehouse", 3),
                 ("granary", 3),
+                ("main_building", 5),
                 ("academy", 1),
                 ("residence", 10),
             ];
@@ -441,14 +500,23 @@ pub fn plan_tick(
         // -------------------------------------------------------------------
         // Rule 5: Training
         // Train the tribe's tier-1 infantry when the garrison is below the
-        // floor (10 + 10 × aggression).
+        // floor (10 + 10 × aggression).  In-training units (training[].remaining
+        // for the tier-1 unit) count toward the floor to avoid queuing duplicates
+        // when a batch is already in progress.
         // Heuristic: train min(needed, TRAIN_CAP_PER_TICK) and let the server's
         // 409 "insufficient" say no — we do not duplicate balance cost tables.
         // -------------------------------------------------------------------
         {
+            let in_training_tier1: u32 = v
+                .training
+                .iter()
+                .filter(|t| t.unit == unit)
+                .map(|t| t.remaining)
+                .sum();
+            let effective_garrison = garrison_sum + in_training_tier1;
             let floor = 10 + 10 * (p.aggression as u32);
-            if garrison_sum < floor {
-                let needed = floor - garrison_sum;
+            if effective_garrison < floor {
+                let needed = floor - effective_garrison;
                 let count = needed.min(TRAIN_CAP_PER_TICK);
                 intents.push(Intent::Train {
                     village: v.id.clone(),
@@ -472,7 +540,15 @@ pub fn plan_tick(
                 .unwrap_or(0);
 
             if culture_allows && residence_level >= 10 {
-                let settler_count = garrison_count_of(v, SETTLER_UNIT);
+                // Count both settlers in the garrison and any currently training, to avoid
+                // queuing duplicate TrainSettlers batches when training is in progress.
+                let settler_in_training: u32 = v
+                    .training
+                    .iter()
+                    .filter(|t| t.unit == SETTLER_UNIT)
+                    .map(|t| t.remaining)
+                    .sum();
+                let settler_count = garrison_count_of(v, SETTLER_UNIT) + settler_in_training;
 
                 if settler_count < 3 {
                     let needed = 3 - settler_count;
@@ -505,49 +581,28 @@ pub fn plan_tick(
         // Conditions: aggression ≥ 1 AND garrison ≥ floor (15 + 5 × aggression).
         // Raid up to `aggression` nearest inactive-labeled map cells within
         // raid_range tiles (Chebyshev).  Skip (x, y) already targeted by an
-        // own in-flight movement.  Party size: min(8 + 4 × aggression, garrison/3)
-        // tier-1 units only; never send below the garrison floor.
+        // own in-flight movement.
+        //
+        // Party budget: start = garrison − floor (what can leave without breaching
+        // the floor).  Per target: min(8 + 4×agg, garrison/3, remaining).  Stop
+        // early when the remaining budget falls below 4.  This prevents overdraw
+        // across multiple simultaneous raids — the floor is always maintained.
         // -------------------------------------------------------------------
         if p.aggression >= 1 {
             let raid_floor = 15 + 5 * (p.aggression as u32);
-            if garrison_sum >= raid_floor {
-                let party_size = {
-                    let max_by_aggression = 8 + 4 * (p.aggression as u32);
-                    let max_by_garrison = garrison_sum / 3;
-                    max_by_aggression.min(max_by_garrison)
-                };
-
-                // Only raid if we can send at least 1 unit and stay above floor.
-                let available_raiders = garrison_sum.saturating_sub(raid_floor).min(party_size);
-
-                if available_raiders > 0
-                    && let Some(map_win) = map
-                {
-                    // Collect inactive targets in range, sorted nearest-first.
-                    let mut targets: Vec<_> = map_win
-                        .rows
-                        .iter()
-                        .flatten()
-                        .filter(|cell| {
-                            cell.label.contains("(inactive)")
-                                && !in_flight.contains(&(cell.x, cell.y))
-                                && chebyshev(v.x, v.y, cell.x, cell.y) <= p.raid_range as u32
-                        })
-                        .collect();
-
-                    targets.sort_by_key(|cell| chebyshev(v.x, v.y, cell.x, cell.y));
-
-                    for cell in targets.iter().take(p.aggression as usize) {
-                        let mut units = BTreeMap::new();
-                        units.insert(unit.to_owned(), available_raiders);
-                        intents.push(Intent::Raid {
-                            village: v.id.clone(),
-                            x: cell.x,
-                            y: cell.y,
-                            units,
-                        });
-                    }
-                }
+            if garrison_sum >= raid_floor
+                && let Some(map_win) = map
+            {
+                raid_targets(
+                    v,
+                    map_win,
+                    &in_flight,
+                    p,
+                    garrison_sum,
+                    raid_floor,
+                    unit,
+                    &mut intents,
+                );
             }
         }
     }
@@ -1387,16 +1442,19 @@ mod tests {
     #[test]
     fn fields_resume_after_doctrine_complete() {
         let mut v = make_village("v1", 0, 0);
+        // All doctrine entries met:
+        //   main_building≥3 ✓, barracks≥3 ✓, warehouse≥3 ✓, granary≥3 ✓,
+        //   main_building≥5 ✓, academy≥1 ✓, residence≥10 ✓
         v.buildings = vec![
             SlotLevel {
                 slot: 0,
                 kind: "main_building".into(),
-                level: 3,
+                level: 5,
             },
             SlotLevel {
                 slot: 2,
                 kind: "barracks".into(),
-                level: 1,
+                level: 3,
             },
             SlotLevel {
                 slot: 3,
@@ -2084,6 +2142,334 @@ mod tests {
         assert!(
             !field_build,
             "field build must not fire when storage fires: {intents:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // M1: Doctrine walk test — verifies the DOCTRINE table is prereq-consistent
+    //     against the classic preset (specs/balance/presets/classic/construction.toml).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn doctrine_table_walks_to_completion() {
+        // Prereq-consistent against the classic preset; verified in this walk test.
+        //   barracks  requires main_building≥3  → MB 3 comes before barracks
+        //   academy   requires barracks≥3        → barracks 3 comes before academy
+        //   residence requires main_building≥5   → MB 5 comes before residence
+        //
+        // Start: fields avg=2 (gate met), only main_building=1 + rally_point.
+        let p = Persona {
+            window_start_hour: 0,
+            window_len_hours: 24,
+            tick_min_secs: 300,
+            tick_max_secs: 720,
+            aggression: 0,
+            raid_range: 8,
+        };
+
+        let mut buildings: Vec<SlotLevel> = vec![
+            SlotLevel {
+                slot: 0,
+                kind: "main_building".into(),
+                level: 1,
+            },
+            SlotLevel {
+                slot: 1,
+                kind: "rally_point".into(),
+                level: 1,
+            },
+        ];
+        let fields: Vec<SlotLevel> = vec![
+            SlotLevel {
+                slot: 0,
+                kind: "wood".into(),
+                level: 2,
+            },
+            SlotLevel {
+                slot: 1,
+                kind: "clay".into(),
+                level: 2,
+            },
+            SlotLevel {
+                slot: 2,
+                kind: "iron".into(),
+                level: 2,
+            },
+            SlotLevel {
+                slot: 3,
+                kind: "crop".into(),
+                level: 2,
+            },
+        ];
+
+        let mut sequence: Vec<(String, u8)> = vec![];
+        let mut step_count = 0u32;
+
+        loop {
+            let v = VillageDigest {
+                id: "v1".to_owned(),
+                x: 0,
+                y: 0,
+                capital: false,
+                resources: resources_at(50),
+                fields: fields.clone(),
+                buildings: buildings.clone(),
+                build_queue: vec![], // empty → build intent always fires
+                training: vec![],
+                garrison: vec![GarrisonEntry {
+                    unit: "legionnaire".into(),
+                    count: 10,
+                }],
+                reinforcements_here: vec![],
+                research: Default::default(),
+            };
+            let d = Digest {
+                world: "world-0001".into(),
+                player: "42".into(),
+                now_ms: 1_700_000_000_000,
+                villages: vec![v],
+                culture: Culture {
+                    villages_used: 1,
+                    villages_allowed: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+
+            let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+
+            // Find the Build intent for a BUILDING (not a field).
+            let build_result: Option<(String, u8)> = intents.iter().find_map(|i| {
+                if let Intent::Build {
+                    kind: Some(k),
+                    slot: s,
+                    target,
+                    ..
+                } = i
+                {
+                    if *target == "building" {
+                        Some((k.clone(), *s))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            });
+
+            let (kind, slot) = match build_result {
+                None => break,
+                Some(pair) => pair,
+            };
+
+            // Prereq checks at emission time (before updating state):
+            //   academy emission → barracks must be ≥3  (construction.toml: academy prereqs barracks≥3)
+            //   residence emission → main_building must be ≥5  (construction.toml: residence prereq MB≥5)
+            if kind == "academy" {
+                let barracks_lvl = buildings
+                    .iter()
+                    .find(|b| b.kind == "barracks")
+                    .map(|b| b.level)
+                    .unwrap_or(0);
+                assert!(
+                    barracks_lvl >= 3,
+                    "step {step_count}: academy emitted before barracks≥3 (barracks={barracks_lvl}); seq={sequence:?}"
+                );
+            }
+            if kind == "residence" {
+                let mb_lvl = buildings
+                    .iter()
+                    .find(|b| b.kind == "main_building")
+                    .map(|b| b.level)
+                    .unwrap_or(0);
+                assert!(
+                    mb_lvl >= 5,
+                    "step {step_count}: residence emitted before main_building≥5 (mb={mb_lvl}); seq={sequence:?}"
+                );
+            }
+
+            // Simulate the build: increment existing building or place new one.
+            if let Some(b) = buildings.iter_mut().find(|b| b.kind == kind) {
+                b.level += 1;
+                sequence.push((kind.clone(), b.level));
+            } else {
+                buildings.push(SlotLevel {
+                    slot,
+                    kind: kind.clone(),
+                    level: 1,
+                });
+                sequence.push((kind.clone(), 1u8));
+            }
+
+            step_count += 1;
+            assert!(
+                step_count <= 30,
+                "doctrine walk exceeded 30 steps; seq={sequence:?}"
+            );
+
+            // Done when residence reaches level 10.
+            let res_level = buildings
+                .iter()
+                .find(|b| b.kind == "residence")
+                .map(|b| b.level)
+                .unwrap_or(0);
+            if res_level >= 10 {
+                break;
+            }
+        }
+
+        // Final assertion: residence must be at level 10.
+        let res_level = buildings
+            .iter()
+            .find(|b| b.kind == "residence")
+            .map(|b| b.level)
+            .unwrap_or(0);
+        assert_eq!(
+            res_level, 10,
+            "walk did not reach residence=10; steps={step_count}, seq={sequence:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // M2: Raid overdraw test — total sent across raids ≤ garrison − floor
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn rule7_raid_never_below_garrison_floor_across_multiple_raids() {
+        // garrison=40, aggression=2, floor=15+5*2=25, remaining budget=15
+        // party per target = min(8+8=16, 40/3=13, 15) = 13
+        //   → first raid: 13 sent, remaining=2
+        //   → second target: party = min(16,13,2)=2 < 4 → STOP
+        // Total sent: 13 ≤ 15 (the budget). Floor (25) is never breached.
+        let mut v = make_village("v1", 0, 0);
+        let p = Persona {
+            window_start_hour: 0,
+            window_len_hours: 24,
+            tick_min_secs: 300,
+            tick_max_secs: 720,
+            aggression: 2,
+            raid_range: 15,
+        };
+        v.garrison = vec![GarrisonEntry {
+            unit: "legionnaire".into(),
+            count: 40,
+        }];
+
+        // Two inactive targets in range.
+        let map = MapWindow {
+            center_x: 0,
+            center_y: 0,
+            r: 15,
+            rows: vec![vec![
+                MapCell {
+                    cell_class: "".into(),
+                    label: "A (inactive) (1, 0)".into(),
+                    settle: false,
+                    x: 1,
+                    y: 0,
+                    href: None,
+                },
+                MapCell {
+                    cell_class: "".into(),
+                    label: "B (inactive) (2, 0)".into(),
+                    settle: false,
+                    x: 2,
+                    y: 0,
+                    href: None,
+                },
+            ]],
+        };
+
+        let now_ms = 1_700_000_000_000_i64;
+        let d = single_village_digest(v);
+        let intents = plan_tick(&d, Some(&map), &p, now_ms, "roman");
+
+        let raids: Vec<_> = intents
+            .iter()
+            .filter(|i| matches!(i, Intent::Raid { .. }))
+            .collect();
+        // Only one raid (second target skipped: remaining=2 < min_party=4).
+        assert_eq!(
+            raids.len(),
+            1,
+            "second target must be skipped when budget exhausted: {intents:?}"
+        );
+
+        // Total units sent ≤ garrison − floor (15).
+        let total_sent: u32 = raids
+            .iter()
+            .map(|i| {
+                if let Intent::Raid { units, .. } = i {
+                    units.values().sum()
+                } else {
+                    0
+                }
+            })
+            .sum();
+        assert!(
+            total_sent <= 15,
+            "total sent {total_sent} exceeds budget of 15: {intents:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // S5: In-training units count toward the garrison floor (no duplicate Train)
+    //     and in-training settlers count toward the settler quota.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn rule5_no_train_when_batch_in_training_fills_floor() {
+        // garrison=9, floor=10 (aggression=0). One legionnaire still training → effective=10 = floor.
+        let mut v = make_village("v1", 0, 0);
+        let p = persona(0); // floor = 10
+        v.garrison = vec![GarrisonEntry {
+            unit: "legionnaire".into(),
+            count: 9,
+        }];
+        v.training = vec![crate::digest::TrainingEntry {
+            building: "barracks".into(),
+            unit: "legionnaire".into(),
+            remaining: 1,
+            next_complete_at_ms: 1_700_000_060_000,
+        }];
+
+        let d = single_village_digest(v);
+        let intents = plan_tick(&d, None, &p, d.now_ms, "roman");
+
+        let train = intents.iter().any(|i| matches!(i, Intent::Train { .. }));
+        assert!(
+            !train,
+            "in-training unit fills floor → no duplicate Train: {intents:?}"
+        );
+    }
+
+    #[test]
+    fn rule6_no_train_settlers_when_one_in_training() {
+        // 2 settlers in garrison + 1 in training → total=3 → no TrainSettlers.
+        let mut v = settle_ready_village("v1", 0, 0);
+        v.garrison.push(GarrisonEntry {
+            unit: SETTLER_UNIT.into(),
+            count: 2,
+        });
+        v.training = vec![crate::digest::TrainingEntry {
+            building: "barracks".into(),
+            unit: SETTLER_UNIT.into(),
+            remaining: 1,
+            next_complete_at_ms: 1_700_000_060_000,
+        }];
+
+        let now_ms = 1_700_000_000_000_i64;
+        let p = persona(0);
+        let mut d = single_village_digest(v);
+        d.culture = culture_allows_more();
+
+        let intents = plan_tick(&d, None, &p, now_ms, "roman");
+        let ts = intents
+            .iter()
+            .any(|i| matches!(i, Intent::TrainSettlers { .. }));
+        assert!(
+            !ts,
+            "2 in garrison + 1 in training = 3 total → no TrainSettlers: {intents:?}"
         );
     }
 
