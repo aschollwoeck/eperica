@@ -1804,6 +1804,7 @@ pub async fn docs_api_openapi() -> Response {
 fn api_doc_group_row(group: crate::apidocs::ApiGroup) -> ApiDocGroupRow {
     ApiDocGroupRow {
         name: group.name,
+        anchor: group.anchor,
         auth_blurb: group.auth_blurb,
         endpoints: group
             .endpoints
@@ -1899,18 +1900,31 @@ fn api_doc_anchor(method: &str, path: &str) -> String {
 /// a POST's request example (already validated as JSON by `apidocs.rs`'s own unit tests) is
 /// compacted to one line for the `-d` value.
 fn api_doc_curl(ep: &crate::apidocs::Endpoint, bearer_placeholder: &str) -> String {
+    // Required query parameters must appear in the copyable line (AC3) — the map window's
+    // x/y are mandatory and a curl without them gets axum's plain-text 400.
+    let query: Vec<String> = ep
+        .params
+        .iter()
+        .filter(|p| matches!(p.location, crate::apidocs::ParamLocation::Query) && p.required)
+        .map(|p| format!("{}={{{}}}", p.name, p.name))
+        .collect();
+    let path_with_query = if query.is_empty() {
+        format!("{{server}}{}", ep.path)
+    } else {
+        format!("\"{{server}}{}?{}\"", ep.path, query.join("&"))
+    };
     let mut parts = vec![
         "curl".to_owned(),
         "-X".to_owned(),
         ep.method.to_owned(),
-        format!("{{server}}{}", ep.path),
+        path_with_query,
         "-H".to_owned(),
         format!("\"Authorization: Bearer {bearer_placeholder}\""),
     ];
     if let Some(body) = ep.request_example {
         let compact = serde_json::from_str::<serde_json::Value>(body)
             .map(|v| v.to_string())
-            .unwrap_or_else(|_| body.to_owned());
+            .unwrap_or_else(|_| body.to_owned()); // unreachable: every_example_string_parses_as_json guards all literals
         parts.push("-H".to_owned());
         parts.push("\"Content-Type: application/json\"".to_owned());
         parts.push("-d".to_owned());

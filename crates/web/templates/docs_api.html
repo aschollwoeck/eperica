@@ -40,7 +40,7 @@
     </section>
 
     {% for g in groups %}
-    <section class="apidoc__group psec" id="group-{{ g.name|lower }}">
+    <section class="apidoc__group psec" id="group-{{ g.anchor }}">
       <div class="bld-cols__head"><h2>{{ g.name }}</h2><span class="bld-cols__rule"></span></div>
       <p class="manual__banner apidoc__auth">{{ g.auth_blurb }}</p>
 
@@ -117,6 +117,10 @@
       <table class="table">
         <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
         <tbody>
+          <tr><td>400</td><td>The request itself is malformed: a body that isn't valid JSON
+            (<code>invalid_json</code> — possible on every POST), a non-numeric query value, or an
+            endpoint-specific validation failure (e.g. <code>empty_composition</code>,
+            <code>count_out_of_range</code> — listed per endpoint above).</td></tr>
           <tr><td>401</td><td>Missing, malformed, revoked or unknown bearer key; or a key whose bound account lost the required role — re-checked on every request, not just at mint.</td></tr>
           <tr><td>403</td><td>The bound account is banned/suspended (<code>account_blocked</code>), the acting player hasn't joined that world (<code>not_joined</code>, Agent API only), or the world is frozen after a win (<code>world_frozen</code>, mutating routes only).</td></tr>
           <tr><td>404</td><td>The path world/village/report id doesn't resolve, or (Agent API) resolves to something this player doesn't own or isn't a party to — never a forbidden leak, always a plain not-found (P4).</td></tr>

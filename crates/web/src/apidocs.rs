@@ -77,6 +77,8 @@ pub struct Endpoint {
 /// One rendered sidebar group (Agent API or Spectator API).
 pub struct ApiGroup {
     pub name: &'static str,
+    /// URL-safe anchor for the group section (no spaces — HTML id rules).
+    pub anchor: &'static str,
     /// The auth scheme explained once at the top of the group (plan/AC5): key format, minting,
     /// rate-budget class.
     pub auth_blurb: &'static str,
@@ -351,7 +353,8 @@ fn agent_group() -> ApiGroup {
             summary: "A bounded map window centred on (x, y) — the same cell data the map page shows.",
             description: "Built by the identical `map_cells` builder the browser `/map/tiles` endpoint (093) \
                 streams, so terrain, village markers, alliance tags and oases can never drift between the two \
-                surfaces. r is clamped to 0..=10 server-side regardless of the value sent (P11 — a bounded \
+                surfaces. A parseable out-of-range r is clamped to 0..=10 server-side; a non-numeric \
+                query value is a plain 400 (P11 — a bounded \
                 read, never a client-controlled unbounded scan).",
             auth: "agent",
             params: vec![
@@ -1038,7 +1041,7 @@ fn agent_group() -> ApiGroup {
                 r#"{
   "sent": true,
   "message_id": "1002938475",
-  "to": "9821"
+  "to": "5137"
 }"#,
             )],
             errors: {
@@ -1083,8 +1086,8 @@ fn agent_group() -> ApiGroup {
                 r#"{
   "conversations": [
     {
-      "key": "dm:9821",
-      "account": "9821",
+      "key": "dm:5137",
+      "account": "5137",
       "title": "gaius77",
       "last_body": "Send grain, we're starving.",
       "last_ms": 1781999500000,
@@ -1119,7 +1122,7 @@ fn agent_group() -> ApiGroup {
   "messages": [
     {
       "id": "1002938475",
-      "sender": "9821",
+      "sender": "5137",
       "sender_name": "gaius77",
       "body": "Send grain, we're starving.",
       "created_ms": 1781999500000
@@ -1141,10 +1144,11 @@ fn agent_group() -> ApiGroup {
 
     ApiGroup {
         name: "Agent API",
-        auth_blurb: "Bearer `epk_<id>_<secret>` — minted per AI account by an Administrator (`/admin` → \
+        anchor: "agent-api",
+        auth_blurb: "Bearer epk_<id>_<secret> — minted per AI account by an Administrator (/admin → \
             AI agents), shown exactly once (only a SHA-256 of the secret is stored). Bulk seeding emits a \
-            one-time JSON manifest `[{\"username\", \"token\"}]` consumed directly by the `eperica-bots` \
-            runner. All `/api` traffic (GETs included) counts against `agent_limit_per_window` — 120 \
+            one-time JSON manifest [{\"username\", \"token\"}] consumed directly by the eperica-bots \
+            runner. All /api traffic (GETs included) counts against agent_limit_per_window — 120 \
             requests/min at current config (specs/balance/fairplay.toml) — per key; see the fairplay rules.",
         endpoints,
     }
@@ -1249,7 +1253,7 @@ fn spectator_group() -> ApiGroup {
             method: "GET",
             path: "/spectator/w/{world}/players",
             summary: "A paged, population-descending index of every player in the world.",
-            description: "50 players per page (page defaults to 1 on a missing/invalid query value). npc is \
+            description: "50 players per page (missing or non-positive page ⇒ 1; a non-numeric value is a plain 400). npc is \
                 derived server-side as is_ai && world.ai_labeled — the raw is_ai truth is never itself \
                 serialized on either a labeled or a disguised world (AC7). Each row also carries villages — \
                 every village that player owns, for the players → village drill-down.",
@@ -1344,7 +1348,8 @@ fn spectator_group() -> ApiGroup {
 
     ApiGroup {
         name: "Spectator API",
-        auth_blurb: "Bearer `spk_<id>_<secret>` — minted per account by an Administrator (`/admin` → \
+        anchor: "spectator-api",
+        auth_blurb: "Bearer spk_<id>_<secret> — minted per account by an Administrator (/admin → \
             Spectator keys), shown exactly once. Authenticates only while the bound account currently holds \
             the Spectator role (re-checked on every request, not just at mint) — revoking the role \
             dead-ends every key that account holds instantly. Read-only by construction: no mutating route is \
@@ -1410,7 +1415,7 @@ fn openapi_operation(group_name: &str, ep: &Endpoint) -> Value {
 
     let mut responses = serde_json::Map::new();
     for r in &ep.responses {
-        let example: Value = serde_json::from_str(r.example).unwrap_or(Value::Null);
+        let example: Value = serde_json::from_str(r.example).unwrap_or(Value::Null) /* unreachable: every_example_string_parses_as_json guards all literals */;
         responses.insert(
             r.status.to_string(),
             json!({
@@ -1452,7 +1457,7 @@ fn openapi_operation(group_name: &str, ep: &Endpoint) -> Value {
         operation.insert("parameters".to_owned(), json!(parameters));
     }
     if let Some(req) = ep.request_example {
-        let example: Value = serde_json::from_str(req).unwrap_or(Value::Null);
+        let example: Value = serde_json::from_str(req).unwrap_or(Value::Null) /* unreachable: every_example_string_parses_as_json guards all literals */;
         operation.insert(
             "requestBody".to_owned(),
             json!({

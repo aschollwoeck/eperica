@@ -44,7 +44,7 @@ document** at `/docs/api/openapi.json` for Swagger UI/Postman/codegen users.
   codes; the coverage test enforces the equality both directions.
 - **AC3 — Real examples.** Every endpoint shows a copyable `curl` (correct method, path,
   auth header, body where applicable) and at least one JSON response example; POST endpoints
-  show a request-body example. The shared error contract (401/403/404/409/422/429 +
+  show a request-body example. The shared error contract (400/401/403/404/409/429 +
   `{error, reason}`, `retry_after_secs`) is documented once centrally and per-endpoint where
   specific.
 - **AC4 — Valid OpenAPI.** `/docs/api/openapi.json` parses as JSON, declares `openapi: 3.0.x`,

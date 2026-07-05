@@ -2102,6 +2102,8 @@ pub struct ApiDocsTemplate {
 /// One sidebar/content group — the Agent API or the Spectator API.
 pub struct ApiDocGroupRow {
     pub name: &'static str,
+    /// URL-safe section anchor (HTML ids must not contain spaces).
+    pub anchor: &'static str,
     /// The auth scheme explainer shown once at the top of the group (AC5).
     pub auth_blurb: &'static str,
     pub endpoints: Vec<ApiDocEndpointRow>,
