@@ -1,5 +1,9 @@
 # Training troops & feeding your army
 
+Every unit you field has to be trained somewhere, and every unit you keep eats crop every hour.
+This page covers where to train each kind of troop, and the upkeep rule that puts a natural
+ceiling on army size.
+
 ## Training a batch
 
 Units are trained at three buildings, each with its own queue:
@@ -33,7 +37,14 @@ To avoid starvation: raise croplands, demolish nothing you need, or simply train
 Watch the crop line on the village page — it turns into a warning when your net is zero or
 negative.
 
-> **Upkeep is not speed-scaled.** On a faster world your fields produce more crop per real-time
-> hour — but each unit eats exactly the same amount regardless of world speed. A large army is just
-> as hungry on a 3× world as on a 1× one. Plan your army size against your cropland output, not
-> the world speed.
+> **Warning:** Upkeep is not speed-scaled. On a faster world your fields produce more crop per
+> real-time hour — but each unit eats exactly the same amount regardless of world speed. A large
+> army is just as hungry on a 3× world as on a 1× one. Plan your army size against your cropland
+> output, not the world speed.
+
+## See also
+
+- [Resources](resources.md) — crop production and the net-crop formula.
+- [Tribes, the Academy & the Smithy](tribes-and-units.md) — each unit's exact upkeep and cost.
+- [Building & upgrading](buildings.md) — Barracks, Stable, and Workshop prerequisites.
+- [Player Manual index](README.md)

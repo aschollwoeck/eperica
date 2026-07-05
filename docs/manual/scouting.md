@@ -50,4 +50,11 @@ Scouting reports sit alongside battle reports under **Reports** from your villag
   scouted and how many enemy scouts you destroyed — but **not** what they learned. If scouts rode in
   with an attack, your battle report simply notes the enemy also scouted you.
 
-> Once sent, a scout mission — like an attack — **can't be recalled**.
+> **Warning:** Once sent, a scout mission — like an attack — **can't be recalled**.
+
+## See also
+
+- [Attacking & defending](combat.md) — scouting alongside an attack or raid.
+- [Tribes, the Academy & the Smithy](tribes-and-units.md) — each tribe's scout and its speed.
+- [Troop movement](troop-movement.md) — how scouting missions travel.
+- [Player Manual index](README.md)

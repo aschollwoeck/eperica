@@ -1,6 +1,8 @@
 # Resources
 
-> This page explains how your village produces, stores, and spends resources.
+Your village runs on four resources — what you build, train, and hold all comes down to how well
+you produce and store them. This page explains the loop: production, storage, and the crop rule
+that keeps your army fed.
 
 ## The four resources
 
@@ -50,10 +52,11 @@ Your village page shows **net crop per hour**:
 net crop = (crop field output × world speed) − population − troop upkeep
 ```
 
-**World speed affects production but not upkeep.** On a fast world your crop fields pour out
-resources at the speed multiplier, while population and troop costs stay the same. Fast worlds
-are naturally crop-abundant. On a slow world (or if you have many troops and few crop fields)
-your net can go negative — watch it carefully, or your garrison will start to starve.
+> **Warning:** World speed affects production but not upkeep. On a fast world your crop fields
+> pour out resources at the speed multiplier, while population and troop upkeep stay exactly the
+> same — fast worlds are naturally crop-abundant. On a slow world (or with many troops and few
+> crop fields) your net can go negative; if it stays negative long enough your granary empties and
+> your troops **starve** — see [Training & upkeep](training-and-upkeep.md).
 
 If net crop turns **red**, either upgrade your crop fields, reduce your troop count, or consume
 stored crop before the granary empties.

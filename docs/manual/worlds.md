@@ -1,7 +1,7 @@
 # Worlds & game modes
 
-> This page explains how to find, join, and switch between worlds, and what the different world
-> types mean.
+This page explains how to find, join, and switch between worlds, and what a world's speed and
+preset mean for how you play it.
 
 ## What is a world?
 
