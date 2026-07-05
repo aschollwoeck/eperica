@@ -17,15 +17,16 @@ use crate::templates::{
     ManualBuildingsTemplate, ManualChapterRow, ManualChapterTemplate, ManualCostRow,
     ManualFieldLevelRow, ManualFieldSection, ManualIndexTemplate, ManualJumpItem, ManualLevelRow,
     ManualMechanicsTemplate, ManualRefLinkRow, ManualSectionRow, ManualTribeMerchant,
-    ManualTribeUnits, ManualTribeWall, ManualUnitRow, ManualUnitsTemplate, MapCellView,
-    MapTemplate, MarketTemplate, MedalRowView, MemberStatRow, MessagesTemplate, ModAccountTemplate,
-    ModQueueTemplate, ModReportRow, MovementRow, NotificationRowView, NotificationsTemplate,
-    OasisRow, OutgoingInviteView, PendingInviteView, PlayerStatsTemplate, PlotView,
-    PrivacyTemplate, ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow,
-    RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, ResourceRibbon,
-    RosterRowView, ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate,
-    SettingsTemplate, SettingsToggleRow, ShipmentRow, SitterRow, SittingTemplate, SmithyRow,
-    SmithyTemplate, SpectateBuildRow, SpectateFeedTemplate, SpectateMovementRow, SpectatePlayerRow,
+    ManualTribeWall, ManualUnitGroup, ManualUnitJumpItem, ManualUnitSection,
+    ManualUnitTribeSection, ManualUnitsTemplate, MapCellView, MapTemplate, MarketTemplate,
+    MedalRowView, MemberStatRow, MessagesTemplate, ModAccountTemplate, ModQueueTemplate,
+    ModReportRow, MovementRow, NotificationRowView, NotificationsTemplate, OasisRow,
+    OutgoingInviteView, PendingInviteView, PlayerStatsTemplate, PlotView, PrivacyTemplate,
+    ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate,
+    ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, ResourceRibbon, RosterRowView,
+    ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate, SettingsTemplate,
+    SettingsToggleRow, ShipmentRow, SitterRow, SittingTemplate, SmithyRow, SmithyTemplate,
+    SpectateBuildRow, SpectateFeedTemplate, SpectateMovementRow, SpectatePlayerRow,
     SpectatePlayersTemplate, SpectateReportRow, SpectateShipmentRow, SpectateTrainingRow,
     SpectateVillageLink, SpectateVillageTemplate, SpectateWorldRow, SpectateWorldsTemplate,
     SpectatorHolderRow, StyleGuideTemplate, TermsTemplate, TrainRow, TroopsTemplate,
@@ -257,34 +258,34 @@ fn field_explanation(kind: ResourceKind) -> &'static str {
         ResourceKind::Wood => {
             "The village's timber yard: nearly every construction order, from your first Warehouse \
              to the Wonder's hundredth level, draws on wood, making it the backbone resource behind \
-             any building spree. It's usually the first field to bottleneck a brand-new village, \
-             before clay overtakes it as the heavier cost once the early buildings are up. Keep a \
+             any building spree. It's usually the first squeeze a brand-new village feels, even \
+             though clay bills heaviest on field upgrades from the very start. Keep a \
              Woodcutter or two ahead of your build queue, not behind it, or every order waiting in \
              line idles on timber. All four field types below share the same output curve — a \
              Woodcutter, Clay Pit, Iron Mine, and Cropland at the same level produce the same \
              hourly amount of their own resource."
         }
         ResourceKind::Clay => {
-            "The hungriest of the three building resources: most construction, buildings and fields \
-             alike, leans on clay harder than on wood or iron, so a Clay Pit falling behind stalls \
+            "The hungriest appetite in the village: field upgrades — the bulk of a village's \
+             lifetime spend — bill clay hardest of the three building resources, so a Clay Pit falling behind stalls \
              the queue faster than any other field would. It pays to run your Clay Pits a level or \
              two ahead of your Woodcutters and Iron Mines for exactly that reason. A village that \
              neglects clay ends up rich in wood and iron it can't actually spend."
         }
         ResourceKind::Iron => {
-            "Where the army's weight of metal comes from: unit costs lean on iron, and upkeep only \
-             grows as the ranks do, so an Iron Mine that keeps pace with your military ambitions \
-             matters more the larger your army gets. Early on it can trail wood and clay without \
-             much cost, but once you're training troops in earnest it becomes the resource that \
-             actually limits how large a force you can field and sustain."
+            "Where the army's weight of metal comes from: the armoured elites — heavy infantry \
+             and the great cavalry lines — bill their steepest share in iron, so an Iron Mine that \
+             keeps pace with your military ambitions matters more as your roster grows serious. \
+             Early on it can trail wood and clay without much cost, but a war economy short on \
+             iron caps how elite a force you can field and sustain."
         }
         ResourceKind::Crop => {
             "The odd one out among the four fields: crop is the only resource a village truly \
              consumes rather than merely spends — every point of population and every trained \
              unit's upkeep draws on it hour after hour, whether you're building anything or not. A \
              cropland shortfall doesn't just slow construction, it starves the village outright, a \
-             warning every Travian veteran learns to dread. Because of that constant drain, the \
-             capital alone may raise its croplands past the ordinary cap, and croplands charge \
+             warning every Travian veteran learns to dread. The capital alone may raise its \
+             fields — croplands very much included — past the ordinary cap, and croplands charge \
              their own cost table, weighted differently from the other fields — notably light \
              on crop itself."
         }
@@ -1084,20 +1085,39 @@ fn fmt_days(secs: i64) -> String {
     }
 }
 
-/// The generated Units reference page (127 T2, AC3/AC4): every tribe's full roster, read from the
-/// resolved `UnitRules`. Only `train_time` is speed-adjusted (plan §Risks) — every other stat, cost,
-/// and upkeep is a flat preset value.
+/// The generated Units reference page (127 T2, AC3/AC4; redesigned per operator feedback — "the
+/// units still don't have the same setup as buildings" — into a chapter per unit, mirroring
+/// `manual_ref_buildings`'s treatment): every tribe's full roster, read from the resolved
+/// `UnitRules`, each rendered as its own `ManualUnitSection` chapter. Only `train_time` is
+/// speed-adjusted (plan §Risks) — every other stat, cost, and upkeep is a flat preset value.
 pub async fn manual_ref_units(State(state): State<AppState>, jar: PrivateCookieJar) -> Response {
     let ctx = manual_rules_view(&state, &jar).await;
     let unit_rules = &ctx.rules.units;
-    let tribes = [Tribe::Romans, Tribe::Teutons, Tribe::Gauls]
+    let tribes: Vec<ManualUnitTribeSection> = [Tribe::Romans, Tribe::Teutons, Tribe::Gauls]
         .into_iter()
-        .map(|tribe| ManualTribeUnits {
+        .map(|tribe| ManualUnitTribeSection {
             tribe: tribe_label(Some(tribe)),
             units: unit_rules
                 .roster(tribe)
                 .iter()
-                .map(|spec| manual_unit_row(tribe, spec, ctx.speed))
+                .map(|spec| manual_unit_section(tribe, spec, ctx.speed))
+                .collect(),
+        })
+        .collect();
+    // The jump-list groups — one per tribe, keeping each roster's own declared order among its
+    // members (127 redesign, mirroring `BUILDING_GROUP_ORDER`'s purpose grouping on the Buildings
+    // page but grouped by tribe here instead).
+    let groups = tribes
+        .iter()
+        .map(|t| ManualUnitGroup {
+            title: t.tribe,
+            items: t
+                .units
+                .iter()
+                .map(|u| ManualUnitJumpItem {
+                    slug: u.slug.clone(),
+                    name: u.name.clone(),
+                })
                 .collect(),
         })
         .collect();
@@ -1105,6 +1125,7 @@ pub async fn manual_ref_units(State(state): State<AppState>, jar: PrivateCookieJ
         sections: manual_section_rows(None),
         ref_links: manual_ref_link_rows(Some("units")),
         banner: ctx.banner,
+        groups,
         tribes,
     })
 }
@@ -1118,23 +1139,27 @@ const UNIT_ART_GAPS: [&str; 3] = [
     "teutons_scout",
 ];
 
-/// The roster thumbnail slug for `spec` under `tribe` — `<tribe>_<id>` (067's existing convention),
-/// or `None` for the pinned `UNIT_ART_GAPS` so the page renders an empty cell rather than a broken
-/// `<img>`.
-fn unit_portrait(tribe: Tribe, spec: &UnitSpec) -> Option<String> {
-    let slug = format!("{}_{}", tribe.slug(), spec.id.as_str());
-    if UNIT_ART_GAPS.contains(&slug.as_str()) {
+/// The chapter anchor id / roster thumbnail slug for `spec` under `tribe` — `<tribe>_<id>` (067's
+/// existing convention).
+fn unit_slug(tribe: Tribe, spec: &UnitSpec) -> String {
+    format!("{}_{}", tribe.slug(), spec.id.as_str())
+}
+
+/// The resolved portrait URL for `slug` — `None` for the pinned `UNIT_ART_GAPS` so the chapter
+/// renders without a figure at all (127 redesign) rather than a broken `<img>`.
+fn unit_portrait_url(slug: &str) -> Option<String> {
+    if UNIT_ART_GAPS.contains(&slug) {
         None
     } else {
-        Some(slug)
+        Some(format!("/static/units/{slug}.webp"))
     }
 }
 
-/// One unit's reference row: prerequisites read straight off its `ResearchSpec` — `None` (a tier-1
-/// combat unit or a research-free Expansion unit) trains from the start; otherwise the Academy-gated
+/// A unit's research requirements, read straight off its `ResearchSpec` — `None` (a tier-1 combat
+/// unit or a research-free Expansion unit) trains from the start; otherwise the Academy-gated
 /// building requirements it lists.
-fn manual_unit_row(tribe: Tribe, spec: &UnitSpec, speed: GameSpeed) -> ManualUnitRow {
-    let prerequisites = match &spec.research {
+fn unit_research_requirements(spec: &UnitSpec) -> String {
+    match &spec.research {
         None => "None — trained from the start".to_owned(),
         Some(r) if r.requirements.is_empty() => {
             "Academy research (no building level required)".to_owned()
@@ -1145,10 +1170,26 @@ fn manual_unit_row(tribe: Tribe, spec: &UnitSpec, speed: GameSpeed) -> ManualUni
             .map(|(k, l)| format!("{} {l}", building_label(*k)))
             .collect::<Vec<_>>()
             .join(", "),
-    };
-    ManualUnitRow {
+    }
+}
+
+/// One unit's full reference chapter (127 redesign) — the unit counterpart to
+/// `manual_building_levels`/`ManualBuildingSection`: portrait, hand-written flavor prose
+/// (`unit_explanation`), a rules-fed facts line, and the always-visible stat card.
+fn manual_unit_section(tribe: Tribe, spec: &UnitSpec, speed: GameSpeed) -> ManualUnitSection {
+    let slug = unit_slug(tribe, spec);
+    let facts = format!(
+        "Trained in {} · Research: {} · Role: {}",
+        building_label(spec.trained_in),
+        unit_research_requirements(spec),
+        role_label(spec.role)
+    );
+    ManualUnitSection {
+        image: unit_portrait_url(&slug),
+        slug,
         name: spec.name.clone(),
-        role: role_label(spec.role),
+        explanation: unit_explanation(tribe, spec),
+        facts,
         attack: spec.attack,
         def_inf: spec.defense_infantry,
         def_cav: spec.defense_cavalry,
@@ -1160,9 +1201,223 @@ fn manual_unit_row(tribe: Tribe, spec: &UnitSpec, speed: GameSpeed) -> ManualUni
         cost_iron: spec.cost.iron,
         cost_crop: spec.cost.crop,
         train_time: fmt_duration(scaled_time_secs(spec.train_secs, speed)),
-        trained_in: building_label(spec.trained_in),
-        prerequisites,
-        portrait: unit_portrait(tribe, spec),
+    }
+}
+
+/// Hand-written flavor prose for a unit's chapter on the Units reference page (127 redesign,
+/// operator feedback: "the units still don't have the same setup as buildings"): role, when it
+/// shines, and its strategic character. Deliberately carries **no balance numbers** — every
+/// rules-fed figure (attack/defence/speed/carry/upkeep/cost/research) lives on the chapter's facts
+/// line or stat card instead, so this text never drifts out of sync with a preset change. Matched on
+/// `(tribe, spec.id)` since a handful of ids (`ram`, `settler`) are shared by more than one tribe's
+/// roster with a genuinely different profile each time.
+fn unit_explanation(tribe: Tribe, spec: &UnitSpec) -> &'static str {
+    match (tribe, spec.id.as_str()) {
+        // ---------------------------------------------------------------- Romans
+        (Tribe::Romans, "legionnaire") => {
+            "Rome's opening infantry: solidly built on both attack and defence rather than \
+             excelling at either, and trainable from the very first Barracks with no research \
+             detour. It's usually the first unit any Roman village fields, equally happy raiding, \
+             garrisoning, or simply discouraging an opportunist. Lean on it early, then let \
+             purpose-built units take over as the Academy unlocks them."
+        }
+        (Tribe::Romans, "praetorian") => {
+            "Where the Legionnaire splits its attention, the Praetorian gives up offence for a \
+             much sturdier defence — the unit a Roman village garrisons with once holding ground \
+             matters more than raiding out. It only trains once you've researched it at the \
+             Academy with a Smithy standing, so it's a deliberate defensive investment, not a \
+             starting default. Post it behind a Wall and a village becomes genuinely hard to \
+             crack."
+        }
+        (Tribe::Romans, "imperian") => {
+            "Rome's heaviest-hitting foot soldier, traded for noticeably thinner defence than the \
+             Praetorian carries. Train it once the Academy and Smithy are up and your strategy has \
+             turned toward offence — it's the backbone of a Roman attacking stack rather than a \
+             garrison unit. Its decent carry means an Imperian raid also comes home well loaded."
+        }
+        (Tribe::Romans, "equites_caesaris") => {
+            "Rome's most expensive cavalry, and the last one its Stable unlocks: a hard-hitting \
+             elite rather than a speed unit, noticeably slower on the march than the Equites \
+             Imperatoris despite its far heavier armour and punch. Field it once a village's \
+             economy can sustain its steep upkeep, as the spearhead of a serious offensive stack. \
+             It rewards a fully developed Academy and Stable, not an early investment."
+        }
+        (Tribe::Romans, "equites_legati") => {
+            "Rome's scout: no attack worth mentioning, sent to spy out a target before you commit \
+             real troops rather than to fight anyone. Its speed gets word back quickly, so it's the \
+             eyes of a campaign, not its fists. Send it ahead of anything you're unsure about — the \
+             intelligence it brings is worth far more than the resources spent training it."
+        }
+        (Tribe::Romans, "equites_imperatoris") => {
+            "Rome's line cavalry: quick, hard on attack, and hauls home a serious amount of loot, \
+             equally at home leading a raid or reinforcing an ally in a hurry. It needs a \
+             well-developed Academy and Stable before it trains, so it belongs to a village that \
+             has already invested in its military infrastructure. Send it wherever Roman troops \
+             need to arrive fast and hit hard the moment they do."
+        }
+        (Tribe::Romans, "battering_ram") => {
+            "Rome's siege ram: brought along specifically to batter down a Wall, without which a \
+             fortified village is nearly unassailable to anything else in the roster. It's slow and \
+             fights like ordinary infantry if forced to, so it always travels inside a larger stack \
+             rather than alone. Build it — and the Workshop and advanced Academy it demands — only \
+             once your strategy has turned toward sieging a real target, not raiding."
+        }
+        (Tribe::Romans, "fire_catapult") => {
+            "Rome's catapult: rather than breaching the Wall, it grinds down a single chosen \
+             building inside the village — a Warehouse, a Granary, even a rival's Wonder. It's \
+             slow, hungry to keep fed, and demands the highest tiers of Academy and Workshop, so it \
+             only appears in a genuinely committed siege force. Pick its target with care — a Fire \
+             Catapult stays aimed at one building type for the whole battle."
+        }
+        (Tribe::Romans, "senator") => {
+            "Rome's diplomat-soldier: sent against an already-weakened enemy village to erode its \
+             loyalty toward capture, not to raze it. It can hold its own in a fight along the way, \
+             but its purpose is political — a successful campaign wins a village over intact rather \
+             than destroying it. Training one is a long, expensive undertaking reserved for a \
+             village explicitly aimed at conquest."
+        }
+        (Tribe::Romans, "settler") => {
+            "Rome's colonist: carries the manpower and resources to found a brand-new village on an \
+             empty tile, the only way to grow beyond your first settlement. It has essentially \
+             nothing to attack with, though a solid defence means a Settler party caught on the \
+             road isn't defenceless. Train the required trio well ahead of a founding attempt — \
+             each one is a slow, resource-heavy project in its own right."
+        }
+        // ---------------------------------------------------------------- Teutons
+        (Tribe::Teutons, "clubswinger") => {
+            "Teuton's opening infantry — the cheapest and fastest-trained unit a village can field, \
+             built to flood the map in overwhelming numbers rather than stand toe-to-toe. Its \
+             defence is thin, so a lone garrison of them folds quickly, but a swarm makes an \
+             excellent early raiding force. Lean into speed and volume, not durability."
+        }
+        (Tribe::Teutons, "spearman") => {
+            "Teuton's dedicated defender: unremarkable on attack but notably strong against \
+             cavalry, the classic answer to an enemy raiding force built around mounted troops. \
+             Garrison it in a village that expects to be raided rather than one planning to raid \
+             out. It only needs a modest Academy to unlock, so it's an easy early addition to a \
+             defensive build."
+        }
+        (Tribe::Teutons, "axeman") => {
+            "Teuton's offensive infantry — meaningfully harder-hitting than the Clubswinger, at the \
+             cost of needing an Academy and Smithy before it trains. Its defence is far more \
+             balanced than the Clubswinger's, so it can hold its own if a raid runs into \
+             resistance. Bring it once you're ready to move from opportunistic raiding toward a \
+             real offensive campaign."
+        }
+        (Tribe::Teutons, "scout") => {
+            "Teuton's scout: unarmed for a real fight, sent ahead purely to see what's waiting at a \
+             target before you commit troops. It's slower afoot and less perceptive than the other \
+             tribes' scouts, so send it early and don't lean on it alone against a well-defended \
+             village. Its Academy requirement is light, so most villages can field one from early \
+             on."
+        }
+        (Tribe::Teutons, "paladin") => {
+            "Teuton's cavalry generalist — modest on attack but the sturdiest defence of any Teuton \
+             horseman, doubling as a mobile garrison as much as a raider. Its unmatched carry also \
+             makes it an efficient looter once a target's defences are broken. Train it once your \
+             Academy and Stable are developed enough to support cavalry play."
+        }
+        (Tribe::Teutons, "teutonic_knight") => {
+            "Teuton's heaviest cavalry — trading away some of the Paladin's defensive sturdiness \
+             for a much bigger punch. It demands a fully built Academy and Stable, so it belongs to \
+             a village well past its opening phase. Use it as the spearhead of a serious offensive \
+             stack rather than a defensive garrison."
+        }
+        (Tribe::Teutons, "ram") => {
+            "Teuton's siege ram: without one accompanying an attack, a defended Wall can turn back \
+             an otherwise-winning army. It's slow and unremarkable in an open fight, so it always \
+             travels as part of a larger stack rather than alone. Build the Workshop and advanced \
+             Academy it needs only once your ambitions move from raiding to actually taking or \
+             crushing a target."
+        }
+        (Tribe::Teutons, "catapult") => {
+            "Teuton's catapult: aimed at grinding down one chosen building inside an enemy village \
+             rather than the Wall itself, from Warehouses to a rival's Wonder. It hits noticeably \
+             softer than the other two tribes' equivalents, so a Teuton siege leans on numbers to \
+             make up the difference. Reserve it for genuine siege campaigns — it demands the \
+             highest tiers of Academy and Workshop and comes with a heavy upkeep."
+        }
+        (Tribe::Teutons, "chief") => {
+            "Teuton's answer to the Senator: sent against an already-weakened village to win it \
+             over through eroded loyalty rather than raze it. Its purpose is political, not \
+             martial, though it can defend itself credibly enough along the way if the escort runs \
+             into trouble. Training one is a serious commitment, reserved for a village explicitly \
+             built for conquest."
+        }
+        (Tribe::Teutons, "settler") => {
+            "Teuton's colonist: carries the manpower and resources to found a brand-new village on \
+             an empty tile, the only way to grow beyond your first settlement. It's not built for a \
+             fight, though a solid defence means a Settler party caught on the road isn't \
+             defenceless. Train the required trio well ahead of a founding attempt — each one is a \
+             slow, resource-heavy project in its own right."
+        }
+        // ---------------------------------------------------------------- Gauls
+        (Tribe::Gauls, "phalanx") => {
+            "The cheap, iron-light infantry Gauls hide behind: barely worth sending on the attack, \
+             but a solid, inexpensive wall of defence for a village that would rather not be raided \
+             at all. It trains from the very start with no research detour, so it's the reflexive \
+             first choice for a new Gaulish village that wants to sit still and turtle. Stack it \
+             deep behind a Wall rather than ever marching it out."
+        }
+        (Tribe::Gauls, "swordsman") => {
+            "Gaul's offensive infantry — considerably harder-hitting than the Phalanx, at the cost \
+             of leaning away from defence. Train it once the Academy and Smithy are up and your \
+             strategy calls for troops that can actually carry a fight rather than just hold a \
+             line. It's the backbone of a Gaulish attacking stack when cavalry alone isn't enough."
+        }
+        (Tribe::Gauls, "pathfinder") => {
+            "Gaul's scout, and the fastest of any tribe's — first to a target and first to report \
+             back, at the cost of no attack worth mentioning. Send it ahead of anything you're \
+             unsure about; the intelligence it brings is worth far more than the modest resources \
+             spent training it. It needs a developed Academy and Stable before it trains."
+        }
+        (Tribe::Gauls, "theutates_thunder") => {
+            "The fastest unit in the game, full stop — a lightning raider that outruns even every \
+             tribe's dedicated scout. It's built to strike hard and be gone before a defender can \
+             react, or to rush reinforcements somewhere in a hurry, rather than to sit and slug it \
+             out. Train it once your Academy and Stable can support serious cavalry play."
+        }
+        (Tribe::Gauls, "druidrider") => {
+            "Gaul's defensive cavalry — unusually tough against infantry for a mounted unit, and \
+             fast enough to redeploy wherever a village needs reinforcing in a hurry. It carries \
+             comparatively little loot, so it's a reinforcer and garrison unit rather than a raider. \
+             Use it to shore up a threatened ally's defence faster than infantry ever could arrive."
+        }
+        (Tribe::Gauls, "haeduan") => {
+            "Gaul's premier cavalry — the hardest counter to enemy horsemen the roster has, on top \
+             of a genuinely heavy attack of its own. It demands a fully built Academy and Stable, so \
+             it belongs to a village well past its opening phase. Field it to break an enemy's \
+             cavalry-led offensive as much as to lead your own."
+        }
+        (Tribe::Gauls, "ram") => {
+            "Gaul's siege ram: without one accompanying an attack, a defended Wall can turn back an \
+             otherwise-winning army. It's slow and unremarkable in an open fight, so it always \
+             travels as part of a larger stack rather than alone. Build the Workshop and advanced \
+             Academy it needs only once your ambitions move from raiding to actually taking or \
+             crushing a target."
+        }
+        (Tribe::Gauls, "trebuchet") => {
+            "Gaul's catapult: aimed at grinding down one chosen building inside an enemy village \
+             rather than the Wall itself, from Warehouses to a rival's Wonder. It demands the \
+             highest tiers of Academy and Workshop and a heavy upkeep, so it only shows up once a \
+             campaign has committed to a genuine siege rather than a raid. Choose its target \
+             carefully — it stays aimed at one building type for the whole battle."
+        }
+        (Tribe::Gauls, "chieftain") => {
+            "Gaul's answer to the Senator: sent against an already-weakened village to win it over \
+             through eroded loyalty rather than raze it. Its purpose is political, not martial, \
+             though it can defend itself credibly enough along the way if the escort runs into \
+             trouble. Training one is a serious commitment, reserved for a village explicitly built \
+             for conquest."
+        }
+        (Tribe::Gauls, "settler") => {
+            "Gaul's colonist — and, of the three tribes', the quickest to finish training: carries \
+             the manpower and resources to found a brand-new village on an empty tile, the only way \
+             to grow beyond your first settlement. It has essentially nothing to attack with, \
+             though a solid defence means a Settler party caught on the road isn't defenceless. \
+             Train the required trio well ahead of a founding attempt."
+        }
+        _ => unreachable!("every roster unit id is a fixed, known TOML entry (127 redesign)"),
     }
 }
 
@@ -8278,7 +8533,7 @@ pub async fn notifications_stream(
 mod tests {
     use super::{
         ALL_BUILDING_KINDS, UNIT_ART_GAPS, building_art_url, building_kind_id, field_art_slug,
-        pct_encode, user_msg,
+        pct_encode, unit_explanation, user_msg,
     };
     use eperica_domain::{ResourceKind, Tribe};
 
@@ -8364,6 +8619,31 @@ mod tests {
                     "{slug}: file exists={exists}, pinned as a known gap={pinned_gap} — if art \
                      was added, shrink UNIT_ART_GAPS; if a gap is new, pin it"
                 );
+            }
+        }
+    }
+
+    /// 127 redesign: `unit_explanation` is matched on `(tribe, spec.id)` rather than compiler-checked
+    /// exhaustiveness (unlike `ALL_BUILDING_KINDS` against the `BuildingKind` enum), so a preset
+    /// shipping a roster id this match doesn't cover would panic the live page. Walks every roster
+    /// entry in **both** shipped presets (classic and speed) and calls it, proving there is no gap —
+    /// a reminder to add a prose arm the moment a new unit id ships in either preset.
+    #[test]
+    fn unit_explanation_covers_every_roster_unit_in_every_shipped_preset() {
+        for preset in ["classic", "speed"] {
+            let rules = eperica_infrastructure::load_world_rules(preset)
+                .unwrap_or_else(|e| panic!("{preset} bundle loads: {e}"));
+            for tribe in [Tribe::Romans, Tribe::Teutons, Tribe::Gauls] {
+                for spec in rules.units.roster(tribe) {
+                    // Panics (via the match's `unreachable!`) if this (tribe, id) pair isn't covered.
+                    let text = unit_explanation(tribe, spec);
+                    assert!(
+                        !text.is_empty(),
+                        "{preset}/{}/{}: explanation must not be empty",
+                        tribe.slug(),
+                        spec.id.as_str()
+                    );
+                }
             }
         }
     }

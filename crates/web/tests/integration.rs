@@ -13701,6 +13701,10 @@ async fn manual_reference_pages_are_public_and_match_classic_values(pool: sqlx::
         .unwrap();
 
     // --- Units: public 200, classic banner, legionnaire's attack + clubswinger's cost row. ---
+    // 127 redesign (operator feedback: "the units still don't have the same setup as buildings"):
+    // every roster unit now renders as its own `manual__bldg`-shaped chapter, same as a building —
+    // portrait figure, flavor prose, a rules-fed facts line, and an always-visible stat card (a
+    // unit's stats are a single row, so nothing needs to fold into a `<details>`).
     let units_res = anon
         .get(format!("{base}/manual/reference/units"))
         .send()
@@ -13718,45 +13722,77 @@ async fn manual_reference_pages_are_public_and_match_classic_values(pool: sqlx::
         ),
         "anonymous reader sees the classic-fallback banner: {units_body}"
     );
-    // Legionnaire (Roman tier-1): attack 40, cost 120/100/150/30, trained at the Barracks, no research.
-    let legionnaire_row = units_body
-        .split("Legionnaire")
+    // Legionnaire (Roman tier-1): its own chapter section, attack 40, cost 120/100/150/30, trained
+    // at the Barracks, no research.
+    let legionnaire_chapter = units_body
+        .split(r#"<section class="manual__bldg" id="romans_legionnaire">"#)
         .nth(1)
-        .expect("a Legionnaire row is rendered");
-    let legionnaire_row = &legionnaire_row[..legionnaire_row
-        .find("</tr>")
-        .unwrap_or(legionnaire_row.len())];
+        .expect("a Legionnaire chapter is rendered");
+    let legionnaire_chapter = &legionnaire_chapter[..legionnaire_chapter
+        .find("</section>")
+        .unwrap_or(legionnaire_chapter.len())];
     assert!(
-        legionnaire_row.contains(">40<"),
-        "legionnaire's attack (40): {legionnaire_row}"
+        legionnaire_chapter.contains(">40<"),
+        "legionnaire's attack (40): {legionnaire_chapter}"
     );
     assert!(
-        legionnaire_row.contains("120/100/150/30"),
-        "legionnaire's cost row: {legionnaire_row}"
+        legionnaire_chapter.contains(
+            "<td>Training</td><td class=\"num\">120</td><td class=\"num\">100</td>\
+             <td class=\"num\">150</td><td class=\"num\">30</td>"
+        ),
+        "legionnaire's cost row (120/100/150/30): {legionnaire_chapter}"
     );
     assert!(
-        legionnaire_row.contains("None — trained from the start"),
-        "legionnaire (tier-1) needs no research: {legionnaire_row}"
+        legionnaire_chapter.contains("Research: None — trained from the start"),
+        "legionnaire (tier-1) needs no research: {legionnaire_chapter}"
     );
-    // Clubswinger (Teuton tier-1): cost 95/75/40/40.
-    let clubswinger_row = units_body
-        .split("Clubswinger")
-        .nth(1)
-        .expect("a Clubswinger row is rendered");
-    let clubswinger_row = &clubswinger_row[..clubswinger_row
-        .find("</tr>")
-        .unwrap_or(clubswinger_row.len())];
-    assert!(
-        clubswinger_row.contains("95/75/40/40"),
-        "clubswinger's cost row: {clubswinger_row}"
-    );
-    // 127 redesign: every roster row leads with a portrait thumbnail — the Legionnaire's ships art
+    // 127 redesign: every unit chapter opens with its portrait figure — the Legionnaire's ships art
     // (`romans_legionnaire.webp`), unlike the three pinned `UNIT_ART_GAPS`.
     assert!(
-        units_body.contains(
-            r#"<img class="manual__unit-thumb" src="/static/units/romans_legionnaire.webp""#
+        legionnaire_chapter.contains(r#"<img src="/static/units/romans_legionnaire.webp""#),
+        "Legionnaire's portrait renders: {legionnaire_chapter}"
+    );
+
+    // Clubswinger (Teuton tier-1): its own chapter, cost 95/75/40/40.
+    let clubswinger_chapter = units_body
+        .split(r#"<section class="manual__bldg" id="teutons_clubswinger">"#)
+        .nth(1)
+        .expect("a Clubswinger chapter is rendered");
+    let clubswinger_chapter = &clubswinger_chapter[..clubswinger_chapter
+        .find("</section>")
+        .unwrap_or(clubswinger_chapter.len())];
+    assert!(
+        clubswinger_chapter.contains(
+            "<td>Training</td><td class=\"num\">95</td><td class=\"num\">75</td>\
+             <td class=\"num\">40</td><td class=\"num\">40</td>"
         ),
-        "Legionnaire's portrait renders: {units_body}"
+        "clubswinger's cost row (95/75/40/40): {clubswinger_chapter}"
+    );
+
+    // 127 redesign gap case: the Teuton Scout is one of the pinned `UNIT_ART_GAPS` — its chapter
+    // renders WITHOUT a figure at all (no broken `<img>`), not an empty placeholder box.
+    let scout_chapter = units_body
+        .split(r#"<section class="manual__bldg" id="teutons_scout">"#)
+        .nth(1)
+        .expect("a Teuton Scout chapter is rendered");
+    let scout_chapter = &scout_chapter[..scout_chapter
+        .find("</section>")
+        .unwrap_or(scout_chapter.len())];
+    assert!(
+        !scout_chapter.contains("<img"),
+        "the Teuton Scout's chapter renders no image at all (a pinned art gap): {scout_chapter}"
+    );
+
+    // The jump-list chips are grouped by tribe and link straight to a chapter id that really
+    // exists on the page — spot-check the Legionnaire's own chip.
+    assert!(
+        units_body
+            .contains("<a class=\"manual__chip\" href=\"#romans_legionnaire\">Legionnaire</a>"),
+        "Legionnaire's jump chip hrefs to its own chapter id: {units_body}"
+    );
+    assert!(
+        units_body.contains(r#"<section class="manual__bldg" id="romans_legionnaire">"#),
+        "…and that chapter id really exists on the page: {units_body}"
     );
 
     // --- Buildings: public 200, Warehouse L10 capacity 12 000. ---

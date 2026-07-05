@@ -78,29 +78,69 @@ pub struct ManualRefLinkRow {
     pub is_active: bool,
 }
 
-/// The generated Units reference page (127 T2, AC3/AC4): every tribe's full roster from the resolved
-/// `UnitRules` — world-aware via `banner` (the selected world's preset + speed, or the classic
-/// fallback).
+/// The generated Units reference page (127 T2, AC3/AC4; redesigned per operator feedback — "the
+/// units still don't have the same setup as buildings" — into a chapter per unit, mirroring
+/// [`ManualBuildingSection`]'s treatment exactly): a jump-list grouped by tribe, then one full
+/// chapter per roster unit — world-aware via `banner` (the selected world's preset + speed, or the
+/// classic fallback).
 #[derive(Template)]
 #[template(path = "manual_units.html")]
 pub struct ManualUnitsTemplate {
     pub sections: Vec<ManualSectionRow>,
     pub ref_links: Vec<ManualRefLinkRow>,
     pub banner: String,
-    pub tribes: Vec<ManualTribeUnits>,
+    /// The jump-list groups shown above the chapters — one per tribe (`Romans, Teutons, Gauls`, that
+    /// fixed order), each keeping its roster's own declared order. Same `.manual__jump`/
+    /// `.manual__chip` look as the buildings page's `ManualBuildingGroup`, but a distinct type — a
+    /// unit's slug/name are runtime TOML data (`String`), not the `&'static str` a hand-authored
+    /// building kind/label always is, so `ManualJumpItem` (which borrows `'static`) doesn't fit.
+    pub groups: Vec<ManualUnitGroup>,
+    /// One tribe section per tribe, each holding a chapter per roster unit.
+    pub tribes: Vec<ManualUnitTribeSection>,
 }
 
-/// One tribe's full roster on the Units reference page.
-pub struct ManualTribeUnits {
-    pub tribe: &'static str,
-    pub units: Vec<ManualUnitRow>,
+/// One tribe's jump-list group on the Units reference page (127 redesign) — the unit counterpart to
+/// [`ManualBuildingGroup`], sized for owned (TOML-sourced) strings rather than `&'static str`.
+pub struct ManualUnitGroup {
+    pub title: &'static str,
+    pub items: Vec<ManualUnitJumpItem>,
 }
 
-/// One unit's full reference row (127 T2 AC3). Every field but `train_time` is a flat preset value
-/// (never speed-scaled, per plan §Risks); `train_time` is `train_secs ÷ world speed`.
-pub struct ManualUnitRow {
+/// One jump-list entry on the Units reference page: an anchor link to its unit's chapter section —
+/// the unit counterpart to [`ManualJumpItem`].
+pub struct ManualUnitJumpItem {
+    pub slug: String,
     pub name: String,
-    pub role: &'static str,
+}
+
+/// One tribe's chapters on the Units reference page (127 redesign).
+pub struct ManualUnitTribeSection {
+    pub tribe: &'static str,
+    pub units: Vec<ManualUnitSection>,
+}
+
+/// One unit's full reference chapter (127 redesign) — the unit counterpart to
+/// [`ManualBuildingSection`]: portrait, hand-written flavor prose, a rules-fed facts line, and an
+/// always-visible stat card. Unlike a building's collapsible per-level `<details>`, a unit's stats
+/// are a single row of data rather than 10-20 levels, so the card is never folded away. Every
+/// numeric field but `train_time` is a flat preset value (never speed-scaled, per plan §Risks);
+/// `train_time` is `train_secs ÷ world speed`.
+pub struct ManualUnitSection {
+    /// The anchor id (`<tribe>_<unit id>`, e.g. `romans_legionnaire`) — also the jump-list link
+    /// target.
+    pub slug: String,
+    pub name: String,
+    /// The resolved portrait URL (`/static/units/<tribe>_<id>.webp`) — `None` for the pinned
+    /// `UNIT_ART_GAPS` (in handlers.rs), rendered as a figure-less chapter rather than a broken
+    /// `<img>`.
+    pub image: Option<String>,
+    /// Hand-written flavor prose (role, when it shines, strategic character) — deliberately carries
+    /// no balance numbers, same convention as `ManualBuildingSection::explanation`; every figure
+    /// lives on the facts line or the stat card instead.
+    pub explanation: &'static str,
+    /// A rules-fed facts line: "Trained in {building} · Research: {requirements, or "available from
+    /// the start"} · Role: {role label}".
+    pub facts: String,
     pub attack: u32,
     pub def_inf: u32,
     pub def_cav: u32,
@@ -112,12 +152,6 @@ pub struct ManualUnitRow {
     pub cost_iron: i64,
     pub cost_crop: i64,
     pub train_time: String,
-    pub trained_in: &'static str,
-    pub prerequisites: String,
-    /// The `<tribe>_<id>` portrait slug for this row's leading thumbnail (127 redesign) —
-    /// `/static/units/<portrait>.webp`. `None` for the pinned art gaps (`UNIT_ART_GAPS` in
-    /// handlers.rs), rendered as an empty cell rather than a broken `<img>`.
-    pub portrait: Option<String>,
 }
 
 /// The generated Buildings reference page (127 T2, AC3/AC4; redesigned per operator feedback into a

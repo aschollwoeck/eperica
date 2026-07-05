@@ -1091,9 +1091,12 @@ a { color: var(--c-gold); }
    non-capital cap). */
 .manual__capital-row { opacity: .72; }
 
-/* The Units reference page's leading portrait column (127 redesign) — empty for the pinned art
-   gaps (`UNIT_ART_GAPS`), never a broken image icon. */
-.manual__unit-thumb { display: block; width: 48px; height: 48px; border-radius: var(--radius-sm); border: 1px solid var(--c-border); object-fit: cover; }
+/* The Units reference page's per-unit stat card (127 redesign, mirroring the buildings page's
+   per-level `<details>` — but a unit is a single row of data, not 10-20 levels, so both tables stay
+   always visible rather than folded into a `<summary>`). */
+.manual__statcard { margin-bottom: var(--space-4); }
+.manual__statcard .table { margin-bottom: 8px; }
+.manual__statcard .table:last-child { margin-bottom: 0; }
 
 /* Prev/next chapter footer nav. */
 .manual__prevnext { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); margin-top: var(--space-6); }
