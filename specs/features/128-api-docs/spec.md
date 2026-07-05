@@ -1,6 +1,6 @@
 # Feature 128 — developer API reference at /docs/api (swagger-style + OpenAPI)
 
-**Status:** Draft
+**Status:** Verified (reviewer APPROVE at 81bf2ee; core fact-check clean — 12+ endpoint examples diffed field-exact against the live serializers, all nine error mappers verified)
 **Depends on:** 118/119 (Agent API), 125 (Spectator API), 127 (public docs pipeline precedent).
 **Origin:** operator request — the API contracts live only in the repo; serve them on the site,
 "swagger-like", with real per-endpoint examples.

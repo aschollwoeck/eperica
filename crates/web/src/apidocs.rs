@@ -1264,7 +1264,7 @@ fn spectator_group() -> ApiGroup {
                     "page",
                     "integer",
                     false,
-                    "1-based page number; missing/invalid defaults to 1.",
+                    "1-based page number; missing or non-positive defaults to 1 (non-numeric is a 400).",
                 ),
             ],
             request_example: None,

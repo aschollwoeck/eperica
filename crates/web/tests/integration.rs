@@ -14231,6 +14231,12 @@ async fn docs_api_shows_curl_examples_and_the_error_contract(pool: sqlx::PgPool)
         body.contains("movement"),
         "the attack response example (movement echo) must appear: {body}"
     );
+    // SF2 regression pin: the map endpoint's copyable curl must carry its REQUIRED query
+    // placeholders — a line without ?x&y gets axum's plain-text 400.
+    assert!(
+        body.contains("/api/w/{world}/map?x={x}&amp;y={y}"),
+        "map curl must include the required x/y query placeholders"
+    );
 }
 
 /// AC5: the sidebar lists both group titles, at least one method-badge class renders, and
