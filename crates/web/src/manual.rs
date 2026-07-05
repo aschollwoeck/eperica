@@ -598,6 +598,36 @@ mod tests {
                     );
                 assert!(resolves, "{slug} links to unresolvable {href}");
             }
+            // A .md-shaped link that FAILED rewriting escapes the /manual prefix scan as a
+            // relative href — catch that class too: no rendered href may end in .md.
+            assert!(
+                !rendered.html.contains(".md\""),
+                "{slug} contains an unrewritten .md href"
+            );
+        }
+    }
+
+    /// Every callout the classifier recognises must carry EXACTLY the bare label as its first
+    /// strong run — an author writing `> **Tip: don't do X**` would otherwise have the whole
+    /// bold (including prose) silently stripped by the label-dedup pass.
+    #[test]
+    fn every_corpus_callout_label_is_exactly_the_bare_label() {
+        for (_, ch) in flat_chapters() {
+            let slug = ch.slug;
+            for line in ch.body.lines() {
+                let t = line.trim_start();
+                let Some(rest) = t.strip_prefix("> **") else {
+                    continue;
+                };
+                for label in ["Tip", "Warning", "Faithful"] {
+                    if rest.starts_with(label) {
+                        assert!(
+                            rest.starts_with(&format!("{label}:**")),
+                            "{slug}: callout label must be exactly **{label}:** — got: {t}"
+                        );
+                    }
+                }
+            }
         }
     }
 
