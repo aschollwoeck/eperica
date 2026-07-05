@@ -23,20 +23,9 @@ you still clear the animals, but the oasis stays **unoccupied** (and its animals
 ## The Outpost
 
 The **Outpost** is the building that lets you **hold** oases. Build and upgrade it like any building;
-its **level sets how many oases** your village may occupy at once. With **no Outpost** you can clear
-animals but **can't occupy** anything. Upgrade it to hold more.
-
-**Outpost capacity by level:**
-
-| Level | Oases held |
-|-------|------------|
-| 0 (none) | 0 |
-| 1–2 | 1 |
-| 3–4 | 2 |
-| 5–6 | 3 |
-| 7–8 | 4 |
-| 9 | 5 |
-| 10 | 6 |
+its **level sets how many oases** your village may occupy at once — a level-1 Outpost holds 1, a
+level-10 Outpost holds 6. With **no Outpost** you can clear animals but **can't occupy** anything.
+The full level-by-level capacity table is in [the numbers](/manual/reference/mechanics).
 
 ## The production bonus
 
@@ -67,3 +56,10 @@ the regrowth.
 
 Every oasis battle produces a **report** under **Reports**, just like a normal battle — the forces, the
 losses, who won, and whether the oasis changed hands.
+
+## See also
+
+- [Building & upgrading](buildings.md) — the Outpost's prerequisites.
+- [The world map](the-map.md) — spotting oases and how far they sit from the centre.
+- [Attacking & defending](combat.md) — how the fight against wild animals resolves.
+- [Player Manual index](README.md)

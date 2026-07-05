@@ -30,6 +30,329 @@ pub struct PrivacyTemplate;
 #[template(path = "terms.html")]
 pub struct TermsTemplate;
 
+/// The manual section index (127 T1): the six sections with their chapter links + a short intro.
+#[derive(Template)]
+#[template(path = "manual_index.html")]
+pub struct ManualIndexTemplate {
+    pub sections: Vec<ManualSectionRow>,
+    pub ref_links: Vec<ManualRefLinkRow>,
+}
+
+/// One rendered manual chapter (127 T1) — the markdown body is pre-rendered and pre-escaped by
+/// [`crate::manual::render`]; see the template for the `|safe` justification.
+#[derive(Template)]
+#[template(path = "manual_chapter.html")]
+pub struct ManualChapterTemplate {
+    pub sections: Vec<ManualSectionRow>,
+    pub ref_links: Vec<ManualRefLinkRow>,
+    pub section_title: &'static str,
+    pub title: &'static str,
+    /// Pre-rendered, pre-escaped chapter HTML — see the template's `|safe` comment for why this is
+    /// safe to insert unescaped.
+    pub html: String,
+    pub prev: Option<ManualChapterRow>,
+    pub next: Option<ManualChapterRow>,
+}
+
+/// A manual sidebar section: its title and the chapters under it, in registry order.
+pub struct ManualSectionRow {
+    pub title: &'static str,
+    pub chapters: Vec<ManualChapterRow>,
+}
+
+/// A chapter link in the manual sidebar/index/prev-next nav.
+pub struct ManualChapterRow {
+    pub slug: &'static str,
+    pub title: &'static str,
+    /// Highlights this chapter in the sidebar when it is the one currently open.
+    pub is_active: bool,
+}
+
+/// A generated reference page link (T2 delivers the route; the link is listed now per plan).
+pub struct ManualRefLinkRow {
+    pub slug: &'static str,
+    pub title: &'static str,
+    /// Highlights this link in the sidebar when its own reference page is the one currently open
+    /// (127 review NIT — previously always `false`, so the three reference pages never lit
+    /// themselves up in their own sidebar).
+    pub is_active: bool,
+}
+
+/// The generated Units reference page (127 T2, AC3/AC4; redesigned per operator feedback — "the
+/// units still don't have the same setup as buildings" — into a chapter per unit, mirroring
+/// [`ManualBuildingSection`]'s treatment exactly): a jump-list grouped by tribe, then one full
+/// chapter per roster unit — world-aware via `banner` (the selected world's preset + speed, or the
+/// classic fallback).
+#[derive(Template)]
+#[template(path = "manual_units.html")]
+pub struct ManualUnitsTemplate {
+    pub sections: Vec<ManualSectionRow>,
+    pub ref_links: Vec<ManualRefLinkRow>,
+    pub banner: String,
+    /// The jump-list groups shown above the chapters — one per tribe (`Romans, Teutons, Gauls`, that
+    /// fixed order), each keeping its roster's own declared order. Same `.manual__jump`/
+    /// `.manual__chip` look as the buildings page's `ManualBuildingGroup`, but a distinct type — a
+    /// unit's slug/name are runtime TOML data (`String`), not the `&'static str` a hand-authored
+    /// building kind/label always is, so `ManualJumpItem` (which borrows `'static`) doesn't fit.
+    pub groups: Vec<ManualUnitGroup>,
+    /// One tribe section per tribe, each holding a chapter per roster unit.
+    pub tribes: Vec<ManualUnitTribeSection>,
+}
+
+/// One tribe's jump-list group on the Units reference page (127 redesign) — the unit counterpart to
+/// [`ManualBuildingGroup`], sized for owned (TOML-sourced) strings rather than `&'static str`.
+pub struct ManualUnitGroup {
+    pub title: &'static str,
+    pub items: Vec<ManualUnitJumpItem>,
+}
+
+/// One jump-list entry on the Units reference page: an anchor link to its unit's chapter section —
+/// the unit counterpart to [`ManualJumpItem`].
+pub struct ManualUnitJumpItem {
+    pub slug: String,
+    pub name: String,
+}
+
+/// One tribe's chapters on the Units reference page (127 redesign).
+pub struct ManualUnitTribeSection {
+    pub tribe: &'static str,
+    pub units: Vec<ManualUnitSection>,
+}
+
+/// One unit's full reference chapter (127 redesign) — the unit counterpart to
+/// [`ManualBuildingSection`]: portrait, hand-written flavor prose, a rules-fed facts line, and an
+/// always-visible stat card. Unlike a building's collapsible per-level `<details>`, a unit's stats
+/// are a single row of data rather than 10-20 levels, so the card is never folded away. Every
+/// numeric field but `train_time` is a flat preset value (never speed-scaled, per plan §Risks);
+/// `train_time` is `train_secs ÷ world speed`.
+pub struct ManualUnitSection {
+    /// The anchor id (`<tribe>_<unit id>`, e.g. `romans_legionnaire`) — also the jump-list link
+    /// target.
+    pub slug: String,
+    pub name: String,
+    /// The resolved portrait URL (`/static/units/<tribe>_<id>.webp`) — `None` for the pinned
+    /// `UNIT_ART_GAPS` (in handlers.rs), rendered as a figure-less chapter rather than a broken
+    /// `<img>`.
+    pub image: Option<String>,
+    /// Hand-written flavor prose (role, when it shines, strategic character) — deliberately carries
+    /// no balance numbers, same convention as `ManualBuildingSection::explanation`; every figure
+    /// lives on the facts line or the stat card instead.
+    pub explanation: &'static str,
+    /// A rules-fed facts line: "Trained in {building} · Research: {requirements, or "available from
+    /// the start"} · Role: {role label}".
+    pub facts: String,
+    pub attack: u32,
+    pub def_inf: u32,
+    pub def_cav: u32,
+    pub speed: u32,
+    pub carry: u32,
+    pub upkeep: u32,
+    pub cost_wood: i64,
+    pub cost_clay: i64,
+    pub cost_iron: i64,
+    pub cost_crop: i64,
+    pub train_time: String,
+}
+
+/// The generated Buildings reference page (127 T2, AC3/AC4; redesigned per operator feedback into a
+/// chapter per building — see [`ManualBuildingSection`]; the resource fields got the same treatment
+/// on a later pass — see [`ManualFieldSection`]): a jump-list grouped by purpose, one full chapter
+/// per buildable kind, a few illustrative per-level curves, and one chapter per resource field.
+#[derive(Template)]
+#[template(path = "manual_buildings.html")]
+pub struct ManualBuildingsTemplate {
+    pub sections: Vec<ManualSectionRow>,
+    pub ref_links: Vec<ManualRefLinkRow>,
+    pub banner: String,
+    /// The jump-list groups shown above the chapters, in fixed purpose order (`BUILDING_GROUP_ORDER`
+    /// in handlers.rs, plus a trailing "Resource fields" group) — each keeping its members' own
+    /// declared order within it.
+    pub groups: Vec<ManualBuildingGroup>,
+    /// One chapter per buildable kind, in `ALL_BUILDING_KINDS` order.
+    pub buildings: Vec<ManualBuildingSection>,
+    /// Warehouse storage capacity at levels 1/5/10.
+    pub warehouse_curve: Vec<ManualLevelRow>,
+    /// Granary storage capacity at levels 1/5/10.
+    pub granary_curve: Vec<ManualLevelRow>,
+    /// Main Building construction-speed factor at levels 1/5/10.
+    pub main_building_curve: Vec<ManualLevelRow>,
+    /// Town Hall culture points/hour, every level.
+    pub town_hall_curve: Vec<ManualLevelRow>,
+    /// One chapter per resource field (Woodcutter, Clay Pit, Iron Mine, Cropland) — same shape as
+    /// `buildings`' chapters (127 follow-up, operator feedback: "show resources also individually
+    /// like buildings and units").
+    pub fields: Vec<ManualFieldSection>,
+}
+
+/// One purpose group's chips in the Buildings page's jump-list (127 redesign).
+pub struct ManualBuildingGroup {
+    pub title: &'static str,
+    pub items: Vec<ManualJumpItem>,
+}
+
+/// One jump-list entry: an anchor link to its building's chapter section.
+pub struct ManualJumpItem {
+    pub slug: &'static str,
+    pub name: &'static str,
+}
+
+/// One building's full reference chapter (127 redesign, operator feedback: "a chapter for each
+/// building… do some explaining… put the collapsible into that chapter… include the images") —
+/// replaces the old flat summary table + separate per-level `<details>` list with one self-contained
+/// `<section id="{slug}">` per kind.
+pub struct ManualBuildingSection {
+    /// The anchor id (`building_kind_id`) — also the jump-list link target.
+    pub slug: &'static str,
+    pub name: &'static str,
+    /// The jump-list purpose group this kind belongs to (`building_group` in handlers.rs).
+    pub group: &'static str,
+    /// The resolved static image path (`building_art_url`) — the generic plate when the kind ships
+    /// one, else the Gauls tribal plate as the canonical illustration.
+    pub image: String,
+    /// Hand-written flavor prose (what it is, why you build it, when it matters strategically) —
+    /// deliberately carries no balance numbers; any rules-fed figure belongs on the facts
+    /// line/`rules_note` instead.
+    pub explanation: &'static str,
+    pub prerequisites: String,
+    pub max_level: u8,
+    pub multi: bool,
+    /// A rules-fed callout appended to the facts line — `Some` only for Embassy (its join/found
+    /// alliance levels) and Wonder (its win level), formatted from the resolved rules rather than
+    /// hand-typed (127 review M4's guarantee, carried over from the old `purpose` column). Every
+    /// other kind is `None`.
+    pub rules_note: Option<String>,
+    /// The full per-level cost/time table for the `<details>` inside this chapter.
+    pub levels: ManualBuildingLevels,
+}
+
+/// One resource field's full reference chapter (127 follow-up, operator feedback: "show resources
+/// also individually like buildings and units") — same shape as [`ManualBuildingSection`]: image,
+/// hand-written prose, a facts line, and one collapsible per-level table, but with an added
+/// Production/h column since a field (unlike a building) has a per-level output of its own.
+pub struct ManualFieldSection {
+    /// The anchor id (`woodcutter`/`clay_pit`/`iron_mine`/`cropland`, from `field_art_slug`).
+    pub slug: &'static str,
+    pub name: &'static str,
+    /// The resolved static image path (`building_art_url` over `field_art_slug`) — the generic
+    /// plate for Woodcutter/Clay Pit/Cropland, the Gauls tribal plate for Iron Mine.
+    pub image: String,
+    /// Hand-written flavor prose (what it is, why it matters, when it becomes the bottleneck) —
+    /// deliberately carries no balance numbers, same convention as `ManualBuildingSection::explanation`.
+    pub explanation: &'static str,
+    /// A rules-fed facts line: the normal/capital level caps, plus (Cropland only) a note that it
+    /// charges its own cheaper cost table.
+    pub facts: String,
+    /// The capital field cap — also the number named in the `<details>` summary ("levels 1–N").
+    pub max_level: u8,
+    /// One row per level, 1..=`max_level`.
+    pub levels: Vec<ManualFieldLevelRow>,
+}
+
+/// One resource field level's cost, build time, and hourly production — the "Level | Wood | Clay |
+/// Iron | Crop | Build time | Production/h" row inside a [`ManualFieldSection`]'s `<details>`.
+pub struct ManualFieldLevelRow {
+    pub level: u8,
+    /// Pre-formatted cost cells (`"—"` if the rules table has no entry at this level, rather than a
+    /// misleading `0` — see the S1 lesson referenced in handlers.rs).
+    pub wood: String,
+    pub clay: String,
+    pub iron: String,
+    pub crop: String,
+    /// Build time at the resolved world's speed, formatted like every other duration in the manual
+    /// (`"—"` if the rules table has no entry at this level).
+    pub time: String,
+    /// This field's own hourly output at this level (`EconomyRules::field_production_per_hour`).
+    pub production: i64,
+    /// True for levels only a **capital** village can reach (past the normal field cap) — reuses
+    /// `.manual__capital-row` for the same dimming/badge treatment as the building chapters.
+    pub capital_only: bool,
+}
+
+/// A `level → value` row shared by the buildings/mechanics curve tables (127 T2) — pre-formatted in
+/// the handler (matching `fmt_duration`'s convention) so the templates stay dumb about number
+/// formatting.
+pub struct ManualLevelRow {
+    pub level: u8,
+    pub value: String,
+}
+
+/// One buildable kind's full per-level cost/time table (the `<details>` body under its summary
+/// row) — answers "I can't find a resource table for buildings", the summary table's level-1-only
+/// row.
+pub struct ManualBuildingLevels {
+    pub name: &'static str,
+    /// The kind's max level — also the number named in the `<summary>` ("levels 1–N").
+    pub max_level: u8,
+    /// One row per rendered level — every level for an ordinary kind, sampled every 10th level for
+    /// the 100-level Wonder (see `sampled`).
+    pub rows: Vec<ManualCostRow>,
+    /// True only for the Wonder: its table is sampled (1, 10, 20, … 100) rather than exhaustive —
+    /// 100 rows adds nothing a reader can act on beyond the first and the shape of the curve, and
+    /// it would dwarf every other `<details>` on the page even collapsed. The template renders an
+    /// explanatory note only when this is set.
+    pub sampled: bool,
+}
+
+/// One level's cost + build time — the "Level | Wood | Clay | Iron | Crop | Build time" row shared
+/// by every per-building `<details>` table.
+pub struct ManualCostRow {
+    pub level: u8,
+    pub wood: i64,
+    pub clay: i64,
+    pub iron: i64,
+    pub crop: i64,
+    /// Build time at the resolved world's speed (Main Building level 1 — see the section note; a
+    /// higher Main Building shortens it further), formatted like every other duration in the manual.
+    pub time: String,
+}
+
+/// The generated Mechanics reference page (127 T2, AC3/AC4): the cross-cutting numbers that don't
+/// belong to a single unit/building — culture/expansion, loyalty, walls/siege, merchants, and the
+/// protection/lifecycle windows.
+#[derive(Template)]
+#[template(path = "manual_mechanics.html")]
+pub struct ManualMechanicsTemplate {
+    pub sections: Vec<ManualSectionRow>,
+    pub ref_links: Vec<ManualRefLinkRow>,
+    pub banner: String,
+    /// CP needed to be allowed the Nth village (index 0 skipped — unused; the first village is free).
+    pub cp_thresholds: Vec<ManualLevelRow>,
+    /// Expansion slots a single Residence/Palace grants, by its level.
+    pub expansion_slots: Vec<ManualLevelRow>,
+    pub settlers_per_village: u32,
+    /// Oases an Outpost may hold, by its level.
+    pub outpost_capacity: Vec<ManualLevelRow>,
+    pub loyalty_drop_min: i64,
+    pub loyalty_drop_max: i64,
+    pub loyalty_regen_per_hour: i64,
+    pub loyalty_post_conquest: i64,
+    pub walls: Vec<ManualTribeWall>,
+    pub catapult_durability: String,
+    pub merchants: Vec<ManualTribeMerchant>,
+    /// Merchants at a given Marketplace level (tribe-independent — every tribe shares this table).
+    pub merchants_per_level: Vec<ManualLevelRow>,
+    /// Beginner's-protection **base** duration (before world speed; the banner/template note says so).
+    pub protection_base: String,
+    pub protection_population_threshold: i64,
+    /// Real wall-clock time, not speed-scaled (054) — the template says so explicitly.
+    pub inactive_after: String,
+    pub abandon_after: String,
+}
+
+/// One tribe's Wall reference row: its bonus at level 10 and its ram durability.
+pub struct ManualTribeWall {
+    pub tribe: &'static str,
+    pub bonus_l10_pct: String,
+    pub ram_durability: String,
+}
+
+/// One tribe's merchant profile (capacity + map speed).
+pub struct ManualTribeMerchant {
+    pub tribe: &'static str,
+    pub capacity: u32,
+    pub speed: u32,
+}
+
 #[derive(Template)]
 #[template(path = "register.html")]
 pub struct RegisterTemplate {

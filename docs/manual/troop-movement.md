@@ -43,6 +43,14 @@ When you no longer need troops you've stationed abroad, press **Send back** next
 movement is on its way, it can't be turned around mid-flight.
 
 Every kind of mission rides the same movement engine: **attacks and raids**, **scouting runs**,
-**trade shipments**, and **settler treks** all depart, travel in real time, and arrive using exactly
-the rules above. See **[Combat](combat.md)**, **[Scouting](scouting.md)**,
-**[Trading](trade.md)**, and **[Settling](settling.md)** for what each mission does on arrival.
+**trade shipments**, and **settler treks** all depart, travel in real time, and arrive using
+exactly the rules above.
+
+## See also
+
+- [Attacking & defending](combat.md) — what attacks and raids do on arrival.
+- [Scouting](scouting.md) — what scouting runs do on arrival.
+- [Trading](trade.md) — merchant shipments, another kind of movement.
+- [Settling](settling.md) — settler treks and founding a village.
+- [The world map](the-map.md) — finding coordinates to send troops to.
+- [Player Manual index](README.md)

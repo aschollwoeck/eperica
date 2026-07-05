@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
+{% block content %}
+<div class="page manual">
+  <aside class="manual__sidebar" aria-label="Manual sections">
+    {% include "_manual_sidebar.html" %}
+  </aside>
+  <div class="manual__content">
+    <nav class="manual__crumbs" aria-label="Breadcrumb">Manual</nav>
+    <section class="phead">
+      <div class="phead__eyebrow">Player Manual</div>
+      <h1 class="phead__title">The Eperica Manual</h1>
+      <p class="phead__sub">Guided chapters for every part of the game — from your first village to
+        the Wonder of the World. Pick a section on the left, or jump straight to a chapter below.</p>
+    </section>
+    {% for section in sections %}
+    <div class="psec">
+      <div class="bld-cols__head"><h2>{{ section.title }}</h2><span class="bld-cols__rule"></span></div>
+      <ul class="manual__grid">
+        {% for ch in section.chapters %}
+        <li><a class="manual__card" href="/manual/{{ ch.slug }}">{{ ch.title }}</a></li>
+        {% endfor %}
+        {% if section.title == "Reference" %}
+        {% for link in ref_links %}
+        <li><a class="manual__card" href="/manual/reference/{{ link.slug }}">{{ link.title }}</a></li>
+        {% endfor %}
+        {% endif %}
+      </ul>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

@@ -23,7 +23,7 @@
     <nav class="topbar__nav" id="topnav">
       <!-- Public links — shown to everyone. `data-wl` carries the leaf path; JS (below) rewrites these to
            /w/{world}/… when the current URL is inside a world, else to /worlds (056). -->
-      <a href="/leaderboard" data-wl-public="/leaderboard">Leaderboards</a> <a href="/wonder" data-wl-public="/wonder">Wonder</a>
+      <a href="/leaderboard" data-wl-public="/leaderboard">Leaderboards</a> <a href="/wonder" data-wl-public="/wonder">Wonder</a> <a href="/manual">Manual</a>
       <!-- Member links — revealed by JS (/me) only when logged in (035). Hidden by default to avoid
            showing account-only links to visitors. -->
       <span class="topbar__group" data-auth="in" hidden>
@@ -50,6 +50,10 @@
         <a href="/worlds">Worlds</a>
         <a href="/leaderboard">Leaderboards</a>
         <a href="/wonder">Wonder</a>
+      </nav>
+      <nav class="site-footer__col" aria-label="Learn">
+        <h2 class="site-footer__h">Learn</h2>
+        <a href="/manual">Manual</a>
       </nav>
       <nav class="site-footer__col" aria-label="Account">
         <h2 class="site-footer__h">Account</h2>

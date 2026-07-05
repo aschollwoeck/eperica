@@ -11,12 +11,24 @@ Open the **Map** link from your village page. You'll see a grid centred on your 
 - **Green tiles are valleys** — the only tiles a village can sit on. Each valley has a fixed field
   layout (its woodcutters / clay pits / iron mines / croplands), shown when you hover it. Most are
   the balanced `4·4·4·6`; rare **croppers** like `3·3·3·9` or `1·1·1·15` trade other resources for
-  huge crop output and are prime settling targets later.
+  huge crop output and are prime settling targets later. An empty valley (a `·` tile with no
+  village) is free to settle.
 - **Blue tiles are oases** — they grant a production bonus (hover to see it). Clear the animals
-  and claim one through your Outpost to add its bonus to your village — see **[Oases](oases.md)**.
-- **Red tiles are Natar** — special tiles reserved for the end-game.
+  and claim one through your Outpost to add its bonus to your village — see
+  [Oases](oases.md).
+- **Red tiles are Natar** — special tiles reserved for the end-game; see
+  [Artifacts & the Natars](artifacts.md).
 - **★ marks a village.** Hover it for the owner's name; your own is highlighted. Who owns what and
   where is public — but a village's troops, resources, and defences stay hidden until you scout.
+
+Two extra markers you'll spot as you explore:
+
+- **Greyed villages** belong to accounts that have gone quiet for a while — the map marks them
+  **inactive** so active players can spot them as farms. They play by the normal rules; they're
+  just easier targets. See [Protection & a living world](protection-and-lifecycle.md).
+- **"NPC" tags** appear on AI-controlled villages, but only on worlds set to label them. On a
+  disguised world an AI village looks exactly like a human one. See
+  [AI players (NPCs)](ai-players.md).
 
 ## Getting around
 
@@ -28,3 +40,10 @@ generated once from the world's seed.
 **Tile info cards** appear when you click a tile. Where an action makes sense the card offers it
 directly — for example, clicking an occupied village lets you **send a merchant** there from your
 Marketplace, and clicking a free valley lets you **settle** on it once you have settlers ready.
+
+## See also
+
+- [Oases](oases.md) — clearing, occupying, and holding the blue tiles.
+- [Settling](settling.md) — founding a village on a free valley.
+- [Troop movement](troop-movement.md) — sending armies and shipments across the map.
+- [Player Manual index](README.md)

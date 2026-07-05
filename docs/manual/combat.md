@@ -57,6 +57,11 @@ After every battle, both sides get a **report** (see **Reports** from your villa
 side's forces and losses, how far the Wall was knocked down, and the **luck and morale** that applied —
 so the outcome is always explainable. Only the two parties to a battle can read its report.
 
-> See also **[Scouting](scouting.md)** — reveal an enemy's defenses or resources before you commit —
-> and **[Siege & loot](siege-and-loot.md)** — carry resources home, smash buildings with catapults, and
-> guard your stores with a Cranny.
+## See also
+
+- [Scouting](scouting.md) — reveal an enemy's defenses or resources before you commit.
+- [Siege & loot](siege-and-loot.md) — carry resources home, smash buildings with catapults, and
+  guard your stores with a Cranny.
+- [Tribes, the Academy & the Smithy](tribes-and-units.md) — each tribe's Wall bonus and unit stats.
+- [Troop movement](troop-movement.md) — how attacks travel to their target.
+- [Player Manual index](README.md)

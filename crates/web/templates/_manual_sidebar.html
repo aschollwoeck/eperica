@@ -1,0 +1,19 @@
+{# The manual's section/chapter sidebar (127 T1, AC5) — shared by manual_index.html and
+   manual_chapter.html, both of which carry the same `sections`/`ref_links` fields so this partial
+   can be included from either. The active chapter (if any) is pre-flagged by the handler via
+   `ManualChapterRow::is_active` — no comparison logic needed in the template itself. #}
+{% for section in sections %}
+<div class="manual__section">
+  <h2 class="manual__section-h">{{ section.title }}</h2>
+  <ul class="manual__list">
+    {% for ch in section.chapters %}
+    <li><a class="manual__link{% if ch.is_active %} manual__link--active{% endif %}" href="/manual/{{ ch.slug }}">{{ ch.title }}</a></li>
+    {% endfor %}
+    {% if section.title == "Reference" %}
+    {% for link in ref_links %}
+    <li><a class="manual__link{% if link.is_active %} manual__link--active{% endif %}" href="/manual/reference/{{ link.slug }}">{{ link.title }}</a></li>
+    {% endfor %}
+    {% endif %}
+  </ul>
+</div>
+{% endfor %}

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
+{% block content %}
+<div class="page manual">
+  <aside class="manual__sidebar" aria-label="Manual sections">
+    {% include "_manual_sidebar.html" %}
+  </aside>
+  <div class="manual__content">
+    <nav class="manual__crumbs" aria-label="Breadcrumb"><a href="/manual">Manual</a> › Reference › Full unit stats</nav>
+    <section class="phead">
+      <div class="phead__eyebrow">Reference</div>
+      <h1 class="phead__title">Units</h1>
+      <p class="phead__sub">Every unit — one per tribe roster — gets its own chapter below: what it
+        is, when it shines, and its full combat and training stat card, straight from the loaded
+        balance rules.</p>
+    </section>
+    <p class="manual__banner">{{ banner }}</p>
+
+    <nav class="manual__jump" aria-label="Jump to a unit">
+      {% for g in groups %}
+      <div class="manual__jump-group">
+        <h3>{{ g.title }}</h3>
+        <div class="manual__jump-chips">
+          {% for item in g.items %}
+          <a class="manual__chip" href="#{{ item.slug }}">{{ item.name }}</a>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </nav>
+
+    {% for t in tribes %}
+    <section class="manual__refsec">
+      <h2>{{ t.tribe }}</h2>
+      {% for u in t.units %}
+      <section class="manual__bldg" id="{{ u.slug }}">
+        <h2>{{ u.name }}</h2>
+        {% if let Some(img) = u.image %}
+        <figure class="manual__bldg-fig">
+          <img src="{{ img }}" alt="{{ u.name }}" loading="lazy">
+        </figure>
+        {% endif %}
+        <p class="manual__bldg-prose">{{ u.explanation }}</p>
+        <p class="manual__facts">{{ u.facts }}</p>
+        <div class="manual__statcard">
+          <div style="overflow-x:auto">
+          <table class="table">
+            <thead>
+              <tr>
+                <th aria-hidden="true"></th><th class="num">Attack</th><th class="num">Def inf</th>
+                <th class="num">Def cav</th><th class="num">Speed</th><th class="num">Carry</th>
+                <th class="num">Upkeep</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>Combat</td><td class="num">{{ u.attack }}</td><td class="num">{{ u.def_inf }}</td><td class="num">{{ u.def_cav }}</td><td class="num">{{ u.speed }}</td><td class="num">{{ u.carry }}</td><td class="num">{{ u.upkeep }}</td></tr>
+            </tbody>
+          </table>
+          </div>
+          <div style="overflow-x:auto">
+          <table class="table">
+            <thead>
+              <tr>
+                <th aria-hidden="true"></th><th class="num">Wood</th><th class="num">Clay</th>
+                <th class="num">Iron</th><th class="num">Crop</th><th class="num">Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>Training</td><td class="num">{{ u.cost_wood }}</td><td class="num">{{ u.cost_clay }}</td><td class="num">{{ u.cost_iron }}</td><td class="num">{{ u.cost_crop }}</td><td class="num">{{ u.train_time }}</td></tr>
+            </tbody>
+          </table>
+          </div>
+        </div>
+      </section>
+      {% endfor %}
+    </section>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

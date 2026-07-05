@@ -39,6 +39,13 @@ pub fn clear_cookie() -> Cookie<'static> {
     base_cookie(AUTH_COOKIE, String::new())
 }
 
+/// A removal cookie that clears the world-selection cookie on logout (127 review S3) — otherwise a
+/// logged-out reader keeps seeing their last-selected world's banner/numbers on the manual reference
+/// pages, which are meant to fall back to the classic preset the moment there's no session at all.
+pub fn clear_world_cookie() -> Cookie<'static> {
+    base_cookie(WORLD_COOKIE, String::new())
+}
+
 /// Build the sit cookie for `owner_id` — the account a sitter is operating (030).
 pub fn sit_cookie(owner_id: u128) -> Cookie<'static> {
     base_cookie(SIT_COOKIE, owner_id.to_string())

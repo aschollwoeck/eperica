@@ -44,5 +44,12 @@ travel home empty and become **free again** for the next shipment.
 While shipments are out, your village page lists them under **Shipments in transit** — where they're
 headed, what they carry, and a live countdown — plus your returning merchants.
 
-> There's no marketplace of posted offers yet: a shipment is a direct send to a village you choose.
-> Trading at agreed ratios happens by both sides sending to each other.
+> **Tip:** There's no marketplace of posted offers yet — a shipment is a direct send to a village
+> you choose. Trading at agreed ratios happens by both sides sending to each other.
+
+## See also
+
+- [Resources](resources.md) — what you're shipping, and how storage caps what arrives.
+- [Tribes, the Academy & the Smithy](tribes-and-units.md) — each tribe's merchant speed and carry.
+- [Building & upgrading](buildings.md) — the Marketplace's prerequisites.
+- [Player Manual index](README.md)

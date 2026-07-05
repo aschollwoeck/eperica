@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
+{% block content %}
+<div class="page manual">
+  <aside class="manual__sidebar" aria-label="Manual sections">
+    {% include "_manual_sidebar.html" %}
+  </aside>
+  <div class="manual__content">
+    <nav class="manual__crumbs" aria-label="Breadcrumb"><a href="/manual">Manual</a> › {{ section_title }} › {{ title }}</nav>
+    <article class="manual__article">
+      {# Safety of `|safe`: `html` is NOT player input — it is our own server-rendered output from
+         `crates/web/src/manual.rs::render`, produced from trusted repo markdown (docs/manual/*.md)
+         through a pipeline that maps raw/inline HTML in the source to escaped text before
+         rendering (AC2), so there is nothing unescaped left in it. `|safe` here only stops Askama
+         from re-escaping HTML we already built and already escaped ourselves — it does not open a
+         path for untrusted content, because none reaches this field. #}
+      {{ html|safe }}
+    </article>
+    <nav class="manual__prevnext">
+      {% if let Some(p) = prev %}
+      <a class="manual__navcard manual__navcard--prev" href="/manual/{{ p.slug }}"><span class="manual__navlabel">← Previous</span>{{ p.title }}</a>
+      {% else %}
+      <span></span>
+      {% endif %}
+      {% if let Some(n) = next %}
+      <a class="manual__navcard manual__navcard--next" href="/manual/{{ n.slug }}"><span class="manual__navlabel">Next →</span>{{ n.title }}</a>
+      {% endif %}
+    </nav>
+  </div>
+</div>
+{% endblock %}

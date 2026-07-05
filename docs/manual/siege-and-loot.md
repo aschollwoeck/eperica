@@ -35,8 +35,8 @@ Build a **Cranny** to **hide a chunk of each resource** from looters. Whatever s
 capacity is **safe** — raiders simply can't reach it. Upgrade the Cranny to protect more. A village with
 no Cranny protects nothing beyond what it has already spent.
 
-> **Teutons dig deeper.** A **Teuton** attacker **partially bypasses** an enemy Cranny, looting more
-> than other tribes would against the same protection — true to their raiding nature.
+> **Faithful:** Teutons dig deeper — a **Teuton** attacker **partially bypasses** an enemy Cranny,
+> looting more than other tribes would against the same protection, true to their raiding nature.
 
 ## Reading the report
 
@@ -47,5 +47,12 @@ After a battle, the **report** (under **Reports**) now also shows:
 
 Both sides see this, so a defender knows exactly what was taken and broken.
 
-> Once sent, an attack or raid **can't be recalled** — choose your target and your catapults' aim before
-> you commit.
+> **Warning:** Once sent, an attack or raid **can't be recalled** — choose your target and your
+> catapults' aim before you commit.
+
+## See also
+
+- [Attacking & defending](combat.md) — winning the battle that unlocks looting and razing.
+- [Building & upgrading](buildings.md) — building a Cranny to protect your resources.
+- [Tribes, the Academy & the Smithy](tribes-and-units.md) — each unit's carry capacity.
+- [Player Manual index](README.md)

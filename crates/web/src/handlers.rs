@@ -2,7 +2,7 @@
 
 use crate::auth::{
     AuthUser, GameContext, MaybeAuthUser, MaybeRealUser, RealUser, WORLD_COOKIE, WorldScope,
-    auth_cookie, clear_cookie, world_cookie,
+    auth_cookie, clear_cookie, clear_world_cookie, world_cookie,
 };
 use crate::state::AppState;
 use crate::templates::{
@@ -13,19 +13,25 @@ use crate::templates::{
     ForceRow, ForumPostRow, ForumTemplate, ForumThreadRow, ForumThreadTemplate, GarrisonRow,
     HistoryPointView, ImpressumTemplate, IncomingRow, IncomingView, IndexTemplate,
     JoinableWorldRow, JoinedWorldRow, LandingWorldRow, LeaderboardRowView, LeaderboardTemplate,
-    LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MedalRowView, MemberStatRow,
-    MessagesTemplate, ModAccountTemplate, ModQueueTemplate, ModReportRow, MovementRow,
-    NotificationRowView, NotificationsTemplate, OasisRow, OutgoingInviteView, PendingInviteView,
-    PlayerStatsTemplate, PlotView, PrivacyTemplate, ProfileTemplate, QuestsTemplate, QueueView,
-    RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate,
-    ReportsTemplate, ResourceRibbon, RosterRowView, ScoutReportTemplate, ScoutResourceRow,
-    SearchHitRow, SearchTemplate, SettingsTemplate, SettingsToggleRow, ShipmentRow, SitterRow,
-    SittingTemplate, SmithyRow, SmithyTemplate, SpectateBuildRow, SpectateFeedTemplate,
-    SpectateMovementRow, SpectatePlayerRow, SpectatePlayersTemplate, SpectateReportRow,
-    SpectateShipmentRow, SpectateTrainingRow, SpectateVillageLink, SpectateVillageTemplate,
-    SpectateWorldRow, SpectateWorldsTemplate, SpectatorHolderRow, StyleGuideTemplate,
-    TermsTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate,
-    VillageTrainingRow, WonderStandingView, WonderTemplate, WorldsTemplate,
+    LoginTemplate, ManualBuildingGroup, ManualBuildingLevels, ManualBuildingSection,
+    ManualBuildingsTemplate, ManualChapterRow, ManualChapterTemplate, ManualCostRow,
+    ManualFieldLevelRow, ManualFieldSection, ManualIndexTemplate, ManualJumpItem, ManualLevelRow,
+    ManualMechanicsTemplate, ManualRefLinkRow, ManualSectionRow, ManualTribeMerchant,
+    ManualTribeWall, ManualUnitGroup, ManualUnitJumpItem, ManualUnitSection,
+    ManualUnitTribeSection, ManualUnitsTemplate, MapCellView, MapTemplate, MarketTemplate,
+    MedalRowView, MemberStatRow, MessagesTemplate, ModAccountTemplate, ModQueueTemplate,
+    ModReportRow, MovementRow, NotificationRowView, NotificationsTemplate, OasisRow,
+    OutgoingInviteView, PendingInviteView, PlayerStatsTemplate, PlotView, PrivacyTemplate,
+    ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate,
+    ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, ResourceRibbon, RosterRowView,
+    ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate, SettingsTemplate,
+    SettingsToggleRow, ShipmentRow, SitterRow, SittingTemplate, SmithyRow, SmithyTemplate,
+    SpectateBuildRow, SpectateFeedTemplate, SpectateMovementRow, SpectatePlayerRow,
+    SpectatePlayersTemplate, SpectateReportRow, SpectateShipmentRow, SpectateTrainingRow,
+    SpectateVillageLink, SpectateVillageTemplate, SpectateWorldRow, SpectateWorldsTemplate,
+    SpectatorHolderRow, StyleGuideTemplate, TermsTemplate, TrainRow, TroopsTemplate,
+    VillageStatRow, VillageSwitchRow, VillageTemplate, VillageTrainingRow, WonderStandingView,
+    WonderTemplate, WorldsTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -65,11 +71,12 @@ use eperica_application::{
     PLAYERS_PER_PAGE, player_villages, players as spectate_player_index, village_detail, world_feed,
 };
 use eperica_domain::{
-    AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, ChatChannel,
-    Coordinate, DEMOLISH_MIN_MAIN_BUILDING, DiplomacyStance, DiplomacyStatus, Economy, GameSpeed,
-    MedalCategory, MovementKind, OasisBonus, PlayerId, Presence, Quadrant, QuestReward, QueueLane,
-    ReportReason, ResearchDenied, ResourceAmounts, ResourceKind, RightSet, SanctionKind,
-    ScoutTarget, TileKind, Timestamp, TradeKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied,
+    AllianceId, AllianceRight, AllianceRole, AllianceRules, AttackMode, BuildRules, BuildTarget,
+    BuildingKind, ChatChannel, Coordinate, DEMOLISH_MIN_MAIN_BUILDING, DiplomacyStance,
+    DiplomacyStatus, Economy, EconomyRules, GameSpeed, MAX_WONDER_LEVEL, MedalCategory,
+    MovementKind, OasisBonus, PlayerId, Presence, Quadrant, QuestReward, QueueLane, ReportReason,
+    ResearchDenied, ResourceAmounts, ResourceKind, RightSet, SanctionKind, ScoutTarget, TileKind,
+    Timestamp, TradeKind, Tribe, UnitId, UnitRole, UnitRules, UnitSpec, UpgradeDenied,
     VILLAGE_BUILDING_SLOTS, Village, VillageId, WorldId, building_at, can_access_channel,
     can_afford, can_place, can_research, can_upgrade, current_quest, expansion_slots,
     garrison_upkeep, is_inactive, per_unit_time_secs, prerequisites_met, presence, queue_lane,
@@ -78,6 +85,7 @@ use eperica_domain::{
 use eperica_infrastructure::now;
 use eperica_infrastructure::{DEFAULT_PRESET, KNOWN_PRESETS, WorldRules, known_preset};
 use serde::Deserialize;
+use std::sync::Arc;
 
 fn resource_label(kind: ResourceKind) -> &'static str {
     match kind {
@@ -148,8 +156,26 @@ fn building_label(kind: BuildingKind) -> &'static str {
     }
 }
 
-/// A one-line description of what a building does, for the generic building page (087).
-fn building_blurb(kind: BuildingKind) -> &'static str {
+/// A one-line description of what a building does, for the generic building page (087) and the
+/// buildings reference page (127 T2). Fixed prose for every kind except two whose numbers are
+/// preset-configurable and must track the *loaded* rules, never a hand-typed guess (127 review M4):
+/// Embassy's join/found levels (`AllianceRules`) and the Wonder's win level (`MAX_WONDER_LEVEL`).
+fn building_blurb(kind: BuildingKind, alliance: &AllianceRules) -> String {
+    match kind {
+        BuildingKind::Embassy => format!(
+            "Diplomacy — level {} to join an alliance, level {} to found one.",
+            alliance.join_embassy_level, alliance.found_embassy_level
+        ),
+        BuildingKind::Wonder => {
+            format!("The Wonder of the World — raise it to {MAX_WONDER_LEVEL} to win the round.")
+        }
+        _ => building_blurb_fixed(kind).to_owned(),
+    }
+}
+
+/// The fixed-prose half of [`building_blurb`] — every kind except Embassy/Wonder, which that
+/// wrapper formats from the resolved rules instead (127 review M4).
+fn building_blurb_fixed(kind: BuildingKind) -> &'static str {
     match kind {
         BuildingKind::MainBuilding => {
             "The heart of the village — higher levels speed every construction."
@@ -160,7 +186,6 @@ fn building_blurb(kind: BuildingKind) -> &'static str {
         BuildingKind::Marketplace => {
             "Enables trade; its level sets how many merchants you command."
         }
-        BuildingKind::Embassy => "Diplomacy — level 1 to join an alliance, level 3 to found one.",
         BuildingKind::Wall => "Rings the village in defence; reduced by rams in a siege.",
         BuildingKind::Barracks => "Trains infantry.",
         BuildingKind::Academy => "Researches new unit types so they can be trained.",
@@ -173,7 +198,9 @@ fn building_blurb(kind: BuildingKind) -> &'static str {
         BuildingKind::TownHall => "Produces culture points, which gate founding new villages.",
         BuildingKind::Palace => "Designates your capital and trains settlers/administrators.",
         BuildingKind::Treasury => "Houses a captured artifact, whose power aids your empire.",
-        BuildingKind::Wonder => "The Wonder of the World — raise it to 100 to win the round.",
+        BuildingKind::Embassy | BuildingKind::Wonder => {
+            unreachable!("Embassy/Wonder are handled by building_blurb itself")
+        }
     }
 }
 
@@ -209,6 +236,343 @@ fn field_art_slug(kind: ResourceKind) -> &'static str {
         ResourceKind::Clay => "clay_pit",
         ResourceKind::Iron => "iron_mine",
         ResourceKind::Crop => "cropland",
+    }
+}
+
+/// A resource field's chapter title on the Buildings reference page (127 follow-up).
+fn field_label(kind: ResourceKind) -> &'static str {
+    match kind {
+        ResourceKind::Wood => "Woodcutter",
+        ResourceKind::Clay => "Clay Pit",
+        ResourceKind::Iron => "Iron Mine",
+        ResourceKind::Crop => "Cropland",
+    }
+}
+
+/// Hand-written flavor prose for a resource field's chapter (127 follow-up, operator feedback:
+/// "show resources also individually like buildings and units") — same convention as
+/// `building_explanation`: what it is, why it matters, when it becomes the bottleneck, and
+/// deliberately **no balance numbers** (those live on the facts line and the per-level table).
+fn field_explanation(kind: ResourceKind) -> &'static str {
+    match kind {
+        ResourceKind::Wood => {
+            "The village's timber yard: nearly every construction order, from your first Warehouse \
+             to the Wonder's hundredth level, draws on wood, making it the backbone resource behind \
+             any building spree. It's usually the first squeeze a brand-new village feels, even \
+             though clay bills heaviest on field upgrades from the very start. Keep a \
+             Woodcutter or two ahead of your build queue, not behind it, or every order waiting in \
+             line idles on timber. All four field types below share the same output curve — a \
+             Woodcutter, Clay Pit, Iron Mine, and Cropland at the same level produce the same \
+             hourly amount of their own resource."
+        }
+        ResourceKind::Clay => {
+            "The hungriest appetite in the village: field upgrades — the bulk of a village's \
+             lifetime spend — bill clay hardest of the three building resources, so a Clay Pit falling behind stalls \
+             the queue faster than any other field would. It pays to run your Clay Pits a level or \
+             two ahead of your Woodcutters and Iron Mines for exactly that reason. A village that \
+             neglects clay ends up rich in wood and iron it can't actually spend."
+        }
+        ResourceKind::Iron => {
+            "Where the army's weight of metal comes from: the armoured elites — heavy infantry \
+             and the great cavalry lines — bill iron among their steepest costs, so an Iron Mine that \
+             keeps pace with your military ambitions matters more as your roster grows serious. \
+             Early on it can trail wood and clay without much cost, but a war economy short on \
+             iron caps how elite a force you can field and sustain."
+        }
+        ResourceKind::Crop => {
+            "The odd one out among the four fields: crop is the only resource a village truly \
+             consumes rather than merely spends — every point of population and every trained \
+             unit's upkeep draws on it hour after hour, whether you're building anything or not. A \
+             cropland shortfall doesn't just slow construction, it starves the village outright, a \
+             warning every Travian veteran learns to dread. The capital alone may raise its \
+             fields — croplands very much included — past the ordinary cap, and croplands charge \
+             their own cost table, weighted differently from the other fields — notably light \
+             on crop itself."
+        }
+    }
+}
+
+/// The facts line for a resource field's chapter: the normal/capital level caps from the resolved
+/// rules (`BuildRules::field_max_level`), plus — Cropland only — a note that it charges its own
+/// cost table rather than the shared wood/clay/iron one.
+fn field_facts(kind: ResourceKind, build: &BuildRules) -> String {
+    let normal = build.field_max_level(false);
+    let capital = build.field_max_level(true);
+    let base = format!("Max level {normal} (normal) · up to {capital} in the capital");
+    if kind == ResourceKind::Crop {
+        format!("{base} · charges its own (cheaper-in-crop) cost table, not the shared field one")
+    } else {
+        base
+    }
+}
+
+/// One resource field's full per-level table (127 follow-up): cost from the shared field table
+/// (`BuildRules::cost`) for wood/clay/iron, or Cropland's own cheaper table
+/// (`BuildRules::field_cost`); build time from the shared field table either way; hourly production
+/// from `EconomyRules::field_production_per_hour` (the same accessor the old flat production table
+/// used). Rows run `1..=`the **capital** cap — rows past the *normal* cap are marked `capital_only`
+/// for the template's dimming/badge. Unlike `manual_cost_row`, a missing rules entry renders `"—"`,
+/// not a hidden `0` default (the S1 lesson) — though in practice the shared/cropland field tables
+/// both run the full 20 levels, so this never triggers today.
+fn manual_field_levels(
+    build: &BuildRules,
+    econ: &EconomyRules,
+    kind: ResourceKind,
+    speed: GameSpeed,
+) -> Vec<ManualFieldLevelRow> {
+    let field_target = BuildTarget::Field { slot: 0 };
+    let normal_max = build.field_max_level(false);
+    let capital_max = build.field_max_level(true);
+    let fmt_amount = |v: Option<i64>| v.map_or_else(|| "—".to_owned(), |n| n.to_string());
+    (1..=capital_max)
+        .map(|level| {
+            let cost = if kind == ResourceKind::Crop {
+                build.field_cost(ResourceKind::Crop, level - 1)
+            } else {
+                build.cost(field_target, level - 1)
+            };
+            let time_secs = build.base_time_secs(field_target, level - 1);
+            ManualFieldLevelRow {
+                level,
+                wood: fmt_amount(cost.map(|c| c.wood)),
+                clay: fmt_amount(cost.map(|c| c.clay)),
+                iron: fmt_amount(cost.map(|c| c.iron)),
+                crop: fmt_amount(cost.map(|c| c.crop)),
+                time: time_secs.map_or_else(
+                    || "—".to_owned(),
+                    |t| fmt_duration(scaled_time_secs(t, speed)),
+                ),
+                production: econ.field_production_per_hour(kind, level, speed),
+                capital_only: level > normal_max,
+            }
+        })
+        .collect()
+}
+
+/// One resource field's full reference chapter — the field counterpart to
+/// [`manual_building_levels`]/[`ManualBuildingSection`] (127 follow-up).
+fn manual_field_section(
+    build: &BuildRules,
+    econ: &EconomyRules,
+    kind: ResourceKind,
+    speed: GameSpeed,
+) -> ManualFieldSection {
+    let slug = field_art_slug(kind);
+    ManualFieldSection {
+        slug,
+        name: field_label(kind),
+        image: building_art_url(slug),
+        explanation: field_explanation(kind),
+        facts: field_facts(kind, build),
+        max_level: build.field_max_level(true),
+        levels: manual_field_levels(build, econ, kind, speed),
+    }
+}
+
+/// Art slugs (`building_kind_id`/`field_art_slug` output) that ship a **generic**, non-tribal
+/// illustration under `/static/buildings/<slug>.webp` — verified against the checked-in asset set
+/// (127 redesign). Every other kind has no generic plate at all, only the per-tribe ones.
+const GENERIC_BUILDING_ART: [&str; 9] = [
+    "barracks",
+    "clay_pit",
+    "cropland",
+    "marketplace",
+    "outpost",
+    "rally_point",
+    "residence",
+    "smithy",
+    "woodcutter",
+];
+
+/// Resolves the canonical illustration for a building/field art slug: the generic plate when the
+/// kind ships one (`GENERIC_BUILDING_ART`), else the Gauls tribal plate — a single, deterministic
+/// chain (127 redesign) rather than the CSS-layered generic+tribe-overlay the single-building pages
+/// use, so the manual's `<img>` always has one definite `src` a test can stat on disk (see
+/// `building_and_field_art_resolves_to_a_file_that_exists_on_disk` below).
+fn building_art_url(slug: &str) -> String {
+    if GENERIC_BUILDING_ART.contains(&slug) {
+        format!("/static/buildings/{slug}.webp")
+    } else {
+        format!("/static/buildings/gauls_{slug}.webp")
+    }
+}
+
+/// The five purpose groups the Buildings reference page's jump-list organizes chapters under (127
+/// redesign, operator feedback), in display order — mirrors the roles `specs/game-design.md` §4
+/// already describes for each building. Fixed and hand-picked per kind, like `building_blurb`.
+const BUILDING_GROUP_ORDER: [&str; 5] = [
+    "Command & defence",
+    "Economy",
+    "Military",
+    "Expansion & diplomacy",
+    "End-game",
+];
+
+/// Which of `BUILDING_GROUP_ORDER`'s five groups a building kind's jump-list chip falls under (127
+/// redesign).
+fn building_group(kind: BuildingKind) -> &'static str {
+    match kind {
+        BuildingKind::MainBuilding
+        | BuildingKind::RallyPoint
+        | BuildingKind::Wall
+        | BuildingKind::Cranny => "Command & defence",
+        BuildingKind::Warehouse | BuildingKind::Granary | BuildingKind::Marketplace => "Economy",
+        BuildingKind::Barracks
+        | BuildingKind::Academy
+        | BuildingKind::Smithy
+        | BuildingKind::Stable
+        | BuildingKind::Workshop => "Military",
+        BuildingKind::Residence
+        | BuildingKind::Outpost
+        | BuildingKind::TownHall
+        | BuildingKind::Palace
+        | BuildingKind::Embassy => "Expansion & diplomacy",
+        BuildingKind::Treasury | BuildingKind::Wonder => "End-game",
+    }
+}
+
+/// Hand-written flavor prose for a building's chapter on the Buildings reference page (127
+/// redesign): what it is, why you'd build it, and when it matters strategically. Deliberately
+/// carries **no balance numbers** — every rules-fed figure (prerequisites, max level, the Embassy/
+/// Wonder callouts) lives on the chapter's facts line instead, so this text never drifts out of
+/// sync with a preset change.
+fn building_explanation(kind: BuildingKind) -> &'static str {
+    match kind {
+        BuildingKind::MainBuilding => {
+            "The heart of the village: every other construction order here is timed against its \
+             level, so a stronger Main Building means everything else finishes sooner. Raise it \
+             early, ahead of almost anything else — the speed bonus compounds over every future \
+             upgrade in this village, and nowhere else. At its highest level it also unlocks \
+             demolition, letting you tear down and relocate a building you no longer need."
+        }
+        BuildingKind::RallyPoint => {
+            "The village's parade ground: no troop marches out, and none returns, without a Rally \
+             Point standing here. It's where you review incoming attacks, send raids and \
+             reinforcements, and recall an army already on the move, so it matters the moment you \
+             have troops worth moving at all. Every village is founded with one already built."
+        }
+        BuildingKind::Warehouse => {
+            "A raised, guarded store for wood, clay, and iron: without enough capacity, a thriving \
+             field simply overflows and the surplus is wasted the instant it's produced. Build \
+             ahead of a construction spree, or before a stretch of time you'll be away, so incoming \
+             resources never spill over the brim. It's also a legitimate siege target — a \
+             besieger's catapults can knock levels off it to shrink what you're able to hoard."
+        }
+        BuildingKind::Granary => {
+            "The crop counterpart to the Warehouse: it caps how much grain the village can bank \
+             against an army that eats every hour, online or not. A Granary sized for the worst \
+             week, not the average one, keeps your troops fed through a bad harvest or a run of \
+             coordinated raids. Like the Warehouse, it's a target catapults can shrink during a \
+             siege, cutting how long your defenders can hold out."
+        }
+        BuildingKind::Marketplace => {
+            "The village's gateway to trade: it dispatches and receives the merchants who carry \
+             resources between you, your allies, and your own outlying villages. Build one as soon \
+             as you have a surplus worth shipping — an economy without a Marketplace is landlocked, \
+             unable to trade a glut of one resource for a shortage of another. Its level sets how \
+             many merchants you command at once, so it pays to grow it the moment your trade routes \
+             get busy."
+        }
+        BuildingKind::Embassy => {
+            "The seat of diplomacy: without one, a village cannot belong to an alliance at all, and \
+             going it alone against the rest of the map rarely ends well. Build it the moment you're \
+             ready to stop playing solo — shared defence, trade, and coordinated offence all flow \
+             through alliance membership. A high enough level lets you found an alliance of your \
+             own, rather than only ever joining one someone else built."
+        }
+        BuildingKind::Wall => {
+            "A tribe-specific rampart ringing the village, standing between a raiding party and your \
+             stores. It matters most once you're a known target — a strong Wall can turn an \
+             opportunistic raid into a costly failure, and shelters the garrison during a real \
+             siege. Rams in the attacking force chip away at it during a battle, so a Wall alone is \
+             a deterrent, never an unbreakable shield."
+        }
+        BuildingKind::Barracks => {
+            "Where infantry is trained — the backbone of almost every early army, cheap enough to \
+             field in numbers and available from the very start. Build one the moment you want \
+             troops of your own, whether to raid, to garrison, or simply to stop being an easy \
+             target. It's also where any infantry the Academy has unlocked actually gets produced."
+        }
+        BuildingKind::Academy => {
+            "The village's research hall: units beyond your tribe's starting roster must be \
+             researched here before a Barracks, Stable, or Workshop can ever train them. Visit it \
+             the moment your strategy calls for a unit you don't yet have — cavalry, siege engines, \
+             and the expansion units all wait behind an Academy unlock. Research is a village \
+             matter: each village unlocks its own roster, so a newly founded village starts from \
+             scratch and needs its own Academy before it can train beyond the basics."
+        }
+        BuildingKind::Smithy => {
+            "A forge that permanently upgrades an already-researched unit's attack or defence, \
+             sharpening the troops you already train rather than adding new ones. It rewards a \
+             settled, defensible position — the gains apply to every unit of that type this \
+             village fields when fighting from home — including troops trained before the \
+             upgrade — so it's most worthwhile \
+             once you know which units you'll keep fielding. \
+             Prioritise whichever side, attack or defence, your strategy actually leans on."
+        }
+        BuildingKind::Stable => {
+            "Where cavalry is trained — faster and harder-hitting than infantry, at a steeper cost \
+             in resources and upkeep. Build one once your economy can sustain mounted troops, \
+             whether for lightning raids, distant reinforcements, or a scouting/harassment role your \
+             infantry can't fill. Like the Barracks, it also trains any cavalry the Academy has \
+             unlocked."
+        }
+        BuildingKind::Workshop => {
+            "Builds the siege engines — rams and catapults — that no ordinary army can substitute \
+             for. Without one, an attacking force can wear down a garrison but never breach a Wall \
+             or grind down a target's buildings, so it's a prerequisite for any serious offensive \
+             campaign. Build it once raiding stops being enough and conquest or sustained sieging \
+             becomes the goal."
+        }
+        BuildingKind::Residence => {
+            "Trains the settlers and administrators that let a single village grow into an empire — \
+             without one, you're permanently confined to the village you started with. Build it as \
+             soon as founding a second village becomes the priority, since settlers take time to \
+             train and a free tile to found on. It's superseded, not duplicated, by the Palace once \
+             you decide where your capital will stand."
+        }
+        BuildingKind::Cranny => {
+            "A hidden cache that shelters a share of the village's resources from looters, invisible \
+             to a raider's take even when everything else in the warehouse is stripped bare. It \
+             matters most for a young or unshielded village — regular small raids can bleed a \
+             defenceless economy dry, and a Cranny is the cheapest way to blunt them. It offers no \
+             protection at all against a real siege army, only against opportunistic raiding."
+        }
+        BuildingKind::Outpost => {
+            "Garrisons a cleared oasis, turning captured territory into a lasting bonus rather than \
+             a one-time raid. Build one once you've cleared an oasis and want to keep its production \
+             bonus permanently, since holding any oasis at all requires an Outpost. Its level sets \
+             how many oases the village can hold at once, so ambitions to hold several are gated by \
+             this one building."
+        }
+        BuildingKind::TownHall => {
+            "Produces the culture points that gate every act of expansion — founding a new village, \
+             or growing an alliance, both draw on the culture your Town Halls generate. Build and \
+             raise it well ahead of your next planned settlement, since culture accumulates \
+             gradually and a shortfall stalls expansion outright."
+        }
+        BuildingKind::Palace => {
+            "Designates the village as your capital — the one village that can never be conquered, \
+             and the only one whose resource fields can be raised past the ordinary cap. Like the \
+             Residence, it trains settlers and administrators, but its real weight is strategic: \
+             only one Palace, and therefore one capital, can exist at a time. Choosing where to \
+             build it — and whether to relocate it later — is one of the most consequential \
+             decisions of a campaign."
+        }
+        BuildingKind::Treasury => {
+            "The vault that houses a captured artifact, folding its empire-wide bonus into your \
+             account once it's yours to hold. It only matters in the end-game, once artifacts are \
+             in play — an attacking army from a Treasury village is what makes capturing or \
+             stealing one possible at all. Without a Treasury, an artifact simply can't be brought \
+             home."
+        }
+        BuildingKind::Wonder => {
+            "The Wonder of the World — the capstone that decides how the round ends. Only a \
+             captured Natar Wonder site, held by an alliance holding the plan, can raise one at all, \
+             and doing so is a whole-alliance undertaking rather than a single village's project. \
+             Whichever alliance first finishes raising theirs wins the round outright, freezing the \
+             server."
+        }
     }
 }
 
@@ -596,6 +960,817 @@ pub async fn terms() -> Response {
     page(&TermsTemplate)
 }
 
+/// The manual section index (127 T1, AC1): public, no login — mirrors how the legal pages above
+/// need no session data at all (the nav's auth-aware groups are revealed client-side by the `/me`
+/// poll in base.html, not server-rendered).
+pub async fn manual_index() -> Response {
+    page(&ManualIndexTemplate {
+        sections: manual_section_rows(None),
+        ref_links: manual_ref_link_rows(None),
+    })
+}
+
+/// A manual chapter (127 T1, AC1/AC2/AC5): rendered server-side from `docs/manual/{slug}.md` via
+/// [`crate::manual::render`]. Unknown slug is the site's normal 404.
+pub async fn manual_chapter(Path(slug): Path<String>) -> Response {
+    let Some(chapter) = crate::manual::render(&slug) else {
+        return not_found();
+    };
+    page(&ManualChapterTemplate {
+        sections: manual_section_rows(Some(&slug)),
+        ref_links: manual_ref_link_rows(None),
+        section_title: chapter.section,
+        title: chapter.title,
+        html: chapter.html,
+        prev: chapter.prev.map(manual_nav_row),
+        next: chapter.next.map(manual_nav_row),
+    })
+}
+
+/// Builds the sidebar's section/chapter rows from the compile-time registry, marking the chapter
+/// matching `active_slug` (if any) as active.
+fn manual_section_rows(active_slug: Option<&str>) -> Vec<ManualSectionRow> {
+    crate::manual::SECTIONS
+        .iter()
+        .map(|s| ManualSectionRow {
+            title: s.title,
+            chapters: s
+                .chapters
+                .iter()
+                .map(|c| ManualChapterRow {
+                    slug: c.slug,
+                    title: c.title,
+                    is_active: active_slug == Some(c.slug),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// Builds the sidebar's generated-reference-page rows, marking the one matching `active_ref` (if
+/// any) as active — the reference-page counterpart of [`manual_section_rows`]'s `active_slug`
+/// (127 review NIT: previously always built with no active marker at all, even from the reference
+/// pages themselves).
+fn manual_ref_link_rows(active_ref: Option<&str>) -> Vec<ManualRefLinkRow> {
+    crate::manual::REFERENCE_LINKS
+        .iter()
+        .map(|r| ManualRefLinkRow {
+            slug: r.slug,
+            title: r.title,
+            is_active: active_ref == Some(r.slug),
+        })
+        .collect()
+}
+
+fn manual_nav_row(n: crate::manual::NavLink) -> ManualChapterRow {
+    ManualChapterRow {
+        slug: n.slug,
+        title: n.title,
+        is_active: false,
+    }
+}
+
+// ============================================================================
+// 127 T2 — the generated manual reference pages: /manual/reference/{units,buildings,mechanics}.
+// ============================================================================
+
+/// The rule bundle + speed + world-aware banner shared by every reference page (127 T2, AC4): the
+/// session's selected world (from `WORLD_COOKIE`) if it still resolves through the registry, else the
+/// `classic` preset at 1× (plan "Classic fallback via the existing preset loader" — no second source
+/// of balance truth). **Never a client parameter** (P4): the world comes only from the session cookie,
+/// itself re-validated against the live registry on every call — a stale/forged value that no longer
+/// resolves just falls back to the classic banner, it is never trusted blindly.
+struct ManualRulesView {
+    rules: Arc<WorldRules>,
+    speed: GameSpeed,
+    /// "Values for *World* — speed N×, preset rules", or the classic-fallback sentence (AC4).
+    banner: String,
+}
+
+async fn manual_rules_view(state: &AppState, jar: &PrivateCookieJar) -> ManualRulesView {
+    let selected = jar
+        .get(WORLD_COOKIE)
+        .and_then(|c| c.value().parse::<u128>().ok())
+        .map(WorldId);
+    if let Some(world_id) = selected
+        && let Some((name, speed, rules, preset)) =
+            state.world_registry.label_and_rules_for(world_id).await
+    {
+        return ManualRulesView {
+            rules,
+            speed,
+            banner: format!(
+                "Values for {name} — speed {}×, {preset} rules",
+                speed.multiplier()
+            ),
+        };
+    }
+    ManualRulesView {
+        rules: state.world_registry.classic_rules(),
+        speed: GameSpeed::new(1.0).expect("1.0 is a valid speed"),
+        banner: "Values shown for the classic rules — join a world to see its exact numbers."
+            .to_owned(),
+    }
+}
+
+/// A human duration for the mechanics reference page (127 T2): whole days when the value is an exact
+/// multiple of a day (every shipped preset's lifecycle windows are), else the `h:mm:ss` fallback the
+/// rest of the game already uses ([`fmt_duration`]).
+fn fmt_days(secs: i64) -> String {
+    if secs > 0 && secs % 86400 == 0 {
+        let days = secs / 86400;
+        format!("{days} day{}", if days == 1 { "" } else { "s" })
+    } else {
+        fmt_duration(secs)
+    }
+}
+
+/// The generated Units reference page (127 T2, AC3/AC4; redesigned per operator feedback — "the
+/// units still don't have the same setup as buildings" — into a chapter per unit, mirroring
+/// `manual_ref_buildings`'s treatment): every tribe's full roster, read from the resolved
+/// `UnitRules`, each rendered as its own `ManualUnitSection` chapter. Only `train_time` is
+/// speed-adjusted (plan §Risks) — every other stat, cost, and upkeep is a flat preset value.
+pub async fn manual_ref_units(State(state): State<AppState>, jar: PrivateCookieJar) -> Response {
+    let ctx = manual_rules_view(&state, &jar).await;
+    let unit_rules = &ctx.rules.units;
+    let tribes: Vec<ManualUnitTribeSection> = [Tribe::Romans, Tribe::Teutons, Tribe::Gauls]
+        .into_iter()
+        .map(|tribe| ManualUnitTribeSection {
+            tribe: tribe_label(Some(tribe)),
+            units: unit_rules
+                .roster(tribe)
+                .iter()
+                .map(|spec| manual_unit_section(tribe, spec, ctx.speed))
+                .collect(),
+        })
+        .collect();
+    // The jump-list groups — one per tribe, keeping each roster's own declared order among its
+    // members (127 redesign, mirroring `BUILDING_GROUP_ORDER`'s purpose grouping on the Buildings
+    // page but grouped by tribe here instead).
+    let groups = tribes
+        .iter()
+        .map(|t| ManualUnitGroup {
+            title: t.tribe,
+            items: t
+                .units
+                .iter()
+                .map(|u| ManualUnitJumpItem {
+                    slug: u.slug.clone(),
+                    name: u.name.clone(),
+                })
+                .collect(),
+        })
+        .collect();
+    page(&ManualUnitsTemplate {
+        sections: manual_section_rows(None),
+        ref_links: manual_ref_link_rows(Some("units")),
+        banner: ctx.banner,
+        groups,
+        tribes,
+    })
+}
+
+/// Unit portrait slugs (`<tribe>_<id>`) with no shipped `/static/units/` plate yet (127 redesign) —
+/// pinned so the roster test below fails loudly the moment art is added for one (a reminder to
+/// shrink this list) rather than silently leaving a stale gap undetected.
+const UNIT_ART_GAPS: [&str; 3] = [
+    "romans_equites_caesaris",
+    "romans_fire_catapult",
+    "teutons_scout",
+];
+
+/// The chapter anchor id / roster thumbnail slug for `spec` under `tribe` — `<tribe>_<id>` (067's
+/// existing convention).
+fn unit_slug(tribe: Tribe, spec: &UnitSpec) -> String {
+    format!("{}_{}", tribe.slug(), spec.id.as_str())
+}
+
+/// The resolved portrait URL for `slug` — `None` for the pinned `UNIT_ART_GAPS` so the chapter
+/// renders without a figure at all (127 redesign) rather than a broken `<img>`.
+fn unit_portrait_url(slug: &str) -> Option<String> {
+    if UNIT_ART_GAPS.contains(&slug) {
+        None
+    } else {
+        Some(format!("/static/units/{slug}.webp"))
+    }
+}
+
+/// A unit's research requirements, read straight off its `ResearchSpec` — `None` (a tier-1 combat
+/// unit or a research-free Expansion unit) trains from the start; otherwise the Academy-gated
+/// building requirements it lists.
+fn unit_research_requirements(spec: &UnitSpec) -> String {
+    match &spec.research {
+        None => "None — trained from the start".to_owned(),
+        Some(r) if r.requirements.is_empty() => {
+            "Academy research (no building level required)".to_owned()
+        }
+        Some(r) => r
+            .requirements
+            .iter()
+            .map(|(k, l)| format!("{} {l}", building_label(*k)))
+            .collect::<Vec<_>>()
+            .join(", "),
+    }
+}
+
+/// One unit's full reference chapter (127 redesign) — the unit counterpart to
+/// `manual_building_levels`/`ManualBuildingSection`: portrait, hand-written flavor prose
+/// (`unit_explanation`), a rules-fed facts line, and the always-visible stat card.
+fn manual_unit_section(tribe: Tribe, spec: &UnitSpec, speed: GameSpeed) -> ManualUnitSection {
+    let slug = unit_slug(tribe, spec);
+    let facts = format!(
+        "Trained in {} · Research: {} · Role: {}",
+        building_label(spec.trained_in),
+        unit_research_requirements(spec),
+        role_label(spec.role)
+    );
+    ManualUnitSection {
+        image: unit_portrait_url(&slug),
+        slug,
+        name: spec.name.clone(),
+        explanation: unit_explanation(tribe, spec),
+        facts,
+        attack: spec.attack,
+        def_inf: spec.defense_infantry,
+        def_cav: spec.defense_cavalry,
+        speed: spec.speed,
+        carry: spec.carry_capacity,
+        upkeep: spec.crop_upkeep,
+        cost_wood: spec.cost.wood,
+        cost_clay: spec.cost.clay,
+        cost_iron: spec.cost.iron,
+        cost_crop: spec.cost.crop,
+        train_time: fmt_duration(scaled_time_secs(spec.train_secs, speed)),
+    }
+}
+
+/// Hand-written flavor prose for a unit's chapter on the Units reference page (127 redesign,
+/// operator feedback: "the units still don't have the same setup as buildings"): role, when it
+/// shines, and its strategic character. Deliberately carries **no balance numbers** — every
+/// rules-fed figure (attack/defence/speed/carry/upkeep/cost/research) lives on the chapter's facts
+/// line or stat card instead, so this text never drifts out of sync with a preset change. Matched on
+/// `(tribe, spec.id)` since a handful of ids (`ram`, `settler`) are shared by more than one tribe's
+/// roster with a genuinely different profile each time.
+fn unit_explanation(tribe: Tribe, spec: &UnitSpec) -> &'static str {
+    match (tribe, spec.id.as_str()) {
+        // ---------------------------------------------------------------- Romans
+        (Tribe::Romans, "legionnaire") => {
+            "Rome's opening infantry: solidly built on both attack and defence rather than \
+             excelling at either, and trainable from the very first Barracks with no research \
+             detour. It's usually the first unit any Roman village fields, equally happy raiding, \
+             garrisoning, or simply discouraging an opportunist. Lean on it early, then let \
+             purpose-built units take over as the Academy unlocks them."
+        }
+        (Tribe::Romans, "praetorian") => {
+            "Where the Legionnaire splits its attention, the Praetorian gives up offence for a \
+             much sturdier defence against foot troops — the unit a Roman village garrisons with once holding ground \
+             matters more than raiding out. It only trains once you've researched it at the \
+             Academy with a Smithy standing, so it's a deliberate defensive investment, not a \
+             starting default. Post it behind a Wall and a village becomes genuinely hard to \
+             crack."
+        }
+        (Tribe::Romans, "imperian") => {
+            "Rome's heaviest-hitting foot soldier, traded for noticeably thinner defence than the \
+             Praetorian carries. Train it once the Academy and Smithy are up and your strategy has \
+             turned toward offence — it's the backbone of a Roman attacking stack rather than a \
+             garrison unit. Its decent carry means an Imperian raid also comes home well loaded."
+        }
+        (Tribe::Romans, "equites_caesaris") => {
+            "Rome's most expensive cavalry, and the last one its Stable unlocks: a hard-hitting \
+             elite rather than a speed unit, noticeably slower on the march than the Equites \
+             Imperatoris despite its far heavier armour and punch. Field it once a village's \
+             economy can sustain its steep upkeep, as the spearhead of a serious offensive stack. \
+             It rewards a fully developed Stable above all, not an early investment."
+        }
+        (Tribe::Romans, "equites_legati") => {
+            "Rome's scout: no attack worth mentioning, sent to spy out a target before you commit \
+             real troops rather than to fight anyone. Its speed gets word back quickly, so it's the \
+             eyes of a campaign, not its fists. Send it ahead of anything you're unsure about — the \
+             intelligence it brings is worth far more than the resources spent training it."
+        }
+        (Tribe::Romans, "equites_imperatoris") => {
+            "Rome's line cavalry: quick, hard on attack, and hauls home a serious amount of loot, \
+             equally at home leading a raid or reinforcing an ally in a hurry. It needs a \
+             well-developed Academy and Stable before it trains, so it belongs to a village that \
+             has already invested in its military infrastructure. Send it wherever Roman troops \
+             need to arrive fast and hit hard the moment they do."
+        }
+        (Tribe::Romans, "battering_ram") => {
+            "Rome's siege ram: brought along specifically to batter down a Wall, without which a \
+             fortified village is nearly unassailable to anything else in the roster. It's slow and \
+             fights like ordinary infantry if forced to, so it always travels inside a larger stack \
+             rather than alone. Build it — and the Workshop and advanced Academy it demands — only \
+             once your strategy has turned toward sieging a real target, not raiding."
+        }
+        (Tribe::Romans, "fire_catapult") => {
+            "Rome's catapult: rather than breaching the Wall, it grinds down a single chosen \
+             building inside the village — a Warehouse, a Granary, even a rival's Wonder. It's \
+             slow, hungry to keep fed, and demands the highest tiers of Academy and Workshop, so it \
+             only appears in a genuinely committed siege force. Pick its target with care — a Fire \
+             Catapult stays aimed at one building type for the whole battle."
+        }
+        (Tribe::Romans, "senator") => {
+            "Rome's diplomat-soldier: sent against an already-weakened enemy village to erode its \
+             loyalty toward capture, not to raze it. It can hold its own in a fight along the way, \
+             but its purpose is political — a successful campaign wins a village over intact rather \
+             than destroying it. Training one is a long, expensive undertaking reserved for a \
+             village explicitly aimed at conquest."
+        }
+        (Tribe::Romans, "settler") => {
+            "Rome's colonist: carries the manpower and resources to found a brand-new village on an \
+             empty tile — the peaceful path to growing beyond your first settlement. It has essentially \
+             nothing to attack with, though a solid defence means a Settler party caught on the \
+             road isn't defenceless. Train the required trio well ahead of a founding attempt — \
+             each one is a slow, resource-heavy project in its own right."
+        }
+        // ---------------------------------------------------------------- Teutons
+        (Tribe::Teutons, "clubswinger") => {
+            "Teuton's opening infantry — the cheapest and fastest-trained unit a village can field, \
+             built to flood the map in overwhelming numbers rather than stand toe-to-toe. Its \
+             defence is thin, so a lone garrison of them folds quickly, but a swarm makes an \
+             excellent early raiding force. Lean into speed and volume, not durability."
+        }
+        (Tribe::Teutons, "spearman") => {
+            "Teuton's dedicated defender: unremarkable on attack but notably strong against \
+             cavalry, the classic answer to an enemy raiding force built around mounted troops. \
+             Garrison it in a village that expects to be raided rather than one planning to raid \
+             out. It only needs a modest Academy to unlock, so it's an easy early addition to a \
+             defensive build."
+        }
+        (Tribe::Teutons, "axeman") => {
+            "Teuton's offensive infantry — meaningfully harder-hitting than the Clubswinger, at the \
+             cost of needing an Academy and Smithy before it trains. Its defence is far more \
+             balanced than the Clubswinger's, so it can hold its own if a raid runs into \
+             resistance. Bring it once you're ready to move from opportunistic raiding toward a \
+             real offensive campaign."
+        }
+        (Tribe::Teutons, "scout") => {
+            "Teuton's scout: unarmed for a real fight, sent ahead purely to see what's waiting at a \
+             target before you commit troops. It's slower afoot and less perceptive than the other \
+             tribes' scouts, so send it early and don't lean on it alone against a well-defended \
+             village. Its Academy requirement is light, so most villages can field one from early \
+             on."
+        }
+        (Tribe::Teutons, "paladin") => {
+            "Teuton's cavalry generalist — modest on attack but the sturdiest defence of any Teuton \
+             horseman, doubling as a mobile garrison as much as a raider. Its unmatched carry also \
+             makes it an efficient looter once a target's defences are broken. Train it once your \
+             Academy and Stable are developed enough to support cavalry play."
+        }
+        (Tribe::Teutons, "teutonic_knight") => {
+            "Teuton's heaviest cavalry — trading away some of the Paladin's defensive sturdiness \
+             for a much bigger punch. It demands a fully built Academy and Stable, so it belongs to \
+             a village well past its opening phase. Use it as the spearhead of a serious offensive \
+             stack rather than a defensive garrison."
+        }
+        (Tribe::Teutons, "ram") => {
+            "Teuton's siege ram: without one accompanying an attack, a defended Wall can turn back \
+             an otherwise-winning army. It's slow and unremarkable in an open fight, so it always \
+             travels as part of a larger stack rather than alone. Build the Workshop and advanced \
+             Academy it needs only once your ambitions move from raiding to actually taking or \
+             crushing a target."
+        }
+        (Tribe::Teutons, "catapult") => {
+            "Teuton's catapult: aimed at grinding down one chosen building inside an enemy village \
+             rather than the Wall itself, from Warehouses to a rival's Wonder. It hits noticeably \
+             softer than the other two tribes' equivalents, so a Teuton siege leans on numbers to \
+             make up the difference. Reserve it for genuine siege campaigns — it demands the \
+             highest tiers of Academy and Workshop and comes with a heavy upkeep."
+        }
+        (Tribe::Teutons, "chief") => {
+            "Teuton's answer to the Senator: sent against an already-weakened village to win it \
+             over through eroded loyalty rather than raze it. Its purpose is political, not \
+             martial, though it can defend itself credibly enough along the way if the escort runs \
+             into trouble. Training one is a serious commitment, reserved for a village explicitly \
+             built for conquest."
+        }
+        (Tribe::Teutons, "settler") => {
+            "Teuton's colonist: carries the manpower and resources to found a brand-new village on \
+             an empty tile — the peaceful path to growing beyond your first settlement. It's not built for a \
+             fight, though a solid defence means a Settler party caught on the road isn't \
+             defenceless. Train the required trio well ahead of a founding attempt — each one is a \
+             slow, resource-heavy project in its own right."
+        }
+        // ---------------------------------------------------------------- Gauls
+        (Tribe::Gauls, "phalanx") => {
+            "The cheap, iron-light infantry Gauls hide behind: barely worth sending on the attack, \
+             but a solid, inexpensive wall of defence for a village that would rather not be raided \
+             at all. It trains from the very start with no research detour, so it's the reflexive \
+             first choice for a new Gaulish village that wants to sit still and turtle. Stack it \
+             deep behind a Wall rather than ever marching it out."
+        }
+        (Tribe::Gauls, "swordsman") => {
+            "Gaul's offensive infantry — considerably harder-hitting than the Phalanx, at the cost \
+             of leaning away from defence. Train it once the Academy and Smithy are up and your \
+             strategy calls for troops that can actually carry a fight rather than just hold a \
+             line. It's the backbone of a Gaulish attacking stack when cavalry alone isn't enough."
+        }
+        (Tribe::Gauls, "pathfinder") => {
+            "Gaul's scout, and the fastest of any tribe's — first to a target and first to report \
+             back, at the cost of no attack worth mentioning. Send it ahead of anything you're \
+             unsure about; the intelligence it brings is worth far more than the modest resources \
+             spent training it. It needs a developed Academy and a Stable before it trains."
+        }
+        (Tribe::Gauls, "theutates_thunder") => {
+            "The fastest unit in the game, full stop — a lightning raider that outruns even every \
+             tribe's dedicated scout. It's built to strike hard and be gone before a defender can \
+             react, or to rush reinforcements somewhere in a hurry, rather than to sit and slug it \
+             out. Train it once your Academy and Stable can support serious cavalry play."
+        }
+        (Tribe::Gauls, "druidrider") => {
+            "Gaul's defensive cavalry — unusually tough against infantry for a mounted unit, and \
+             fast enough to redeploy wherever a village needs reinforcing in a hurry. It carries \
+             comparatively little loot, so it's a reinforcer and garrison unit rather than a raider. \
+             Use it to shore up a threatened ally's defence faster than infantry ever could arrive."
+        }
+        (Tribe::Gauls, "haeduan") => {
+            "Gaul's premier cavalry — the hardest counter to enemy horsemen the roster has, on top \
+             of a genuinely heavy attack of its own. It demands a fully built Academy and Stable, so \
+             it belongs to a village well past its opening phase. Field it to break an enemy's \
+             cavalry-led offensive as much as to lead your own."
+        }
+        (Tribe::Gauls, "ram") => {
+            "Gaul's siege ram: without one accompanying an attack, a defended Wall can turn back an \
+             otherwise-winning army. It's slow and unremarkable in an open fight, so it always \
+             travels as part of a larger stack rather than alone. Build the Workshop and advanced \
+             Academy it needs only once your ambitions move from raiding to actually taking or \
+             crushing a target."
+        }
+        (Tribe::Gauls, "trebuchet") => {
+            "Gaul's catapult: aimed at grinding down one chosen building inside an enemy village \
+             rather than the Wall itself, from Warehouses to a rival's Wonder. It demands the \
+             highest tiers of Academy and Workshop and a heavy upkeep, so it only shows up once a \
+             campaign has committed to a genuine siege rather than a raid. Choose its target \
+             carefully — it stays aimed at one building type for the whole battle."
+        }
+        (Tribe::Gauls, "chieftain") => {
+            "Gaul's answer to the Senator: sent against an already-weakened village to win it over \
+             through eroded loyalty rather than raze it. Its purpose is political, not martial, \
+             though it can defend itself credibly enough along the way if the escort runs into \
+             trouble. Training one is a serious commitment, reserved for a village explicitly built \
+             for conquest."
+        }
+        (Tribe::Gauls, "settler") => {
+            "Gaul's colonist — and, of the three tribes', the quickest to finish training: carries \
+             the manpower and resources to found a brand-new village on an empty tile — the \
+             peaceful path to growing beyond your first settlement. It has essentially nothing to attack with, \
+             though a solid defence means a Settler party caught on the road isn't defenceless. \
+             Train the required trio well ahead of a founding attempt."
+        }
+        _ => {
+            // Presets are operator-authored directories (ADR 0035): a future preset may ship a
+            // roster id this table doesn't know. A live manual page must not 500 over prose —
+            // log loudly and render a neutral line instead (the stat card carries the data).
+            tracing::warn!(
+                ?tribe,
+                unit = ?spec.id,
+                "no manual prose for roster unit; using fallback"
+            );
+            "A unit of this tribe's roster — see the stat card below for its role and numbers."
+        }
+    }
+}
+
+/// Every buildable kind, in `building.rs`'s declared enum order — `BuildingKind` carries no
+/// enumeration of its own, so the Buildings reference page iterates this fixed list.
+const ALL_BUILDING_KINDS: [BuildingKind; 19] = [
+    BuildingKind::MainBuilding,
+    BuildingKind::RallyPoint,
+    BuildingKind::Warehouse,
+    BuildingKind::Granary,
+    BuildingKind::Marketplace,
+    BuildingKind::Embassy,
+    BuildingKind::Barracks,
+    BuildingKind::Academy,
+    BuildingKind::Smithy,
+    BuildingKind::Stable,
+    BuildingKind::Workshop,
+    BuildingKind::Residence,
+    BuildingKind::Wall,
+    BuildingKind::Cranny,
+    BuildingKind::Outpost,
+    BuildingKind::TownHall,
+    BuildingKind::Palace,
+    BuildingKind::Treasury,
+    BuildingKind::Wonder,
+];
+
+/// One level's cost + build time for `target` — the shared row builder behind every per-level
+/// table on the Buildings reference page.
+///
+/// `BuildRules::cost`/`base_time_secs` take a **current level** and return the cost/time to reach
+/// the next one (verified against `construction.rs`'s own doc comments and the classic
+/// `construction.toml` header: "index 0 = cost/time to go from level 0 to level 1" — the same
+/// convention `order_build`'s call site uses to price the in-progress upgrade). So the row for
+/// display level `N` reads `cost(target, N - 1)`/`base_time_secs(target, N - 1)`.
+///
+/// The time is scaled by world speed only, **not** the Main Building factor — `base_time_secs`
+/// returns the raw table value, and `build_time_secs` (the function the live build queue actually
+/// uses) applies `main_building_factor(mb_level)` as a *separate* divisor on top of speed. Classic's
+/// own `main_building_factor_per_level` table sets index 0 and 1 equal (both `1.0`) with the
+/// comment "villages start at Main Building level 1 (the baseline)", so `base_time_secs ÷ speed`
+/// **is** exactly the Main-Building-level-1 time — hence the section note directing readers to a
+/// higher Main Building for anything faster.
+fn manual_cost_row(
+    build: &BuildRules,
+    target: BuildTarget,
+    level: u8,
+    speed: GameSpeed,
+) -> ManualCostRow {
+    let cost = build.cost(target, level - 1).unwrap_or_default();
+    let time_secs = build.base_time_secs(target, level - 1).unwrap_or(0);
+    ManualCostRow {
+        level,
+        wood: cost.wood,
+        clay: cost.clay,
+        iron: cost.iron,
+        crop: cost.crop,
+        time: fmt_duration(scaled_time_secs(time_secs, speed)),
+    }
+}
+
+/// One buildable kind's full per-level table for the `<details>` under the summary row.
+///
+/// Every kind renders levels `1..=max_level` — except the **Wonder**, whose 100-level table is
+/// sampled every 10th level (`1, 10, 20, … 100`): rendering all 100 rows would dwarf every other
+/// kind's table on the page even collapsed inside `<details>`, and the Wonder's curve is a fixed
+/// geometric progression (`cost_ratio`/`time_ratio` per level, `wonder.toml`) — the sampled points
+/// already show its shape; the template adds a note explaining the gap instead of hiding it.
+fn manual_building_levels(
+    build: &BuildRules,
+    kind: BuildingKind,
+    speed: GameSpeed,
+) -> ManualBuildingLevels {
+    let target = BuildTarget::Building { slot: 0, kind };
+    let max_level = build.max_level(target);
+    let sampled = kind == BuildingKind::Wonder;
+    let levels: Vec<u8> = if sampled {
+        // Derive the sample points from the actual max level (every 10th) rather than a
+        // literal 100 — if the Wonder curve ever changed length, the rows stay in range.
+        std::iter::once(1)
+            .chain((1..=(max_level / 10)).map(|n| n * 10))
+            .collect()
+    } else {
+        (1..=max_level).collect()
+    };
+    ManualBuildingLevels {
+        name: building_label(kind),
+        max_level,
+        rows: levels
+            .into_iter()
+            .map(|level| manual_cost_row(build, target, level, speed))
+            .collect(),
+        sampled,
+    }
+}
+
+/// The generated Buildings reference page (127 T2, AC3/AC4; redesigned into a chapter per building
+/// per operator feedback): one full [`ManualBuildingSection`] per kind — image, explanation, facts
+/// line, and per-level cost table — grouped by purpose for the jump-list, plus a few illustrative
+/// per-level curves and the resource-field tables — all read from the resolved
+/// `BuildRules`/`EconomyRules`/`CultureRules`.
+pub async fn manual_ref_buildings(
+    State(state): State<AppState>,
+    jar: PrivateCookieJar,
+) -> Response {
+    let ctx = manual_rules_view(&state, &jar).await;
+    let build = &ctx.rules.build;
+    let econ = &ctx.rules.economy;
+    let culture = &ctx.rules.culture;
+
+    // One full chapter per buildable kind — the collapsible per-level table now lives inside its
+    // own building's section rather than a separate flat list (127 redesign).
+    let buildings: Vec<ManualBuildingSection> = ALL_BUILDING_KINDS
+        .iter()
+        .map(|&kind| {
+            let target = BuildTarget::Building { slot: 0, kind };
+            let prereqs = build.prerequisites(kind);
+            let prerequisites = if prereqs.is_empty() {
+                "None".to_owned()
+            } else {
+                prereqs
+                    .iter()
+                    .map(|(k, l)| format!("{} {l}", building_label(*k)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            // Embassy/Wonder's numeric callout is rules-fed, not hand-typed (127 review M4) — folded
+            // into the facts line rather than a separate purpose column now that the flavor prose
+            // carries no numbers of its own.
+            let rules_note = match kind {
+                BuildingKind::Embassy | BuildingKind::Wonder => {
+                    Some(building_blurb(kind, &ctx.rules.alliance))
+                }
+                _ => None,
+            };
+            let slug = building_kind_id(kind);
+            ManualBuildingSection {
+                slug,
+                name: building_label(kind),
+                group: building_group(kind),
+                image: building_art_url(slug),
+                explanation: building_explanation(kind),
+                prerequisites,
+                max_level: build.max_level(target),
+                multi: kind.is_multi(),
+                rules_note,
+                levels: manual_building_levels(build, kind, ctx.speed),
+            }
+        })
+        .collect();
+
+    // The jump-list groups, in fixed purpose order, each keeping `ALL_BUILDING_KINDS`'s own order
+    // among its members (127 redesign) — plus a trailing "Resource fields" group for the four field
+    // chapters below (127 follow-up).
+    let mut groups: Vec<ManualBuildingGroup> = BUILDING_GROUP_ORDER
+        .iter()
+        .map(|&title| ManualBuildingGroup {
+            title,
+            items: buildings
+                .iter()
+                .filter(|b| b.group == title)
+                .map(|b| ManualJumpItem {
+                    slug: b.slug,
+                    name: b.name,
+                })
+                .collect(),
+        })
+        .collect();
+    groups.push(ManualBuildingGroup {
+        title: "Resource fields",
+        items: [
+            ResourceKind::Wood,
+            ResourceKind::Clay,
+            ResourceKind::Iron,
+            ResourceKind::Crop,
+        ]
+        .into_iter()
+        .map(|kind| ManualJumpItem {
+            slug: field_art_slug(kind),
+            name: field_label(kind),
+        })
+        .collect(),
+    });
+
+    // The illustrative curves (plan: "key per-level values for Warehouse/Granary/Main Building").
+    const CURVE_LEVELS: [u8; 3] = [1, 5, 10];
+    let warehouse_curve = CURVE_LEVELS
+        .iter()
+        .map(|&l| ManualLevelRow {
+            level: l,
+            value: econ.warehouse_capacity(l).to_string(),
+        })
+        .collect();
+    let granary_curve = CURVE_LEVELS
+        .iter()
+        .map(|&l| ManualLevelRow {
+            level: l,
+            value: econ.granary_capacity(l).to_string(),
+        })
+        .collect();
+    let main_building_curve = CURVE_LEVELS
+        .iter()
+        .map(|&l| ManualLevelRow {
+            level: l,
+            value: format!("{:.2}×", build.main_building_factor(l)),
+        })
+        .collect();
+    let town_hall_curve = culture
+        .town_hall_cp_per_level
+        .iter()
+        .enumerate()
+        .map(|(l, &cp)| ManualLevelRow {
+            level: l as u8,
+            value: cp.to_string(),
+        })
+        .collect();
+
+    // One full chapter per resource field — the field counterpart to `buildings` above (127
+    // follow-up, operator feedback: "show resources also individually like buildings and units").
+    let fields = [
+        ResourceKind::Wood,
+        ResourceKind::Clay,
+        ResourceKind::Iron,
+        ResourceKind::Crop,
+    ]
+    .into_iter()
+    .map(|kind| manual_field_section(build, econ, kind, ctx.speed))
+    .collect();
+
+    page(&ManualBuildingsTemplate {
+        sections: manual_section_rows(None),
+        ref_links: manual_ref_link_rows(Some("buildings")),
+        banner: ctx.banner,
+        groups,
+        buildings,
+        warehouse_curve,
+        granary_curve,
+        main_building_curve,
+        town_hall_curve,
+        fields,
+    })
+}
+
+/// The generated Mechanics reference page (127 T2, AC3/AC4): the cross-cutting numbers that don't
+/// belong to a single unit/building — culture/expansion, loyalty, walls/siege, merchants, and the
+/// protection/lifecycle windows.
+pub async fn manual_ref_mechanics(
+    State(state): State<AppState>,
+    jar: PrivateCookieJar,
+) -> Response {
+    let ctx = manual_rules_view(&state, &jar).await;
+    let culture = &ctx.rules.culture;
+    let econ = &ctx.rules.economy;
+    let loyalty = &ctx.rules.loyalty;
+    let combat = &ctx.rules.combat;
+    let merchant = &ctx.rules.merchant;
+    let lifecycle = &ctx.rules.lifecycle;
+
+    // Index 0 is unused (the balance data's own convention — the first village is free at index 1).
+    let cp_thresholds = culture
+        .cp_thresholds
+        .iter()
+        .enumerate()
+        .skip(1)
+        .map(|(n, &cp)| ManualLevelRow {
+            level: n as u8,
+            value: cp.to_string(),
+        })
+        .collect();
+    let expansion_slots = culture
+        .expansion_slots_per_level
+        .iter()
+        .enumerate()
+        .map(|(l, &slots)| ManualLevelRow {
+            level: l as u8,
+            value: slots.to_string(),
+        })
+        .collect();
+    let outpost_capacity = econ
+        .outpost_capacity_per_level
+        .iter()
+        .enumerate()
+        .map(|(l, &cap)| ManualLevelRow {
+            level: l as u8,
+            value: cap.to_string(),
+        })
+        .collect();
+
+    let walls = [Tribe::Romans, Tribe::Teutons, Tribe::Gauls]
+        .into_iter()
+        .map(|tribe| ManualTribeWall {
+            tribe: tribe_label(Some(tribe)),
+            bonus_l10_pct: format!("{:.1}%", combat.wall_bonus(tribe, 10) * 100.0),
+            ram_durability: combat
+                .walls
+                .get(&tribe)
+                .map_or_else(|| "—".to_owned(), |w| format!("{:.0}", w.ram_durability)),
+        })
+        .collect();
+
+    let merchants = [Tribe::Romans, Tribe::Teutons, Tribe::Gauls]
+        .into_iter()
+        .map(|tribe| {
+            let p = merchant.profile(tribe);
+            ManualTribeMerchant {
+                tribe: tribe_label(Some(tribe)),
+                capacity: p.capacity,
+                speed: p.speed,
+            }
+        })
+        .collect();
+    // Tribe-independent (one shared table) — rendered 0..=10, matching the shipped presets' tables;
+    // levels beyond a shorter table clamp to its last entry (still the correct count).
+    let merchants_per_level = (0u8..=10)
+        .map(|l| ManualLevelRow {
+            level: l,
+            value: merchant.merchants_total(l).to_string(),
+        })
+        .collect();
+
+    page(&ManualMechanicsTemplate {
+        sections: manual_section_rows(None),
+        ref_links: manual_ref_link_rows(Some("mechanics")),
+        banner: ctx.banner,
+        cp_thresholds,
+        expansion_slots,
+        settlers_per_village: culture.settlers_per_village,
+        outpost_capacity,
+        loyalty_drop_min: loyalty.drop_min,
+        loyalty_drop_max: loyalty.drop_max,
+        loyalty_regen_per_hour: loyalty.regen_per_hour,
+        loyalty_post_conquest: loyalty.post_conquest_loyalty,
+        walls,
+        catapult_durability: format!("{:.0}", combat.catapult_durability),
+        merchants,
+        merchants_per_level,
+        protection_base: fmt_days(lifecycle.beginner_protection_secs),
+        protection_population_threshold: lifecycle.protection_population_threshold,
+        inactive_after: fmt_days(lifecycle.inactive_after_secs),
+        abandon_after: fmt_days(lifecycle.abandon_after_secs),
+    })
+}
+
 /// Registration form (Visitor).
 pub async fn register_form(
     State(state): State<AppState>,
@@ -754,9 +1929,13 @@ pub async fn login_submit(
     }
 }
 
-/// Log out: clear the auth cookie (Player) and return to the landing page.
+/// Log out: clear the auth cookie (Player) and the selected-world cookie, then return to the
+/// landing page. Clearing the world cookie too (127 review S3) matters beyond tidiness: the manual's
+/// world-aware reference pages read it even from an anonymous request, so leaving it set after
+/// logout would keep showing a logged-out reader their last-selected world's numbers instead of the
+/// classic fallback a truly anonymous visitor should see.
 pub async fn logout(jar: PrivateCookieJar) -> Response {
-    let jar = jar.remove(clear_cookie());
+    let jar = jar.remove(clear_cookie()).remove(clear_world_cookie());
     (jar, Redirect::to("/")).into_response()
 }
 
@@ -2248,7 +3427,7 @@ pub async fn building_detail(
         eyebrow: "Building",
         art_slug: building_kind_id(kind),
         title: building_label(kind).to_owned(),
-        blurb: building_blurb(kind).to_owned(),
+        blurb: building_blurb(kind, &ctx.rules.alliance),
         icon: format!("i-{}", building_kind_id(kind)),
         upgrade,
         can_demolish,
@@ -2325,7 +3504,7 @@ pub async fn slot_detail(
                 eyebrow: "Building",
                 art_slug: building_kind_id(kind),
                 title: building_label(kind).to_owned(),
-                blurb: building_blurb(kind).to_owned(),
+                blurb: building_blurb(kind, &ctx.rules.alliance),
                 icon: format!("i-{}", building_kind_id(kind)),
                 upgrade,
                 can_demolish,
@@ -7362,7 +8541,11 @@ pub async fn notifications_stream(
 
 #[cfg(test)]
 mod tests {
-    use super::{pct_encode, user_msg};
+    use super::{
+        ALL_BUILDING_KINDS, UNIT_ART_GAPS, building_art_url, building_kind_id, field_art_slug,
+        pct_encode, unit_explanation, user_msg,
+    };
+    use eperica_domain::{ResourceKind, Tribe};
 
     #[test]
     fn user_msg_hides_storage_errors_but_keeps_reasons() {
@@ -7393,5 +8576,85 @@ mod tests {
         // Unreserved set is preserved; everything else (incl. multi-byte UTF-8) is escaped.
         assert_eq!(pct_encode("a-b_c.d~e"), "a-b_c.d~e");
         assert_eq!(pct_encode("—"), "%E2%80%94"); // em-dash, 3 UTF-8 bytes
+    }
+
+    /// 127 redesign: `building_art_url` is a single deterministic chain (generic plate, else Gauls)
+    /// — this walks every rendered building kind plus the four resource-field art slugs and stats
+    /// the file each one resolves to, so a future `BuildingKind` (or field) added without a shipped
+    /// plate fails the build instead of serving a broken `<img>` in the manual.
+    #[test]
+    fn building_and_field_art_resolves_to_a_file_that_exists_on_disk() {
+        let static_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("static");
+        for &kind in ALL_BUILDING_KINDS.iter() {
+            let slug = building_kind_id(kind);
+            let url = building_art_url(slug);
+            let rel = url
+                .strip_prefix("/static/")
+                .expect("building art url is always under /static/");
+            let path = static_root.join(rel);
+            assert!(path.exists(), "{kind:?} resolves to missing file {path:?}");
+        }
+        for kind in [
+            ResourceKind::Wood,
+            ResourceKind::Clay,
+            ResourceKind::Iron,
+            ResourceKind::Crop,
+        ] {
+            let slug = field_art_slug(kind);
+            let url = building_art_url(slug);
+            let rel = url
+                .strip_prefix("/static/")
+                .expect("field art url is always under /static/");
+            let path = static_root.join(rel);
+            assert!(path.exists(), "{kind:?} field art missing: {path:?}");
+        }
+    }
+
+    /// 127 redesign: portrait resolution is a bare `<tribe>_<id>.webp` lookup (067's existing
+    /// convention), no fallback chain — every roster id must either have a shipped plate or be one
+    /// of the pinned `UNIT_ART_GAPS`. Adding art for a pinned gap makes this fail until the list is
+    /// shrunk to match — a loud reminder rather than a silently stale gap list.
+    #[test]
+    fn roster_portraits_exist_except_the_pinned_gaps() {
+        let rules =
+            eperica_infrastructure::load_world_rules("classic").expect("classic bundle loads");
+        let static_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("static/units");
+        for tribe in [Tribe::Romans, Tribe::Teutons, Tribe::Gauls] {
+            for spec in rules.units.roster(tribe) {
+                let slug = format!("{}_{}", tribe.slug(), spec.id.as_str());
+                let exists = static_root.join(format!("{slug}.webp")).exists();
+                let pinned_gap = UNIT_ART_GAPS.contains(&slug.as_str());
+                assert!(
+                    exists != pinned_gap,
+                    "{slug}: file exists={exists}, pinned as a known gap={pinned_gap} — if art \
+                     was added, shrink UNIT_ART_GAPS; if a gap is new, pin it"
+                );
+            }
+        }
+    }
+
+    /// 127 redesign: `unit_explanation` is matched on `(tribe, spec.id)` rather than compiler-checked
+    /// exhaustiveness (unlike `ALL_BUILDING_KINDS` against the `BuildingKind` enum), so a preset
+    /// shipping a roster id this match doesn't cover would panic the live page. Walks every roster
+    /// entry in **both** shipped presets (classic and speed) and calls it, proving there is no gap —
+    /// a reminder to add a prose arm the moment a new unit id ships in either preset.
+    #[test]
+    fn unit_explanation_covers_every_roster_unit_in_every_shipped_preset() {
+        for preset in ["classic", "speed"] {
+            let rules = eperica_infrastructure::load_world_rules(preset)
+                .unwrap_or_else(|e| panic!("{preset} bundle loads: {e}"));
+            for tribe in [Tribe::Romans, Tribe::Teutons, Tribe::Gauls] {
+                for spec in rules.units.roster(tribe) {
+                    // Panics (via the match's `unreachable!`) if this (tribe, id) pair isn't covered.
+                    let text = unit_explanation(tribe, spec);
+                    assert!(
+                        !text.is_empty(),
+                        "{preset}/{}/{}: explanation must not be empty",
+                        tribe.slug(),
+                        spec.id.as_str()
+                    );
+                }
+            }
+        }
     }
 }

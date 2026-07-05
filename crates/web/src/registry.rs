@@ -4,7 +4,8 @@
 
 use eperica_domain::{GameSpeed, WorldId, WorldMap};
 use eperica_infrastructure::{
-    PgAccountRepository, PgEventStore, PgPool, Scheduler, WorldRules, load_world_rules, world_by_id,
+    DEFAULT_PRESET, PgAccountRepository, PgEventStore, PgPool, Scheduler, WorldRules,
+    load_world_rules, world_by_id,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -24,6 +25,12 @@ pub struct WorldMeta {
     /// Whether AI players are labeled as NPCs on this world (120 Decision #3). `true` when
     /// `ai_visibility = 'labeled'`; `false` for `'disguised'`. Cached here — zero per-request queries.
     pub ai_labeled: bool,
+    /// The world's display name (056) — carried so the manual's world-aware banner (127 T2) can name the
+    /// world without a second lookup once this meta is cached.
+    pub name: String,
+    /// The world's named rule preset (049) — carried alongside `rules` (the resolved bundle) so the manual
+    /// banner can say *which* preset is in play, not just serve its numbers.
+    pub preset: String,
 }
 
 /// Holds the shared scheduler rules + the machinery to start a scheduler for any world.
@@ -87,6 +94,28 @@ impl WorldRegistry {
         }
     }
 
+    /// The world's cached [`WorldMeta`], loading (and caching) it from its row on a first access
+    /// (P10, 127 review S2) — the one cache-miss dance `context_for`/`comms_context_for`/
+    /// `label_and_rules_for` each need, previously written out three times over. `None` if the world
+    /// does not exist or its speed is invalid.
+    async fn meta_for(&self, world_id: WorldId) -> Option<WorldMeta> {
+        if let Some(m) = self.meta.lock().unwrap().get(&world_id).cloned() {
+            return Some(m);
+        }
+        let world = world_by_id(&self.pool, world_id).await.ok()??;
+        let m = WorldMeta {
+            seed: world.seed,
+            radius: world.radius,
+            speed: GameSpeed::new(world.speed).ok()?,
+            rules: self.rules_for(&world.rule_preset)?,
+            ai_labeled: world.ai_visibility != "disguised",
+            name: world.name,
+            preset: world.rule_preset,
+        };
+        self.meta.lock().unwrap().insert(world_id, m.clone());
+        Some(m)
+    }
+
     /// The selected world's game runtime (043): a freshly-built world-scoped `PgAccountRepository` + its
     /// `WorldMap` + speed + radius + resolved rule bundle + AI label flag, from the cached meta. The map is
     /// generate-on-read, so building the runtime is cheap; the cache is populated on first access from the
@@ -102,22 +131,7 @@ impl WorldRegistry {
         Arc<WorldRules>,
         bool,
     )> {
-        let cached = self.meta.lock().unwrap().get(&world_id).cloned();
-        let meta = match cached {
-            Some(m) => m,
-            None => {
-                let world = world_by_id(&self.pool, world_id).await.ok()??;
-                let m = WorldMeta {
-                    seed: world.seed,
-                    radius: world.radius,
-                    speed: GameSpeed::new(world.speed).ok()?,
-                    rules: self.rules_for(&world.rule_preset)?,
-                    ai_labeled: world.ai_visibility != "disguised",
-                };
-                self.meta.lock().unwrap().insert(world_id, m.clone());
-                m
-            }
-        };
+        let meta = self.meta_for(world_id).await?;
         let map = Arc::new(WorldMap::new(
             meta.seed as u64,
             meta.radius,
@@ -150,22 +164,7 @@ impl WorldRegistry {
         &self,
         world_id: WorldId,
     ) -> Option<(PgAccountRepository, Arc<WorldRules>)> {
-        let cached = self.meta.lock().unwrap().get(&world_id).cloned();
-        let meta = match cached {
-            Some(m) => m,
-            None => {
-                let world = world_by_id(&self.pool, world_id).await.ok()??;
-                let m = WorldMeta {
-                    seed: world.seed,
-                    radius: world.radius,
-                    speed: GameSpeed::new(world.speed).ok()?,
-                    rules: self.rules_for(&world.rule_preset)?,
-                    ai_labeled: world.ai_visibility != "disguised",
-                };
-                self.meta.lock().unwrap().insert(world_id, m.clone());
-                m
-            }
-        };
+        let meta = self.meta_for(world_id).await?;
         let repo = PgAccountRepository::new(
             self.pool.clone(),
             world_id,
@@ -176,6 +175,28 @@ impl WorldRegistry {
             meta.speed,
         );
         Some((repo, Arc::clone(&meta.rules)))
+    }
+
+    /// The selected world's display name, speed, resolved rule bundle, and preset name (127 T2 manual
+    /// banner, AC4) — the same cache `context_for`/`comms_context_for` populate, but skipping the
+    /// map/account-repo build those need (this reader wants only the label + rules). `None` if the world
+    /// does not exist or its speed is invalid.
+    pub async fn label_and_rules_for(
+        &self,
+        world_id: WorldId,
+    ) -> Option<(String, GameSpeed, Arc<WorldRules>, String)> {
+        let meta = self.meta_for(world_id).await?;
+        Some((meta.name, meta.speed, Arc::clone(&meta.rules), meta.preset))
+    }
+
+    /// The `classic` preset's rule bundle (127 T2) — the manual reference pages' fallback for an
+    /// anonymous reader or a session with no (or an unresolvable) selected world. Shares the same
+    /// preset cache [`Self::rules_for`] serves every world from, so an anonymous manual view never
+    /// re-parses the balance TOMLs once `classic` is warm. `classic` is a shipped, always-valid preset
+    /// (validated at boot and by `world_rules::tests`), so this never fails in practice.
+    pub fn classic_rules(&self) -> Arc<WorldRules> {
+        self.rules_for(DEFAULT_PRESET)
+            .expect("the shipped classic preset always loads")
     }
 
     /// Start the scheduler for `world_id`, building its world-scoped runtime (map/repo/event-store from
@@ -229,6 +250,8 @@ impl WorldRegistry {
                 speed,
                 rules: Arc::clone(&rules),
                 ai_labeled: world.ai_visibility != "disguised",
+                name: world.name.clone(),
+                preset: world.rule_preset.clone(),
             },
         );
         let map = Arc::new(WorldMap::new(

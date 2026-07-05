@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
+{% block content %}
+<div class="page manual">
+  <aside class="manual__sidebar" aria-label="Manual sections">
+    {% include "_manual_sidebar.html" %}
+  </aside>
+  <div class="manual__content">
+    <nav class="manual__crumbs" aria-label="Breadcrumb"><a href="/manual">Manual</a> › Reference › All buildings &amp; prerequisites</nav>
+    <section class="phead">
+      <div class="phead__eyebrow">Reference</div>
+      <h1 class="phead__title">Buildings</h1>
+      <p class="phead__sub">Every building — and every resource field — gets its own chapter below:
+        what it is, why you'd build it, and its full per-level cost, build-time (and, for fields,
+        production) table — plus a few illustrative curves, all straight from the loaded balance
+        rules.</p>
+    </section>
+    <p class="manual__banner">{{ banner }}</p>
+
+    <nav class="manual__jump" aria-label="Jump to a building">
+      {% for g in groups %}
+      <div class="manual__jump-group">
+        <h3>{{ g.title }}</h3>
+        <div class="manual__jump-chips">
+          {% for item in g.items %}
+          <a class="manual__chip" href="#{{ item.slug }}">{{ item.name }}</a>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </nav>
+
+    {% for b in buildings %}
+    <section class="manual__bldg" id="{{ b.slug }}">
+      <h2>{{ b.name }}</h2>
+      <figure class="manual__bldg-fig">
+        <img src="{{ b.image }}" alt="{{ b.name }}" loading="lazy">
+      </figure>
+      <p class="manual__bldg-prose">{{ b.explanation }}</p>
+      <p class="manual__facts">Prerequisites: {{ b.prerequisites }} · Max level {{ b.max_level }} ·
+        {% if b.multi %}Stacks — multiple per village{% else %}One per village{% endif %}{% if let Some(n) = b.rules_note %} · {{ n }}{% endif %}</p>
+      <details class="manual__lvls">
+        <summary>Full cost &amp; build time — levels 1–{{ b.max_level }}</summary>
+        {% if b.levels.sampled %}
+        <p class="manual__note">Sampled every 10th level (1, 10, 20, … 100) — 100 rows would dwarf
+          every other section on this page even collapsed; the Wonder's cost and time both escalate
+          by a fixed ratio each level in between.</p>
+        {% endif %}
+        <div style="overflow-x:auto">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Level</th><th class="num">Wood</th><th class="num">Clay</th>
+              <th class="num">Iron</th><th class="num">Crop</th><th class="num">Build time</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in b.levels.rows %}
+            <tr><td>{{ r.level }}</td><td class="num">{{ r.wood }}</td><td class="num">{{ r.clay }}</td><td class="num">{{ r.iron }}</td><td class="num">{{ r.crop }}</td><td class="num">{{ r.time }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      </details>
+    </section>
+    {% endfor %}
+
+    <section class="manual__refsec">
+      <h2>Key per-level curves</h2>
+      <div class="manual__curves">
+        <div class="manual__curve">
+          <h4>Warehouse capacity</h4>
+          <table class="table">
+            <thead><tr><th>Level</th><th class="num">Capacity</th></tr></thead>
+            <tbody>
+              {% for r in warehouse_curve %}
+              <tr><td>{{ r.level }}</td><td class="num">{{ r.value }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="manual__curve">
+          <h4>Granary capacity</h4>
+          <table class="table">
+            <thead><tr><th>Level</th><th class="num">Capacity</th></tr></thead>
+            <tbody>
+              {% for r in granary_curve %}
+              <tr><td>{{ r.level }}</td><td class="num">{{ r.value }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="manual__curve">
+          <h4>Main Building speed factor</h4>
+          <table class="table">
+            <thead><tr><th>Level</th><th class="num">Factor</th></tr></thead>
+            <tbody>
+              {% for r in main_building_curve %}
+              <tr><td>{{ r.level }}</td><td class="num">{{ r.value }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="manual__curve">
+          <h4>Town Hall CP/hour</h4>
+          <table class="table">
+            <thead><tr><th>Level</th><th class="num">CP/h</th></tr></thead>
+            <tbody>
+              {% for r in town_hall_curve %}
+              <tr><td>{{ r.level }}</td><td class="num">{{ r.value }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    {% for f in fields %}
+    <section class="manual__bldg" id="{{ f.slug }}">
+      <h2>{{ f.name }}</h2>
+      <figure class="manual__bldg-fig">
+        <img src="{{ f.image }}" alt="{{ f.name }}" loading="lazy">
+      </figure>
+      <p class="manual__bldg-prose">{{ f.explanation }}</p>
+      <p class="manual__facts">{{ f.facts }}</p>
+      <details class="manual__lvls">
+        <summary>Full cost, build time &amp; production — levels 1–{{ f.max_level }}</summary>
+        <div style="overflow-x:auto">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Level</th><th class="num">Wood</th><th class="num">Clay</th>
+              <th class="num">Iron</th><th class="num">Crop</th><th class="num">Build time</th>
+              <th class="num">Production/h</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in f.levels %}
+            <tr{% if r.capital_only %} class="manual__capital-row"{% endif %}><td>{{ r.level }}{% if r.capital_only %} <span class="badge">Capital only</span>{% endif %}</td><td class="num">{{ r.wood }}</td><td class="num">{{ r.clay }}</td><td class="num">{{ r.iron }}</td><td class="num">{{ r.crop }}</td><td class="num">{{ r.time }}</td><td class="num">{{ r.production }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      </details>
+    </section>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

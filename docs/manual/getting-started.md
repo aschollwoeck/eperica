@@ -1,90 +1,75 @@
 # Getting started
 
-> This page walks you from a blank browser tab to your first active village.
+This page walks you from a blank browser tab to a growing village. Follow it in order — each
+step unlocks the next.
 
-## Create your account
+## 1. Create your account
 
 1. Open the site and choose **Create account**.
 2. Enter a **username**, your **email address**, and a **password** (at least 8 characters).
-3. Choose your **tribe** — Romans, Teutons, or Gauls. This becomes your tribe for the home world.
+3. Choose your **tribe** — Romans, Teutons, or Gauls. This is your tribe for your **home world**;
+   see [Tribes, the Academy & the Smithy](tribes-and-units.md) if you want to weigh them up first.
 4. Submit the form.
 
-Your account is created and your first (home-world) village is placed on the map with the tribe
-you chose. If the server requires email confirmation, login is gated until your address is
-verified — no confirmation email is sent automatically unless the operator has wired up a mailer.
+Your account and your first village are created together — the village lands on the home
+world's map with the tribe you picked. If the server requires email confirmation, you can't log
+in until you've verified your address.
 
-## The worlds lobby
+## 2. Tour your village
 
-After you log in you land at the **worlds lobby** (`/worlds`). It shows two lists:
+Log in and you'll land on your **village page**. Three things orient you immediately:
 
-- **Your worlds** — the worlds you are already playing in, with the currently active world
-  highlighted.
-- **Joinable worlds** — open worlds you have not joined yet, each labelled with its **name**,
-  **speed** (1× classic, 3× speed, …), and **size** (map radius).
+- **The fortress plan** — your 18 resource fields and 22 building slots, laid out around your
+  village centre. Click any slot to see what can go there.
+- **The status strip** at the top of the page — three cards:
+  - **Incoming attacks** — a countdown to any hostile movement headed your way, or "None — all
+    quiet."
+  - **Training** — what's on the drill yard and when the next unit finishes, or "Not training."
+  - **Culture** — your pooled culture points, CP/hour, and progress toward your next village
+    slot.
+- **Your coordinate** on the shared world map — this is your home base; see
+  [The world map](the-map.md) for how to read it.
 
-The lobby is also where you **switch** between worlds if you play in more than one.
+Check the status strip every time you log in — it's the fastest way to see what needs your
+attention.
 
-## Joining additional worlds
+## 3. Make your first build
 
-Your home world is already set up after registration. For any other world in the joinable list,
-select your **tribe** — Romans, Teutons, or Gauls — using the inline selector on the join row,
-then click **Join**. Your tribe choice is specific to that world and can differ from your other
-worlds.
+Click any empty resource field or the **Main Building** slot to open its build menu, then press
+**Upgrade**. Resources are spent immediately and a countdown starts; the new level applies on its
+own, even while you're offline. A good opening move is a resource field or two, followed by the
+**Main Building** to speed up everything after it. See
+[Building & upgrading](buildings.md) for the full village layout and every building's purpose.
 
-After you join, the server creates your starting village and drops you straight into it.
+## 4. Work through the quest chain
 
-## Your starting village
+A **quest chain** is waiting for you from the start. It walks you through the core loop —
+upgrading fields, building a Warehouse, training troops, sending your first raid — one step at a
+time, rewarding each with resources or culture points. Open **Quests** from the village menu to
+see your current step. See [Quests & onboarding](quests-and-onboarding.md) for the full chain.
 
-Every new village begins with:
+## 5. Join more worlds
 
-- **18 resource fields** that produce **wood** (4 fields), **clay** (4), **iron** (4), and
-  **crop** (6).
-- A **Main Building** and a **Rally Point** already built.
-- A starting supply of resources ready to spend.
-
-Your village has a coordinate on the shared world map — that's your home base.
-
-## Reading the status strip
-
-At the top of your village page, above the fortress plan, sits a three-card **status strip**:
-
-- **Incoming attacks** — lists any hostile movements headed your way with a countdown to
-  arrival. When no attack is inbound it reads "None — all quiet." Only arrival times are shown;
-  you won't see the attacker's origin or troop count until a scout report or the battle itself.
-- **Training** — shows which units are on the drill yard, how many remain, and when the next
-  batch finishes. Reads "Not training." when idle.
-- **Culture** — your pooled culture points (CP), your CP/hour, villages used out of the ones you
-  are allowed, and a progress bar toward the threshold for your next village slot.
-
-Keep an eye on this strip whenever you log in — incoming attacks need a decision, and a full
-culture bar means you're ready to expand.
-
-## The quest chain
-
-After joining you'll find a **quest chain** waiting. It guides you through the core loop step
-by step — upgrading fields, constructing buildings, training your first troops — and rewards
-each step with resources, culture points, or troops. Work through it and you'll have a solid
-village by the time it ends.
+Your home world is set up the moment you register. Eperica also runs other **worlds** — separate
+maps with their own economy and rules — and you can play in several at once. From the
+**worlds lobby** (`/worlds`), pick a **tribe** for any joinable world using the inline selector on
+its row, then click **Join**. Your tribe choice is per-world, so you can play Gauls in one world
+and Romans in another. See [Worlds & game modes](worlds.md) for the lobby, speed, and presets.
 
 ## Logging in and out
 
 1. Choose **Log in**.
 2. Enter your **username** and **password**.
 
-You arrive at the **worlds lobby**. Use **Log out** when you're done; everything is saved on
-the server and will be exactly as you left it — including any buildings that finished while you
-were away.
+You arrive at the **worlds lobby**. Use **Log out** when you're done — everything is saved on the
+server exactly as you left it, including anything that finished while you were away.
 
-## Tips
-
-- Keep your password safe — it is the only way into your account.
-- If login says *"invalid username or password"*, double-check both; the message is intentionally
-  vague for security.
-- You can play in multiple worlds simultaneously and use a different tribe in each one.
+> **Tip:** If login says *"invalid username or password"*, double-check both — the message is
+> intentionally vague for security.
 
 ## See also
 
-- [Worlds & game modes](worlds.md) — how to join and switch worlds.
+- [Worlds & game modes](worlds.md) — the lobby, joining, and switching worlds.
 - [Resources](resources.md) — how your village produces and stores resources.
 - [Building & upgrading](buildings.md) — grow your village with fields and buildings.
 - [Quests & onboarding](quests-and-onboarding.md) — the guided quest chain.

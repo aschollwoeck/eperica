@@ -6,6 +6,7 @@ pub mod api;
 pub mod apikey;
 pub mod auth;
 pub mod handlers;
+pub mod manual;
 pub mod registry;
 pub mod spectator_api;
 pub mod state;
@@ -467,6 +468,23 @@ pub fn router(state: AppState) -> Router {
         .route("/logout", post(handlers::logout))
         .route("/worlds", get(handlers::worlds_page))
         .route("/worlds/join", post(handlers::join_world))
+        // The in-game player manual (127 T1) — fully public, no world context: the section index
+        // and every registered chapter.
+        .route("/manual", get(handlers::manual_index))
+        .route("/manual/{slug}", get(handlers::manual_chapter))
+        // The generated reference pages (127 T2, AC3/AC4) — native templates fed from `WorldRules`,
+        // world-aware via the session's selected world (or the `classic` fallback). Also fully
+        // public: no login, no world-path requirement (unlike `WorldScope`, which needs `/w/{world}`
+        // in the path — these read the session's *optional* world instead).
+        .route("/manual/reference/units", get(handlers::manual_ref_units))
+        .route(
+            "/manual/reference/buildings",
+            get(handlers::manual_ref_buildings),
+        )
+        .route(
+            "/manual/reference/mechanics",
+            get(handlers::manual_ref_mechanics),
+        )
         // World-coupled routes live under `/w/{world}/…` (056); the world (its UUID) is read from the path.
         .nest("/w/{world}", world_router())
         // The Agent API (118, ADR 0036) — bearer-key JSON surface for AI agents; world-scoped agent

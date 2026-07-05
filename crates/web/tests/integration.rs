@@ -19,6 +19,7 @@ use eperica_infrastructure::{
     map_rules, merchant_rules, now, oasis_rules, ranking_rules, run_chat_listener,
     run_notification_listener, scout_rules, starting_village, unit_rules,
 };
+use eperica_web::manual;
 use eperica_web::registry::WorldRegistry;
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -13424,4 +13425,658 @@ async fn admin_bulk_seeds_agents(pool: sqlx::PgPool) {
             .unwrap();
         assert_eq!(r.status().as_u16(), 401, "fleet-revoked token is rejected");
     }
+}
+
+// ============================================================================
+// 127 T1 — the in-game player manual: public routes, markdown pipeline, navigation & links.
+// ============================================================================
+
+/// AC1: `/manual` and every registered chapter render `200` with no login at all (a bare,
+/// cookie-less client) — iterating the registry via [`manual::all_slugs`] so this test can never
+/// drift out of sync with the chapter list. An unknown slug is the site's normal 404.
+#[sqlx::test(migrations = "../../migrations")]
+async fn manual_index_and_every_chapter_are_public(pool: sqlx::PgPool) {
+    let base = spawn(pool).await;
+    // No cookie store at all — a strictly anonymous request, proving login is never required.
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let index = anon.get(format!("{base}/manual")).send().await.unwrap();
+    assert_eq!(index.status().as_u16(), 200, "GET /manual is public");
+
+    let slugs = manual::all_slugs();
+    assert!(!slugs.is_empty(), "the manual registry must not be empty");
+    for slug in slugs {
+        let res = anon
+            .get(format!("{base}/manual/{slug}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status().as_u16(), 200, "GET /manual/{slug} is public");
+    }
+
+    let missing = anon
+        .get(format!("{base}/manual/no-such-chapter"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        missing.status().as_u16(),
+        404,
+        "an unregistered slug is the site's normal 404"
+    );
+}
+
+/// AC2: a chapter's rendered HTML shows a rewritten intra-manual link (`href="/manual/…"`, not a
+/// raw `docs/manual` filename) and no leftover markdown-link syntax (`](`) — proving the pipeline
+/// actually ran over real HTTP, on top of the direct unit coverage in `manual.rs`. Checked against
+/// every chapter (not one hardcoded slug) so a parallel prose rewrite can't accidentally desync
+/// this test from the corpus.
+#[sqlx::test(migrations = "../../migrations")]
+async fn manual_chapter_links_are_rewritten_to_site_routes(pool: sqlx::PgPool) {
+    let base = spawn(pool).await;
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let mut saw_rewritten_link = false;
+    for slug in manual::all_slugs() {
+        let body = anon
+            .get(format!("{base}/manual/{slug}"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(
+            !body.contains("]("),
+            "{slug} left an unrendered markdown-link artifact"
+        );
+        if body.contains(r#"href="/manual/"#) {
+            saw_rewritten_link = true;
+        }
+    }
+    assert!(
+        saw_rewritten_link,
+        "at least one chapter must show a rewritten intra-manual link"
+    );
+}
+
+/// AC5: the sidebar lists all six sections on both the index and a chapter page, the chapter page
+/// carries breadcrumbs and a valid prev/next footer nav, and the manual is linked from the site
+/// footer and the register page (navigation & appearance).
+#[sqlx::test(migrations = "../../migrations")]
+async fn manual_navigation_breadcrumbs_and_site_links(pool: sqlx::PgPool) {
+    let base = spawn(pool).await;
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let sections = [
+        "Getting started",
+        "Economy",
+        "Military",
+        "Expansion",
+        "Society",
+        "Reference",
+    ];
+
+    let index_body = anon
+        .get(format!("{base}/manual"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    for section in sections {
+        assert!(
+            index_body.contains(section),
+            "manual index sidebar/body must list section {section}"
+        );
+    }
+
+    // The first registered chapter carries breadcrumbs + a prev/next footer.
+    let first_slug = manual::all_slugs()[0];
+    let chapter = manual::render(first_slug).unwrap();
+    let chapter_body = anon
+        .get(format!("{base}/manual/{first_slug}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    for section in sections {
+        assert!(
+            chapter_body.contains(section),
+            "chapter sidebar must still list section {section}"
+        );
+    }
+    assert!(
+        chapter_body.contains("manual__crumbs"),
+        "breadcrumb nav present"
+    );
+    assert!(
+        chapter_body.contains(chapter.title),
+        "breadcrumb/heading shows the chapter title"
+    );
+    // The first chapter has no prev; it does have a next — assert that link's href resolves.
+    let next = chapter.next.expect("first chapter has a next");
+    let next_href = format!(r#"href="/manual/{}""#, next.slug);
+    assert!(
+        chapter_body.contains(&next_href),
+        "next-chapter nav href present: {next_href}"
+    );
+    let next_res = anon
+        .get(format!("{base}/manual/{}", next.slug))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        next_res.status().as_u16(),
+        200,
+        "the next-chapter link resolves"
+    );
+
+    // Site footer + register page both link to the manual (AC5 "linked from the site footer, the
+    // register page, and the in-game nav").
+    let home_body = anon
+        .get(format!("{base}/"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        home_body.contains(r#"href="/manual""#),
+        "the site footer/nav links to /manual"
+    );
+
+    let register_body = anon
+        .get(format!("{base}/register"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        register_body.contains(r#"href="/manual""#),
+        "the register page links to /manual"
+    );
+}
+
+/// AC6 (127 review M3): a prose spot-check over the chapters that quote **classic** balance figures
+/// directly in their text — resources' field-upgrade costs, conquest's loyalty numbers, and
+/// settling's settler count. These are hand-written prose (unlike the T2 reference pages' rules-
+/// generated tables), so nothing re-checks them against `specs/balance/presets/classic/` at build
+/// time; this test at least pins the current prose so a future balance change is forced to touch it
+/// deliberately, not silently go stale. Matched against stable substrings straight from the chapters
+/// (`docs/manual/resources.md`, `conquest.md`, `settling.md`).
+#[sqlx::test(migrations = "../../migrations")]
+async fn manual_prose_quotes_the_current_classic_balance_figures(pool: sqlx::PgPool) {
+    let base = spawn(pool).await;
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Resources: a level-1 cropland (70/90/70/20 — construction.toml's crop_cost) and the capital's
+    // raised field cap (20, vs. a normal village's 10).
+    let resources_body = anon
+        .get(format!("{base}/manual/resources"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        resources_body.contains("70 wood / 90 clay / 70 iron / 20 crop"),
+        "the level-1 cropland cost ratio (70/90/70/20): {resources_body}"
+    );
+    assert!(
+        resources_body.contains("level 20"),
+        "the capital's raised field cap (20): {resources_body}"
+    );
+
+    // Conquest: an administrator's loyalty drop (20–30, conquest.toml's loyalty_drop_min/max) and the
+    // post-conquest reset (25, post_conquest_loyalty).
+    let conquest_body = anon
+        .get(format!("{base}/manual/conquest"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        conquest_body.contains("20\u{2013}30 points"),
+        "the administrator loyalty-drop range (20-30): {conquest_body}"
+    );
+    assert!(
+        conquest_body.contains("25 loyalty"),
+        "the post-conquest loyalty reset (25): {conquest_body}"
+    );
+
+    // Settling: 3 settlers together found a village (culture.toml's settlers_per_village).
+    let settling_body = anon
+        .get(format!("{base}/manual/settling"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        settling_body.contains("3 settlers together"),
+        "founding a village needs 3 settlers: {settling_body}"
+    );
+}
+
+// ============================================================================
+// 127 T2 — the generated manual reference pages: /manual/reference/{units,buildings,mechanics}.
+// ============================================================================
+
+/// AC3/AC4 (anonymous half): all three reference pages are public (`200` with no login at all), show
+/// the classic-fallback banner, and every figure equals the loaded classic TOMLs — spot-checked across
+/// all three pages (legionnaire's attack + clubswinger's cost row on Units; the Warehouse L10 capacity
+/// on Buildings; the CP threshold, outpost capacities, wall ram durabilities, catapult durability, and
+/// merchant speeds on Mechanics). Every figure comes straight from the balance data (specs/balance/
+/// presets/classic/), never hand-written on the page (AC3).
+#[sqlx::test(migrations = "../../migrations")]
+async fn manual_reference_pages_are_public_and_match_classic_values(pool: sqlx::PgPool) {
+    let base = spawn(pool).await;
+    // A strictly anonymous client (no cookie store at all) — proving login is never required (AC3).
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // --- Units: public 200, classic banner, legionnaire's attack + clubswinger's cost row. ---
+    // 127 redesign (operator feedback: "the units still don't have the same setup as buildings"):
+    // every roster unit now renders as its own `manual__bldg`-shaped chapter, same as a building —
+    // portrait figure, flavor prose, a rules-fed facts line, and an always-visible stat card (a
+    // unit's stats are a single row, so nothing needs to fold into a `<details>`).
+    let units_res = anon
+        .get(format!("{base}/manual/reference/units"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        units_res.status().as_u16(),
+        200,
+        "Units reference is public"
+    );
+    let units_body = units_res.text().await.unwrap();
+    assert!(
+        units_body.contains(
+            "Values shown for the classic rules — join a world to see its exact numbers."
+        ),
+        "anonymous reader sees the classic-fallback banner: {units_body}"
+    );
+    // Legionnaire (Roman tier-1): its own chapter section, attack 40, cost 120/100/150/30, trained
+    // at the Barracks, no research.
+    let legionnaire_chapter = units_body
+        .split(r#"<section class="manual__bldg" id="romans_legionnaire">"#)
+        .nth(1)
+        .expect("a Legionnaire chapter is rendered");
+    let legionnaire_chapter = &legionnaire_chapter[..legionnaire_chapter
+        .find("</section>")
+        .unwrap_or(legionnaire_chapter.len())];
+    assert!(
+        legionnaire_chapter.contains(">40<"),
+        "legionnaire's attack (40): {legionnaire_chapter}"
+    );
+    assert!(
+        legionnaire_chapter.contains(
+            "<td>Training</td><td class=\"num\">120</td><td class=\"num\">100</td>\
+             <td class=\"num\">150</td><td class=\"num\">30</td>"
+        ),
+        "legionnaire's cost row (120/100/150/30): {legionnaire_chapter}"
+    );
+    assert!(
+        legionnaire_chapter.contains("Research: None — trained from the start"),
+        "legionnaire (tier-1) needs no research: {legionnaire_chapter}"
+    );
+    // 127 redesign: every unit chapter opens with its portrait figure — the Legionnaire's ships art
+    // (`romans_legionnaire.webp`), unlike the three pinned `UNIT_ART_GAPS`.
+    assert!(
+        legionnaire_chapter.contains(r#"<img src="/static/units/romans_legionnaire.webp""#),
+        "Legionnaire's portrait renders: {legionnaire_chapter}"
+    );
+
+    // Clubswinger (Teuton tier-1): its own chapter, cost 95/75/40/40.
+    let clubswinger_chapter = units_body
+        .split(r#"<section class="manual__bldg" id="teutons_clubswinger">"#)
+        .nth(1)
+        .expect("a Clubswinger chapter is rendered");
+    let clubswinger_chapter = &clubswinger_chapter[..clubswinger_chapter
+        .find("</section>")
+        .unwrap_or(clubswinger_chapter.len())];
+    assert!(
+        clubswinger_chapter.contains(
+            "<td>Training</td><td class=\"num\">95</td><td class=\"num\">75</td>\
+             <td class=\"num\">40</td><td class=\"num\">40</td>"
+        ),
+        "clubswinger's cost row (95/75/40/40): {clubswinger_chapter}"
+    );
+
+    // 127 redesign gap case: the Teuton Scout is one of the pinned `UNIT_ART_GAPS` — its chapter
+    // renders WITHOUT a figure at all (no broken `<img>`), not an empty placeholder box.
+    let scout_chapter = units_body
+        .split(r#"<section class="manual__bldg" id="teutons_scout">"#)
+        .nth(1)
+        .expect("a Teuton Scout chapter is rendered");
+    let scout_chapter = &scout_chapter[..scout_chapter
+        .find("</section>")
+        .unwrap_or(scout_chapter.len())];
+    assert!(
+        !scout_chapter.contains("<img"),
+        "the Teuton Scout's chapter renders no image at all (a pinned art gap): {scout_chapter}"
+    );
+
+    // The jump-list chips are grouped by tribe and link straight to a chapter id that really
+    // exists on the page — spot-check the Legionnaire's own chip.
+    assert!(
+        units_body
+            .contains("<a class=\"manual__chip\" href=\"#romans_legionnaire\">Legionnaire</a>"),
+        "Legionnaire's jump chip hrefs to its own chapter id: {units_body}"
+    );
+    assert!(
+        units_body.contains(r#"<section class="manual__bldg" id="romans_legionnaire">"#),
+        "…and that chapter id really exists on the page: {units_body}"
+    );
+
+    // --- Buildings: public 200, Warehouse L10 capacity 12 000. ---
+    let buildings_res = anon
+        .get(format!("{base}/manual/reference/buildings"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        buildings_res.status().as_u16(),
+        200,
+        "Buildings reference is public"
+    );
+    let buildings_body = buildings_res.text().await.unwrap();
+    assert!(
+        buildings_body.contains("<td>10</td><td class=\"num\">12000</td>"),
+        "Warehouse level 10 capacity is 12 000: {buildings_body}"
+    );
+    // 127 redesign: the old summary table is gone — every buildable kind now gets its own chapter
+    // (illustration, flavor prose, facts line, and the per-level `<details>` folded in). Spot-check
+    // the Rally Point's chapter, which ships a generic (non-tribal) plate — `building_art_url`
+    // resolves it straight to `/static/buildings/rally_point.webp`, no Gauls fallback needed.
+    assert!(
+        buildings_body.contains(r#"<section class="manual__bldg" id="rally_point">"#),
+        "Rally Point renders its own chapter section: {buildings_body}"
+    );
+    assert!(
+        buildings_body.contains(r#"<img src="/static/buildings/rally_point.webp""#),
+        "Rally Point's chapter shows its generic illustration: {buildings_body}"
+    );
+    // Embassy's blurb (127 review M4) is formatted from `AllianceRules` at render time, not
+    // hand-typed — pin it against the classic bundle's own `join_embassy_level`/
+    // `found_embassy_level` so a future preset change is forced to keep the prose honest.
+    let classic = load_world_rules("classic").expect("classic bundle loads");
+    assert!(
+        buildings_body.contains(&format!(
+            "level {} to join an alliance, level {} to found one",
+            classic.alliance.join_embassy_level, classic.alliance.found_embassy_level
+        )),
+        "Embassy's blurb is rules-driven, not hand-typed: {buildings_body}"
+    );
+    // The Wonder's blurb is likewise formatted from the domain `MAX_WONDER_LEVEL` const rather than
+    // a hand-typed "100".
+    assert!(
+        buildings_body.contains(&format!(
+            "raise it to {} to win the round",
+            eperica_domain::MAX_WONDER_LEVEL
+        )),
+        "Wonder's blurb names the real win level: {buildings_body}"
+    );
+    // Operator feedback: "I can't find a resource table for buildings" — the summary table above
+    // only shows level 1. Pin a **non-level-1** row from the new full per-level tables: the
+    // Warehouse's level-2 cost/time (construction.toml `buildings.warehouse`: `cost` index 1 =
+    // 165/205/115/50, `time_secs` index 1 = 1500s = 0:25:00 at the classic fallback's 1× speed).
+    assert!(
+        buildings_body.contains(
+            "<tr><td>2</td><td class=\"num\">165</td><td class=\"num\">205</td>\
+             <td class=\"num\">115</td><td class=\"num\">50</td><td class=\"num\">0:25:00</td></tr>"
+        ),
+        "Warehouse level 2 full cost/time row: {buildings_body}"
+    );
+    // 127 follow-up (operator feedback: "show resources also individually like buildings and
+    // units"): the flat Resource-fields tables/strip are gone — each of Woodcutter/Clay Pit/Iron
+    // Mine/Cropland now gets its own `manual__bldg`-shaped chapter, same as a building. Iron Mine
+    // ships no generic plate (unlike Woodcutter/Clay Pit/Cropland), so it falls back to the Gauls
+    // tribal plate — the same resolution chain as any other art-gap building kind.
+    assert!(
+        buildings_body.contains(r#"<section class="manual__bldg" id="iron_mine">"#)
+            && buildings_body.contains(r#"<img src="/static/buildings/gauls_iron_mine.webp""#),
+        "Iron Mine renders its own chapter with an image: {buildings_body}"
+    );
+
+    // Cropland's own (cheaper) level-1 cost table (construction.toml `field.crop_cost` index 0):
+    // 70 wood / 90 clay / 70 iron / 20 crop — distinct from the shared wood/clay/iron field table.
+    // Extract the Cropland chapter specifically (between its `id` and the next `</section>`) so the
+    // pinned row is proven to live *inside* that chapter, not merely somewhere on the page.
+    let cropland_chapter = buildings_body
+        .split(r#"<section class="manual__bldg" id="cropland">"#)
+        .nth(1)
+        .expect("a Cropland chapter is rendered");
+    let cropland_chapter = &cropland_chapter[..cropland_chapter
+        .find("</section>")
+        .unwrap_or(cropland_chapter.len())];
+    assert!(
+        cropland_chapter.contains(
+            "<tr><td>1</td><td class=\"num\">70</td><td class=\"num\">90</td>\
+             <td class=\"num\">70</td><td class=\"num\">20</td>"
+        ),
+        "cropland level-1 cost 70/90/70/20, inside the Cropland chapter: {cropland_chapter}"
+    );
+    // Production is identical across all four field types (economy.toml's `production.wood/clay/
+    // iron/crop` tables are the same curve) — the Cropland chapter's own level-20 row (the capital
+    // cap) still carries the shared production figure (3000/h) and the "Capital only" badge/row
+    // class, past the normal (10) cap. Cost/time cover the full 1..=20 range for every field type
+    // (both `[field.cost]`/`[field.crop_cost]` and `[field.time_secs]` in construction.toml run all
+    // 20 entries), so there is no "beyond-table" cost cell to pin here.
+    assert!(
+        cropland_chapter.contains(r#"<tr class="manual__capital-row">"#)
+            && cropland_chapter.contains("<td>20 <span class=\"badge\">Capital only</span></td>")
+            && cropland_chapter.contains("<td class=\"num\">3000</td></tr>"),
+        "capital-only production at level 20 (3000/h), inside the Cropland chapter: {cropland_chapter}"
+    );
+
+    // --- Mechanics: public 200, CP threshold 200, outpost capacities 1..6, ram durabilities per
+    // tribe (90/130/180), catapult durability 110, merchant speeds 16/12/24. ---
+    let mechanics_res = anon
+        .get(format!("{base}/manual/reference/mechanics"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        mechanics_res.status().as_u16(),
+        200,
+        "Mechanics reference is public"
+    );
+    let mechanics_body = mechanics_res.text().await.unwrap();
+    assert!(
+        mechanics_body.contains(">200<"),
+        "a CP threshold of 200 is listed: {mechanics_body}"
+    );
+    // The outpost curve's last row pairs level 10 with capacity 6 (economy.toml:
+    // capacity_per_level = [0,1,1,2,2,3,3,4,4,5,6]).
+    assert!(
+        mechanics_body.contains("<td>10</td><td class=\"num\">6</td>"),
+        "outpost capacity tops out at 6 (level 10): {mechanics_body}"
+    );
+    assert!(
+        mechanics_body.contains(">90<"),
+        "Roman ram durability 90: {mechanics_body}"
+    );
+    assert!(
+        mechanics_body.contains(">130<"),
+        "Gaul ram durability 130: {mechanics_body}"
+    );
+    assert!(
+        mechanics_body.contains(">180<"),
+        "Teuton ram durability 180: {mechanics_body}"
+    );
+    assert!(
+        mechanics_body.contains(">110<"),
+        "catapult durability 110: {mechanics_body}"
+    );
+    assert!(
+        mechanics_body.contains(">16<"),
+        "Roman merchant speed 16: {mechanics_body}"
+    );
+    assert!(
+        mechanics_body.contains(">12<"),
+        "Teuton merchant speed 12: {mechanics_body}"
+    );
+    assert!(
+        mechanics_body.contains(">24<"),
+        "Gaul merchant speed 24: {mechanics_body}"
+    );
+    assert!(
+        mechanics_body.contains("protection lasts <b>3 days</b>"),
+        "classic beginner protection base is 3 days: {mechanics_body}"
+    );
+}
+
+/// AC4: a reader with a **selected world** sees that world's preset + speed named in the banner, and a
+/// value that genuinely differs from the classic default — proving the numbers actually switch with the
+/// world, not just the label. Uses the `speed` preset (052), whose beginner-protection base (1 day) is
+/// shorter than classic's (3 days) — a value the mechanics page shows verbatim (not speed-adjusted, so
+/// the divergence is the **preset**, not the world's chosen speed multiplier).
+#[sqlx::test(migrations = "../../migrations")]
+async fn manual_reference_pages_are_world_aware(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    // A short prefix (unlike e.g. "manualref") — `unique()` appends a nanosecond timestamp plus a
+    // process-wide counter that grows across the whole test binary run, and usernames are capped; a
+    // long prefix can intermittently push the total over the cap when this test runs late in a big
+    // parallel suite (register_client then sees a re-rendered form, not a redirect).
+    let admin_name = unique("mref");
+    let (ac, _admin_id) = register_client(&base, &pool, &admin_name).await;
+    sqlx::query("UPDATE users SET is_admin = TRUE WHERE username = $1")
+        .bind(&admin_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Create a second, `speed`-preset world (052) via the real admin flow (P4 — server-authoritative).
+    let r = ac
+        .post(format!("{base}/admin/world"))
+        .form(&[
+            ("name", "Blitzburg"),
+            ("speed", "2"),
+            ("radius", "40"),
+            ("preset", "speed"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let world_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM worlds WHERE name = 'Blitzburg'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Join it (045) — this is what selects it in the session (the `WORLD_COOKIE`, never a client
+    // parameter read directly by the manual, P4). The form takes the plain u128 (not the hyphenated
+    // UUID string) — matches `world_cookie`/`WorldId` parsing (056).
+    let r = ac
+        .post(format!("{base}/worlds/join"))
+        .form(&[
+            ("world", world_id.as_u128().to_string().as_str()),
+            ("tribe", "romans"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303, "joining the world succeeds");
+
+    let mechanics_body = ac
+        .get(format!("{base}/manual/reference/mechanics"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        mechanics_body.contains("Values for Blitzburg — speed 2×, speed rules"),
+        "the banner names the selected world, its speed, and its preset: {mechanics_body}"
+    );
+    // The `speed` preset's beginner protection base is 1 day (classic: 3 days) — a genuine value
+    // divergence, not just a relabeled default. (`inactive_after` also happens to read "3 days" on the
+    // `speed` preset, so the check is scoped to the protection sentence specifically, not a bare
+    // substring search.)
+    assert!(
+        mechanics_body.contains("protection lasts <b>1 day</b>"),
+        "the speed preset's shorter beginner protection shows: {mechanics_body}"
+    );
+    assert!(
+        !mechanics_body.contains("protection lasts <b>3 days</b>"),
+        "the classic protection duration must not leak through: {mechanics_body}"
+    );
+
+    // An anonymous reader (no session at all) still sees classic — switching worlds never leaks into a
+    // different session.
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let anon_body = anon
+        .get(format!("{base}/manual/reference/mechanics"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        anon_body.contains(
+            "Values shown for the classic rules — join a world to see its exact numbers."
+        ),
+        "anonymous still sees the classic banner: {anon_body}"
+    );
+    assert!(
+        anon_body.contains("protection lasts <b>3 days</b>"),
+        "anonymous sees classic's 3-day protection: {anon_body}"
+    );
+
+    // S3 (127 review): logging out must clear the world-selection cookie too, not just the auth
+    // cookie — otherwise `ac`'s now-logged-out session would keep reading Blitzburg's numbers off a
+    // stale `WORLD_COOKIE`, even though it no longer identifies as anyone. `ac` keeps its cookie jar
+    // across the logout (the same `reqwest::Client`), so this exercises exactly that carry-over.
+    let logout = ac.post(format!("{base}/logout")).send().await.unwrap();
+    assert_eq!(logout.status().as_u16(), 303, "logout succeeds");
+    let after_logout_body = ac
+        .get(format!("{base}/manual/reference/mechanics"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        after_logout_body.contains(
+            "Values shown for the classic rules — join a world to see its exact numbers."
+        ),
+        "a logged-out reader is truly anonymous — classic banner, not Blitzburg's: {after_logout_body}"
+    );
+    assert!(
+        after_logout_body.contains("protection lasts <b>3 days</b>"),
+        "a logged-out reader sees classic's 3-day protection, not the speed preset's 1 day: {after_logout_body}"
+    );
 }
