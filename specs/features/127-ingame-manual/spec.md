@@ -1,6 +1,6 @@
 # Feature 127 — the in-game player manual: informative, visual, always true
 
-**Status:** Verified (reviewer APPROVE at 158b9d4 + delta APPROVE at ea360a7; full per-level tables added on operator feedback)
+**Status:** Verified (reviewer APPROVE ×3: 158b9d4 main, ea360a7 tables delta, dab5f47 visuals delta — illustrated building chapters + unit portraits added on operator feedback)
 **Depends on:** 047–053 (WorldRules/presets — the data source), 045 (world context), the
 docs/manual content base (audited in PR #141).
 **Origin:** operator review — the markdown manual is factually right but "far away" from a real

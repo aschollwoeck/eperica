@@ -374,7 +374,8 @@ fn building_explanation(kind: BuildingKind) -> &'static str {
             "A forge that permanently upgrades an already-researched unit's attack or defence, \
              sharpening the troops you already train rather than adding new ones. It rewards a \
              settled, defensible position — the gains apply to every unit of that type this \
-             village fields, including troops trained before the upgrade, so it's most worthwhile \
+             village fields when fighting from home — including troops trained before the \
+             upgrade — so it's most worthwhile \
              once you know which units you'll keep fielding. \
              Prioritise whichever side, attack or defence, your strategy actually leans on."
         }
