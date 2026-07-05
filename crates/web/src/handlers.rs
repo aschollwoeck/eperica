@@ -13,22 +13,23 @@ use crate::templates::{
     ForceRow, ForumPostRow, ForumTemplate, ForumThreadRow, ForumThreadTemplate, GarrisonRow,
     HistoryPointView, ImpressumTemplate, IncomingRow, IncomingView, IndexTemplate,
     JoinableWorldRow, JoinedWorldRow, LandingWorldRow, LeaderboardRowView, LeaderboardTemplate,
-    LoginTemplate, ManualBuildingRow, ManualBuildingsTemplate, ManualChapterRow,
-    ManualChapterTemplate, ManualIndexTemplate, ManualLevelRow, ManualMechanicsTemplate,
-    ManualRefLinkRow, ManualSectionRow, ManualTribeMerchant, ManualTribeUnits, ManualTribeWall,
-    ManualUnitRow, ManualUnitsTemplate, MapCellView, MapTemplate, MarketTemplate, MedalRowView,
-    MemberStatRow, MessagesTemplate, ModAccountTemplate, ModQueueTemplate, ModReportRow,
-    MovementRow, NotificationRowView, NotificationsTemplate, OasisRow, OutgoingInviteView,
-    PendingInviteView, PlayerStatsTemplate, PlotView, PrivacyTemplate, ProfileTemplate,
-    QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow,
-    ReportRow, ReportTemplate, ReportsTemplate, ResourceRibbon, RosterRowView, ScoutReportTemplate,
-    ScoutResourceRow, SearchHitRow, SearchTemplate, SettingsTemplate, SettingsToggleRow,
-    ShipmentRow, SitterRow, SittingTemplate, SmithyRow, SmithyTemplate, SpectateBuildRow,
-    SpectateFeedTemplate, SpectateMovementRow, SpectatePlayerRow, SpectatePlayersTemplate,
-    SpectateReportRow, SpectateShipmentRow, SpectateTrainingRow, SpectateVillageLink,
-    SpectateVillageTemplate, SpectateWorldRow, SpectateWorldsTemplate, SpectatorHolderRow,
-    StyleGuideTemplate, TermsTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
-    VillageTemplate, VillageTrainingRow, WonderStandingView, WonderTemplate, WorldsTemplate,
+    LoginTemplate, ManualBuildingLevels, ManualBuildingRow, ManualBuildingsTemplate,
+    ManualChapterRow, ManualChapterTemplate, ManualCostRow, ManualIndexTemplate, ManualLevelRow,
+    ManualMechanicsTemplate, ManualProductionRow, ManualRefLinkRow, ManualSectionRow,
+    ManualTribeMerchant, ManualTribeUnits, ManualTribeWall, ManualUnitRow, ManualUnitsTemplate,
+    MapCellView, MapTemplate, MarketTemplate, MedalRowView, MemberStatRow, MessagesTemplate,
+    ModAccountTemplate, ModQueueTemplate, ModReportRow, MovementRow, NotificationRowView,
+    NotificationsTemplate, OasisRow, OutgoingInviteView, PendingInviteView, PlayerStatsTemplate,
+    PlotView, PrivacyTemplate, ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate,
+    RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate,
+    ResourceRibbon, RosterRowView, ScoutReportTemplate, ScoutResourceRow, SearchHitRow,
+    SearchTemplate, SettingsTemplate, SettingsToggleRow, ShipmentRow, SitterRow, SittingTemplate,
+    SmithyRow, SmithyTemplate, SpectateBuildRow, SpectateFeedTemplate, SpectateMovementRow,
+    SpectatePlayerRow, SpectatePlayersTemplate, SpectateReportRow, SpectateShipmentRow,
+    SpectateTrainingRow, SpectateVillageLink, SpectateVillageTemplate, SpectateWorldRow,
+    SpectateWorldsTemplate, SpectatorHolderRow, StyleGuideTemplate, TermsTemplate, TrainRow,
+    TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate, VillageTrainingRow,
+    WonderStandingView, WonderTemplate, WorldsTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -68,15 +69,16 @@ use eperica_application::{
     PLAYERS_PER_PAGE, player_villages, players as spectate_player_index, village_detail, world_feed,
 };
 use eperica_domain::{
-    AllianceId, AllianceRight, AllianceRole, AllianceRules, AttackMode, BuildTarget, BuildingKind,
-    ChatChannel, Coordinate, DEMOLISH_MIN_MAIN_BUILDING, DiplomacyStance, DiplomacyStatus, Economy,
-    GameSpeed, MAX_WONDER_LEVEL, MedalCategory, MovementKind, OasisBonus, PlayerId, Presence,
-    Quadrant, QuestReward, QueueLane, ReportReason, ResearchDenied, ResourceAmounts, ResourceKind,
-    RightSet, SanctionKind, ScoutTarget, TileKind, Timestamp, TradeKind, Tribe, UnitId, UnitRole,
-    UnitRules, UnitSpec, UpgradeDenied, VILLAGE_BUILDING_SLOTS, Village, VillageId, WorldId,
-    building_at, can_access_channel, can_afford, can_place, can_research, can_upgrade,
-    current_quest, expansion_slots, garrison_upkeep, is_inactive, per_unit_time_secs,
-    prerequisites_met, presence, queue_lane, regenerate_loyalty, reserved_kind, scaled_time_secs,
+    AllianceId, AllianceRight, AllianceRole, AllianceRules, AttackMode, BuildRules, BuildTarget,
+    BuildingKind, ChatChannel, Coordinate, DEMOLISH_MIN_MAIN_BUILDING, DiplomacyStance,
+    DiplomacyStatus, Economy, GameSpeed, MAX_WONDER_LEVEL, MedalCategory, MovementKind, OasisBonus,
+    PlayerId, Presence, Quadrant, QuestReward, QueueLane, ReportReason, ResearchDenied,
+    ResourceAmounts, ResourceKind, RightSet, SanctionKind, ScoutTarget, TileKind, Timestamp,
+    TradeKind, Tribe, UnitId, UnitRole, UnitRules, UnitSpec, UpgradeDenied, VILLAGE_BUILDING_SLOTS,
+    Village, VillageId, WorldId, building_at, can_access_channel, can_afford, can_place,
+    can_research, can_upgrade, current_quest, expansion_slots, garrison_upkeep, is_inactive,
+    per_unit_time_secs, prerequisites_met, presence, queue_lane, regenerate_loyalty, reserved_kind,
+    scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use eperica_infrastructure::{DEFAULT_PRESET, KNOWN_PRESETS, WorldRules, known_preset};
@@ -828,6 +830,71 @@ const ALL_BUILDING_KINDS: [BuildingKind; 19] = [
     BuildingKind::Wonder,
 ];
 
+/// One level's cost + build time for `target` — the shared row builder behind every per-level
+/// table on the Buildings reference page.
+///
+/// `BuildRules::cost`/`base_time_secs` take a **current level** and return the cost/time to reach
+/// the next one (verified against `construction.rs`'s own doc comments and the classic
+/// `construction.toml` header: "index 0 = cost/time to go from level 0 to level 1" — the same
+/// convention `order_build`'s call site uses to price the in-progress upgrade). So the row for
+/// display level `N` reads `cost(target, N - 1)`/`base_time_secs(target, N - 1)`.
+///
+/// The time is scaled by world speed only, **not** the Main Building factor — `base_time_secs`
+/// returns the raw table value, and `build_time_secs` (the function the live build queue actually
+/// uses) applies `main_building_factor(mb_level)` as a *separate* divisor on top of speed. Classic's
+/// own `main_building_factor_per_level` table sets index 0 and 1 equal (both `1.0`) with the
+/// comment "villages start at Main Building level 1 (the baseline)", so `base_time_secs ÷ speed`
+/// **is** exactly the Main-Building-level-1 time — hence the section note directing readers to a
+/// higher Main Building for anything faster.
+fn manual_cost_row(
+    build: &BuildRules,
+    target: BuildTarget,
+    level: u8,
+    speed: GameSpeed,
+) -> ManualCostRow {
+    let cost = build.cost(target, level - 1).unwrap_or_default();
+    let time_secs = build.base_time_secs(target, level - 1).unwrap_or(0);
+    ManualCostRow {
+        level,
+        wood: cost.wood,
+        clay: cost.clay,
+        iron: cost.iron,
+        crop: cost.crop,
+        time: fmt_duration(scaled_time_secs(time_secs, speed)),
+    }
+}
+
+/// One buildable kind's full per-level table for the `<details>` under the summary row.
+///
+/// Every kind renders levels `1..=max_level` — except the **Wonder**, whose 100-level table is
+/// sampled every 10th level (`1, 10, 20, … 100`): rendering all 100 rows would dwarf every other
+/// kind's table on the page even collapsed inside `<details>`, and the Wonder's curve is a fixed
+/// geometric progression (`cost_ratio`/`time_ratio` per level, `wonder.toml`) — the sampled points
+/// already show its shape; the template adds a note explaining the gap instead of hiding it.
+fn manual_building_levels(
+    build: &BuildRules,
+    kind: BuildingKind,
+    speed: GameSpeed,
+) -> ManualBuildingLevels {
+    let target = BuildTarget::Building { slot: 0, kind };
+    let max_level = build.max_level(target);
+    let sampled = kind == BuildingKind::Wonder;
+    let levels: Vec<u8> = if sampled {
+        std::iter::once(1).chain((1..=10).map(|n| n * 10)).collect()
+    } else {
+        (1..=max_level).collect()
+    };
+    ManualBuildingLevels {
+        name: building_label(kind),
+        max_level,
+        rows: levels
+            .into_iter()
+            .map(|level| manual_cost_row(build, target, level, speed))
+            .collect(),
+        sampled,
+    }
+}
+
 /// The generated Buildings reference page (127 T2, AC3/AC4): purpose, prerequisites, max level,
 /// multi-instance flag, and a level-1 cost row for every kind, plus a few illustrative per-level
 /// curves — all read from the resolved `BuildRules`/`EconomyRules`/`CultureRules`.
@@ -904,6 +971,54 @@ pub async fn manual_ref_buildings(
         })
         .collect();
 
+    // Full per-level cost/time tables (operator feedback: "I can't find a resource table for
+    // buildings" — the summary table above only shows level 1). One `<details>` per kind; the
+    // Wonder's 100-level table is sampled (see `manual_building_levels`'s doc comment).
+    let building_levels = ALL_BUILDING_KINDS
+        .iter()
+        .map(|&kind| manual_building_levels(build, kind, ctx.speed))
+        .collect();
+
+    // The resource-fields section: wood/clay/iron share one cost table (`build.cost`), cropland
+    // charges its own (`build.field_cost`); both share the field's time table. Levels 1..=the
+    // *normal* (non-capital) cap — the capital's raised cap only changes how far production goes
+    // (below), never the cost/time curve's shape.
+    let field_target = BuildTarget::Field { slot: 0 };
+    let field_max_level = build.max_level(field_target);
+    let field_levels = (1..=field_max_level)
+        .map(|level| manual_cost_row(build, field_target, level, ctx.speed))
+        .collect();
+    let cropland_levels = (1..=field_max_level)
+        .map(|level| {
+            let cost = build
+                .field_cost(ResourceKind::Crop, level - 1)
+                .unwrap_or_default();
+            let time_secs = build.base_time_secs(field_target, level - 1).unwrap_or(0);
+            ManualCostRow {
+                level,
+                wood: cost.wood,
+                clay: cost.clay,
+                iron: cost.iron,
+                crop: cost.crop,
+                time: fmt_duration(scaled_time_secs(time_secs, ctx.speed)),
+            }
+        })
+        .collect();
+
+    // Production per field level, 0..=the **capital** cap — rows past `field_max_level` are
+    // reachable only in a capital village (013 §3.4), marked `capital_only` for the template.
+    let capital_field_max_level = build.field_max_level(true);
+    let production_levels = (0..=capital_field_max_level)
+        .map(|level| ManualProductionRow {
+            level,
+            wood: econ.field_production_per_hour(ResourceKind::Wood, level, ctx.speed),
+            clay: econ.field_production_per_hour(ResourceKind::Clay, level, ctx.speed),
+            iron: econ.field_production_per_hour(ResourceKind::Iron, level, ctx.speed),
+            crop: econ.field_production_per_hour(ResourceKind::Crop, level, ctx.speed),
+            capital_only: level > field_max_level,
+        })
+        .collect();
+
     page(&ManualBuildingsTemplate {
         sections: manual_section_rows(None),
         ref_links: manual_ref_link_rows(Some("buildings")),
@@ -913,6 +1028,11 @@ pub async fn manual_ref_buildings(
         granary_curve,
         main_building_curve,
         town_hall_curve,
+        building_levels,
+        field_levels,
+        cropland_levels,
+        production_levels,
+        field_max_level,
     })
 }
 

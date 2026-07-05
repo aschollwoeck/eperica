@@ -133,6 +133,20 @@ pub struct ManualBuildingsTemplate {
     pub main_building_curve: Vec<ManualLevelRow>,
     /// Town Hall culture points/hour, every level.
     pub town_hall_curve: Vec<ManualLevelRow>,
+    /// Full per-level cost/time tables, one `<details>` per buildable kind (operator feedback: the
+    /// summary table above only shows level 1 — this is the actual "resource table for buildings").
+    pub building_levels: Vec<ManualBuildingLevels>,
+    /// Standard wood/clay/iron field upgrade cost + time, levels 1..=the normal (non-capital) field
+    /// cap — the shared table `BuildRules::field` also backs [`ManualBuildingsTemplate::field_max_level`].
+    pub field_levels: Vec<ManualCostRow>,
+    /// Cropland's own (cheaper) cost table, same levels/times as `field_levels` — only the cost
+    /// column differs (`BuildRules::field_cost`).
+    pub cropland_levels: Vec<ManualCostRow>,
+    /// Production per field level (`EconomyRules`), 0..=the **capital** field cap; rows past
+    /// `field_max_level` are marked `capital_only` (only a capital village can reach them).
+    pub production_levels: Vec<ManualProductionRow>,
+    /// The normal (non-capital) field level cap — the boundary `production_levels` marks.
+    pub field_max_level: u8,
 }
 
 /// One building kind's reference row.
@@ -156,6 +170,48 @@ pub struct ManualBuildingRow {
 pub struct ManualLevelRow {
     pub level: u8,
     pub value: String,
+}
+
+/// One buildable kind's full per-level cost/time table (the `<details>` body under its summary
+/// row) — answers "I can't find a resource table for buildings", the summary table's level-1-only
+/// row.
+pub struct ManualBuildingLevels {
+    pub name: &'static str,
+    /// The kind's max level — also the number named in the `<summary>` ("levels 1–N").
+    pub max_level: u8,
+    /// One row per rendered level — every level for an ordinary kind, sampled every 10th level for
+    /// the 100-level Wonder (see `sampled`).
+    pub rows: Vec<ManualCostRow>,
+    /// True only for the Wonder: its table is sampled (1, 10, 20, … 100) rather than exhaustive —
+    /// 100 rows adds nothing a reader can act on beyond the first and the shape of the curve, and
+    /// it would dwarf every other `<details>` on the page even collapsed. The template renders an
+    /// explanatory note only when this is set.
+    pub sampled: bool,
+}
+
+/// One level's cost + build time — the "Level | Wood | Clay | Iron | Crop | Build time" row shared
+/// by every per-building `<details>` table and the plain wood/clay/iron and cropland field tables.
+pub struct ManualCostRow {
+    pub level: u8,
+    pub wood: i64,
+    pub clay: i64,
+    pub iron: i64,
+    pub crop: i64,
+    /// Build time at the resolved world's speed (Main Building level 1 — see the section note; a
+    /// higher Main Building shortens it further), formatted like every other duration in the manual.
+    pub time: String,
+}
+
+/// One field level's hourly production (`EconomyRules`), speed-scaled — the resource-fields
+/// section's third table.
+pub struct ManualProductionRow {
+    pub level: u8,
+    pub wood: i64,
+    pub clay: i64,
+    pub iron: i64,
+    pub crop: i64,
+    /// True for levels only a **capital** village can reach (past the normal field cap).
+    pub capital_only: bool,
 }
 
 /// The generated Mechanics reference page (127 T2, AC3/AC4): the cross-cutting numbers that don't

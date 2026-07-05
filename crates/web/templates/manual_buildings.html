@@ -10,8 +10,9 @@
     <section class="phead">
       <div class="phead__eyebrow">Reference</div>
       <h1 class="phead__title">Buildings</h1>
-      <p class="phead__sub">Every building's purpose, prerequisites, and level-1 cost, straight from
-        the loaded balance rules.</p>
+      <p class="phead__sub">Every building's purpose, prerequisites, and level-1 cost at a glance below —
+        plus the full per-level cost &amp; build-time table for every kind, and the resource-field
+        curves, further down — straight from the loaded balance rules.</p>
     </section>
     <p class="manual__banner">{{ banner }}</p>
 
@@ -88,6 +89,96 @@
             </tbody>
           </table>
         </div>
+      </div>
+    </section>
+
+    <section class="manual__refsec">
+      <h2>Full per-level costs &amp; times</h2>
+      <p class="manual__note">Times shown for Main Building level 1 — a higher Main Building
+        reduces them further.</p>
+      {% for b in building_levels %}
+      <details class="manual__lvls">
+        <summary>{{ b.name }} — levels 1–{{ b.max_level }}</summary>
+        {% if b.sampled %}
+        <p class="manual__note">Sampled every 10th level (1, 10, 20, … 100) — 100 rows would dwarf
+          every other table on this page even collapsed; the Wonder's cost and time both escalate
+          by a fixed ratio each level in between (see the Wonder chapter for the exact curve).</p>
+        {% endif %}
+        <div style="overflow-x:auto">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Level</th><th class="num">Wood</th><th class="num">Clay</th>
+              <th class="num">Iron</th><th class="num">Crop</th><th class="num">Build time</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in b.rows %}
+            <tr><td>{{ r.level }}</td><td class="num">{{ r.wood }}</td><td class="num">{{ r.clay }}</td><td class="num">{{ r.iron }}</td><td class="num">{{ r.crop }}</td><td class="num">{{ r.time }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      </details>
+      {% endfor %}
+    </section>
+
+    <section class="manual__refsec">
+      <h2>Resource fields</h2>
+      <h3>Wood / Clay / Iron field upgrade costs</h3>
+      <div style="overflow-x:auto">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Level</th><th class="num">Wood</th><th class="num">Clay</th>
+            <th class="num">Iron</th><th class="num">Crop</th><th class="num">Build time</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in field_levels %}
+          <tr><td>{{ r.level }}</td><td class="num">{{ r.wood }}</td><td class="num">{{ r.clay }}</td><td class="num">{{ r.iron }}</td><td class="num">{{ r.crop }}</td><td class="num">{{ r.time }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+
+      <h3>Cropland upgrade costs</h3>
+      <p class="manual__note">Croplands charge their own (cheaper-in-crop) cost table — only the
+        cost differs; build time follows the same field table above.</p>
+      <div style="overflow-x:auto">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Level</th><th class="num">Wood</th><th class="num">Clay</th>
+            <th class="num">Iron</th><th class="num">Crop</th><th class="num">Build time</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in cropland_levels %}
+          <tr><td>{{ r.level }}</td><td class="num">{{ r.wood }}</td><td class="num">{{ r.clay }}</td><td class="num">{{ r.iron }}</td><td class="num">{{ r.crop }}</td><td class="num">{{ r.time }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+
+      <h3>Production per field level</h3>
+      <p class="manual__note">Levels above {{ field_max_level }} (marked "capital only") are only
+        reachable in your capital village — see Field level caps in
+        <a href="/manual/resources">Resources</a>.</p>
+      <div style="overflow-x:auto">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Level</th><th class="num">Wood/h</th><th class="num">Clay/h</th>
+            <th class="num">Iron/h</th><th class="num">Crop/h</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in production_levels %}
+          <tr{% if r.capital_only %} class="manual__capital-row"{% endif %}><td>{{ r.level }}{% if r.capital_only %} <span class="badge">Capital only</span>{% endif %}</td><td class="num">{{ r.wood }}</td><td class="num">{{ r.clay }}</td><td class="num">{{ r.iron }}</td><td class="num">{{ r.crop }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
       </div>
     </section>
   </div>

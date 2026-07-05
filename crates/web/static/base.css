@@ -1051,6 +1051,22 @@ a { color: var(--c-gold); }
 .manual__curves { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-4); margin: 0 0 var(--space-4); }
 .manual__curve h4 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--c-ink-muted); margin: 0 0 6px; }
 
+/* A small italic aside above/inside a reference-page table (e.g. "times shown for Main Building
+   level 1"), never as loud as the `.manual__banner` callout it sits below. */
+.manual__note { font-size: .84rem; font-style: italic; color: var(--c-ink-muted); margin: 0 0 var(--space-3); }
+
+/* Full per-level cost/time tables (one per buildable kind) — collapsed by default so the page
+   isn't 19 full tables long; each opens independently. */
+.manual__lvls { border: 1px solid var(--c-border); border-radius: var(--radius-md); background: var(--c-panel); margin-bottom: 8px; padding: 0 var(--space-4); }
+.manual__lvls summary { cursor: pointer; padding: 10px 0; font-weight: 600; color: var(--c-ink); list-style: none; }
+.manual__lvls summary::-webkit-details-marker { display: none; }
+.manual__lvls summary::before { content: "▸ "; color: var(--c-gold); }
+.manual__lvls[open] summary::before { content: "▾ "; }
+.manual__lvls .table { margin-bottom: var(--space-4); }
+
+/* The capital-only tail of the field production table (rows beyond the normal, non-capital cap). */
+.manual__capital-row { opacity: .72; }
+
 /* Prev/next chapter footer nav. */
 .manual__prevnext { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); margin-top: var(--space-6); }
 .manual__navcard {

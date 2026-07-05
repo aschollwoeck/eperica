@@ -72,6 +72,9 @@ field costs mainly clay. A level-1 upgrade for a wood, clay, or iron field costs
 a level-1 cropland costs **70 wood / 90 clay / 70 iron / 20 crop** (roughly 7 : 9 : 7 : 2).
 Because croplands are cheap in crop to upgrade, it is worth prioritising them early.
 
+The full per-level cost, build time, and production tables — every level, not just level 1 — are
+on the [Buildings reference page](/manual/reference/buildings).
+
 ## Field level caps
 
 - **Normal villages:** fields cap at **level 10**.

@@ -83,8 +83,9 @@ level frees the slot for something else; to clear a building fully, demolish it 
 - **Treasury** — required to capture and hold an **artifact**; its level determines which artifact
   scope (small/large/unique) you can keep. See [Artifacts & the Natars](artifacts.md).
 
-Every building's exact prerequisites, max level, and per-level costs are generated straight from
-the world's rules — see [all buildings & prerequisites](/manual/reference/buildings).
+Every building's exact prerequisites, max level, and full per-level costs and build times are
+generated straight from the world's rules — see
+[all buildings & prerequisites](/manual/reference/buildings).
 
 ## Tips
 

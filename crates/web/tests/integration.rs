@@ -13787,6 +13787,35 @@ async fn manual_reference_pages_are_public_and_match_classic_values(pool: sqlx::
         )),
         "Wonder's blurb names the real win level: {buildings_body}"
     );
+    // Operator feedback: "I can't find a resource table for buildings" — the summary table above
+    // only shows level 1. Pin a **non-level-1** row from the new full per-level tables: the
+    // Warehouse's level-2 cost/time (construction.toml `buildings.warehouse`: `cost` index 1 =
+    // 165/205/115/50, `time_secs` index 1 = 1500s = 0:25:00 at the classic fallback's 1× speed).
+    assert!(
+        buildings_body.contains(
+            "<tr><td>2</td><td class=\"num\">165</td><td class=\"num\">205</td>\
+             <td class=\"num\">115</td><td class=\"num\">50</td><td class=\"num\">0:25:00</td></tr>"
+        ),
+        "Warehouse level 2 full cost/time row: {buildings_body}"
+    );
+    // Cropland's own (cheaper) level-1 cost table (construction.toml `field.crop_cost` index 0):
+    // 70 wood / 90 clay / 70 iron / 20 crop — distinct from the shared wood/clay/iron field table.
+    assert!(
+        buildings_body.contains(
+            "<tr><td>1</td><td class=\"num\">70</td><td class=\"num\">90</td>\
+             <td class=\"num\">70</td><td class=\"num\">20</td>"
+        ),
+        "cropland level-1 cost 70/90/70/20: {buildings_body}"
+    );
+    // Production beyond the normal field cap (10) only reaches a capital village — economy.toml
+    // `production.wood` index 20 (level 20, the capital cap) = 3000, marked "Capital only".
+    assert!(
+        buildings_body.contains("Capital only")
+            && buildings_body.contains(
+                "<td>20 <span class=\"badge\">Capital only</span></td><td class=\"num\">3000</td>"
+            ),
+        "capital-only production at level 20 (3000/h): {buildings_body}"
+    );
 
     // --- Mechanics: public 200, CP threshold 200, outpost capacities 1..6, ram durabilities per
     // tribe (90/130/180), catapult durability 110, merchant speeds 16/12/24. ---
