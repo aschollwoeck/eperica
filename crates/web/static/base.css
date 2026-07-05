@@ -1077,15 +1077,9 @@ a { color: var(--c-gold); }
 .manual__bldg-prose { max-width: 62ch; color: var(--c-ink-muted); margin: 0 0 var(--space-3); }
 .manual__facts { font-size: .88rem; color: var(--c-ink-muted); margin: 0 0 var(--space-4); }
 
-/* The Resource fields section's small illustration strip (127 redesign) — woodcutter/clay pit/
-   iron mine/cropland, same resolution chain as the building chapters' figures. */
-.manual__field-strip { display: flex; flex-wrap: wrap; gap: var(--space-4); margin: 0 0 var(--space-4); }
-.manual__field-fig { margin: 0; width: 140px; text-align: center; }
-.manual__field-fig img { display: block; width: 100%; height: auto; border-radius: var(--radius-md); border: 1px solid var(--c-border); }
-.manual__field-fig figcaption { font-size: .78rem; color: var(--c-ink-muted); margin-top: 4px; }
-
-/* Full per-level cost/time tables (one per buildable kind, now nested inside its own chapter) —
-   collapsed by default so the page isn't 19 full tables long; each opens independently. */
+/* Full per-level cost/time/production tables (one per buildable kind or resource field, nested
+   inside its own chapter) — collapsed by default so the page isn't 23 full tables long; each opens
+   independently. */
 .manual__lvls { border: 1px solid var(--c-border); border-radius: var(--radius-md); background: var(--c-panel); margin-bottom: 8px; padding: 0 var(--space-4); }
 .manual__lvls summary { cursor: pointer; padding: 10px 0; font-weight: 600; color: var(--c-ink); list-style: none; }
 .manual__lvls summary::-webkit-details-marker { display: none; }
@@ -1093,7 +1087,8 @@ a { color: var(--c-gold); }
 .manual__lvls[open] summary::before { content: "▾ "; }
 .manual__lvls .table { margin-bottom: var(--space-4); }
 
-/* The capital-only tail of the field production table (rows beyond the normal, non-capital cap). */
+/* The capital-only tail of a resource field's per-level table (rows beyond the normal,
+   non-capital cap). */
 .manual__capital-row { opacity: .72; }
 
 /* The Units reference page's leading portrait column (127 redesign) — empty for the pinned art

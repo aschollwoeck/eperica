@@ -10,9 +10,10 @@
     <section class="phead">
       <div class="phead__eyebrow">Reference</div>
       <h1 class="phead__title">Buildings</h1>
-      <p class="phead__sub">Every building gets its own chapter below — what it is, why you'd build
-        it, and its full per-level cost &amp; build-time table — plus a few illustrative curves and
-        the resource-field numbers further down, straight from the loaded balance rules.</p>
+      <p class="phead__sub">Every building — and every resource field — gets its own chapter below:
+        what it is, why you'd build it, and its full per-level cost, build-time (and, for fields,
+        production) table — plus a few illustrative curves, all straight from the loaded balance
+        rules.</p>
     </section>
     <p class="manual__banner">{{ banner }}</p>
 
@@ -114,72 +115,35 @@
       </div>
     </section>
 
-    <section class="manual__refsec">
-      <h2>Resource fields</h2>
-      <div class="manual__field-strip">
-        {% for f in field_images %}
-        <figure class="manual__field-fig">
-          <img src="{{ f.image }}" alt="{{ f.label }}" loading="lazy">
-          <figcaption>{{ f.label }}</figcaption>
-        </figure>
-        {% endfor %}
-      </div>
-      <h3>Wood / Clay / Iron field upgrade costs</h3>
-      <div style="overflow-x:auto">
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Level</th><th class="num">Wood</th><th class="num">Clay</th>
-            <th class="num">Iron</th><th class="num">Crop</th><th class="num">Build time</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for r in field_levels %}
-          <tr><td>{{ r.level }}</td><td class="num">{{ r.wood }}</td><td class="num">{{ r.clay }}</td><td class="num">{{ r.iron }}</td><td class="num">{{ r.crop }}</td><td class="num">{{ r.time }}</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      </div>
-
-      <h3>Cropland upgrade costs</h3>
-      <p class="manual__note">Croplands charge their own (cheaper-in-crop) cost table — only the
-        cost differs; build time follows the same field table above.</p>
-      <div style="overflow-x:auto">
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Level</th><th class="num">Wood</th><th class="num">Clay</th>
-            <th class="num">Iron</th><th class="num">Crop</th><th class="num">Build time</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for r in cropland_levels %}
-          <tr><td>{{ r.level }}</td><td class="num">{{ r.wood }}</td><td class="num">{{ r.clay }}</td><td class="num">{{ r.iron }}</td><td class="num">{{ r.crop }}</td><td class="num">{{ r.time }}</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      </div>
-
-      <h3>Production per field level</h3>
-      <p class="manual__note">Levels above {{ field_max_level }} (marked "capital only") are only
-        reachable in your capital village — see Field level caps in
-        <a href="/manual/resources">Resources</a>.</p>
-      <div style="overflow-x:auto">
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Level</th><th class="num">Wood/h</th><th class="num">Clay/h</th>
-            <th class="num">Iron/h</th><th class="num">Crop/h</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for r in production_levels %}
-          <tr{% if r.capital_only %} class="manual__capital-row"{% endif %}><td>{{ r.level }}{% if r.capital_only %} <span class="badge">Capital only</span>{% endif %}</td><td class="num">{{ r.wood }}</td><td class="num">{{ r.clay }}</td><td class="num">{{ r.iron }}</td><td class="num">{{ r.crop }}</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      </div>
+    {% for f in fields %}
+    <section class="manual__bldg" id="{{ f.slug }}">
+      <h2>{{ f.name }}</h2>
+      <figure class="manual__bldg-fig">
+        <img src="{{ f.image }}" alt="{{ f.name }}" loading="lazy">
+      </figure>
+      <p class="manual__bldg-prose">{{ f.explanation }}</p>
+      <p class="manual__facts">{{ f.facts }}</p>
+      <details class="manual__lvls">
+        <summary>Full cost, build time &amp; production — levels 1–{{ f.max_level }}</summary>
+        <div style="overflow-x:auto">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Level</th><th class="num">Wood</th><th class="num">Clay</th>
+              <th class="num">Iron</th><th class="num">Crop</th><th class="num">Build time</th>
+              <th class="num">Production/h</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in f.levels %}
+            <tr{% if r.capital_only %} class="manual__capital-row"{% endif %}><td>{{ r.level }}{% if r.capital_only %} <span class="badge">Capital only</span>{% endif %}</td><td class="num">{{ r.wood }}</td><td class="num">{{ r.clay }}</td><td class="num">{{ r.iron }}</td><td class="num">{{ r.crop }}</td><td class="num">{{ r.time }}</td><td class="num">{{ r.production }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      </details>
     </section>
+    {% endfor %}
   </div>
 </div>
 {% endblock %}

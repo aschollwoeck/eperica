@@ -121,9 +121,9 @@ pub struct ManualUnitRow {
 }
 
 /// The generated Buildings reference page (127 T2, AC3/AC4; redesigned per operator feedback into a
-/// chapter per building — see [`ManualBuildingSection`]): a jump-list grouped by purpose, one full
-/// chapter per buildable kind, plus a few illustrative per-level curves and the resource-field
-/// tables/image strip.
+/// chapter per building — see [`ManualBuildingSection`]; the resource fields got the same treatment
+/// on a later pass — see [`ManualFieldSection`]): a jump-list grouped by purpose, one full chapter
+/// per buildable kind, a few illustrative per-level curves, and one chapter per resource field.
 #[derive(Template)]
 #[template(path = "manual_buildings.html")]
 pub struct ManualBuildingsTemplate {
@@ -131,7 +131,8 @@ pub struct ManualBuildingsTemplate {
     pub ref_links: Vec<ManualRefLinkRow>,
     pub banner: String,
     /// The jump-list groups shown above the chapters, in fixed purpose order (`BUILDING_GROUP_ORDER`
-    /// in handlers.rs) — each keeping the buildable kinds' own declared order within it.
+    /// in handlers.rs, plus a trailing "Resource fields" group) — each keeping its members' own
+    /// declared order within it.
     pub groups: Vec<ManualBuildingGroup>,
     /// One chapter per buildable kind, in `ALL_BUILDING_KINDS` order.
     pub buildings: Vec<ManualBuildingSection>,
@@ -143,20 +144,10 @@ pub struct ManualBuildingsTemplate {
     pub main_building_curve: Vec<ManualLevelRow>,
     /// Town Hall culture points/hour, every level.
     pub town_hall_curve: Vec<ManualLevelRow>,
-    /// Standard wood/clay/iron field upgrade cost + time, levels 1..=the normal (non-capital) field
-    /// cap — the shared table `BuildRules::field` also backs [`ManualBuildingsTemplate::field_max_level`].
-    pub field_levels: Vec<ManualCostRow>,
-    /// Cropland's own (cheaper) cost table, same levels/times as `field_levels` — only the cost
-    /// column differs (`BuildRules::field_cost`).
-    pub cropland_levels: Vec<ManualCostRow>,
-    /// Production per field level (`EconomyRules`), 0..=the **capital** field cap; rows past
-    /// `field_max_level` are marked `capital_only` (only a capital village can reach them).
-    pub production_levels: Vec<ManualProductionRow>,
-    /// The normal (non-capital) field level cap — the boundary `production_levels` marks.
-    pub field_max_level: u8,
-    /// The four resource-field illustrations (woodcutter/clay pit/iron mine/cropland) shown as a
-    /// small strip above the field tables — resolved the same way as building art.
-    pub field_images: Vec<ManualFieldImage>,
+    /// One chapter per resource field (Woodcutter, Clay Pit, Iron Mine, Cropland) — same shape as
+    /// `buildings`' chapters (127 follow-up, operator feedback: "show resources also individually
+    /// like buildings and units").
+    pub fields: Vec<ManualFieldSection>,
 }
 
 /// One purpose group's chips in the Buildings page's jump-list (127 redesign).
@@ -200,11 +191,47 @@ pub struct ManualBuildingSection {
     pub levels: ManualBuildingLevels,
 }
 
-/// One resource field's illustration + caption for the Resource fields section's image strip (127
-/// redesign).
-pub struct ManualFieldImage {
-    pub label: &'static str,
+/// One resource field's full reference chapter (127 follow-up, operator feedback: "show resources
+/// also individually like buildings and units") — same shape as [`ManualBuildingSection`]: image,
+/// hand-written prose, a facts line, and one collapsible per-level table, but with an added
+/// Production/h column since a field (unlike a building) has a per-level output of its own.
+pub struct ManualFieldSection {
+    /// The anchor id (`woodcutter`/`clay_pit`/`iron_mine`/`cropland`, from `field_art_slug`).
+    pub slug: &'static str,
+    pub name: &'static str,
+    /// The resolved static image path (`building_art_url` over `field_art_slug`) — the generic
+    /// plate for Woodcutter/Clay Pit/Cropland, the Gauls tribal plate for Iron Mine.
     pub image: String,
+    /// Hand-written flavor prose (what it is, why it matters, when it becomes the bottleneck) —
+    /// deliberately carries no balance numbers, same convention as `ManualBuildingSection::explanation`.
+    pub explanation: &'static str,
+    /// A rules-fed facts line: the normal/capital level caps, plus (Cropland only) a note that it
+    /// charges its own cheaper cost table.
+    pub facts: String,
+    /// The capital field cap — also the number named in the `<details>` summary ("levels 1–N").
+    pub max_level: u8,
+    /// One row per level, 1..=`max_level`.
+    pub levels: Vec<ManualFieldLevelRow>,
+}
+
+/// One resource field level's cost, build time, and hourly production — the "Level | Wood | Clay |
+/// Iron | Crop | Build time | Production/h" row inside a [`ManualFieldSection`]'s `<details>`.
+pub struct ManualFieldLevelRow {
+    pub level: u8,
+    /// Pre-formatted cost cells (`"—"` if the rules table has no entry at this level, rather than a
+    /// misleading `0` — see the S1 lesson referenced in handlers.rs).
+    pub wood: String,
+    pub clay: String,
+    pub iron: String,
+    pub crop: String,
+    /// Build time at the resolved world's speed, formatted like every other duration in the manual
+    /// (`"—"` if the rules table has no entry at this level).
+    pub time: String,
+    /// This field's own hourly output at this level (`EconomyRules::field_production_per_hour`).
+    pub production: i64,
+    /// True for levels only a **capital** village can reach (past the normal field cap) — reuses
+    /// `.manual__capital-row` for the same dimming/badge treatment as the building chapters.
+    pub capital_only: bool,
 }
 
 /// A `level → value` row shared by the buildings/mechanics curve tables (127 T2) — pre-formatted in
@@ -233,7 +260,7 @@ pub struct ManualBuildingLevels {
 }
 
 /// One level's cost + build time — the "Level | Wood | Clay | Iron | Crop | Build time" row shared
-/// by every per-building `<details>` table and the plain wood/clay/iron and cropland field tables.
+/// by every per-building `<details>` table.
 pub struct ManualCostRow {
     pub level: u8,
     pub wood: i64,
@@ -243,18 +270,6 @@ pub struct ManualCostRow {
     /// Build time at the resolved world's speed (Main Building level 1 — see the section note; a
     /// higher Main Building shortens it further), formatted like every other duration in the manual.
     pub time: String,
-}
-
-/// One field level's hourly production (`EconomyRules`), speed-scaled — the resource-fields
-/// section's third table.
-pub struct ManualProductionRow {
-    pub level: u8,
-    pub wood: i64,
-    pub clay: i64,
-    pub iron: i64,
-    pub crop: i64,
-    /// True for levels only a **capital** village can reach (past the normal field cap).
-    pub capital_only: bool,
 }
 
 /// The generated Mechanics reference page (127 T2, AC3/AC4): the cross-cutting numbers that don't

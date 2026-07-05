@@ -15,17 +15,17 @@ use crate::templates::{
     JoinableWorldRow, JoinedWorldRow, LandingWorldRow, LeaderboardRowView, LeaderboardTemplate,
     LoginTemplate, ManualBuildingGroup, ManualBuildingLevels, ManualBuildingSection,
     ManualBuildingsTemplate, ManualChapterRow, ManualChapterTemplate, ManualCostRow,
-    ManualFieldImage, ManualIndexTemplate, ManualJumpItem, ManualLevelRow, ManualMechanicsTemplate,
-    ManualProductionRow, ManualRefLinkRow, ManualSectionRow, ManualTribeMerchant, ManualTribeUnits,
-    ManualTribeWall, ManualUnitRow, ManualUnitsTemplate, MapCellView, MapTemplate, MarketTemplate,
-    MedalRowView, MemberStatRow, MessagesTemplate, ModAccountTemplate, ModQueueTemplate,
-    ModReportRow, MovementRow, NotificationRowView, NotificationsTemplate, OasisRow,
-    OutgoingInviteView, PendingInviteView, PlayerStatsTemplate, PlotView, PrivacyTemplate,
-    ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate,
-    ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, ResourceRibbon, RosterRowView,
-    ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate, SettingsTemplate,
-    SettingsToggleRow, ShipmentRow, SitterRow, SittingTemplate, SmithyRow, SmithyTemplate,
-    SpectateBuildRow, SpectateFeedTemplate, SpectateMovementRow, SpectatePlayerRow,
+    ManualFieldLevelRow, ManualFieldSection, ManualIndexTemplate, ManualJumpItem, ManualLevelRow,
+    ManualMechanicsTemplate, ManualRefLinkRow, ManualSectionRow, ManualTribeMerchant,
+    ManualTribeUnits, ManualTribeWall, ManualUnitRow, ManualUnitsTemplate, MapCellView,
+    MapTemplate, MarketTemplate, MedalRowView, MemberStatRow, MessagesTemplate, ModAccountTemplate,
+    ModQueueTemplate, ModReportRow, MovementRow, NotificationRowView, NotificationsTemplate,
+    OasisRow, OutgoingInviteView, PendingInviteView, PlayerStatsTemplate, PlotView,
+    PrivacyTemplate, ProfileTemplate, QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow,
+    RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate, ReportsTemplate, ResourceRibbon,
+    RosterRowView, ScoutReportTemplate, ScoutResourceRow, SearchHitRow, SearchTemplate,
+    SettingsTemplate, SettingsToggleRow, ShipmentRow, SitterRow, SittingTemplate, SmithyRow,
+    SmithyTemplate, SpectateBuildRow, SpectateFeedTemplate, SpectateMovementRow, SpectatePlayerRow,
     SpectatePlayersTemplate, SpectateReportRow, SpectateShipmentRow, SpectateTrainingRow,
     SpectateVillageLink, SpectateVillageTemplate, SpectateWorldRow, SpectateWorldsTemplate,
     SpectatorHolderRow, StyleGuideTemplate, TermsTemplate, TrainRow, TroopsTemplate,
@@ -72,14 +72,14 @@ use eperica_application::{
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AllianceRules, AttackMode, BuildRules, BuildTarget,
     BuildingKind, ChatChannel, Coordinate, DEMOLISH_MIN_MAIN_BUILDING, DiplomacyStance,
-    DiplomacyStatus, Economy, GameSpeed, MAX_WONDER_LEVEL, MedalCategory, MovementKind, OasisBonus,
-    PlayerId, Presence, Quadrant, QuestReward, QueueLane, ReportReason, ResearchDenied,
-    ResourceAmounts, ResourceKind, RightSet, SanctionKind, ScoutTarget, TileKind, Timestamp,
-    TradeKind, Tribe, UnitId, UnitRole, UnitRules, UnitSpec, UpgradeDenied, VILLAGE_BUILDING_SLOTS,
-    Village, VillageId, WorldId, building_at, can_access_channel, can_afford, can_place,
-    can_research, can_upgrade, current_quest, expansion_slots, garrison_upkeep, is_inactive,
-    per_unit_time_secs, prerequisites_met, presence, queue_lane, regenerate_loyalty, reserved_kind,
-    scaled_time_secs,
+    DiplomacyStatus, Economy, EconomyRules, GameSpeed, MAX_WONDER_LEVEL, MedalCategory,
+    MovementKind, OasisBonus, PlayerId, Presence, Quadrant, QuestReward, QueueLane, ReportReason,
+    ResearchDenied, ResourceAmounts, ResourceKind, RightSet, SanctionKind, ScoutTarget, TileKind,
+    Timestamp, TradeKind, Tribe, UnitId, UnitRole, UnitRules, UnitSpec, UpgradeDenied,
+    VILLAGE_BUILDING_SLOTS, Village, VillageId, WorldId, building_at, can_access_channel,
+    can_afford, can_place, can_research, can_upgrade, current_quest, expansion_slots,
+    garrison_upkeep, is_inactive, per_unit_time_secs, prerequisites_met, presence, queue_lane,
+    regenerate_loyalty, reserved_kind, scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use eperica_infrastructure::{DEFAULT_PRESET, KNOWN_PRESETS, WorldRules, known_preset};
@@ -235,6 +235,136 @@ fn field_art_slug(kind: ResourceKind) -> &'static str {
         ResourceKind::Clay => "clay_pit",
         ResourceKind::Iron => "iron_mine",
         ResourceKind::Crop => "cropland",
+    }
+}
+
+/// A resource field's chapter title on the Buildings reference page (127 follow-up).
+fn field_label(kind: ResourceKind) -> &'static str {
+    match kind {
+        ResourceKind::Wood => "Woodcutter",
+        ResourceKind::Clay => "Clay Pit",
+        ResourceKind::Iron => "Iron Mine",
+        ResourceKind::Crop => "Cropland",
+    }
+}
+
+/// Hand-written flavor prose for a resource field's chapter (127 follow-up, operator feedback:
+/// "show resources also individually like buildings and units") — same convention as
+/// `building_explanation`: what it is, why it matters, when it becomes the bottleneck, and
+/// deliberately **no balance numbers** (those live on the facts line and the per-level table).
+fn field_explanation(kind: ResourceKind) -> &'static str {
+    match kind {
+        ResourceKind::Wood => {
+            "The village's timber yard: nearly every construction order, from your first Warehouse \
+             to the Wonder's hundredth level, draws on wood, making it the backbone resource behind \
+             any building spree. It's usually the first field to bottleneck a brand-new village, \
+             before clay overtakes it as the heavier cost once the early buildings are up. Keep a \
+             Woodcutter or two ahead of your build queue, not behind it, or every order waiting in \
+             line idles on timber. All four field types below share the same output curve — a \
+             Woodcutter, Clay Pit, Iron Mine, and Cropland at the same level produce the same \
+             hourly amount of their own resource."
+        }
+        ResourceKind::Clay => {
+            "The hungriest of the three building resources: most construction, buildings and fields \
+             alike, leans on clay harder than on wood or iron, so a Clay Pit falling behind stalls \
+             the queue faster than any other field would. It pays to run your Clay Pits a level or \
+             two ahead of your Woodcutters and Iron Mines for exactly that reason. A village that \
+             neglects clay ends up rich in wood and iron it can't actually spend."
+        }
+        ResourceKind::Iron => {
+            "Where the army's weight of metal comes from: unit costs lean on iron, and upkeep only \
+             grows as the ranks do, so an Iron Mine that keeps pace with your military ambitions \
+             matters more the larger your army gets. Early on it can trail wood and clay without \
+             much cost, but once you're training troops in earnest it becomes the resource that \
+             actually limits how large a force you can field and sustain."
+        }
+        ResourceKind::Crop => {
+            "The odd one out among the four fields: crop is the only resource a village truly \
+             consumes rather than merely spends — every point of population and every trained \
+             unit's upkeep draws on it hour after hour, whether you're building anything or not. A \
+             cropland shortfall doesn't just slow construction, it starves the village outright, a \
+             warning every Travian veteran learns to dread. Because of that constant drain, the \
+             capital alone may raise its croplands past the ordinary cap, and croplands charge \
+             their own cost table, weighted differently from the other fields — notably light \
+             on crop itself."
+        }
+    }
+}
+
+/// The facts line for a resource field's chapter: the normal/capital level caps from the resolved
+/// rules (`BuildRules::field_max_level`), plus — Cropland only — a note that it charges its own
+/// cost table rather than the shared wood/clay/iron one.
+fn field_facts(kind: ResourceKind, build: &BuildRules) -> String {
+    let normal = build.field_max_level(false);
+    let capital = build.field_max_level(true);
+    let base = format!("Max level {normal} (normal) · up to {capital} in the capital");
+    if kind == ResourceKind::Crop {
+        format!("{base} · charges its own (cheaper-in-crop) cost table, not the shared field one")
+    } else {
+        base
+    }
+}
+
+/// One resource field's full per-level table (127 follow-up): cost from the shared field table
+/// (`BuildRules::cost`) for wood/clay/iron, or Cropland's own cheaper table
+/// (`BuildRules::field_cost`); build time from the shared field table either way; hourly production
+/// from `EconomyRules::field_production_per_hour` (the same accessor the old flat production table
+/// used). Rows run `1..=`the **capital** cap — rows past the *normal* cap are marked `capital_only`
+/// for the template's dimming/badge. Unlike `manual_cost_row`, a missing rules entry renders `"—"`,
+/// not a hidden `0` default (the S1 lesson) — though in practice the shared/cropland field tables
+/// both run the full 20 levels, so this never triggers today.
+fn manual_field_levels(
+    build: &BuildRules,
+    econ: &EconomyRules,
+    kind: ResourceKind,
+    speed: GameSpeed,
+) -> Vec<ManualFieldLevelRow> {
+    let field_target = BuildTarget::Field { slot: 0 };
+    let normal_max = build.field_max_level(false);
+    let capital_max = build.field_max_level(true);
+    let fmt_amount = |v: Option<i64>| v.map_or_else(|| "—".to_owned(), |n| n.to_string());
+    (1..=capital_max)
+        .map(|level| {
+            let cost = if kind == ResourceKind::Crop {
+                build.field_cost(ResourceKind::Crop, level - 1)
+            } else {
+                build.cost(field_target, level - 1)
+            };
+            let time_secs = build.base_time_secs(field_target, level - 1);
+            ManualFieldLevelRow {
+                level,
+                wood: fmt_amount(cost.map(|c| c.wood)),
+                clay: fmt_amount(cost.map(|c| c.clay)),
+                iron: fmt_amount(cost.map(|c| c.iron)),
+                crop: fmt_amount(cost.map(|c| c.crop)),
+                time: time_secs.map_or_else(
+                    || "—".to_owned(),
+                    |t| fmt_duration(scaled_time_secs(t, speed)),
+                ),
+                production: econ.field_production_per_hour(kind, level, speed),
+                capital_only: level > normal_max,
+            }
+        })
+        .collect()
+}
+
+/// One resource field's full reference chapter — the field counterpart to
+/// [`manual_building_levels`]/[`ManualBuildingSection`] (127 follow-up).
+fn manual_field_section(
+    build: &BuildRules,
+    econ: &EconomyRules,
+    kind: ResourceKind,
+    speed: GameSpeed,
+) -> ManualFieldSection {
+    let slug = field_art_slug(kind);
+    ManualFieldSection {
+        slug,
+        name: field_label(kind),
+        image: building_art_url(slug),
+        explanation: field_explanation(kind),
+        facts: field_facts(kind, build),
+        max_level: build.field_max_level(true),
+        levels: manual_field_levels(build, econ, kind, speed),
     }
 }
 
@@ -1185,8 +1315,9 @@ pub async fn manual_ref_buildings(
         .collect();
 
     // The jump-list groups, in fixed purpose order, each keeping `ALL_BUILDING_KINDS`'s own order
-    // among its members (127 redesign).
-    let groups = BUILDING_GROUP_ORDER
+    // among its members (127 redesign) — plus a trailing "Resource fields" group for the four field
+    // chapters below (127 follow-up).
+    let mut groups: Vec<ManualBuildingGroup> = BUILDING_GROUP_ORDER
         .iter()
         .map(|&title| ManualBuildingGroup {
             title,
@@ -1200,6 +1331,21 @@ pub async fn manual_ref_buildings(
                 .collect(),
         })
         .collect();
+    groups.push(ManualBuildingGroup {
+        title: "Resource fields",
+        items: [
+            ResourceKind::Wood,
+            ResourceKind::Clay,
+            ResourceKind::Iron,
+            ResourceKind::Crop,
+        ]
+        .into_iter()
+        .map(|kind| ManualJumpItem {
+            slug: field_art_slug(kind),
+            name: field_label(kind),
+        })
+        .collect(),
+    });
 
     // The illustrative curves (plan: "key per-level values for Warehouse/Granary/Main Building").
     const CURVE_LEVELS: [u8; 3] = [1, 5, 10];
@@ -1234,60 +1380,16 @@ pub async fn manual_ref_buildings(
         })
         .collect();
 
-    // The resource-fields section: wood/clay/iron share one cost table (`build.cost`), cropland
-    // charges its own (`build.field_cost`); both share the field's time table. Levels 1..=the
-    // *normal* (non-capital) cap — the capital's raised cap only changes how far production goes
-    // (below), never the cost/time curve's shape.
-    let field_target = BuildTarget::Field { slot: 0 };
-    let field_max_level = build.max_level(field_target);
-    let field_levels = (1..=field_max_level)
-        .map(|level| manual_cost_row(build, field_target, level, ctx.speed))
-        .collect();
-    let cropland_levels = (1..=field_max_level)
-        .map(|level| {
-            let cost = build
-                .field_cost(ResourceKind::Crop, level - 1)
-                .unwrap_or_default();
-            let time_secs = build.base_time_secs(field_target, level - 1).unwrap_or(0);
-            ManualCostRow {
-                level,
-                wood: cost.wood,
-                clay: cost.clay,
-                iron: cost.iron,
-                crop: cost.crop,
-                time: fmt_duration(scaled_time_secs(time_secs, ctx.speed)),
-            }
-        })
-        .collect();
-
-    // Production per field level, 0..=the **capital** cap — rows past `field_max_level` are
-    // reachable only in a capital village (013 §3.4), marked `capital_only` for the template.
-    let capital_field_max_level = build.field_max_level(true);
-    let production_levels = (0..=capital_field_max_level)
-        .map(|level| ManualProductionRow {
-            level,
-            wood: econ.field_production_per_hour(ResourceKind::Wood, level, ctx.speed),
-            clay: econ.field_production_per_hour(ResourceKind::Clay, level, ctx.speed),
-            iron: econ.field_production_per_hour(ResourceKind::Iron, level, ctx.speed),
-            crop: econ.field_production_per_hour(ResourceKind::Crop, level, ctx.speed),
-            capital_only: level > field_max_level,
-        })
-        .collect();
-
-    // The Resource fields section's small image strip (127 redesign) — same resolution chain as
-    // the building chapters, so woodcutter/clay_pit/cropland's generic plates render and iron_mine
-    // falls back to the Gauls one.
-    let field_images = [
-        (ResourceKind::Wood, "Woodcutter"),
-        (ResourceKind::Clay, "Clay pit"),
-        (ResourceKind::Iron, "Iron mine"),
-        (ResourceKind::Crop, "Cropland"),
+    // One full chapter per resource field — the field counterpart to `buildings` above (127
+    // follow-up, operator feedback: "show resources also individually like buildings and units").
+    let fields = [
+        ResourceKind::Wood,
+        ResourceKind::Clay,
+        ResourceKind::Iron,
+        ResourceKind::Crop,
     ]
     .into_iter()
-    .map(|(kind, label)| ManualFieldImage {
-        label,
-        image: building_art_url(field_art_slug(kind)),
-    })
+    .map(|kind| manual_field_section(build, econ, kind, ctx.speed))
     .collect();
 
     page(&ManualBuildingsTemplate {
@@ -1300,11 +1402,7 @@ pub async fn manual_ref_buildings(
         granary_curve,
         main_building_curve,
         town_hall_curve,
-        field_levels,
-        cropland_levels,
-        production_levels,
-        field_max_level,
-        field_images,
+        fields,
     })
 }
 

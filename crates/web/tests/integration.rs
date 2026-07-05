@@ -13818,23 +13818,46 @@ async fn manual_reference_pages_are_public_and_match_classic_values(pool: sqlx::
         ),
         "Warehouse level 2 full cost/time row: {buildings_body}"
     );
+    // 127 follow-up (operator feedback: "show resources also individually like buildings and
+    // units"): the flat Resource-fields tables/strip are gone — each of Woodcutter/Clay Pit/Iron
+    // Mine/Cropland now gets its own `manual__bldg`-shaped chapter, same as a building. Iron Mine
+    // ships no generic plate (unlike Woodcutter/Clay Pit/Cropland), so it falls back to the Gauls
+    // tribal plate — the same resolution chain as any other art-gap building kind.
+    assert!(
+        buildings_body.contains(r#"<section class="manual__bldg" id="iron_mine">"#)
+            && buildings_body.contains(r#"<img src="/static/buildings/gauls_iron_mine.webp""#),
+        "Iron Mine renders its own chapter with an image: {buildings_body}"
+    );
+
     // Cropland's own (cheaper) level-1 cost table (construction.toml `field.crop_cost` index 0):
     // 70 wood / 90 clay / 70 iron / 20 crop — distinct from the shared wood/clay/iron field table.
+    // Extract the Cropland chapter specifically (between its `id` and the next `</section>`) so the
+    // pinned row is proven to live *inside* that chapter, not merely somewhere on the page.
+    let cropland_chapter = buildings_body
+        .split(r#"<section class="manual__bldg" id="cropland">"#)
+        .nth(1)
+        .expect("a Cropland chapter is rendered");
+    let cropland_chapter = &cropland_chapter[..cropland_chapter
+        .find("</section>")
+        .unwrap_or(cropland_chapter.len())];
     assert!(
-        buildings_body.contains(
+        cropland_chapter.contains(
             "<tr><td>1</td><td class=\"num\">70</td><td class=\"num\">90</td>\
              <td class=\"num\">70</td><td class=\"num\">20</td>"
         ),
-        "cropland level-1 cost 70/90/70/20: {buildings_body}"
+        "cropland level-1 cost 70/90/70/20, inside the Cropland chapter: {cropland_chapter}"
     );
-    // Production beyond the normal field cap (10) only reaches a capital village — economy.toml
-    // `production.wood` index 20 (level 20, the capital cap) = 3000, marked "Capital only".
+    // Production is identical across all four field types (economy.toml's `production.wood/clay/
+    // iron/crop` tables are the same curve) — the Cropland chapter's own level-20 row (the capital
+    // cap) still carries the shared production figure (3000/h) and the "Capital only" badge/row
+    // class, past the normal (10) cap. Cost/time cover the full 1..=20 range for every field type
+    // (both `[field.cost]`/`[field.crop_cost]` and `[field.time_secs]` in construction.toml run all
+    // 20 entries), so there is no "beyond-table" cost cell to pin here.
     assert!(
-        buildings_body.contains("Capital only")
-            && buildings_body.contains(
-                "<td>20 <span class=\"badge\">Capital only</span></td><td class=\"num\">3000</td>"
-            ),
-        "capital-only production at level 20 (3000/h): {buildings_body}"
+        cropland_chapter.contains(r#"<tr class="manual__capital-row">"#)
+            && cropland_chapter.contains("<td>20 <span class=\"badge\">Capital only</span></td>")
+            && cropland_chapter.contains("<td class=\"num\">3000</td></tr>"),
+        "capital-only production at level 20 (3000/h), inside the Cropland chapter: {cropland_chapter}"
     );
 
     // --- Mechanics: public 200, CP threshold 200, outpost capacities 1..6, ram durabilities per
