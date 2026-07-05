@@ -83,6 +83,9 @@ pub struct UserRecord {
     /// Whether this is a synthetic **AI agent** account (118) — created by an operator, not a human
     /// registrant; agent API keys may only be bound to `is_ai` accounts.
     pub is_ai: bool,
+    /// Whether the account holds the **Spectator** role (125) — admin-granted, additive to other
+    /// roles; lets the account observe the full server state read-only with no game agency.
+    pub is_spectator: bool,
     /// When the account was permanently **banned** (022), or `None`. A ban always blocks.
     pub banned_at: Option<Timestamp>,
     /// The instant a temporary **suspension** lifts (022), or `None`. Blocks while `now` is before it.
@@ -3209,6 +3212,8 @@ pub struct AdminAccount {
     pub username: String,
     pub is_moderator: bool,
     pub is_admin: bool,
+    /// Whether the account holds the Spectator role (125).
+    pub is_spectator: bool,
     pub abandoned: bool,
 }
 
@@ -3278,6 +3283,75 @@ pub trait AdminRepository: Send + Sync {
     ) -> Result<WorldId, RepoError> {
         Err(RepoError::Backend("create_world unimplemented".to_owned()))
     }
+}
+
+/// Persistence for spectator keys (125). Default errors so fakes that don't support spectator keys
+/// get a clear "not supported" rather than silent success — mirrors the agent-key pattern (118).
+#[async_trait]
+pub trait SpectatorRepository: Send + Sync {
+    /// Set (or clear) the Spectator role on an account (125 AC1). Idempotent.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn set_spectator(&self, _user: PlayerId, _granted: bool) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// Look up a spectator key by its public id (125 AC2). Returns `None` if no key exists.
+    ///
+    /// The return type reuses [`AgentKeyRecord`] — its shape is identical (`user`, `secret_hash`,
+    /// `revoked`). The separation between agent and spectator credentials is enforced at the DB-
+    /// table level (distinct `spectator_keys` vs `agent_keys` tables) and at the parse/token level
+    /// (`spk_` vs `epk_`); the shared struct carries no ambiguity (AC2 Decision, plan.md).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn find_spectator_key(&self, _key_id: &str) -> Result<Option<AgentKeyRecord>, RepoError> {
+        Err(RepoError::Backend("spectator keys not supported".into()))
+    }
+
+    /// Store a new spectator key for an account (125). `key_id` is the public hex id;
+    /// `secret_hash` is `sha256(secret)` hex — the plaintext is never stored.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn insert_spectator_key(
+        &self,
+        _user: PlayerId,
+        _key_id: &str,
+        _secret_hash: &str,
+    ) -> Result<(), RepoError> {
+        Err(RepoError::Backend("spectator keys not supported".into()))
+    }
+
+    /// Revoke all unrevoked spectator keys for `user` (125 AC2). Returns the number of rows
+    /// updated. Revoking the Spectator role does NOT call this — dead-ending happens at auth time
+    /// when the role check fails (T4), so existing keys need not be hunted down on role revoke.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn revoke_spectator_keys(&self, _user: PlayerId) -> Result<u64, RepoError> {
+        Ok(0)
+    }
+
+    /// All accounts with at least one active (unrevoked) spectator key, for the admin panel
+    /// (125). Ordered by username. Defaults to empty.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn list_spectator_key_holders(&self) -> Result<Vec<SpectatorKeyHolder>, RepoError> {
+        Ok(Vec::new())
+    }
+}
+
+/// One row in the admin spectator-key panel (125): an account that holds ≥1 active spectator key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpectatorKeyHolder {
+    /// The user (account) id.
+    pub user_id: PlayerId,
+    pub username: String,
+    /// `true` while the account holds ≥1 unrevoked spectator key.
+    pub has_active_key: bool,
 }
 
 /// One message line in a conversation (024) — a DM line or a channel line.
@@ -3545,5 +3619,217 @@ pub trait NotificationRepository: Send + Sync {
         _muted: bool,
     ) -> Result<(), RepoError> {
         Ok(())
+    }
+}
+
+// ---- Spectator read aggregation (125 T2). The feed is a bounded snapshot assembled on read from
+// existing due-stamped state (P1) — never a new event store. Every query below is scoped to the
+// implementing repository's bound world and capped by the caller (P11 — no whole-world scan). ----
+
+/// One in-flight troop movement world-wide (125 AC4), with its **full composition regardless of
+/// direction** — unlike a player's own defence view (015 [`IncomingAttack`]), the spectator sees a
+/// hostile movement's troops too.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldMovement {
+    /// Movement identity (for stable dashboard row keys).
+    pub id: u128,
+    pub kind: MovementKind,
+    /// The village the troops departed from (movements always originate at a village).
+    pub origin_village: VillageId,
+    pub origin_coord: Coordinate,
+    pub origin_owner: String,
+    /// `None` when the movement targets a bare tile rather than a village (settlers founding,
+    /// oasis attack/reinforce, 012/013).
+    pub destination_village: Option<VillageId>,
+    pub destination_coord: Coordinate,
+    pub destination_owner: Option<String>,
+    pub arrive_at: Timestamp,
+    /// The composition — never redacted for the spectator (AC4).
+    pub troops: UnitCounts,
+}
+
+/// One in-flight merchant shipment world-wide (125 AC4), either leg (deliver/return).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldShipment {
+    pub id: u128,
+    pub kind: TradeKind,
+    pub origin_village: VillageId,
+    pub origin_coord: Coordinate,
+    pub origin_owner: String,
+    pub destination_village: VillageId,
+    pub destination_coord: Coordinate,
+    pub destination_owner: String,
+    pub arrive_at: Timestamp,
+    /// The carried bundle (all zero on a return leg).
+    pub bundle: ResourceAmounts,
+    pub merchants: u32,
+}
+
+/// One active build/upgrade order world-wide (125), for the feed's "builds completing soonest"
+/// section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldBuildOrder {
+    pub village: VillageId,
+    pub village_coord: Coordinate,
+    pub owner: String,
+    pub target: BuildTarget,
+    pub target_level: u8,
+    pub complete_at: Timestamp,
+}
+
+/// One active training batch world-wide (125), for the feed's "training completing soonest"
+/// section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldTrainingOrder {
+    pub village: VillageId,
+    pub village_coord: Coordinate,
+    pub owner: String,
+    pub unit: UnitId,
+    /// Units still owed by this batch (`count_total - count_done`).
+    pub remaining: u32,
+    /// When the next unit in the batch completes (Unix-ms UTC) — the ordering key.
+    pub next_complete_at: Timestamp,
+}
+
+/// One recent battle or scout report world-wide (125) — a **cheap** outcome summary only; the full
+/// forces/losses/intel bodies stay behind the existing per-player report pages (never parsed here).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldReportRow {
+    pub id: u128,
+    pub occurred_at: Timestamp,
+    /// `Attack`/`Raid` for a battle report, `Scout` for a scouting report.
+    pub kind: MovementKind,
+    pub attacker_name: String,
+    pub attacker_coord: Coordinate,
+    /// The defending player's name, or a synthetic label (e.g. an oasis's wild animals, 012).
+    pub defender_name: String,
+    pub defender_coord: Coordinate,
+    /// A short, precomputed outcome string (e.g. "attacker won" / "defender held" / "detected") —
+    /// never derived from the jsonb forces/losses/intel bodies (P11 — cheap per row).
+    pub outcome: String,
+}
+
+/// One player row in the world-wide spectator index (125 AC5), population descending.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpectatorPlayerRow {
+    pub player: PlayerId,
+    pub username: String,
+    pub tribe: Option<Tribe>,
+    pub population: i64,
+    pub village_count: i64,
+    /// `None` when the player belongs to no alliance.
+    pub alliance_tag: Option<String>,
+    /// Whether this is an AI agent account (120) — the disguise/label decision (AC7) is made by the
+    /// caller (web layer), not here: this is the raw truth.
+    pub is_ai: bool,
+}
+
+/// One village belonging to a player, for the spectator players-index drill-down (125 SF2) —
+/// coordinate + capital flag only; full village detail lives behind
+/// [`SpectateReadRepository::village_in_world`]/village_detail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpectatorPlayerVillage {
+    pub owner: PlayerId,
+    pub village: VillageId,
+    pub x: i32,
+    pub y: i32,
+    pub is_capital: bool,
+}
+
+/// World-scoped, capped read queries backing the spectator feed/players/village-detail surfaces
+/// (125 AC3–AC5). Each method is scoped to the implementing repository's bound world; `cap`/
+/// `per_page` bound the result (≤ 50, AC5). Default empty so non-spectator fakes are untouched.
+#[async_trait]
+pub trait SpectateReadRepository: Send + Sync {
+    /// Every in-flight troop movement in this world (attacks, raids, reinforcements, returns,
+    /// scouts, settlers, oasis attacks/reinforcements — both directions), soonest-arrival first,
+    /// capped at `cap` (AC4/AC5).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn movements_in_world(&self, _cap: i64) -> Result<Vec<WorldMovement>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Every in-flight merchant shipment in this world (both legs), soonest-arrival first, capped
+    /// at `cap` (AC4/AC5).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn shipments_in_world(&self, _cap: i64) -> Result<Vec<WorldShipment>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Every active build/upgrade order in this world, soonest-completing first, capped at `cap`
+    /// (AC5).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn active_build_orders_in_world(
+        &self,
+        _cap: i64,
+    ) -> Result<Vec<WorldBuildOrder>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Every active training batch in this world, soonest-next-unit first, capped at `cap` (AC5).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn active_training_in_world(
+        &self,
+        _cap: i64,
+    ) -> Result<Vec<WorldTrainingOrder>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// The world's most recent battle/scout reports, newest first, capped at `cap` (AC5).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn recent_reports_in_world(&self, _cap: i64) -> Result<Vec<WorldReportRow>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Every player in this world, population descending, paged at `per_page` (AC5 — the players
+    /// index). `page` is 1-based; `econ` feeds the same population formula as the 016 boards
+    /// ([`RankingRepository::population_board`]).
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn spectate_player_index(
+        &self,
+        _econ: &EconomyRules,
+        _page: i64,
+        _per_page: i64,
+    ) -> Result<Vec<SpectatorPlayerRow>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// Every village owned by any of `owners`, in this world, for the players-index drill-down
+    /// (125 SF2) — one query regardless of how many owners are passed (a page's worth, ≤
+    /// [`crate::spectate::PLAYERS_PER_PAGE`]), ordered by owner, then capital first, then
+    /// coordinate.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn spectate_villages_of(
+        &self,
+        _owners: &[PlayerId],
+    ) -> Result<Vec<SpectatorPlayerVillage>, RepoError> {
+        Ok(Vec::new())
+    }
+
+    /// `village` scoped to **this repository's world** — `None` both when the village doesn't exist
+    /// and when it exists in a different world (125 SF1). Unlike [`VillageRepository::village_by_id`]
+    /// (unscoped — shared by combat/scouting/starvation callers that already know the village is in
+    /// their world), this is the world-boundary check the spectator village-detail read needs: a
+    /// village id copied from world B into a `/spectate/{worldA}/village/{id}` URL must 404, never
+    /// serve world B's village under world A's rules.
+    ///
+    /// # Errors
+    /// [`RepoError::Backend`] on storage failure.
+    async fn village_in_world(&self, _village: VillageId) -> Result<Option<Village>, RepoError> {
+        Ok(None)
     }
 }

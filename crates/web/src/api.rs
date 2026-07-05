@@ -837,8 +837,9 @@ fn unit_bundle(map: std::collections::BTreeMap<String, u32>) -> Vec<(UnitId, u32
 
 /// Serialize an in-flight [`MovementView`] to the compact shape the send-action responses carry.
 /// Lowercase wire label for a [`MovementKind`] — one source of truth for echoes, digest heads and
-/// report reads.
-fn movement_kind_str(k: MovementKind) -> &'static str {
+/// report reads. `pub(crate)` so the spectator API (125) reuses the exact same vocabulary rather
+/// than re-deriving it (a world-feed movement/report row carries the same `MovementKind`).
+pub(crate) fn movement_kind_str(k: MovementKind) -> &'static str {
     match k {
         MovementKind::Reinforce => "reinforce",
         MovementKind::Return => "return",

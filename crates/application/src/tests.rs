@@ -70,6 +70,7 @@ impl AccountRepository for InMemoryAccounts {
             is_moderator: false,
             is_admin: false,
             is_ai: false,
+            is_spectator: false,
             banned_at: None,
             suspended_until: None,
         };

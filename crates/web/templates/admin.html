@@ -183,7 +183,7 @@
     <p class="bld-tip">{{ rows.len() }} most-recent accounts (search above to manage any account). Roles are additive; you cannot remove your own admin role.</p>
     {% endif %}
     <table class="table">
-      <thead><tr><th>Account</th><th>Roles</th><th>Moderator</th><th>Administrator</th></tr></thead>
+      <thead><tr><th>Account</th><th>Roles</th><th>Moderator</th><th>Administrator</th><th>Spectator</th></tr></thead>
       <tbody>
         {% for a in rows %}
         <tr>
@@ -191,6 +191,7 @@
           <td>
             {% if a.is_admin %}<span class="badge">Admin</span>{% endif %}
             {% if a.is_moderator %}<span class="badge">Mod</span>{% endif %}
+            {% if a.is_spectator %}<span class="badge">Spec</span>{% endif %}
           </td>
           <td>
             <form method="post" action="/admin/role" class="inline">
@@ -212,10 +213,59 @@
             </form>
             {% endif %}
           </td>
+          <td>
+            {# 125 AC1: no self-removal restriction — revoking your own spectator role is harmless. #}
+            <form method="post" action="/admin/role" class="inline">
+              <input type="hidden" name="target" value="{{ a.id }}">
+              <input type="hidden" name="role" value="spectator">
+              <input type="hidden" name="grant" value="{% if a.is_spectator %}false{% else %}true{% endif %}">
+              <button type="submit" class="btn btn--small btn--secondary">{% if a.is_spectator %}Remove{% else %}Make spectator{% endif %}</button>
+            </form>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
+  </div>
+
+  <div class="psec">
+    <div class="bld-cols__head"><h2>Spectator keys (125)</h2><span class="bld-cols__rule"></span><span class="sub">{{ spectator_holders.len() }} holder(s)</span></div>
+
+    {% match spectator_key %}
+    {% when Some with (token) %}
+    <div class="notice notice--warn" style="margin-bottom:12px">
+      <strong>Copy this key now — it is shown only once and cannot be recovered.</strong>
+      <code class="agent-key" style="display:block;margin-top:8px;word-break:break-all">{{ token }}</code>
+    </div>
+    {% when None %}
+    {% endmatch %}
+
+    <form method="post" action="/admin/spectator-key" class="inline-form">
+      <label>Username <input type="text" name="username" maxlength="32" placeholder="account to receive the key" required></label>
+      <button type="submit" class="btn btn--primary">Mint spectator key</button>
+    </form>
+
+    {% if spectator_holders.is_empty() %}
+    <p class="bld-tip muted">No active spectator keys.</p>
+    {% else %}
+    <table class="table">
+      <thead><tr><th>Account</th><th>Action</th></tr></thead>
+      <tbody>
+        {% for h in spectator_holders %}
+        <tr>
+          <td>{{ h.username }}</td>
+          <td>
+            <form method="post" action="/admin/spectator-key/revoke" class="inline">
+              <input type="hidden" name="user" value="{{ h.user_id }}">
+              <button type="submit" class="btn btn--small btn--secondary">Revoke keys</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    <p class="bld-tip">Keys (<code>spk_…</code>) are hashed at rest and shown once. A key only authenticates while the account holds the Spectator role.</p>
   </div>
 </div>
 <script>

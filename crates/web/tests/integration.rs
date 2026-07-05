@@ -2809,6 +2809,1370 @@ async fn admin_console_gates_and_manages_roles(pool: sqlx::PgPool) {
     );
 }
 
+/// 125 AC1/AC2: the admin console grants and revokes the Spectator role via the existing
+/// `POST /admin/role` (no self-removal restriction, unlike admin), mints a one-time `spk_`
+/// spectator key, and revokes all of a user's keys. A non-admin is 403 on every one of these.
+#[sqlx::test(migrations = "../../migrations")]
+async fn admin_manages_spectator_role_and_keys(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let admin_name = unique("sadm");
+    let target_name = unique("spec");
+    let (ac, admin_id) = register_client(&base, &pool, &admin_name).await;
+    let (_tc, target_id) = register_client(&base, &pool, &target_name).await;
+    sqlx::query("UPDATE users SET is_admin = TRUE WHERE id = $1")
+        .bind(admin_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Grant the Spectator role via the shared role endpoint (AC1).
+    let r = ac
+        .post(format!("{base}/admin/role"))
+        .form(&[
+            ("target", target_id.as_u128().to_string().as_str()),
+            ("role", "spectator"),
+            ("grant", "true"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let is_spec: bool = sqlx::query_scalar("SELECT is_spectator FROM users WHERE id = $1")
+        .bind(target_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(is_spec, "spectator role granted");
+
+    // The console reflects the role (badge + toggle flips to Remove).
+    let body = ac
+        .get(format!("{base}/admin?q={target_name}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains("name=\"role\" value=\"spectator\""),
+        "spectator toggle rendered"
+    );
+
+    // Unlike Admin there is NO self-removal restriction: the admin grants themself the role and
+    // removes it again without a rejection.
+    for grant in ["true", "false"] {
+        let r = ac
+            .post(format!("{base}/admin/role"))
+            .form(&[
+                ("target", admin_id.as_u128().to_string().as_str()),
+                ("role", "spectator"),
+                ("grant", grant),
+            ])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 303, "self spectator toggle accepted");
+    }
+    let self_spec: bool = sqlx::query_scalar("SELECT is_spectator FROM users WHERE id = $1")
+        .bind(admin_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(!self_spec, "self-removal of spectator role succeeded");
+
+    // Mint a spectator key for the target (AC2): the plaintext spk_ token is shown exactly once
+    // in the re-rendered page; only the hash lands in spectator_keys.
+    let minted = ac
+        .post(format!("{base}/admin/spectator-key"))
+        .form(&[("username", target_name.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(minted.status().as_u16(), 200);
+    let minted_body = minted.text().await.unwrap();
+    assert!(
+        minted_body.contains("spk_"),
+        "one-time spk_ token shown on the admin page"
+    );
+    assert!(
+        !minted_body.contains("epk_"),
+        "no agent token leaks into the spectator mint response"
+    );
+    let key_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM spectator_keys WHERE user_id = $1")
+            .bind(target_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(key_count, 1, "one spectator_keys row created");
+    // The holders panel lists the account.
+    let page = ac
+        .get(format!("{base}/admin"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        page.contains("/admin/spectator-key/revoke"),
+        "holder revoke form rendered"
+    );
+
+    // Revoking the *role* deliberately does NOT delete or revoke the keys — a key dead-ends at
+    // auth time via the role re-check (T4), so no key hunt is needed on role revoke.
+    let r = ac
+        .post(format!("{base}/admin/role"))
+        .form(&[
+            ("target", target_id.as_u128().to_string().as_str()),
+            ("role", "spectator"),
+            ("grant", "false"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let live_keys: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM spectator_keys WHERE user_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(target_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(live_keys, 1, "role revoke leaves the key rows untouched");
+
+    // Explicit key revocation stamps revoked_at on all of the user's keys.
+    let r = ac
+        .post(format!("{base}/admin/spectator-key/revoke"))
+        .form(&[("user", target_id.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let live_keys: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM spectator_keys WHERE user_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(target_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(live_keys, 0, "all keys revoked");
+
+    // A non-admin is refused on every spectator admin surface (server-authoritative, P4).
+    let (plain, _pid) = register_client(&base, &pool, &unique("splain")).await;
+    let r = plain
+        .post(format!("{base}/admin/role"))
+        .form(&[
+            ("target", target_id.as_u128().to_string().as_str()),
+            ("role", "spectator"),
+            ("grant", "true"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403, "non-admin cannot grant the role");
+    let r = plain
+        .post(format!("{base}/admin/spectator-key"))
+        .form(&[("username", target_name.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403, "non-admin cannot mint keys");
+    let r = plain
+        .post(format!("{base}/admin/spectator-key/revoke"))
+        .form(&[("user", target_id.as_u128().to_string().as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403, "non-admin cannot revoke keys");
+}
+
+/// 125 AC2 (repo level): a spectator key round-trips through the `SpectatorRepository` port —
+/// insert → find returns the record (correct binding + hash, unrevoked) → revoke-all flips it to
+/// revoked (the lookup still returns it, exposing revocation exactly like agent keys do).
+#[sqlx::test(migrations = "../../migrations")]
+async fn spectator_key_repo_round_trip(pool: sqlx::PgPool) {
+    use eperica_application::SpectatorRepository;
+
+    let repo = movement_repo(&pool).await;
+    let base = spawn(pool.clone()).await;
+    let name = unique("skey");
+    let (_c, uid) = register_client(&base, &pool, &name).await;
+    let user = PlayerId(uid.as_u128());
+
+    let (key, token) = eperica_web::apikey::generate_spectator();
+    assert!(token.starts_with("spk_"), "spectator tokens are spk_");
+    let hash = eperica_web::apikey::secret_hash(&key.secret);
+
+    repo.insert_spectator_key(user, &key.id, &hash)
+        .await
+        .unwrap();
+    let rec = repo
+        .find_spectator_key(&key.id)
+        .await
+        .unwrap()
+        .expect("inserted key is found");
+    assert_eq!(rec.user, user, "key bound to the right account");
+    assert_eq!(rec.secret_hash, hash, "only the hash is stored");
+    assert!(!rec.revoked, "fresh key is unrevoked");
+
+    // Revoke all of the user's keys; the record stays findable but flagged revoked.
+    let n = repo.revoke_spectator_keys(user).await.unwrap();
+    assert_eq!(n, 1, "one key revoked");
+    let rec = repo
+        .find_spectator_key(&key.id)
+        .await
+        .unwrap()
+        .expect("revoked key still findable");
+    assert!(rec.revoked, "revocation exposed on the record");
+    // Idempotent: nothing left to revoke.
+    let n = repo.revoke_spectator_keys(user).await.unwrap();
+    assert_eq!(n, 0, "second revoke is a no-op");
+
+    // An unknown id is None, not an error.
+    assert!(
+        repo.find_spectator_key("00000000deadbeef")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+/// The first Unix-ms value following a `data-deadline="…"` attribute in `body` — used to compare a
+/// countdown deadline rendered on two different pages without assuming which build/training/movement
+/// produced it (125 AC3/AC4 tests).
+fn first_deadline(body: &str) -> i64 {
+    let after = body
+        .split("data-deadline=\"")
+        .nth(1)
+        .expect("a countdown is rendered");
+    let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().expect("deadline is numeric")
+}
+
+/// 125 AC1 (T3 web): the spectator dashboard is role-gated end-to-end on every page — anonymous is
+/// redirected to `/login`, a logged-in non-spectator is 403, and granting the role (the existing admin
+/// toggle, already covered at the repo/admin level above) opens all four pages to 200.
+#[sqlx::test(migrations = "../../migrations")]
+async fn spectate_dashboard_role_gate(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let name = unique("specgate");
+    let (c, uid) = register_client(&base, &pool, &name).await;
+    let vid = village_uuid(&pool, &name).await;
+
+    let paths = [
+        "/spectate".to_owned(),
+        format!("/spectate/{home}"),
+        format!("/spectate/{home}/players"),
+        format!("/spectate/{home}/village/{vid}"),
+    ];
+
+    // Anonymous → redirected to /login (RealUser has no session to resolve).
+    let anon = client();
+    for path in &paths {
+        let r = anon.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 303, "anonymous redirected on {path}");
+        assert_eq!(
+            r.headers().get(LOCATION).unwrap().to_str().unwrap(),
+            "/login",
+            "anonymous lands on /login from {path}"
+        );
+    }
+
+    // Logged in, but not a spectator → 403 on every page (P4 — server-checked, not just hidden nav).
+    for path in &paths {
+        let r = c.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 403, "non-spectator 403 on {path}");
+    }
+
+    // Grant the Spectator role → every page now answers 200.
+    sqlx::query("UPDATE users SET is_spectator = TRUE WHERE id = $1")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for path in &paths {
+        let r = c.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 200, "spectator 200 on {path}");
+    }
+
+    // The world picker links with a real, navigable (hyphenated-UUID) world id — not a decimal one,
+    // which would redirect to the lobby via `world_from_path`.
+    let picker = c
+        .get(format!("{base}/spectate"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        picker.contains(&format!("href=\"/spectate/{home}\"")),
+        "the picker links to the feed with a valid world id: {picker}"
+    );
+
+    // The dashboard router is GET-only, by construction (no mutating route is registered): a POST to
+    // a recognised `/spectate` path is rejected by axum's method routing before any handler runs.
+    let r = c
+        .post(format!("{base}/spectate/{home}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        405,
+        "POST to a GET-only /spectate path is rejected, not routed"
+    );
+}
+
+/// 125 AC3 (T3 web): the spectator village drill-down reuses the exact owner-view read-model — a
+/// foreign village's resources and its active build queue show the same values on both the owner's own
+/// `/village` page and the spectator's `/spectate/{world}/village/{id}` page.
+#[sqlx::test(migrations = "../../migrations")]
+async fn spectate_village_matches_owner_view(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    let owner_name = unique("vown");
+    let (oc, _) = register_client(&base, &pool, &owner_name).await;
+    let vid = village_uuid(&pool, &owner_name).await;
+    let vid_uuid = uuid::Uuid::parse_str(&vid).unwrap();
+
+    // An active build order (AC3 — "build queue with deadlines"), placed BEFORE the resource amounts
+    // below are pinned — ordering it spends resources on the field's cost, which would otherwise throw
+    // off the distinctive values asserted next.
+    let res = oc
+        .post(format!("{base}/w/{home}/village/{vid}/build"))
+        .form(&[("table", "field"), ("slot", "0")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303, "field upgrade ordered");
+
+    // A distinctive, known resource state — all comfortably under the level-0 warehouse/granary cap
+    // (800), so the read never clamps them (AC3 — "equal to what the owner sees").
+    sqlx::query(
+        "UPDATE village_resources SET wood = 619, clay = 428, iron = 337, crop = 246 \
+         WHERE village_id = $1",
+    )
+    .bind(vid_uuid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let spec_name = unique("vspec");
+    let (sc, spec_uid) = register_client(&base, &pool, &spec_name).await;
+    sqlx::query("UPDATE users SET is_spectator = TRUE WHERE id = $1")
+        .bind(spec_uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let owner_body = oc
+        .get(format!("{base}/w/{home}/village/{vid}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let spec_res = sc
+        .get(format!("{base}/spectate/{home}/village/{vid}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(spec_res.status().as_u16(), 200);
+    let spec_body = spec_res.text().await.unwrap();
+
+    for amount in [">619<", ">428<", ">337<", ">246<"] {
+        assert!(owner_body.contains(amount), "owner sees {amount}");
+        assert!(
+            spec_body.contains(amount),
+            "spectator sees {amount}: {spec_body}"
+        );
+    }
+    assert_eq!(
+        first_deadline(&owner_body),
+        first_deadline(&spec_body),
+        "the same build-queue deadline shows on both pages"
+    );
+}
+
+/// 125 SF1: `village_by_id` (used by `village_detail`'s callers elsewhere — combat/scouting/
+/// starvation) is NOT world-scoped, so a village id copied from world B into a world-A spectate URL
+/// must 404 rather than render world B's village under world A's rules. Covers both the T3 dashboard
+/// and its T4 API twin, and confirms the same village resolves fine under its own world's path.
+#[sqlx::test(migrations = "../../migrations")]
+async fn spectate_village_cross_world_mismatch_404s(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    let spec_name = unique("spxw");
+    let (sc, spec_uid) = register_client(&base, &pool, &spec_name).await;
+    sqlx::query("UPDATE users SET is_spectator = TRUE WHERE id = $1")
+        .bind(spec_uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate_spectator();
+    sqlx::query("INSERT INTO spectator_keys (id, user_id, secret_hash) VALUES ($1, $2, $3)")
+        .bind(&key.id)
+        .bind(spec_uid)
+        .bind(apikey::secret_hash(&key.secret))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // A second world with its own village (the 042 join primitive, mirroring
+    // `selecting_a_world_switches_the_village_page`).
+    let world_b = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds (id, speed, radius, seed) VALUES ($1, 1.0, 30, 4343)")
+        .bind(world_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repo_b = PgAccountRepository::new(
+        pool.clone(),
+        WorldId(world_b.as_u128()),
+        4343,
+        30,
+        economy_rules().unwrap().starting_amounts,
+        lifecycle_rules().unwrap().beginner_protection_secs,
+        GameSpeed::new(1.0).unwrap(),
+    );
+    let owner_b_name = unique("spxwown");
+    let (_oc_b, owner_b_uid) = register_client(&base, &pool, &owner_b_name).await;
+    let player_b = repo_b
+        .create_player_in_world(
+            PlayerId(owner_b_uid.as_u128()),
+            Tribe::Teutons,
+            &starting_village().unwrap(),
+        )
+        .await
+        .unwrap();
+    let b_vid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE owner_id = $1")
+        .bind(uuid::Uuid::from_u128(player_b.0))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // The dashboard: a world-A path carrying world-B's village id 404s.
+    let r = sc
+        .get(format!("{base}/spectate/{home}/village/{b_vid}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        404,
+        "a village from another world 404s under this world's spectate path"
+    );
+
+    // Sanity: the same village resolves under its own world's path.
+    let r = sc
+        .get(format!("{base}/spectate/{world_b}/village/{b_vid}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        200,
+        "the village resolves fine in its own world"
+    );
+
+    // The API twin: same cross-world mismatch, same 404, JSON.
+    let agent = client();
+    let r = agent
+        .get(format!("{base}/spectator/w/{home}/village/{b_vid}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        404,
+        "the API twin 404s the same cross-world mismatch"
+    );
+    let body = r.text().await.unwrap();
+    assert!(body.contains("\"error\":\"not_found\""), "got: {body}");
+}
+
+/// 125 AC4 (T3 web): a launched attack appears on the spectator feed WITH its full composition, while
+/// the defender's own village page — as always (P4/§7.3) — shows only an arrival-only warning, with no
+/// composition and no attacker identity.
+#[sqlx::test(migrations = "../../migrations")]
+async fn spectate_feed_shows_composition_owner_view_does_not(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    let attacker = unique("spatk");
+    let defender = unique("spdef");
+    let (ca, _a_uid) = register_client(&base, &pool, &attacker).await;
+    let (cd, _d_uid) = register_client(&base, &pool, &defender).await;
+    let a_vid = village_uuid(&pool, &attacker).await;
+    let d_vid = village_uuid(&pool, &defender).await;
+    let (dx, dy): (i32, i32) = sqlx::query_as("SELECT x, y FROM villages WHERE id = $1")
+        .bind(uuid::Uuid::parse_str(&d_vid).unwrap())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    clear_protection(&pool).await; // 019: fresh accounts would otherwise be protected from attack.
+
+    // Give the attacker a garrison to raid with (a fresh village starts with none).
+    sqlx::query(
+        "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 20)",
+    )
+    .bind(uuid::Uuid::parse_str(&a_vid).unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let res = ca
+        .post(format!("{base}/w/{home}/village/{a_vid}/rally/send"))
+        .form(&[
+            ("mode", "raid"),
+            ("x", dx.to_string().as_str()),
+            ("y", dy.to_string().as_str()),
+            ("count_phalanx", "7"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303, "raid launched");
+
+    // The defender's own view: arrival-only, no composition, no attacker identity (P4/§7.3).
+    let def_body = cd
+        .get(format!("{base}/w/{home}/village/{d_vid}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        def_body.contains("Incoming attacks"),
+        "the defender sees the arrival warning"
+    );
+    assert!(
+        !def_body.contains("7 Phalanx"),
+        "the defender's own view withholds the composition: {def_body}"
+    );
+    assert!(
+        !def_body.contains(&attacker),
+        "the defender's own view withholds the attacker's identity"
+    );
+
+    // The spectator sees it all: the kind, both endpoints (with their owners), and the composition.
+    let spec_name = unique("spwatch");
+    let (sc, spec_uid) = register_client(&base, &pool, &spec_name).await;
+    sqlx::query("UPDATE users SET is_spectator = TRUE WHERE id = $1")
+        .bind(spec_uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let feed = sc
+        .get(format!("{base}/spectate/{home}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(feed.contains("Raid"), "movement kind shown: {feed}");
+    assert!(feed.contains(&attacker), "origin owner shown");
+    assert!(feed.contains(&defender), "destination owner shown");
+    assert!(
+        feed.contains("7 Phalanx"),
+        "composition shown to the spectator: {feed}"
+    );
+
+    // Each row links into the drill-down with a real, navigable (hyphenated-UUID) village id — not a
+    // decimal one, which would 404 against the `/spectate/{world}/village/{id}` route.
+    let origin_href = format!("href=\"/spectate/{home}/village/{a_vid}\"");
+    assert!(
+        feed.contains(&origin_href),
+        "origin links to its village drill-down: {feed}"
+    );
+    let dest_href = format!("/spectate/{home}/village/{d_vid}");
+    let r = sc.get(format!("{base}{dest_href}")).send().await.unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        200,
+        "the destination village link the feed renders actually resolves"
+    );
+}
+
+/// 125 AC7: the spectator players index carries the NPC tag on a `labeled` world and never reveals
+/// `is_ai` on a `disguised` one — the same rule the leaderboard/stats pages already enforce (120).
+#[sqlx::test(migrations = "../../migrations")]
+async fn spectate_players_npc_tag_by_world_visibility(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    let admin_name = unique("spnadm");
+    let (ac, _) = register_client(&base, &pool, &admin_name).await;
+    sqlx::query("UPDATE users SET is_admin = TRUE WHERE username = $1")
+        .bind(&admin_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let spec_name = unique("spnwatch");
+    let (sc, spec_uid) = register_client(&base, &pool, &spec_name).await;
+    sqlx::query("UPDATE users SET is_spectator = TRUE WHERE id = $1")
+        .bind(spec_uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Mint a bot in the home (labeled by default) world.
+    let home_uuid: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM worlds ORDER BY created_at, id LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let bot_name = unique("spnbot");
+    let mint = ac
+        .post(format!("{base}/admin/agent"))
+        .form(&[
+            ("username", bot_name.as_str()),
+            ("world", home_uuid.as_u128().to_string().as_str()),
+            ("tribe", "romans"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mint.status().as_u16(), 200, "bot minted in the home world");
+
+    let labeled_body = sc
+        .get(format!("{base}/spectate/{home}/players"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(labeled_body.contains(&bot_name), "bot listed");
+    assert!(
+        labeled_body.contains(r#"class="badge">NPC<"#),
+        "NPC tag shown on the labeled world: {labeled_body}"
+    );
+
+    // 125 SF2: the row also links to the bot's village (the players → village drill-down), with a
+    // real, navigable (hyphenated-UUID) village id that actually resolves.
+    let bot_vid: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN players p ON p.id = v.owner_id \
+         JOIN users u ON u.id = p.user_id WHERE u.username = $1",
+    )
+    .bind(&bot_name)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let village_href = format!("/spectate/{home}/village/{bot_vid}");
+    assert!(
+        labeled_body.contains(&format!("href=\"{village_href}\"")),
+        "the players index links to the bot's village: {labeled_body}"
+    );
+    let r = sc
+        .get(format!("{base}{village_href}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        200,
+        "the players-index village link actually resolves"
+    );
+
+    // A disguised world: the same bot mechanism, but the tag never appears.
+    let r = ac
+        .post(format!("{base}/admin/world"))
+        .form(&[
+            ("name", "SpectatorShadow"),
+            ("speed", "1"),
+            ("radius", "40"),
+            ("ai_visibility", "disguised"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303, "disguised world created");
+    let disg_uuid: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM worlds ORDER BY created_at DESC, id DESC LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let disg_world = disg_uuid.to_string();
+    let disg_bot = unique("spnbd");
+    let mint2 = ac
+        .post(format!("{base}/admin/agent"))
+        .form(&[
+            ("username", disg_bot.as_str()),
+            ("world", disg_uuid.as_u128().to_string().as_str()),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        mint2.status().as_u16(),
+        200,
+        "bot minted in the disguised world"
+    );
+
+    let disguised_body = sc
+        .get(format!("{base}/spectate/{disg_world}/players"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(disguised_body.contains(&disg_bot), "disguised bot listed");
+    assert!(
+        !disguised_body.contains("NPC"),
+        "no NPC tag leaks on a disguised world: {disguised_body}"
+    );
+}
+
+/// 125 AC6: spectating has no activity side effects — loading any `/spectate` page must not refresh the
+/// spectator's own `last_activity` (the presence-touch middleware exempts `/spectate…` paths).
+#[sqlx::test(migrations = "../../migrations")]
+async fn spectate_pages_do_not_touch_presence(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let name = unique("specidle");
+    let (c, uid) = register_client(&base, &pool, &name).await;
+    let vid = village_uuid(&pool, &name).await;
+    sqlx::query("UPDATE users SET is_spectator = TRUE WHERE id = $1")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let stale = "UPDATE users SET last_activity = now() - interval '2 hours' WHERE id = $1";
+    let read_activity =
+        "SELECT (EXTRACT(EPOCH FROM last_activity)*1000)::bigint FROM users WHERE id = $1";
+
+    for path in [
+        "/spectate".to_owned(),
+        format!("/spectate/{home}"),
+        format!("/spectate/{home}/players"),
+        format!("/spectate/{home}/village/{vid}"),
+    ] {
+        sqlx::query(stale).bind(uid).execute(&pool).await.unwrap();
+        let before: i64 = sqlx::query_scalar(read_activity)
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let r = c.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 200, "page loads: {path}");
+        let after: i64 = sqlx::query_scalar(read_activity)
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(before, after, "{path} must not touch presence");
+    }
+}
+
+/// 125 T4 (AC2): the Spectator API's bearer auth — a valid `spk_` key on `/spectator/me` returns the
+/// expected introspection JSON; an `epk_` (agent) token is refused on the spectator surface and a
+/// `spk_` token is refused on the Agent API (cross-refusal, both directions, by construction of the
+/// separate parsers/tables — 118/125 AC2); revoking the Spectator role dead-ends a still-live key
+/// instantly (the auth-time re-check, not just at mint); revoking the key itself also 401s.
+#[sqlx::test(migrations = "../../migrations")]
+async fn spectator_api_bearer_auth_cross_refusal(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+
+    let name = unique("spapi");
+    let (_c, uid) = register_client(&base, &pool, &name).await;
+    sqlx::query("UPDATE users SET is_spectator = TRUE WHERE id = $1")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate_spectator();
+    sqlx::query("INSERT INTO spectator_keys (id, user_id, secret_hash) VALUES ($1, $2, $3)")
+        .bind(&key.id)
+        .bind(uid)
+        .bind(apikey::secret_hash(&key.secret))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let agent = client(); // pure bearer client, no cookies
+
+    // Missing key → 401 JSON (never a redirect — this is the JSON surface).
+    let r = agent
+        .get(format!("{base}/spectator/me"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 401);
+    assert!(
+        r.text()
+            .await
+            .unwrap()
+            .contains("\"error\":\"unauthorized\""),
+        "missing key is 401 unauthorized"
+    );
+
+    // Valid spk key → 200 with the expected introspection shape.
+    let r = agent
+        .get(format!("{base}/spectator/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let body = r.text().await.unwrap();
+    assert!(
+        body.contains(&format!("\"username\":\"{name}\"")),
+        "got: {body}"
+    );
+    assert!(body.contains("\"is_spectator\":true"), "got: {body}");
+    assert!(
+        body.contains(&format!("\"account\":\"{}\"", uid.as_u128())),
+        "got: {body}"
+    );
+
+    // Cross-refusal, direction 1: an epk_ (agent) key is refused on the spectator surface.
+    let agent_name = unique("spagt");
+    let (_ac, agent_uid) = register_client(&base, &pool, &agent_name).await;
+    sqlx::query("UPDATE users SET is_ai = TRUE WHERE id = $1")
+        .bind(agent_uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (agent_key, agent_token) = apikey::generate();
+    sqlx::query("INSERT INTO agent_keys (id, user_id, secret_hash) VALUES ($1, $2, $3)")
+        .bind(&agent_key.id)
+        .bind(agent_uid)
+        .bind(apikey::secret_hash(&agent_key.secret))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let r = agent
+        .get(format!("{base}/spectator/me"))
+        .header("Authorization", format!("Bearer {agent_token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        401,
+        "an epk_ agent token is refused on the spectator surface"
+    );
+
+    // Cross-refusal, direction 2: an spk_ token is refused on the Agent API.
+    let r = agent
+        .get(format!("{base}/api/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        401,
+        "an spk_ spectator token is refused on the Agent API"
+    );
+
+    // Role revoked ⇒ 401 with the still-live key (auth-time re-check dead-ends it instantly).
+    sqlx::query("UPDATE users SET is_spectator = FALSE WHERE id = $1")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let r = agent
+        .get(format!("{base}/spectator/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        401,
+        "role revoke dead-ends the key, even though it is unrevoked"
+    );
+
+    // Restore the role, then revoke the key itself ⇒ 401.
+    sqlx::query("UPDATE users SET is_spectator = TRUE WHERE id = $1")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE spectator_keys SET revoked_at = now() WHERE id = $1")
+        .bind(&key.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let r = agent
+        .get(format!("{base}/spectator/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 401, "a revoked key is refused");
+}
+
+/// 125 T4 (AC3): the Spectator API's village-detail JSON is the owner-view truth — a foreign
+/// village's resources come back as real numbers (not fog), same as the T3 dashboard drill-down.
+#[sqlx::test(migrations = "../../migrations")]
+async fn spectator_api_village_detail_json(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    let owner_name = unique("spvown");
+    let (_oc, _) = register_client(&base, &pool, &owner_name).await;
+    let vid = village_uuid(&pool, &owner_name).await;
+    let vid_uuid = uuid::Uuid::parse_str(&vid).unwrap();
+    sqlx::query(
+        "UPDATE village_resources SET wood = 611, clay = 422, iron = 333, crop = 244 \
+         WHERE village_id = $1",
+    )
+    .bind(vid_uuid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let spec_name = unique("spvspc");
+    let (_sc, spec_uid) = register_client(&base, &pool, &spec_name).await;
+    sqlx::query("UPDATE users SET is_spectator = TRUE WHERE id = $1")
+        .bind(spec_uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate_spectator();
+    sqlx::query("INSERT INTO spectator_keys (id, user_id, secret_hash) VALUES ($1, $2, $3)")
+        .bind(&key.id)
+        .bind(spec_uid)
+        .bind(apikey::secret_hash(&key.secret))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let agent = client();
+    let r = agent
+        .get(format!("{base}/spectator/w/{home}/village/{vid}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let body = r.text().await.unwrap();
+    assert!(
+        body.contains(&format!("\"owner\":\"{owner_name}\"")),
+        "got: {body}"
+    );
+    for amount in [
+        "\"amount\":611",
+        "\"amount\":422",
+        "\"amount\":333",
+        "\"amount\":244",
+    ] {
+        assert!(body.contains(amount), "spectator sees {amount}: {body}");
+    }
+}
+
+/// 125 T4 (AC4): a launched raid appears on the Spectator API feed with its full composition — the
+/// same omniscience the T3 dashboard feed shows, now as JSON.
+#[sqlx::test(migrations = "../../migrations")]
+async fn spectator_api_feed_shows_composition(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    let attacker = unique("spfatk");
+    let defender = unique("spfdef");
+    let (ca, _a_uid) = register_client(&base, &pool, &attacker).await;
+    let (_cd, _d_uid) = register_client(&base, &pool, &defender).await;
+    let a_vid = village_uuid(&pool, &attacker).await;
+    let d_vid = village_uuid(&pool, &defender).await;
+    let (dx, dy): (i32, i32) = sqlx::query_as("SELECT x, y FROM villages WHERE id = $1")
+        .bind(uuid::Uuid::parse_str(&d_vid).unwrap())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    clear_protection(&pool).await; // 019: fresh accounts would otherwise be protected from attack.
+
+    sqlx::query(
+        "INSERT INTO village_units (village_id, unit_id, count) VALUES ($1, 'phalanx', 20)",
+    )
+    .bind(uuid::Uuid::parse_str(&a_vid).unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let res = ca
+        .post(format!("{base}/w/{home}/village/{a_vid}/rally/send"))
+        .form(&[
+            ("mode", "raid"),
+            ("x", dx.to_string().as_str()),
+            ("y", dy.to_string().as_str()),
+            ("count_phalanx", "7"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 303, "raid launched");
+
+    let spec_name = unique("spfwch");
+    let (_sc, spec_uid) = register_client(&base, &pool, &spec_name).await;
+    sqlx::query("UPDATE users SET is_spectator = TRUE WHERE id = $1")
+        .bind(spec_uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate_spectator();
+    sqlx::query("INSERT INTO spectator_keys (id, user_id, secret_hash) VALUES ($1, $2, $3)")
+        .bind(&key.id)
+        .bind(spec_uid)
+        .bind(apikey::secret_hash(&key.secret))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let agent = client();
+    let r = agent
+        .get(format!("{base}/spectator/w/{home}/feed"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let body = r.text().await.unwrap();
+    assert!(
+        body.contains("\"kind\":\"raid\""),
+        "movement kind shown: {body}"
+    );
+    assert!(body.contains(&attacker), "origin owner shown: {body}");
+    assert!(body.contains(&defender), "destination owner shown: {body}");
+    assert!(
+        body.contains("\"phalanx\":7"),
+        "composition shown to the spectator: {body}"
+    );
+}
+
+/// 125 T4 (AC6): the Spectator API is GET-only by construction — a POST to a registered path is
+/// rejected without ever reaching a handler (pinned to the actual axum status so a regression is
+/// caught), and reading any endpoint never touches the spectator's own `last_activity` (contrast with
+/// the Agent API's 123 activity touch — spectating has zero side effects).
+#[sqlx::test(migrations = "../../migrations")]
+async fn spectator_api_read_only_and_no_activity_touch(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    let name = unique("spro");
+    let (_c, uid) = register_client(&base, &pool, &name).await;
+    sqlx::query("UPDATE users SET is_spectator = TRUE WHERE id = $1")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate_spectator();
+    sqlx::query("INSERT INTO spectator_keys (id, user_id, secret_hash) VALUES ($1, $2, $3)")
+        .bind(&key.id)
+        .bind(uid)
+        .bind(apikey::secret_hash(&key.secret))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let agent = client();
+
+    // A POST to a registered GET-only path never reaches a handler (P4/AC6): axum answers a
+    // recognised path with the wrong method as 405 (as opposed to the 404 fallback for an unknown
+    // path entirely) — pinned here so a future axum upgrade changing this is caught.
+    let r = agent
+        .post(format!("{base}/spectator/w/{home}/feed"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        405,
+        "POST to a GET-only spectator path is rejected, not routed"
+    );
+    // An unregistered spectator path is the JSON 404 fallback, never the HTML fallback.
+    let r = agent
+        .get(format!("{base}/spectator/nope"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 404);
+    assert!(
+        r.text()
+            .await
+            .unwrap()
+            .contains("\"error\":\"unknown_endpoint\"")
+    );
+
+    // No activity side effects: reading any spectator endpoint never refreshes the spectator's own
+    // last_activity (AC6) — contrast with the Agent API's 123 touch.
+    let stale = "UPDATE users SET last_activity = now() - interval '2 hours' WHERE id = $1";
+    let read_activity =
+        "SELECT (EXTRACT(EPOCH FROM last_activity)*1000)::bigint FROM users WHERE id = $1";
+    for path in [
+        "/spectator/me".to_owned(),
+        format!("/spectator/w/{home}/feed"),
+        format!("/spectator/w/{home}/players"),
+    ] {
+        sqlx::query(stale).bind(uid).execute(&pool).await.unwrap();
+        let before: i64 = sqlx::query_scalar(read_activity)
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let r = agent
+            .get(format!("{base}{path}"))
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 200, "endpoint loads: {path}");
+        let after: i64 = sqlx::query_scalar(read_activity)
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after, before, "{path} must not touch presence");
+    }
+}
+
+/// 125 T4 (AC7): the Spectator API's players endpoint carries the `npc` tag on a labeled world and
+/// never serializes `is_ai` anywhere on a disguised one — the T3 dashboard rule, now on the wire.
+#[sqlx::test(migrations = "../../migrations")]
+async fn spectator_api_players_npc_visibility(pool: sqlx::PgPool) {
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+
+    let admin_name = unique("spnad2");
+    let (ac, _) = register_client(&base, &pool, &admin_name).await;
+    sqlx::query("UPDATE users SET is_admin = TRUE WHERE username = $1")
+        .bind(&admin_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let spec_name = unique("spnwc2");
+    let (_sc, spec_uid) = register_client(&base, &pool, &spec_name).await;
+    sqlx::query("UPDATE users SET is_spectator = TRUE WHERE id = $1")
+        .bind(spec_uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate_spectator();
+    sqlx::query("INSERT INTO spectator_keys (id, user_id, secret_hash) VALUES ($1, $2, $3)")
+        .bind(&key.id)
+        .bind(spec_uid)
+        .bind(apikey::secret_hash(&key.secret))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let home_uuid: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM worlds ORDER BY created_at, id LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let bot_name = unique("spnbt2");
+    let mint = ac
+        .post(format!("{base}/admin/agent"))
+        .form(&[
+            ("username", bot_name.as_str()),
+            ("world", home_uuid.as_u128().to_string().as_str()),
+            ("tribe", "romans"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mint.status().as_u16(), 200, "bot minted in the home world");
+
+    let agent = client();
+    let labeled_body = agent
+        .get(format!("{base}/spectator/w/{home}/players"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        labeled_body.contains(&bot_name),
+        "bot listed: {labeled_body}"
+    );
+    assert!(
+        labeled_body.contains("\"npc\":true"),
+        "npc true on a labeled world: {labeled_body}"
+    );
+    assert!(
+        !labeled_body.contains("is_ai"),
+        "raw is_ai never serialized: {labeled_body}"
+    );
+
+    // 125 SF2: each row also carries its `villages` array (id/x/y/capital) — the API twin of the
+    // dashboard's players → village drill-down.
+    let bot_vid: uuid::Uuid = sqlx::query_scalar(
+        "SELECT v.id FROM villages v JOIN players p ON p.id = v.owner_id \
+         JOIN users u ON u.id = p.user_id WHERE u.username = $1",
+    )
+    .bind(&bot_name)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        labeled_body.contains(&format!("\"id\":\"{bot_vid}\"")),
+        "the bot's village id appears in its villages array: {labeled_body}"
+    );
+    assert!(
+        labeled_body.contains("\"capital\":"),
+        "each village row carries a capital flag: {labeled_body}"
+    );
+
+    // A disguised world: the same bot mechanism, but npc is false and is_ai never leaks.
+    let r = ac
+        .post(format!("{base}/admin/world"))
+        .form(&[
+            ("name", "SpectatorApiShadow"),
+            ("speed", "1"),
+            ("radius", "40"),
+            ("ai_visibility", "disguised"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303, "disguised world created");
+    let disg_uuid: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM worlds ORDER BY created_at DESC, id DESC LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let disg_world = disg_uuid.to_string();
+    let disg_bot = unique("spnbd2");
+    let mint2 = ac
+        .post(format!("{base}/admin/agent"))
+        .form(&[
+            ("username", disg_bot.as_str()),
+            ("world", disg_uuid.as_u128().to_string().as_str()),
+            ("tribe", "gauls"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        mint2.status().as_u16(),
+        200,
+        "bot minted in the disguised world"
+    );
+
+    let disguised_body = agent
+        .get(format!("{base}/spectator/w/{disg_world}/players"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        disguised_body.contains(&disg_bot),
+        "disguised bot listed: {disguised_body}"
+    );
+    assert!(
+        disguised_body.contains("\"npc\":false"),
+        "npc false on a disguised world: {disguised_body}"
+    );
+    assert!(
+        !disguised_body.contains("is_ai"),
+        "raw is_ai never leaks: {disguised_body}"
+    );
+}
+
+/// 125 T4 (AC8): spectator-key traffic shares the Agent API's rate-budget class — pre-seeding the
+/// window counter at the limit makes the next request 429 with `retry_after_secs`, mirroring the 118
+/// `agent_rate_guard_enforces_limit` test but keyed `spectator:<id>`.
+#[sqlx::test(migrations = "../../migrations")]
+async fn spectator_rate_guard_enforces_limit(pool: sqlx::PgPool) {
+    use eperica_infrastructure::fair_play_rules;
+    use eperica_web::apikey;
+    let base = spawn(pool.clone()).await;
+
+    let name = unique("sprg");
+    let (_c, uid) = register_client(&base, &pool, &name).await;
+    sqlx::query("UPDATE users SET is_spectator = TRUE WHERE id = $1")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (key, token) = apikey::generate_spectator();
+    sqlx::query("INSERT INTO spectator_keys (id, user_id, secret_hash) VALUES ($1, $2, $3)")
+        .bind(&key.id)
+        .bind(uid)
+        .bind(apikey::secret_hash(&key.secret))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let agent = client();
+
+    // A request within the limit passes.
+    let r = agent
+        .get(format!("{base}/spectator/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "under-limit request succeeds");
+
+    // Pre-seed the rate_limits table with count = limit so the very next request tips over.
+    // Subject: `spectator:<keyid>`, action: `agent` — the SAME budget class as the agent guard (125
+    // AC8), just its own subject namespace.
+    let rules = fair_play_rules().unwrap();
+    let window_secs = rules.rate_window_secs;
+    let limit = rules.agent_limit_per_window;
+    let subject = format!("spectator:{}", key.id);
+    let now_unix_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let window_start_secs = (now_unix_secs / window_secs) * window_secs;
+    sqlx::query(
+        "INSERT INTO rate_limits (subject, action, window_start, count) \
+         VALUES ($1, 'agent', to_timestamp($2::float8), $3) \
+         ON CONFLICT (subject, action, window_start) DO UPDATE SET count = EXCLUDED.count",
+    )
+    .bind(&subject)
+    .bind(window_start_secs as f64)
+    .bind(limit as i64)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let r = agent
+        .get(format!("{base}/spectator/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 429, "over-limit request is rejected");
+    let body = r.text().await.unwrap();
+    assert!(body.contains("\"error\":\"rate_limited\""), "got: {body}");
+    assert!(body.contains("\"retry_after_secs\""), "got: {body}");
+}
+
 /// 041: an admin creates a world from the console; it is persisted, started live (registry), and listed.
 /// A non-admin cannot create one, and invalid parameters are rejected.
 #[sqlx::test(migrations = "../../migrations")]
@@ -6870,7 +8234,8 @@ async fn register_client(
     name: &str,
 ) -> (reqwest::Client, uuid::Uuid) {
     let c = client();
-    c.post(format!("{base}/register"))
+    let r = c
+        .post(format!("{base}/register"))
         .form(&[
             ("username", name),
             ("email", &format!("{name}@example.com")),
@@ -6880,6 +8245,13 @@ async fn register_client(
         .send()
         .await
         .unwrap();
+    // A successful registration redirects; anything else (e.g. a >32-char generated
+    // username) would otherwise surface later as a confusing RowNotFound here.
+    assert!(
+        r.status().is_redirection(),
+        "registration for {name:?} did not redirect (status {})",
+        r.status()
+    );
     let id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
         .bind(name)
         .fetch_one(pool)

@@ -1323,15 +1323,24 @@ pub struct AdminWorldRow {
     pub is_home: bool,
 }
 
-/// One account row in the admin console listing (036 AC3).
+/// One account row in the admin console listing (036/125 AC3/AC1).
 pub struct AdminAccountRow {
     pub id: String,
     pub username: String,
     pub is_moderator: bool,
     pub is_admin: bool,
+    /// Whether the account holds the Spectator role (125).
+    pub is_spectator: bool,
     pub abandoned: bool,
     /// Whether this row is the viewing admin (hides the self-demote-admin control, AC3).
     pub is_self: bool,
+}
+
+/// One row in the admin spectator-key panel (125 AC2): an account holding ≥1 active spectator key.
+pub struct SpectatorHolderRow {
+    /// Decimal `u128` string of the user id (for the revoke form value).
+    pub user_id: String,
+    pub username: String,
 }
 
 /// One row in the admin fleet panel (120 AC2).
@@ -1389,6 +1398,11 @@ pub struct AdminTemplate {
     pub agent_manifest_data_url: Option<String>,
     /// All AI accounts across all worlds, for the fleet management panel (120 AC2).
     pub bots: Vec<AgentBotRow>,
+    /// One-time plaintext spectator key (125 AC2) — `Some` only immediately after a successful
+    /// POST /admin/spectator-key; `None` on every other render. Never persisted; shown ONCE.
+    pub spectator_key: Option<String>,
+    /// Accounts holding at least one active (unrevoked) spectator key (125 AC2 panel).
+    pub spectator_holders: Vec<SpectatorHolderRow>,
 }
 
 /// A row in the conversations list (024 AC3 / 060: aggregated across worlds).
@@ -1596,4 +1610,148 @@ pub struct JoinableWorldRow {
     pub name: String,
     pub speed: f64,
     pub radius: u32,
+}
+
+// ---- Spectator dashboard (125 T3): a session-gated, role-checked, read-only view of a world's full
+// activity — no game agency, so unlike every page above these carry no forms/actions. ----
+
+/// One world on the spectator world picker (125 `/spectate`).
+pub struct SpectateWorldRow {
+    pub id: String,
+    pub name: String,
+    pub speed: f64,
+    pub radius: u32,
+    /// Whether the world is won/frozen (021/057) — otherwise running.
+    pub won: bool,
+}
+
+#[derive(Template)]
+#[template(path = "spectate_worlds.html")]
+pub struct SpectateWorldsTemplate {
+    pub worlds: Vec<SpectateWorldRow>,
+}
+
+/// One in-flight movement on the spectator feed (125 AC4) — unlike the owner's [`MovementRow`], both
+/// endpoints and the full composition are always shown regardless of direction.
+pub struct SpectateMovementRow {
+    pub kind: String,
+    pub origin_label: String,
+    pub origin_href: String,
+    pub destination_label: String,
+    /// `None` when the movement targets a bare tile (settlers founding, oasis attack/reinforce) rather
+    /// than a village.
+    pub destination_href: Option<String>,
+    pub troops: String,
+    pub arrive_ms: i64,
+}
+
+/// One in-flight merchant shipment on the spectator feed (125 AC4).
+pub struct SpectateShipmentRow {
+    pub kind: String,
+    pub origin_label: String,
+    pub origin_href: String,
+    pub destination_label: String,
+    pub destination_href: String,
+    pub contents: String,
+    pub arrive_ms: i64,
+}
+
+/// One active build/upgrade order on the spectator feed (125).
+pub struct SpectateBuildRow {
+    pub owner: String,
+    pub coord: String,
+    pub href: String,
+    pub target: String,
+    pub target_level: u8,
+    pub complete_ms: i64,
+}
+
+/// One active training batch on the spectator feed (125).
+pub struct SpectateTrainingRow {
+    pub owner: String,
+    pub coord: String,
+    pub href: String,
+    pub unit: String,
+    pub remaining: u32,
+    pub next_complete_ms: i64,
+}
+
+/// One recent battle/scout report on the spectator feed (125) — a cheap outcome summary only (see
+/// [`eperica_application::WorldReportRow`]).
+pub struct SpectateReportRow {
+    pub when_ms: i64,
+    pub kind: String,
+    pub attacker: String,
+    pub defender: String,
+    pub outcome: String,
+}
+
+#[derive(Template)]
+#[template(path = "spectate_feed.html")]
+pub struct SpectateFeedTemplate {
+    pub world: String,
+    pub movements: Vec<SpectateMovementRow>,
+    pub shipments: Vec<SpectateShipmentRow>,
+    pub builds: Vec<SpectateBuildRow>,
+    pub trainings: Vec<SpectateTrainingRow>,
+    pub reports: Vec<SpectateReportRow>,
+}
+
+/// One village coordinate link on the spectator players index (125 SF2), pointing at the omniscient
+/// village drill-down (`/spectate/{world}/village/{id}`, hyphenated uuid — the T3 link-resolution
+/// lesson).
+pub struct SpectateVillageLink {
+    pub href: String,
+    /// e.g. `"(12|34)"`, or `"★ (12|34)"` for the capital.
+    pub label: String,
+}
+
+/// One player on the spectator index (125 AC5/AC7) — links to the existing public 016 player stats page
+/// (the closest thing to a per-player "drill-down") **and** to each of that player's villages (125
+/// SF2 — the Surfaces section's promised players → village drill-down).
+pub struct SpectatePlayerRow {
+    pub href: String,
+    pub username: String,
+    pub tribe: String,
+    pub population: i64,
+    pub villages: i64,
+    /// "—" when the player belongs to no alliance.
+    pub alliance_tag: String,
+    /// The NPC tag (125 AC7) — `true` only on `labeled` worlds for an `is_ai` account; never set on
+    /// `disguised` worlds (the caller enforces this, mirroring the leaderboard's `npc` field).
+    pub npc: bool,
+    /// This player's villages, capital first then coordinate (125 SF2).
+    pub village_links: Vec<SpectateVillageLink>,
+}
+
+#[derive(Template)]
+#[template(path = "spectate_players.html")]
+pub struct SpectatePlayersTemplate {
+    pub world: String,
+    pub page: i64,
+    pub has_prev: bool,
+    pub has_next: bool,
+    pub rows: Vec<SpectatePlayerRow>,
+}
+
+#[derive(Template)]
+#[template(path = "spectate_village.html")]
+pub struct SpectateVillageTemplate {
+    pub world: String,
+    pub village_id: String,
+    pub owner: String,
+    pub x: i32,
+    pub y: i32,
+    pub is_capital: bool,
+    pub tribe: String,
+    pub ribbon: ResourceRibbon,
+    /// The build queue, reusing the owner village page's `ActiveView` row shape (label/target
+    /// level/deadline) — no forms, read-only.
+    pub builds: Vec<ActiveView>,
+    pub trainings: Vec<VillageTrainingRow>,
+    pub garrison: Vec<GarrisonRow>,
+    pub garrison_upkeep: i64,
+    pub reinforcements: Vec<ReinforcementRow>,
+    pub loyalty: i64,
+    pub researched: Vec<String>,
 }

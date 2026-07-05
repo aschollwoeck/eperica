@@ -33,6 +33,7 @@ pub mod search;
 pub mod settings;
 pub mod settling;
 pub mod sitting;
+pub mod spectate;
 pub mod starvation;
 pub mod trade;
 pub mod units;
@@ -104,9 +105,12 @@ pub use ports::{
     PendingInvite, PlanCapture, PlayerHit, PlayerStats, PlayerWorld, ProfileView, QuestRepository,
     RankingRepository, RazedBuilding, ReinforcementReturn, RepoError, ReportView, ResourceWrite,
     RosterEntry, ScoutApply, ScoutIntel, ScoutReportView, ScoutRepository, SettleApply,
-    SettleOutcome, SettleRepository, SitterActionView, StarvationRepository, StationedGroup,
-    ThreadHead, ThreadSummary, TradeRepository, TradeView, TrainingRepository, UnitOrderKind,
-    UnitRepository, UserRecord, VillageMarker, WonderOutcome, WonderRepository, WonderStanding,
+    SettleOutcome, SettleRepository, SitterActionView, SpectateReadRepository, SpectatorKeyHolder,
+    SpectatorPlayerRow, SpectatorPlayerVillage, SpectatorRepository, StarvationRepository,
+    StationedGroup, ThreadHead, ThreadSummary, TradeRepository, TradeView, TrainingRepository,
+    UnitOrderKind, UnitRepository, UserRecord, VillageMarker, WonderOutcome, WonderRepository,
+    WonderStanding, WorldBuildOrder, WorldMovement, WorldReportRow, WorldShipment,
+    WorldTrainingOrder,
 };
 pub use profile::{ProfileError, edit_bio, view_profile};
 pub use quests::evaluate_quests;
@@ -124,6 +128,10 @@ pub use settling::{SettleError, order_settle, process_due_settles};
 pub use sitting::{
     SITTER_LOG_LIMIT, SittingError, authorize_sit, grant_sitter, list_sitters, list_sitting_for,
     record_sitter_action, revoke_sitter, sitter_log,
+};
+pub use spectate::{
+    FEED_CAP, PLAYERS_PER_PAGE, SpectatorVillageDetail, WorldFeed, player_villages, players,
+    village_detail, world_feed,
 };
 pub use starvation::{process_due_starvation, sync_starvation_check, sync_starvation_checks};
 pub use trade::{TradeError, order_trade, process_due_trades};

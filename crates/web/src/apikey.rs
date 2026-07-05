@@ -1,16 +1,22 @@
-//! Agent API key utilities (118).
+//! Agent API key utilities (118) and spectator key utilities (125).
 //!
 //! ## Format
 //!
-//! `epk_<id>_<secret>` where:
+//! Agent keys:    `epk_<id>_<secret>`
+//! Spectator keys: `spk_<id>_<secret>`
+//!
+//! In both cases:
 //! - `id` is 16 lowercase hex chars (8 random bytes) — the indexed lookup half.
 //! - `secret` is 43 base64url chars (no padding, 32 random bytes) — the secret half.
+//!
+//! The distinct prefixes ensure agent and spectator credentials can never be confused: each surface
+//! only calls its own `parse`/`parse_spectator`, which rejects the other prefix (125 AC2).
 //!
 //! ## Storage (Decision #2, P11)
 //!
 //! Only `sha256(secret)` (hex) is persisted. A 256-bit random secret gains nothing from argon2
 //! stretching — the entropy is already at the ceiling — and SHA-256 verification adds ~0 overhead
-//! on the P11 hot path (every agent request). A DB leak still reveals no usable keys.
+//! on the P11 hot path (every agent/spectator request). A DB leak still reveals no usable keys.
 //! Keys are revocable via `revoked_at`; the plaintext is returned exactly once at creation.
 
 use base64::Engine as _;
@@ -28,11 +34,25 @@ pub struct AgentKey {
     pub secret: String,
 }
 
-/// Generate a fresh key pair.
+/// Generate a fresh agent key pair (`epk_` prefix).
 ///
 /// Returns the [`AgentKey`] parts and the full plaintext token `epk_<id>_<secret>` (shown exactly
 /// once at creation; only [`secret_hash`] is stored — Decision #2, P11).
 pub fn generate() -> (AgentKey, String) {
+    generate_with_prefix("epk")
+}
+
+/// Generate a fresh spectator key pair (`spk_` prefix, 125).
+///
+/// Returns the [`AgentKey`] parts and the full plaintext token `spk_<id>_<secret>`. Same entropy
+/// and storage rules as agent keys; only the prefix differs so the two surfaces can never be
+/// confused (AC2 by construction).
+pub fn generate_spectator() -> (AgentKey, String) {
+    generate_with_prefix("spk")
+}
+
+/// Shared key-generation logic — `prefix` is `"epk"` or `"spk"`.
+fn generate_with_prefix(prefix: &str) -> (AgentKey, String) {
     use rand::RngCore as _;
     let mut rng = rand::thread_rng();
 
@@ -44,16 +64,29 @@ pub fn generate() -> (AgentKey, String) {
     rng.fill_bytes(&mut secret_bytes);
     let secret = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
 
-    let token = format!("epk_{id}_{secret}");
+    let token = format!("{prefix}_{id}_{secret}");
     (AgentKey { id, secret }, token)
 }
 
-/// Parse a bearer token into `(id, secret)`.
+/// Parse an agent bearer token (`epk_` prefix) into `(id, secret)`.
 ///
 /// Returns `None` when the format is invalid — wrong prefix, wrong component count, or wrong
 /// lengths. Strict format validation ensures malformed tokens are rejected before any DB lookup.
 pub fn parse(token: &str) -> Option<(String, String)> {
-    let rest = token.strip_prefix("epk_")?;
+    parse_with_prefix(token, "epk_")
+}
+
+/// Parse a spectator bearer token (`spk_` prefix, 125) into `(id, secret)`.
+///
+/// Returns `None` for any token that is not a valid `spk_` key — including `epk_` agent tokens.
+/// This ensures agent credentials are refused on the spectator surface at the parse step (AC2).
+pub fn parse_spectator(token: &str) -> Option<(String, String)> {
+    parse_with_prefix(token, "spk_")
+}
+
+/// Shared parse logic — `prefix` is `"epk_"` or `"spk_"`.
+fn parse_with_prefix(token: &str, prefix: &str) -> Option<(String, String)> {
+    let rest = token.strip_prefix(prefix)?;
     // Split on the first `_` only: id cannot contain `_`, secret may not contain `_` but we
     // enforce length anyway. Using splitn(2) so the secret is not further split.
     let (id, secret) = rest.split_once('_')?;
@@ -108,13 +141,38 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
-    /// A generated token round-trips through parse: the id and secret components match.
+    /// A generated agent token round-trips through parse: the id and secret components match.
     #[test]
     fn generate_parse_round_trip() {
         let (key, token) = generate();
         let (id, secret) = parse(&token).expect("generated token must parse");
         assert_eq!(id, key.id, "id half matches");
         assert_eq!(secret, key.secret, "secret half matches");
+    }
+
+    /// A generated spectator token round-trips through parse_spectator (125).
+    #[test]
+    fn generate_spectator_parse_round_trip() {
+        let (key, token) = generate_spectator();
+        assert!(token.starts_with("spk_"), "spectator token has spk_ prefix");
+        let (id, secret) = parse_spectator(&token).expect("generated spk_ token must parse");
+        assert_eq!(id, key.id, "id half matches");
+        assert_eq!(secret, key.secret, "secret half matches");
+    }
+
+    /// An agent token (`epk_`) is rejected by parse_spectator and vice-versa (125 AC2).
+    #[test]
+    fn wrong_prefix_rejected_cross_kind() {
+        let (_key, agent_token) = generate();
+        let (_key, spectator_token) = generate_spectator();
+        assert!(
+            parse_spectator(&agent_token).is_none(),
+            "agent key must be refused by parse_spectator"
+        );
+        assert!(
+            parse(&spectator_token).is_none(),
+            "spectator key must be refused by parse (agent)"
+        );
     }
 
     /// The generated id is 16 hex chars; the secret is 43 base64url chars.
@@ -129,7 +187,7 @@ mod tests {
         );
     }
 
-    /// parse rejects a wrong prefix.
+    /// parse rejects a wrong prefix (including the spk_ spectator prefix).
     #[test]
     fn parse_rejects_wrong_prefix() {
         assert!(
@@ -138,6 +196,10 @@ mod tests {
         assert!(parse("epk_").is_none());
         assert!(parse("").is_none());
         assert!(parse("0123456789abcdef_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").is_none());
+        // The spectator prefix must be refused by the agent parse.
+        assert!(
+            parse("spk_0123456789abcdef_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").is_none()
+        );
     }
 
     /// parse rejects wrong component count (too few or extra `_` in unexpected places).

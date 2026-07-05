@@ -4,7 +4,7 @@
 
 use crate::ports::{
     AccountRepository, AdminAccount, AdminOverview, AdminRepository, ModerationRepository,
-    RepoError,
+    RepoError, SpectatorRepository,
 };
 use eperica_domain::{GameSpeed, PlayerId, WorldId};
 
@@ -114,16 +114,19 @@ where
     Ok(out)
 }
 
-/// Grant or revoke an elevated role (Moderator or Administrator) on `subject` (036 AC3). Admin-gated.
-/// Refuses to remove the actor's **own** Administrator role (anti-lockout). Idempotent.
+/// Grant or revoke an elevated role (Moderator, Administrator, or Spectator — 036 AC3 / 125 AC1)
+/// on `subject`. Admin-gated. Refuses to remove the actor's **own** Administrator role
+/// (anti-lockout); the Spectator role has no such guard. Idempotent.
 ///
 /// # Errors
 /// [`AdminError::NotAuthorized`] for a non-admin; [`AdminError::SelfDemotion`] when removing your own
 /// admin role; [`AdminError::NotFound`] if the subject does not exist; otherwise a backend error.
-pub async fn set_role<A, M, D>(
+#[allow(clippy::too_many_arguments)] // one repo handle per role-owning trait, mirroring the call shape
+pub async fn set_role<A, M, D, S>(
     accounts: &A,
     moderation: &M,
     admin: &D,
+    spectator: &S,
     actor: PlayerId,
     subject: PlayerId,
     role: ElevatedRole,
@@ -133,6 +136,7 @@ where
     A: AccountRepository,
     M: ModerationRepository,
     D: AdminRepository,
+    S: SpectatorRepository,
 {
     require_admin(accounts, actor).await?;
     if role == ElevatedRole::Admin && !grant && actor == subject {
@@ -145,6 +149,9 @@ where
     match role {
         ElevatedRole::Moderator => moderation.set_moderator(subject, grant).await?,
         ElevatedRole::Admin => admin.set_admin(subject, grant).await?,
+        // Spectator: the "cannot remove own admin" guard does NOT apply — revoking your own spectator
+        // role is harmless (no lockout risk; you can re-grant it as admin).
+        ElevatedRole::Spectator => spectator.set_spectator(subject, grant).await?,
     }
     Ok(())
 }
@@ -249,11 +256,13 @@ where
         .await?)
 }
 
-/// An elevated role an admin can grant/revoke from the console (036 AC3).
+/// An elevated role an admin can grant/revoke from the console (036/125 AC3/AC1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElevatedRole {
     Moderator,
     Admin,
+    /// The Spectator role (125 AC1): omniscient read-only world view, no game agency.
+    Spectator,
 }
 
 impl ElevatedRole {
@@ -263,6 +272,7 @@ impl ElevatedRole {
         match s {
             "moderator" => Some(ElevatedRole::Moderator),
             "admin" => Some(ElevatedRole::Admin),
+            "spectator" => Some(ElevatedRole::Spectator),
             _ => None,
         }
     }
@@ -285,6 +295,7 @@ mod tests {
         users: Mutex<Vec<UserRecord>>,
         set_admin_calls: Mutex<Vec<(u128, bool)>>,
         set_mod_calls: Mutex<Vec<(u128, bool)>>,
+        set_spectator_calls: Mutex<Vec<(u128, bool)>>,
         created_worlds: Mutex<Vec<CreatedWorld>>,
     }
 
@@ -300,6 +311,7 @@ mod tests {
             is_moderator: false,
             is_admin,
             is_ai: false,
+            is_spectator: false,
             banned_at: None,
             suspended_until: None,
         }
@@ -396,6 +408,14 @@ mod tests {
     }
 
     #[async_trait]
+    impl SpectatorRepository for Fake {
+        async fn set_spectator(&self, p: PlayerId, on: bool) -> Result<(), RepoError> {
+            self.set_spectator_calls.lock().unwrap().push((p.0, on));
+            Ok(())
+        }
+    }
+
+    #[async_trait]
     impl AdminRepository for Fake {
         async fn set_admin(&self, p: PlayerId, on: bool) -> Result<(), RepoError> {
             self.set_admin_calls.lock().unwrap().push((p.0, on));
@@ -413,6 +433,7 @@ mod tests {
                     username: u.username.clone(),
                     is_moderator: u.is_moderator,
                     is_admin: u.is_admin,
+                    is_spectator: u.is_spectator,
                     abandoned: u.abandoned,
                 }))
         }
@@ -464,8 +485,9 @@ mod tests {
     #[tokio::test]
     async fn admin_can_grant_and_revoke_roles() {
         let f = fake(vec![user(1, true), user(2, false)]);
-        // Grant moderator + admin to subject 2.
+        // Grant moderator + admin + spectator to subject 2.
         set_role(
+            &f,
             &f,
             &f,
             &f,
@@ -480,6 +502,7 @@ mod tests {
             &f,
             &f,
             &f,
+            &f,
             PlayerId(1),
             PlayerId(2),
             ElevatedRole::Admin,
@@ -487,8 +510,21 @@ mod tests {
         )
         .await
         .unwrap();
+        set_role(
+            &f,
+            &f,
+            &f,
+            &f,
+            PlayerId(1),
+            PlayerId(2),
+            ElevatedRole::Spectator,
+            true,
+        )
+        .await
+        .unwrap();
         assert_eq!(*f.set_mod_calls.lock().unwrap(), vec![(2, true)]);
         assert_eq!(*f.set_admin_calls.lock().unwrap(), vec![(2, true)]);
+        assert_eq!(*f.set_spectator_calls.lock().unwrap(), vec![(2, true)]);
     }
 
     #[tokio::test]
@@ -496,6 +532,7 @@ mod tests {
         let f = fake(vec![user(1, true)]);
         assert_eq!(
             set_role(
+                &f,
                 &f,
                 &f,
                 &f,
@@ -512,6 +549,7 @@ mod tests {
             &f,
             &f,
             &f,
+            &f,
             PlayerId(1),
             PlayerId(1),
             ElevatedRole::Moderator,
@@ -522,6 +560,20 @@ mod tests {
         assert_eq!(*f.set_mod_calls.lock().unwrap(), vec![(1, false)]);
         // No admin write happened.
         assert!(f.set_admin_calls.lock().unwrap().is_empty());
+        // Admin can also remove their own Spectator role (no lockout risk — not an admin check).
+        set_role(
+            &f,
+            &f,
+            &f,
+            &f,
+            PlayerId(1),
+            PlayerId(1),
+            ElevatedRole::Spectator,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(*f.set_spectator_calls.lock().unwrap(), vec![(1, false)]);
     }
 
     #[tokio::test]
@@ -529,6 +581,7 @@ mod tests {
         let f = fake(vec![user(1, true)]);
         assert_eq!(
             set_role(
+                &f,
                 &f,
                 &f,
                 &f,
@@ -567,6 +620,7 @@ mod tests {
         let f = fake(vec![user(1, false), user(2, false)]);
         assert_eq!(
             set_role(
+                &f,
                 &f,
                 &f,
                 &f,

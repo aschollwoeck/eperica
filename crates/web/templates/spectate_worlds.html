@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
+{% block content %}
+<div class="page">
+  <section class="phead">
+    <div class="phead__eyebrow">Spectator</div>
+    <h1 class="phead__title">Spectate a world</h1>
+    <p class="phead__sub">Watch any world's full activity — every village, every movement, unblinded by fog of war.</p>
+  </section>
+
+  <div class="psec">
+    {% if worlds.is_empty() %}
+    <p class="muted">No worlds yet.</p>
+    {% else %}
+    <table class="table table--cards">
+      <thead><tr><th>World</th><th class="num">Speed</th><th class="num">Size</th><th>State</th><th></th></tr></thead>
+      <tbody>
+        {% for w in worlds %}
+        <tr>
+          <td class="table__title"><strong>{{ w.name }}</strong></td>
+          <td class="num" data-label="Speed">{{ w.speed }}×</td>
+          <td class="num" data-label="Size">{{ w.radius }}</td>
+          <td data-label="State">{% if w.won %}<span class="badge">Won / frozen</span>{% else %}<span class="muted">Running</span>{% endif %}</td>
+          <td class="table__act"><a class="btn btn--primary" href="/spectate/{{ w.id }}">Watch →</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

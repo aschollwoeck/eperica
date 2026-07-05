@@ -20,9 +20,12 @@ use crate::templates::{
     RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate,
     ReportsTemplate, ResourceRibbon, RosterRowView, ScoutReportTemplate, ScoutResourceRow,
     SearchHitRow, SearchTemplate, SettingsTemplate, SettingsToggleRow, ShipmentRow, SitterRow,
-    SittingTemplate, SmithyRow, SmithyTemplate, StyleGuideTemplate, TermsTemplate, TrainRow,
-    TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate, VillageTrainingRow,
-    WonderStandingView, WonderTemplate, WorldsTemplate,
+    SittingTemplate, SmithyRow, SmithyTemplate, SpectateBuildRow, SpectateFeedTemplate,
+    SpectateMovementRow, SpectatePlayerRow, SpectatePlayersTemplate, SpectateReportRow,
+    SpectateShipmentRow, SpectateTrainingRow, SpectateVillageLink, SpectateVillageTemplate,
+    SpectateWorldRow, SpectateWorldsTemplate, SpectatorHolderRow, StyleGuideTemplate,
+    TermsTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate,
+    VillageTrainingRow, WonderStandingView, WonderTemplate, WorldsTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -37,16 +40,17 @@ use eperica_application::{
     DiplomacyCommand, ElevatedRole, ForumError, LeaderboardRow, LoginError, MedalRepository,
     MedalSubjectKind, ModerationError, ModerationRepository, MovementRepository, OasisRepository,
     PlayerHit, QuestRepository, RegisterCommand, RegisterError, RepoError, ScoutIntel,
-    ScoutReportView, ScoutRepository, TradeRepository, TrainingRepository, UnitOrderKind,
-    UnitRepository, Viewport, Window, WonderRepository, account_signals, admin_overview,
-    alliance_conflict_leaderboard, alliance_population_leaderboard, alliance_statistics,
-    alliance_view, authenticate, authorize_sit, climbers_leaderboard, conflict_leaderboard,
-    conversation_list, create_world as admin_create_world_uc, disband_alliance, dm_key,
-    dm_pair_key, edit_bio, end_protection_if_established, evaluate_achievements, evaluate_quests,
-    expel_member, file_report, found_alliance, grant_sitter, invite_player, leave_alliance,
-    list_accounts as admin_list_accounts, list_forum, list_notifications_for_account, list_sitters,
-    list_sitting_for, list_worlds as admin_list_worlds, load_culture, load_economy,
-    map_viewport_rect, mark_notifications_read_for_account, notif_key, notification_settings,
+    ScoutReportView, ScoutRepository, SpectatorRepository, TradeRepository, TrainingRepository,
+    UnitOrderKind, UnitRepository, Viewport, Window, WonderRepository, account_signals,
+    admin_overview, alliance_conflict_leaderboard, alliance_population_leaderboard,
+    alliance_statistics, alliance_view, authenticate, authorize_sit, climbers_leaderboard,
+    conflict_leaderboard, conversation_list, create_world as admin_create_world_uc,
+    disband_alliance, dm_key, dm_pair_key, edit_bio, end_protection_if_established,
+    evaluate_achievements, evaluate_quests, expel_member, file_report, found_alliance,
+    grant_sitter, invite_player, leave_alliance, list_accounts as admin_list_accounts, list_forum,
+    list_notifications_for_account, list_sitters, list_sitting_for,
+    list_worlds as admin_list_worlds, load_culture, load_economy, map_viewport_rect,
+    mark_notifications_read_for_account, notif_key, notification_settings,
     notification_unread_for_account, open_chat, open_dm, open_thread, order_attack, order_build,
     order_demolish, order_oasis_attack, order_oasis_recall, order_oasis_reinforce,
     order_reinforcement, order_research, order_return, order_scout, order_settle,
@@ -56,6 +60,9 @@ use eperica_application::{
     revoke_sitter, sanction_account, search, search_accounts as admin_search_accounts, send_chat,
     send_dm, set_diplomacy, set_member_role, set_notification_pref, set_role as admin_set_role_uc,
     sitter_log, start_thread, transfer_founder, unread_badge, view_profile, viewport_coords_rect,
+};
+use eperica_application::{
+    PLAYERS_PER_PAGE, player_villages, players as spectate_player_index, village_detail, world_feed,
 };
 use eperica_domain::{
     AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, ChatChannel,
@@ -265,6 +272,39 @@ fn target_label(village: &Village, target: BuildTarget) -> String {
     }
 }
 
+/// A build-target label without the full `Village` (125) — unlike [`target_label`], the spectator
+/// feed's world-scoped build rows carry only the `BuildTarget` itself, not each village's field layout,
+/// so a field slot loses its resource-kind prefix ("field #3" rather than "Wood field #3").
+fn feed_target_label(target: BuildTarget) -> String {
+    match target {
+        BuildTarget::Field { slot } => format!("field #{slot}"),
+        BuildTarget::Building { kind, .. } => building_label(kind).to_owned(),
+    }
+}
+
+/// A one-word label for a troop movement kind on the spectator feed (125) — the same vocabulary as the
+/// owner-view `MovementRow` labels above, but standalone (kind only; endpoints are separate fields there).
+fn movement_kind_label(kind: MovementKind) -> &'static str {
+    match kind {
+        MovementKind::Reinforce => "Reinforcement",
+        MovementKind::Return => "Return",
+        MovementKind::Attack => "Attack",
+        MovementKind::Raid => "Raid",
+        MovementKind::Scout => "Scout",
+        MovementKind::OasisAttack => "Oasis attack",
+        MovementKind::OasisReinforce => "Oasis reinforcement",
+        MovementKind::Settle => "Settlers",
+    }
+}
+
+/// A one-word label for a merchant shipment leg on the spectator feed (125).
+fn trade_kind_label(kind: TradeKind) -> &'static str {
+    match kind {
+        TradeKind::Deliver => "Delivery",
+        TradeKind::Return => "Return",
+    }
+}
+
 /// Render a template to an HTML response (or 500 on failure).
 fn page<T: Template>(template: &T) -> Response {
     match template.render() {
@@ -288,6 +328,22 @@ fn admin_forbidden() -> Response {
 /// 403 for a non-moderator reaching a moderator-only surface (022 AC1, P4).
 fn forbidden() -> Response {
     (StatusCode::FORBIDDEN, "Moderators only.").into_response()
+}
+
+/// Whether `actor` holds the Spectator role (125 AC1) — the gate for every `/spectate` page. Mirrors
+/// `require_admin` (`application/admin.rs`), kept local to the web layer: spectating has no other
+/// application-level use-case to gate, only these read-only dashboard handlers (P4 — checked server-side
+/// on every request, never only at a link's visibility).
+async fn require_spectator<A: AccountRepository>(accounts: &A, actor: PlayerId) -> bool {
+    matches!(
+        accounts.find_user_by_id(actor).await,
+        Ok(Some(u)) if u.is_spectator
+    )
+}
+
+/// 403 for a non-spectator reaching a `/spectate` page (125 AC1, P4) — mirrors [`admin_forbidden`].
+fn spectator_forbidden() -> Response {
+    (StatusCode::FORBIDDEN, "Spectators only.").into_response()
 }
 
 fn not_found() -> Response {
@@ -4234,7 +4290,7 @@ pub async fn admin(
     Query(q): Query<AdminQuery>,
 ) -> Response {
     let query = q.q.unwrap_or_default();
-    render_admin_page(&state, player, &query, None, None).await
+    render_admin_page(&state, player, &query, None, None, None).await
 }
 
 /// Assemble and render the admin console page. Shared between the GET `/admin` handler and the
@@ -4243,6 +4299,8 @@ pub async fn admin(
 /// * `query`     — the current search string; empty for non-search renders.
 /// * `agent_key` — the one-time plaintext bearer token (118); `None` on every render except the
 ///   immediate success of an agent-create POST.
+/// * `spectator_key` — the one-time plaintext spectator token (125); `None` on every render except
+///   the immediate success of a spectator-key mint POST.
 ///
 /// Authorization is implicitly enforced: `admin_overview` (the first call) returns
 /// `AdminError::NotAuthorized` for non-admins, which maps to a 403 here.
@@ -4252,6 +4310,7 @@ async fn render_admin_page(
     query: &str,
     agent_key: Option<String>,
     agent_manifest: Option<String>,
+    spectator_key: Option<String>,
 ) -> Response {
     let trimmed = query.trim();
     let searched = !trimmed.is_empty();
@@ -4298,6 +4357,7 @@ async fn render_admin_page(
             username: a.username,
             is_moderator: a.is_moderator,
             is_admin: a.is_admin,
+            is_spectator: a.is_spectator,
             abandoned: a.abandoned,
             is_self: a.id == player,
         })
@@ -4331,6 +4391,23 @@ async fn render_admin_page(
             Err(e) => tracing::warn!(world = %w.id.0, error = %e, "list_agents failed"),
         }
     }
+
+    // Accounts holding active spectator keys, for the spectator-key panel (125 AC2).
+    let spectator_holders: Vec<SpectatorHolderRow> =
+        match state.accounts.list_spectator_key_holders().await {
+            Ok(holders) => holders
+                .into_iter()
+                .filter(|h| h.has_active_key)
+                .map(|h| SpectatorHolderRow {
+                    user_id: h.user_id.0.to_string(),
+                    username: h.username,
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "list_spectator_key_holders failed");
+                Vec::new()
+            }
+        };
 
     let worlds: Vec<AdminWorldRow> = raw_worlds
         .into_iter()
@@ -4376,6 +4453,8 @@ async fn render_admin_page(
         agent_manifest,
         agent_manifest_data_url,
         bots,
+        spectator_key,
+        spectator_holders,
     })
 }
 
@@ -4691,7 +4770,7 @@ pub async fn admin_create_agent(
 
     // Re-render the admin page with the one-time plaintext token. The operator must copy it now
     // — it is not stored and cannot be recovered (Decision #2, plan.md).
-    render_admin_page(&state, player, "", Some(token), None).await
+    render_admin_page(&state, player, "", Some(token), None, None).await
 }
 
 /// Bulk-seed AI agent accounts into a world (120 AC1). Admin-gated fail-closed.
@@ -4840,7 +4919,7 @@ pub async fn admin_bulk_seed_agents(
     let created = manifest.len();
     let manifest_json = serde_json::to_string_pretty(&manifest).unwrap_or_default();
     let flash = format!("{created} bot(s) created.");
-    let resp = render_admin_page(&state, player, "", None, Some(manifest_json)).await;
+    let resp = render_admin_page(&state, player, "", None, Some(manifest_json), None).await;
     with_flash(resp, Some(flash))
 }
 
@@ -4918,11 +4997,11 @@ pub struct AdminQuery {
     q: Option<String>,
 }
 
-/// The admin role-change form (036 AC3): grant/revoke Moderator or Administrator on a target account.
+/// The admin role-change form (036 AC3 / 125 AC1): grant/revoke an elevated role on a target account.
 #[derive(Deserialize)]
 pub struct AdminRoleForm {
     target: String,
-    /// `"moderator"` or `"admin"`.
+    /// `"moderator"`, `"admin"`, or `"spectator"` (125).
     role: String,
     grant: bool,
 }
@@ -4948,6 +5027,7 @@ pub async fn admin_role_submit(
         state.accounts.as_ref(),
         state.accounts.as_ref(),
         state.accounts.as_ref(),
+        state.accounts.as_ref(),
         player,
         PlayerId(target),
         role,
@@ -4965,6 +5045,462 @@ pub async fn admin_role_submit(
             )
         }
     }
+}
+
+/// The spectator-key mint form (125 AC2): `POST /admin/spectator-key`.
+#[derive(Deserialize)]
+pub struct SpectatorKeyForm {
+    /// The target account's username (any existing account; the role gate applies at auth time).
+    username: String,
+}
+
+/// The spectator-key revoke form (125 AC2): revoke ALL of a user's spectator keys by id.
+#[derive(Deserialize)]
+pub struct SpectatorKeyRevokeForm {
+    /// Decimal u128 user id.
+    user: String,
+}
+
+/// Mint a spectator key for an existing account (125 AC2). Admin-gated on the real human,
+/// FAIL-CLOSED like the agent-key mint (this mints credentials).
+///
+/// Only `sha256(secret)` is stored; the plaintext `spk_` token is re-rendered into the admin page
+/// exactly once and never logged (118 Decision #2, reused). Minting does not require the account
+/// to already hold the Spectator role — the role is re-checked at auth time (plan.md Key
+/// decisions), so a key minted early simply dead-ends until the role is granted.
+pub async fn admin_spectator_key_submit(
+    State(state): State<AppState>,
+    RealUser(player): RealUser,
+    Form(form): Form<SpectatorKeyForm>,
+) -> Response {
+    if require_admin(state.accounts.as_ref(), player)
+        .await
+        .is_err()
+    {
+        return admin_forbidden();
+    }
+    let username = form.username.trim();
+    let user = match state.accounts.find_user_by_username(username).await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            return with_flash(
+                Redirect::to("/admin").into_response(),
+                Some("No account with that username.".to_owned()),
+            );
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "admin_spectator_key: user lookup failed");
+            return server_error();
+        }
+    };
+    // Generate a spk_ key and persist only the SHA-256 hash. The plaintext token is NEVER logged
+    // — only `key.id` (the public half) may appear in traces.
+    let (key, token) = crate::apikey::generate_spectator();
+    let secret_hash = crate::apikey::secret_hash(&key.secret);
+    if let Err(e) = state
+        .accounts
+        .insert_spectator_key(user.id, &key.id, &secret_hash)
+        .await
+    {
+        tracing::error!(key_id = %key.id, error = %e, "admin_spectator_key: insert failed");
+        return server_error();
+    }
+    // Re-render the admin page with the one-time plaintext token (shown ONCE, not recoverable).
+    render_admin_page(&state, player, "", None, None, Some(token)).await
+}
+
+/// Revoke all spectator keys of an account (125 AC2). Admin-gated on the real human.
+pub async fn admin_spectator_key_revoke(
+    State(state): State<AppState>,
+    RealUser(player): RealUser,
+    Form(form): Form<SpectatorKeyRevokeForm>,
+) -> Response {
+    if require_admin(state.accounts.as_ref(), player)
+        .await
+        .is_err()
+    {
+        return admin_forbidden();
+    }
+    let Ok(user_raw) = form.user.trim().parse::<u128>() else {
+        return with_flash(
+            Redirect::to("/admin").into_response(),
+            Some("Invalid user ID.".to_owned()),
+        );
+    };
+    match state
+        .accounts
+        .revoke_spectator_keys(PlayerId(user_raw))
+        .await
+    {
+        Ok(n) => with_flash(
+            Redirect::to("/admin").into_response(),
+            Some(format!("{n} spectator key(s) revoked.")),
+        ),
+        Err(e) => {
+            tracing::error!(error = %e, "admin_spectator_key_revoke failed");
+            server_error()
+        }
+    }
+}
+
+// ---- Spectator dashboard (125 T3): session-gated, role-checked, read-only. Every handler below
+// re-checks `require_spectator` server-side (P4) — visibility of the nav link is cosmetic only. No
+// mutating route exists on this surface (AC6, by construction — nothing here calls a write use-case). ----
+
+/// `GET /spectate` — the world picker (125 AC1): every world, running or frozen, linking to its feed.
+/// Reuses the same [`AdminRepository::list_worlds`] read the admin console's worlds table uses (not the
+/// admin-gated `admin_list_worlds` wrapper, since our own `require_spectator` check is the gate here).
+pub async fn spectate_worlds(
+    RealUser(player): RealUser,
+    State(state): State<AppState>,
+) -> Response {
+    if !require_spectator(state.accounts.as_ref(), player).await {
+        return spectator_forbidden();
+    }
+    let worlds = match state.accounts.list_worlds().await {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::error!(error = %e, "spectate_worlds: list_worlds failed");
+            return server_error();
+        }
+    };
+    let rows = worlds
+        .into_iter()
+        .map(|w| SpectateWorldRow {
+            id: world_id_str(w.id),
+            name: w.name,
+            speed: w.speed,
+            radius: w.radius,
+            won: w.won_ms.is_some(),
+        })
+        .collect();
+    page(&SpectateWorldsTemplate { worlds: rows })
+}
+
+/// `GET /spectate/{world}` — the live feed (125 AC1/AC4/AC5): movements, shipments, builds, trainings and
+/// recent battles, each capped and soonest-first ([`world_feed`]). Unlike the owner's own village view
+/// (which only ever shows an arrival-only warning for a hostile incoming attack), every movement here
+/// carries its full composition regardless of direction (AC4).
+pub async fn spectate_feed(RealUser(player): RealUser, world: WorldScope) -> Response {
+    if !require_spectator(&world.accounts, player).await {
+        return spectator_forbidden();
+    }
+    let feed = match world_feed(&world.accounts).await {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::error!(error = %e, "spectate_feed: world_feed failed");
+            return server_error();
+        }
+    };
+    let world_id = world_id_str(world.world_id);
+    let unit_rules = &world.rules.units;
+    let village_href = |v: VillageId| format!("/spectate/{world_id}/village/{}", village_seg(v));
+
+    let movements = feed
+        .movements
+        .iter()
+        .map(|m| SpectateMovementRow {
+            kind: movement_kind_label(m.kind).to_owned(),
+            origin_label: format!(
+                "{} ({}|{})",
+                m.origin_owner, m.origin_coord.x, m.origin_coord.y
+            ),
+            origin_href: village_href(m.origin_village),
+            destination_label: match &m.destination_owner {
+                Some(owner) => format!(
+                    "{owner} ({}|{})",
+                    m.destination_coord.x, m.destination_coord.y
+                ),
+                None => format!("({}|{})", m.destination_coord.x, m.destination_coord.y),
+            },
+            destination_href: m.destination_village.map(village_href),
+            troops: troops_summary(unit_rules, &m.troops),
+            arrive_ms: m.arrive_at.0,
+        })
+        .collect();
+
+    let shipments = feed
+        .shipments
+        .iter()
+        .map(|s| SpectateShipmentRow {
+            kind: trade_kind_label(s.kind).to_owned(),
+            origin_label: format!(
+                "{} ({}|{})",
+                s.origin_owner, s.origin_coord.x, s.origin_coord.y
+            ),
+            origin_href: village_href(s.origin_village),
+            destination_label: format!(
+                "{} ({}|{})",
+                s.destination_owner, s.destination_coord.x, s.destination_coord.y
+            ),
+            destination_href: village_href(s.destination_village),
+            contents: format!("{} · {} merchants", bundle_summary(s.bundle), s.merchants),
+            arrive_ms: s.arrive_at.0,
+        })
+        .collect();
+
+    let builds = feed
+        .builds
+        .iter()
+        .map(|b| SpectateBuildRow {
+            owner: b.owner.clone(),
+            coord: format!("{}|{}", b.village_coord.x, b.village_coord.y),
+            href: village_href(b.village),
+            target: feed_target_label(b.target),
+            target_level: b.target_level,
+            complete_ms: b.complete_at.0,
+        })
+        .collect();
+
+    let trainings = feed
+        .trainings
+        .iter()
+        .map(|t| SpectateTrainingRow {
+            owner: t.owner.clone(),
+            coord: format!("{}|{}", t.village_coord.x, t.village_coord.y),
+            href: village_href(t.village),
+            unit: unit_name(unit_rules, &t.unit),
+            remaining: t.remaining,
+            next_complete_ms: t.next_complete_at.0,
+        })
+        .collect();
+
+    let reports = feed
+        .reports
+        .iter()
+        .map(|r| SpectateReportRow {
+            when_ms: r.occurred_at.0,
+            kind: movement_kind_label(r.kind).to_owned(),
+            attacker: format!(
+                "{} ({}|{})",
+                r.attacker_name, r.attacker_coord.x, r.attacker_coord.y
+            ),
+            defender: format!(
+                "{} ({}|{})",
+                r.defender_name, r.defender_coord.x, r.defender_coord.y
+            ),
+            outcome: r.outcome.clone(),
+        })
+        .collect();
+
+    page(&SpectateFeedTemplate {
+        world: world_id,
+        movements,
+        shipments,
+        builds,
+        trainings,
+        reports,
+    })
+}
+
+/// Paging query for the spectator player index (125 AC5): `?page=` (1-based; missing/invalid ⇒ page 1).
+#[derive(Deserialize)]
+pub struct SpectatePlayersQuery {
+    #[serde(default)]
+    page: Option<i64>,
+}
+
+/// `GET /spectate/{world}/players` — the paged, population-descending player index (125 AC5/AC7). The
+/// NPC tag mirrors the leaderboard's rule exactly: shown only when the world is `labeled` **and** the
+/// row is `is_ai`; never surfaced on a `disguised` world (AC7 — no `is_ai` leak either way).
+pub async fn spectate_players(
+    RealUser(player): RealUser,
+    world: WorldScope,
+    Query(q): Query<SpectatePlayersQuery>,
+) -> Response {
+    if !require_spectator(&world.accounts, player).await {
+        return spectator_forbidden();
+    }
+    let page_no = q.page.unwrap_or(1).max(1);
+    let world_id = world_id_str(world.world_id);
+    let rows = match spectate_player_index(&world.accounts, &world.rules.economy, page_no).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "spectate_players: player index failed");
+            return server_error();
+        }
+    };
+    let has_next = rows.len() as i64 == PLAYERS_PER_PAGE;
+
+    // 125 SF2: the players-index → village drill-down. One world-scoped query for the whole page's
+    // owners, then grouped back onto each row (never one query per player, P11).
+    let owners: Vec<PlayerId> = rows.iter().map(|r| r.player).collect();
+    let villages = match player_villages(&world.accounts, &owners).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "spectate_players: village links failed");
+            return server_error();
+        }
+    };
+    let mut villages_by_owner: std::collections::HashMap<PlayerId, Vec<SpectateVillageLink>> =
+        std::collections::HashMap::new();
+    for v in villages {
+        let label = if v.is_capital {
+            format!("★ ({}|{})", v.x, v.y)
+        } else {
+            format!("({}|{})", v.x, v.y)
+        };
+        villages_by_owner
+            .entry(v.owner)
+            .or_default()
+            .push(SpectateVillageLink {
+                href: format!("/spectate/{world_id}/village/{}", village_seg(v.village)),
+                label,
+            });
+    }
+
+    let rows = rows
+        .into_iter()
+        .map(|r| SpectatePlayerRow {
+            href: format!("/w/{world_id}/stats/player/{}", r.player.0),
+            village_links: villages_by_owner.remove(&r.player).unwrap_or_default(),
+            username: r.username,
+            tribe: tribe_label(r.tribe).to_owned(),
+            population: r.population,
+            villages: r.village_count,
+            alliance_tag: r.alliance_tag.unwrap_or_else(|| "—".to_owned()),
+            npc: r.is_ai && world.ai_labeled,
+        })
+        .collect();
+    page(&SpectatePlayersTemplate {
+        world: world_id,
+        page: page_no,
+        has_prev: page_no > 1,
+        has_next,
+        rows,
+    })
+}
+
+/// `GET /spectate/{world}/village/{id}` — the omniscient village drill-down (125 AC3): resources
+/// (computed on read), build queue, training batches, garrison, stationed reinforcements, loyalty and
+/// researched units — reusing the exact owner-view read-model ([`village_detail`]) with the village's
+/// true owner substituted for the caller, so the values shown can never drift from what the owner's own
+/// `/village` page shows.
+pub async fn spectate_village(
+    RealUser(player): RealUser,
+    world: WorldScope,
+    Path((_world, village_id)): Path<(String, String)>,
+) -> Response {
+    if !require_spectator(&world.accounts, player).await {
+        return spectator_forbidden();
+    }
+    let Ok(village_uuid) = uuid::Uuid::parse_str(village_id.trim()) else {
+        return not_found();
+    };
+    let village = VillageId(village_uuid.as_u128());
+    let now_ts = now();
+    let detail = match village_detail(
+        &world.accounts,
+        &world.rules.economy,
+        &world.rules.units,
+        world.speed,
+        now_ts,
+        village,
+    )
+    .await
+    {
+        Ok(Some(d)) => d,
+        Ok(None) => return not_found(),
+        Err(e) => {
+            tracing::error!(error = %e, "spectate_village: village_detail failed");
+            return server_error();
+        }
+    };
+    let owner = match world
+        .accounts
+        .find_user_by_id(detail.economy.village.owner)
+        .await
+    {
+        Ok(Some(u)) => u.username,
+        Ok(None) => "unknown".to_owned(),
+        Err(e) => {
+            tracing::error!(error = %e, "spectate_village: owner lookup failed");
+            return server_error();
+        }
+    };
+
+    let unit_rules = &world.rules.units;
+    let village_row = &detail.economy.village;
+    let roster = village_row.tribe.map_or(&[][..], |t| unit_rules.roster(t));
+
+    let builds = detail
+        .builds
+        .iter()
+        .map(|b| ActiveView {
+            // Unlike the feed's `feed_target_label` (which lacks a `Village` to resolve a field's
+            // resource kind), the village drill-down has the full village — so it uses the exact same
+            // `target_label` the owner's own page uses (125 AC3 — label text can never drift either).
+            label: target_label(village_row, b.target),
+            target_level: b.target_level,
+            complete_ms: b.complete_at.0,
+        })
+        .collect();
+    let trainings = detail
+        .trainings
+        .iter()
+        .map(|t| VillageTrainingRow {
+            label: unit_name(unit_rules, &t.unit),
+            remaining: t.count_total - t.count_done,
+            complete_ms: t.next_complete_at.0,
+        })
+        .collect();
+    let garrison = detail
+        .economy
+        .garrison
+        .iter()
+        .map(|(unit, count)| {
+            let spec = roster.iter().find(|s| &s.id == unit);
+            GarrisonRow {
+                name: spec.map_or_else(|| unit.as_str().to_owned(), |s| s.name.clone()),
+                count: *count,
+                upkeep: spec.map_or(0, |s| i64::from(s.crop_upkeep) * i64::from(*count)),
+            }
+        })
+        .collect();
+    let garrison_upkeep_total = garrison_upkeep(&detail.economy.garrison, roster);
+    let reinforcements = detail
+        .reinforcements
+        .iter()
+        .map(|g| ReinforcementRow {
+            owner: g.other_owner.clone(),
+            coord: format!("({}|{})", g.other_coord.x, g.other_coord.y),
+            troops: troops_summary(unit_rules, &g.troops),
+            host_id: String::new(),
+        })
+        .collect();
+    let loyalty = match detail.loyalty {
+        Some((value, updated)) => regenerate_loyalty(
+            value,
+            (now_ts.0 - updated.0) / 1000,
+            &world.rules.loyalty,
+            world.speed,
+        ),
+        None => world.rules.loyalty.starting_loyalty,
+    };
+    let researched = detail
+        .researched
+        .iter()
+        .map(|u| unit_name(unit_rules, u))
+        .collect();
+    let ribbon = resource_ribbon(&detail.economy.economy);
+
+    page(&SpectateVillageTemplate {
+        world: world_id_str(world.world_id),
+        village_id: village_seg(village),
+        owner,
+        x: village_row.coordinate.x,
+        y: village_row.coordinate.y,
+        is_capital: village_row.is_capital,
+        tribe: tribe_label(village_row.tribe).to_owned(),
+        ribbon,
+        builds,
+        trainings,
+        garrison,
+        garrison_upkeep: garrison_upkeep_total,
+        reinforcements,
+        loyalty,
+        researched,
+    })
 }
 
 /// A player reports another account (022 AC2). Redirects back to the subject's stats page.
@@ -5401,14 +5937,31 @@ pub async fn me(
             .is_some_and(|u| u.is_admin),
         None => false,
     };
+    // Spectator (125) follows the *real* human only, like admin — an elevated, admin-granted role that
+    // must never be delegated through a sit.
+    let spectator = match real {
+        Some(p) if Some(p) == effective => eff_rec.as_ref().is_some_and(|u| u.is_spectator),
+        Some(p) => state
+            .accounts
+            .find_user_by_id(p)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|u| u.is_spectator),
+        None => false,
+    };
     let authed = effective.is_some();
     let moderator = eff_rec.as_ref().is_some_and(|u| u.is_moderator);
     // 115: the account's tribe ("chosen once, for keeps") so base.html can set `data-tribe` on <body>
     // for tribe-specific theming (e.g. the primary button's per-tribe colours).
     let tribe = eff_rec.as_ref().map(|u| u.tribe.slug());
-    axum::Json(
-        serde_json::json!({ "authed": authed, "moderator": moderator, "admin": admin, "tribe": tribe }),
-    )
+    axum::Json(serde_json::json!({
+        "authed": authed,
+        "moderator": moderator,
+        "admin": admin,
+        "spectator": spectator,
+        "tribe": tribe
+    }))
     .into_response()
 }
 
