@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod api;
+pub mod apidocs;
 pub mod apikey;
 pub mod auth;
 pub mod handlers;
