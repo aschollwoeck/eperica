@@ -274,7 +274,7 @@ fn field_explanation(kind: ResourceKind) -> &'static str {
         }
         ResourceKind::Iron => {
             "Where the army's weight of metal comes from: the armoured elites — heavy infantry \
-             and the great cavalry lines — bill their steepest share in iron, so an Iron Mine that \
+             and the great cavalry lines — bill iron among their steepest costs, so an Iron Mine that \
              keeps pace with your military ambitions matters more as your roster grows serious. \
              Early on it can trail wood and clay without much cost, but a war economy short on \
              iron caps how elite a force you can field and sustain."
@@ -1223,7 +1223,7 @@ fn unit_explanation(tribe: Tribe, spec: &UnitSpec) -> &'static str {
         }
         (Tribe::Romans, "praetorian") => {
             "Where the Legionnaire splits its attention, the Praetorian gives up offence for a \
-             much sturdier defence — the unit a Roman village garrisons with once holding ground \
+             much sturdier defence against foot troops — the unit a Roman village garrisons with once holding ground \
              matters more than raiding out. It only trains once you've researched it at the \
              Academy with a Smithy standing, so it's a deliberate defensive investment, not a \
              starting default. Post it behind a Wall and a village becomes genuinely hard to \
@@ -1240,7 +1240,7 @@ fn unit_explanation(tribe: Tribe, spec: &UnitSpec) -> &'static str {
              elite rather than a speed unit, noticeably slower on the march than the Equites \
              Imperatoris despite its far heavier armour and punch. Field it once a village's \
              economy can sustain its steep upkeep, as the spearhead of a serious offensive stack. \
-             It rewards a fully developed Academy and Stable, not an early investment."
+             It rewards a fully developed Stable above all, not an early investment."
         }
         (Tribe::Romans, "equites_legati") => {
             "Rome's scout: no attack worth mentioning, sent to spy out a target before you commit \
@@ -1278,7 +1278,7 @@ fn unit_explanation(tribe: Tribe, spec: &UnitSpec) -> &'static str {
         }
         (Tribe::Romans, "settler") => {
             "Rome's colonist: carries the manpower and resources to found a brand-new village on an \
-             empty tile, the only way to grow beyond your first settlement. It has essentially \
+             empty tile — the peaceful path to growing beyond your first settlement. It has essentially \
              nothing to attack with, though a solid defence means a Settler party caught on the \
              road isn't defenceless. Train the required trio well ahead of a founding attempt — \
              each one is a slow, resource-heavy project in its own right."
@@ -1346,7 +1346,7 @@ fn unit_explanation(tribe: Tribe, spec: &UnitSpec) -> &'static str {
         }
         (Tribe::Teutons, "settler") => {
             "Teuton's colonist: carries the manpower and resources to found a brand-new village on \
-             an empty tile, the only way to grow beyond your first settlement. It's not built for a \
+             an empty tile — the peaceful path to growing beyond your first settlement. It's not built for a \
              fight, though a solid defence means a Settler party caught on the road isn't \
              defenceless. Train the required trio well ahead of a founding attempt — each one is a \
              slow, resource-heavy project in its own right."
@@ -1369,7 +1369,7 @@ fn unit_explanation(tribe: Tribe, spec: &UnitSpec) -> &'static str {
             "Gaul's scout, and the fastest of any tribe's — first to a target and first to report \
              back, at the cost of no attack worth mentioning. Send it ahead of anything you're \
              unsure about; the intelligence it brings is worth far more than the modest resources \
-             spent training it. It needs a developed Academy and Stable before it trains."
+             spent training it. It needs a developed Academy and a Stable before it trains."
         }
         (Tribe::Gauls, "theutates_thunder") => {
             "The fastest unit in the game, full stop — a lightning raider that outruns even every \
@@ -1412,12 +1412,22 @@ fn unit_explanation(tribe: Tribe, spec: &UnitSpec) -> &'static str {
         }
         (Tribe::Gauls, "settler") => {
             "Gaul's colonist — and, of the three tribes', the quickest to finish training: carries \
-             the manpower and resources to found a brand-new village on an empty tile, the only way \
-             to grow beyond your first settlement. It has essentially nothing to attack with, \
+             the manpower and resources to found a brand-new village on an empty tile — the \
+             peaceful path to growing beyond your first settlement. It has essentially nothing to attack with, \
              though a solid defence means a Settler party caught on the road isn't defenceless. \
              Train the required trio well ahead of a founding attempt."
         }
-        _ => unreachable!("every roster unit id is a fixed, known TOML entry (127 redesign)"),
+        _ => {
+            // Presets are operator-authored directories (ADR 0035): a future preset may ship a
+            // roster id this table doesn't know. A live manual page must not 500 over prose —
+            // log loudly and render a neutral line instead (the stat card carries the data).
+            tracing::warn!(
+                ?tribe,
+                unit = ?spec.id,
+                "no manual prose for roster unit; using fallback"
+            );
+            "A unit of this tribe's roster — see the stat card below for its role and numbers."
+        }
     }
 }
 
