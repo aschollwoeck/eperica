@@ -1055,8 +1055,37 @@ a { color: var(--c-gold); }
    level 1"), never as loud as the `.manual__banner` callout it sits below. */
 .manual__note { font-size: .84rem; font-style: italic; color: var(--c-ink-muted); margin: 0 0 var(--space-3); }
 
-/* Full per-level cost/time tables (one per buildable kind) — collapsed by default so the page
-   isn't 19 full tables long; each opens independently. */
+/* Buildings-page jump-list (127 redesign): purpose-grouped anchor chips above the per-building
+   chapters, so a long reference page is still a two-click hop to any one building. */
+.manual__jump { margin: 0 0 var(--space-6); display: flex; flex-direction: column; gap: var(--space-3); }
+.manual__jump-group h3 { font-size: .72rem; text-transform: uppercase; letter-spacing: .1em; color: var(--c-ink-muted); margin: 0 0 6px; }
+.manual__jump-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.manual__chip { display: inline-block; padding: 4px 10px; border: 1px solid var(--c-border); border-radius: 999px; background: var(--c-panel); color: var(--c-ink-muted); text-decoration: none; font-size: .82rem; }
+.manual__chip:hover { border-color: var(--c-gold); color: var(--c-gold); }
+
+/* One building's full chapter (127 redesign, replacing the old flat summary table): heading,
+   illustration, flavor prose, facts line, and the per-level `<details>` all in one section. The
+   figure floats beside the prose at desktop width; `::after` clears it so the `<details>` below
+   never rides up under the image. */
+.manual__bldg { margin-top: var(--space-6); padding-bottom: var(--space-5); border-bottom: 1px solid var(--c-border); scroll-margin-top: calc(var(--topbar-h) + 12px); }
+.manual__bldg:first-of-type { margin-top: 0; }
+.manual__bldg:last-of-type { border-bottom: none; }
+.manual__bldg::after { content: ""; display: table; clear: both; }
+.manual__bldg h2 { font-family: var(--c-serif, Georgia, serif); font-size: 1.3rem; margin: 0 0 var(--space-3); color: var(--c-gold); }
+.manual__bldg-fig { float: right; width: 220px; max-width: 260px; margin: 0 0 var(--space-3) var(--space-4); }
+.manual__bldg-fig img { display: block; width: 100%; height: auto; border-radius: var(--radius-md); border: 1px solid var(--c-border); }
+.manual__bldg-prose { max-width: 62ch; color: var(--c-ink-muted); margin: 0 0 var(--space-3); }
+.manual__facts { font-size: .88rem; color: var(--c-ink-muted); margin: 0 0 var(--space-4); }
+
+/* The Resource fields section's small illustration strip (127 redesign) — woodcutter/clay pit/
+   iron mine/cropland, same resolution chain as the building chapters' figures. */
+.manual__field-strip { display: flex; flex-wrap: wrap; gap: var(--space-4); margin: 0 0 var(--space-4); }
+.manual__field-fig { margin: 0; width: 140px; text-align: center; }
+.manual__field-fig img { display: block; width: 100%; height: auto; border-radius: var(--radius-md); border: 1px solid var(--c-border); }
+.manual__field-fig figcaption { font-size: .78rem; color: var(--c-ink-muted); margin-top: 4px; }
+
+/* Full per-level cost/time tables (one per buildable kind, now nested inside its own chapter) —
+   collapsed by default so the page isn't 19 full tables long; each opens independently. */
 .manual__lvls { border: 1px solid var(--c-border); border-radius: var(--radius-md); background: var(--c-panel); margin-bottom: 8px; padding: 0 var(--space-4); }
 .manual__lvls summary { cursor: pointer; padding: 10px 0; font-weight: 600; color: var(--c-ink); list-style: none; }
 .manual__lvls summary::-webkit-details-marker { display: none; }
@@ -1066,6 +1095,10 @@ a { color: var(--c-gold); }
 
 /* The capital-only tail of the field production table (rows beyond the normal, non-capital cap). */
 .manual__capital-row { opacity: .72; }
+
+/* The Units reference page's leading portrait column (127 redesign) — empty for the pinned art
+   gaps (`UNIT_ART_GAPS`), never a broken image icon. */
+.manual__unit-thumb { display: block; width: 48px; height: 48px; border-radius: var(--radius-sm); border: 1px solid var(--c-border); object-fit: cover; }
 
 /* Prev/next chapter footer nav. */
 .manual__prevnext { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); margin-top: var(--space-6); }
@@ -1082,4 +1115,5 @@ a { color: var(--c-gold); }
   .manual__sidebar { position: static; max-height: none; }
   .manual__prevnext { grid-template-columns: 1fr; }
   .manual__navcard--next { text-align: left; align-items: flex-start; }
+  .manual__bldg-fig { float: none; width: 100%; max-width: 260px; margin: 0 0 var(--space-3); }
 }

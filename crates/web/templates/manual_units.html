@@ -22,6 +22,7 @@
       <table class="table">
         <thead>
           <tr>
+            <th aria-hidden="true"></th>
             <th>Unit</th><th>Role</th><th class="num">Att</th><th class="num">Def inf</th>
             <th class="num">Def cav</th><th class="num">Speed</th><th class="num">Carry</th>
             <th class="num">Upkeep</th><th class="num">Cost (w/c/i/r)</th><th class="num">Train time</th>
@@ -31,6 +32,7 @@
         <tbody>
           {% for u in t.units %}
           <tr>
+            <td>{% if let Some(p) = u.portrait %}<img class="manual__unit-thumb" src="/static/units/{{ p }}.webp" alt="" loading="lazy">{% endif %}</td>
             <td>{{ u.name }}</td>
             <td>{{ u.role }}</td>
             <td class="num">{{ u.attack }}</td>

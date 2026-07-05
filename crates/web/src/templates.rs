@@ -114,17 +114,27 @@ pub struct ManualUnitRow {
     pub train_time: String,
     pub trained_in: &'static str,
     pub prerequisites: String,
+    /// The `<tribe>_<id>` portrait slug for this row's leading thumbnail (127 redesign) —
+    /// `/static/units/<portrait>.webp`. `None` for the pinned art gaps (`UNIT_ART_GAPS` in
+    /// handlers.rs), rendered as an empty cell rather than a broken `<img>`.
+    pub portrait: Option<String>,
 }
 
-/// The generated Buildings reference page (127 T2, AC3/AC4): purpose/prerequisites/max-level/
-/// multi-instance/level-1 cost for every buildable kind, plus a few illustrative per-level curves.
+/// The generated Buildings reference page (127 T2, AC3/AC4; redesigned per operator feedback into a
+/// chapter per building — see [`ManualBuildingSection`]): a jump-list grouped by purpose, one full
+/// chapter per buildable kind, plus a few illustrative per-level curves and the resource-field
+/// tables/image strip.
 #[derive(Template)]
 #[template(path = "manual_buildings.html")]
 pub struct ManualBuildingsTemplate {
     pub sections: Vec<ManualSectionRow>,
     pub ref_links: Vec<ManualRefLinkRow>,
     pub banner: String,
-    pub rows: Vec<ManualBuildingRow>,
+    /// The jump-list groups shown above the chapters, in fixed purpose order (`BUILDING_GROUP_ORDER`
+    /// in handlers.rs) — each keeping the buildable kinds' own declared order within it.
+    pub groups: Vec<ManualBuildingGroup>,
+    /// One chapter per buildable kind, in `ALL_BUILDING_KINDS` order.
+    pub buildings: Vec<ManualBuildingSection>,
     /// Warehouse storage capacity at levels 1/5/10.
     pub warehouse_curve: Vec<ManualLevelRow>,
     /// Granary storage capacity at levels 1/5/10.
@@ -133,9 +143,6 @@ pub struct ManualBuildingsTemplate {
     pub main_building_curve: Vec<ManualLevelRow>,
     /// Town Hall culture points/hour, every level.
     pub town_hall_curve: Vec<ManualLevelRow>,
-    /// Full per-level cost/time tables, one `<details>` per buildable kind (operator feedback: the
-    /// summary table above only shows level 1 — this is the actual "resource table for buildings").
-    pub building_levels: Vec<ManualBuildingLevels>,
     /// Standard wood/clay/iron field upgrade cost + time, levels 1..=the normal (non-capital) field
     /// cap — the shared table `BuildRules::field` also backs [`ManualBuildingsTemplate::field_max_level`].
     pub field_levels: Vec<ManualCostRow>,
@@ -147,21 +154,57 @@ pub struct ManualBuildingsTemplate {
     pub production_levels: Vec<ManualProductionRow>,
     /// The normal (non-capital) field level cap — the boundary `production_levels` marks.
     pub field_max_level: u8,
+    /// The four resource-field illustrations (woodcutter/clay pit/iron mine/cropland) shown as a
+    /// small strip above the field tables — resolved the same way as building art.
+    pub field_images: Vec<ManualFieldImage>,
 }
 
-/// One building kind's reference row.
-pub struct ManualBuildingRow {
+/// One purpose group's chips in the Buildings page's jump-list (127 redesign).
+pub struct ManualBuildingGroup {
+    pub title: &'static str,
+    pub items: Vec<ManualJumpItem>,
+}
+
+/// One jump-list entry: an anchor link to its building's chapter section.
+pub struct ManualJumpItem {
+    pub slug: &'static str,
     pub name: &'static str,
-    /// A one-line, prose purpose description — fixed text for most kinds, but Embassy/Wonder are
-    /// formatted from the resolved rules at render time (127 review M4), so this is owned rather
-    /// than a `&'static str`.
-    pub purpose: String,
+}
+
+/// One building's full reference chapter (127 redesign, operator feedback: "a chapter for each
+/// building… do some explaining… put the collapsible into that chapter… include the images") —
+/// replaces the old flat summary table + separate per-level `<details>` list with one self-contained
+/// `<section id="{slug}">` per kind.
+pub struct ManualBuildingSection {
+    /// The anchor id (`building_kind_id`) — also the jump-list link target.
+    pub slug: &'static str,
+    pub name: &'static str,
+    /// The jump-list purpose group this kind belongs to (`building_group` in handlers.rs).
+    pub group: &'static str,
+    /// The resolved static image path (`building_art_url`) — the generic plate when the kind ships
+    /// one, else the Gauls tribal plate as the canonical illustration.
+    pub image: String,
+    /// Hand-written flavor prose (what it is, why you build it, when it matters strategically) —
+    /// deliberately carries no balance numbers; any rules-fed figure belongs on the facts
+    /// line/`rules_note` instead.
+    pub explanation: &'static str,
     pub prerequisites: String,
     pub max_level: u8,
     pub multi: bool,
-    /// The level-1 cost, "wood/clay/iron/crop" — `"—"` when the kind has no level-1 cost under the
-    /// loaded rules (127 review S1: a missing cost must never silently render as free, `0/0/0/0`).
-    pub cost: String,
+    /// A rules-fed callout appended to the facts line — `Some` only for Embassy (its join/found
+    /// alliance levels) and Wonder (its win level), formatted from the resolved rules rather than
+    /// hand-typed (127 review M4's guarantee, carried over from the old `purpose` column). Every
+    /// other kind is `None`.
+    pub rules_note: Option<String>,
+    /// The full per-level cost/time table for the `<details>` inside this chapter.
+    pub levels: ManualBuildingLevels,
+}
+
+/// One resource field's illustration + caption for the Resource fields section's image strip (127
+/// redesign).
+pub struct ManualFieldImage {
+    pub label: &'static str,
+    pub image: String,
 }
 
 /// A `level → value` row shared by the buildings/mechanics curve tables (127 T2) — pre-formatted in

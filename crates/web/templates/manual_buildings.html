@@ -10,37 +10,59 @@
     <section class="phead">
       <div class="phead__eyebrow">Reference</div>
       <h1 class="phead__title">Buildings</h1>
-      <p class="phead__sub">Every building's purpose, prerequisites, and level-1 cost at a glance below —
-        plus the full per-level cost &amp; build-time table for every kind, and the resource-field
-        curves, further down — straight from the loaded balance rules.</p>
+      <p class="phead__sub">Every building gets its own chapter below — what it is, why you'd build
+        it, and its full per-level cost &amp; build-time table — plus a few illustrative curves and
+        the resource-field numbers further down, straight from the loaded balance rules.</p>
     </section>
     <p class="manual__banner">{{ banner }}</p>
 
-    <section class="manual__refsec">
-      <h2>All buildings</h2>
-      <div style="overflow-x:auto">
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Building</th><th>Purpose</th><th>Prerequisites</th><th class="num">Max level</th>
-            <th>Multi?</th><th class="num">Level 1 cost (w/c/i/r)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for b in rows %}
-          <tr>
-            <td>{{ b.name }}</td>
-            <td>{{ b.purpose }}</td>
-            <td>{{ b.prerequisites }}</td>
-            <td class="num">{{ b.max_level }}</td>
-            <td>{% if b.multi %}Yes — stacks{% else %}No — one per village{% endif %}</td>
-            <td class="num">{{ b.cost }}</td>
-          </tr>
+    <nav class="manual__jump" aria-label="Jump to a building">
+      {% for g in groups %}
+      <div class="manual__jump-group">
+        <h3>{{ g.title }}</h3>
+        <div class="manual__jump-chips">
+          {% for item in g.items %}
+          <a class="manual__chip" href="#{{ item.slug }}">{{ item.name }}</a>
           {% endfor %}
-        </tbody>
-      </table>
+        </div>
       </div>
+      {% endfor %}
+    </nav>
+
+    {% for b in buildings %}
+    <section class="manual__bldg" id="{{ b.slug }}">
+      <h2>{{ b.name }}</h2>
+      <figure class="manual__bldg-fig">
+        <img src="{{ b.image }}" alt="{{ b.name }}" loading="lazy">
+      </figure>
+      <p class="manual__bldg-prose">{{ b.explanation }}</p>
+      <p class="manual__facts">Prerequisites: {{ b.prerequisites }} · Max level {{ b.max_level }} ·
+        {% if b.multi %}Stacks — multiple per village{% else %}One per village{% endif %}{% if let Some(n) = b.rules_note %} · {{ n }}{% endif %}</p>
+      <details class="manual__lvls">
+        <summary>Full cost &amp; build time — levels 1–{{ b.max_level }}</summary>
+        {% if b.levels.sampled %}
+        <p class="manual__note">Sampled every 10th level (1, 10, 20, … 100) — 100 rows would dwarf
+          every other section on this page even collapsed; the Wonder's cost and time both escalate
+          by a fixed ratio each level in between.</p>
+        {% endif %}
+        <div style="overflow-x:auto">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Level</th><th class="num">Wood</th><th class="num">Clay</th>
+              <th class="num">Iron</th><th class="num">Crop</th><th class="num">Build time</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in b.levels.rows %}
+            <tr><td>{{ r.level }}</td><td class="num">{{ r.wood }}</td><td class="num">{{ r.clay }}</td><td class="num">{{ r.iron }}</td><td class="num">{{ r.crop }}</td><td class="num">{{ r.time }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      </details>
     </section>
+    {% endfor %}
 
     <section class="manual__refsec">
       <h2>Key per-level curves</h2>
@@ -93,38 +115,15 @@
     </section>
 
     <section class="manual__refsec">
-      <h2>Full per-level costs &amp; times</h2>
-      <p class="manual__note">Times shown for Main Building level 1 — a higher Main Building
-        reduces them further.</p>
-      {% for b in building_levels %}
-      <details class="manual__lvls">
-        <summary>{{ b.name }} — levels 1–{{ b.max_level }}</summary>
-        {% if b.sampled %}
-        <p class="manual__note">Sampled every 10th level (1, 10, 20, … 100) — 100 rows would dwarf
-          every other table on this page even collapsed; the Wonder's cost and time both escalate
-          by a fixed ratio each level in between (see the Wonder chapter for the exact curve).</p>
-        {% endif %}
-        <div style="overflow-x:auto">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Level</th><th class="num">Wood</th><th class="num">Clay</th>
-              <th class="num">Iron</th><th class="num">Crop</th><th class="num">Build time</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for r in b.rows %}
-            <tr><td>{{ r.level }}</td><td class="num">{{ r.wood }}</td><td class="num">{{ r.clay }}</td><td class="num">{{ r.iron }}</td><td class="num">{{ r.crop }}</td><td class="num">{{ r.time }}</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        </div>
-      </details>
-      {% endfor %}
-    </section>
-
-    <section class="manual__refsec">
       <h2>Resource fields</h2>
+      <div class="manual__field-strip">
+        {% for f in field_images %}
+        <figure class="manual__field-fig">
+          <img src="{{ f.image }}" alt="{{ f.label }}" loading="lazy">
+          <figcaption>{{ f.label }}</figcaption>
+        </figure>
+        {% endfor %}
+      </div>
       <h3>Wood / Clay / Iron field upgrade costs</h3>
       <div style="overflow-x:auto">
       <table class="table">

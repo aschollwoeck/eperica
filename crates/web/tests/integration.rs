@@ -13750,6 +13750,14 @@ async fn manual_reference_pages_are_public_and_match_classic_values(pool: sqlx::
         clubswinger_row.contains("95/75/40/40"),
         "clubswinger's cost row: {clubswinger_row}"
     );
+    // 127 redesign: every roster row leads with a portrait thumbnail — the Legionnaire's ships art
+    // (`romans_legionnaire.webp`), unlike the three pinned `UNIT_ART_GAPS`.
+    assert!(
+        units_body.contains(
+            r#"<img class="manual__unit-thumb" src="/static/units/romans_legionnaire.webp""#
+        ),
+        "Legionnaire's portrait renders: {units_body}"
+    );
 
     // --- Buildings: public 200, Warehouse L10 capacity 12 000. ---
     let buildings_res = anon
@@ -13766,6 +13774,18 @@ async fn manual_reference_pages_are_public_and_match_classic_values(pool: sqlx::
     assert!(
         buildings_body.contains("<td>10</td><td class=\"num\">12000</td>"),
         "Warehouse level 10 capacity is 12 000: {buildings_body}"
+    );
+    // 127 redesign: the old summary table is gone — every buildable kind now gets its own chapter
+    // (illustration, flavor prose, facts line, and the per-level `<details>` folded in). Spot-check
+    // the Rally Point's chapter, which ships a generic (non-tribal) plate — `building_art_url`
+    // resolves it straight to `/static/buildings/rally_point.webp`, no Gauls fallback needed.
+    assert!(
+        buildings_body.contains(r#"<section class="manual__bldg" id="rally_point">"#),
+        "Rally Point renders its own chapter section: {buildings_body}"
+    );
+    assert!(
+        buildings_body.contains(r#"<img src="/static/buildings/rally_point.webp""#),
+        "Rally Point's chapter shows its generic illustration: {buildings_body}"
     );
     // Embassy's blurb (127 review M4) is formatted from `AllianceRules` at render time, not
     // hand-typed — pin it against the classic bundle's own `join_embassy_level`/
