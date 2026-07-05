@@ -433,6 +433,15 @@ mod tests {
         );
     }
 
+    /// 126 AC2: transport-level failures (which now include client-side TIMEOUTS — the
+    /// ApiClient is built with connect/total timeouts) classify as Transient: the bot logs,
+    /// reschedules, and the semaphore permit returns. A timeout can never freeze the fleet.
+    #[test]
+    fn classify_transport_failure_is_transient() {
+        let f = ApiFailure::Http("request timed out (client timeout)".to_owned());
+        assert!(matches!(classify(&f), Outcome::Transient(_)));
+    }
+
     #[test]
     fn classify_bad_body_transient() {
         let f = ApiFailure::BadBody("unexpected EOF".into());

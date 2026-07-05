@@ -82,7 +82,15 @@ impl AnthropicBackend {
         Self {
             key: key.into(),
             model: model.into(),
-            http: reqwest::Client::new(),
+            // 126: explicit timeouts here too — this call runs INSIDE a bot's tick while the
+            // fleet semaphore permit is held, so a hung Anthropic request would freeze the
+            // fleet exactly like a hung game-API request. Total is generous (LLM responses
+            // are slow); a timeout surfaces as an advise Err → prior strategy persists.
+            http: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .expect("HTTP client construction must succeed at startup"),
         }
     }
 }

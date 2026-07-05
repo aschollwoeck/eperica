@@ -79,7 +79,14 @@ impl ApiClient {
         Self {
             base: base.into().trim_end_matches('/').to_owned(),
             token: token.into(),
-            http: reqwest::Client::new(),
+            // 126: explicit timeouts — reqwest's default has NONE, so a hung request (server
+            // restart under a live fleet) would hold a semaphore permit forever and freeze the
+            // fleet at --cap. A timeout is a normal Transient outcome (retry next tick).
+            http: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .expect("HTTP client construction must succeed at startup"),
         }
     }
 
