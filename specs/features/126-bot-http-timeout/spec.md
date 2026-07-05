@@ -1,6 +1,6 @@
 # Feature 126 — bot runner: HTTP timeouts (no hung fleet)
 
-**Status:** Draft
+**Status:** Verified (reviewer APPROVE at 4034cf9 — both must-fixes closed: stray blob rebuilt out of history, strategist client bounded too)
 **Depends on:** 121 (ApiClient, fleet semaphore).
 **Origin:** live incident (2026-07-04): a running fleet went silent for 20 h (the runner process
 died without a trace — cause unattributed). The post-mortem found a genuine freeze hole

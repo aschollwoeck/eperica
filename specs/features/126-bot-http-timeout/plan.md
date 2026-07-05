@@ -1,6 +1,6 @@
 # Plan — 126 bot HTTP timeouts
 
-**Status:** Draft (spec approved)
+**Status:** Verified (built as planned; reviewer APPROVE)
 
 Two client constructions in `crates/bots` move from `reqwest::Client::new()` (NO default
 timeout) to `Client::builder()` with explicit bounds:
