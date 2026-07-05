@@ -880,7 +880,11 @@ fn manual_building_levels(
     let max_level = build.max_level(target);
     let sampled = kind == BuildingKind::Wonder;
     let levels: Vec<u8> = if sampled {
-        std::iter::once(1).chain((1..=10).map(|n| n * 10)).collect()
+        // Derive the sample points from the actual max level (every 10th) rather than a
+        // literal 100 — if the Wonder curve ever changed length, the rows stay in range.
+        std::iter::once(1)
+            .chain((1..=(max_level / 10)).map(|n| n * 10))
+            .collect()
     } else {
         (1..=max_level).collect()
     };

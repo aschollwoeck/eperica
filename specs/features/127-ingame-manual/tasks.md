@@ -1,6 +1,6 @@
 # Tasks — 127 the in-game manual
 
-**Status:** Draft. Gates per task: fmt, clippy -D warnings, cargo test --workspace.
+**Status:** Verified (reviewer APPROVE, 2026-07-05). Gates per task: fmt, clippy -D warnings, cargo test --workspace.
 
 - [x] **T1 — Manual infrastructure.** pulldown-cmark; manual.rs registry (six sections,
   compile-time embeds, link rewriting, callouts, anchors, escaping); /manual + /manual/{slug}
@@ -14,7 +14,7 @@
   the voice rules; big tables → reference links; README regenerated (six sections). (AC6)
 - [x] **T4 — Prose rework wave 2.** Expansion + Society + Reference-section prose (artifacts,
   wonder) rewritten; cross-link pass over the whole corpus; corpus render test green. (AC6)
-- [ ] **T5 — Review & accept.** Gates green; reviewer APPROVE (incl. fact spot-checks);
+- [x] **T5 — Review & accept.** Gates green; reviewer APPROVE (incl. fact spot-checks);
   statuses flipped; merged when Verified.
 
 ## Done when

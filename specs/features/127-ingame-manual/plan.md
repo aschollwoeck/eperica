@@ -1,6 +1,6 @@
 # Plan — 127 the in-game manual
 
-**Status:** Draft (spec approved)
+**Status:** Verified (built as planned; reviewer APPROVE ×2)
 
 ## Constitution check
 

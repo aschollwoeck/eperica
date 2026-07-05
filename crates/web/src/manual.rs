@@ -601,7 +601,7 @@ mod tests {
             // A .md-shaped link that FAILED rewriting escapes the /manual prefix scan as a
             // relative href — catch that class too: no rendered href may end in .md.
             assert!(
-                !rendered.html.contains(".md\""),
+                !rendered.html.contains(".md\"") && !rendered.html.contains(".md#"),
                 "{slug} contains an unrewritten .md href"
             );
         }
