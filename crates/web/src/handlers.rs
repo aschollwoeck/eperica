@@ -257,7 +257,7 @@ const GENERIC_BUILDING_ART: [&str; 9] = [
 /// kind ships one (`GENERIC_BUILDING_ART`), else the Gauls tribal plate — a single, deterministic
 /// chain (127 redesign) rather than the CSS-layered generic+tribe-overlay the single-building pages
 /// use, so the manual's `<img>` always has one definite `src` a test can stat on disk (see
-/// `building_and_field_art_resolves_to_a_file_on_disk` below).
+/// `building_and_field_art_resolves_to_a_file_that_exists_on_disk` below).
 fn building_art_url(slug: &str) -> String {
     if GENERIC_BUILDING_ART.contains(&slug) {
         format!("/static/buildings/{slug}.webp")
@@ -318,8 +318,7 @@ fn building_explanation(kind: BuildingKind) -> &'static str {
             "The village's parade ground: no troop marches out, and none returns, without a Rally \
              Point standing here. It's where you review incoming attacks, send raids and \
              reinforcements, and recall an army already on the move, so it matters the moment you \
-             have troops worth moving at all. Every village is founded with one already built, and \
-             — unlike almost everything else — it can never be torn down."
+             have troops worth moving at all. Every village is founded with one already built."
         }
         BuildingKind::Warehouse => {
             "A raised, guarded store for wood, clay, and iron: without enough capacity, a thriving \
@@ -367,14 +366,16 @@ fn building_explanation(kind: BuildingKind) -> &'static str {
             "The village's research hall: units beyond your tribe's starting roster must be \
              researched here before a Barracks, Stable, or Workshop can ever train them. Visit it \
              the moment your strategy calls for a unit you don't yet have — cavalry, siege engines, \
-             and the expansion units all wait behind an Academy unlock. Research, once completed, \
-             belongs to every village you own, not just the one that researched it."
+             and the expansion units all wait behind an Academy unlock. Research is a village \
+             matter: each village unlocks its own roster, so a newly founded village starts from \
+             scratch and needs its own Academy before it can train beyond the basics."
         }
         BuildingKind::Smithy => {
             "A forge that permanently upgrades an already-researched unit's attack or defence, \
              sharpening the troops you already train rather than adding new ones. It rewards a \
-             settled, defensible position — the gains apply to every unit of that type you train \
-             afterward, so it's most worthwhile once you know which units you'll keep fielding. \
+             settled, defensible position — the gains apply to every unit of that type this \
+             village fields, including troops trained before the upgrade, so it's most worthwhile \
+             once you know which units you'll keep fielding. \
              Prioritise whichever side, attack or defence, your strategy actually leans on."
         }
         BuildingKind::Stable => {
@@ -416,8 +417,7 @@ fn building_explanation(kind: BuildingKind) -> &'static str {
             "Produces the culture points that gate every act of expansion — founding a new village, \
              or growing an alliance, both draw on the culture your Town Halls generate. Build and \
              raise it well ahead of your next planned settlement, since culture accumulates \
-             gradually and a shortfall stalls expansion outright. It also hosts celebrations, a \
-             further source of culture for a village that invests in it."
+             gradually and a shortfall stalls expansion outright."
         }
         BuildingKind::Palace => {
             "Designates the village as your capital — the one village that can never be conquered, \
