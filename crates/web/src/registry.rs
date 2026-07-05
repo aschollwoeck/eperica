@@ -94,6 +94,28 @@ impl WorldRegistry {
         }
     }
 
+    /// The world's cached [`WorldMeta`], loading (and caching) it from its row on a first access
+    /// (P10, 127 review S2) — the one cache-miss dance `context_for`/`comms_context_for`/
+    /// `label_and_rules_for` each need, previously written out three times over. `None` if the world
+    /// does not exist or its speed is invalid.
+    async fn meta_for(&self, world_id: WorldId) -> Option<WorldMeta> {
+        if let Some(m) = self.meta.lock().unwrap().get(&world_id).cloned() {
+            return Some(m);
+        }
+        let world = world_by_id(&self.pool, world_id).await.ok()??;
+        let m = WorldMeta {
+            seed: world.seed,
+            radius: world.radius,
+            speed: GameSpeed::new(world.speed).ok()?,
+            rules: self.rules_for(&world.rule_preset)?,
+            ai_labeled: world.ai_visibility != "disguised",
+            name: world.name,
+            preset: world.rule_preset,
+        };
+        self.meta.lock().unwrap().insert(world_id, m.clone());
+        Some(m)
+    }
+
     /// The selected world's game runtime (043): a freshly-built world-scoped `PgAccountRepository` + its
     /// `WorldMap` + speed + radius + resolved rule bundle + AI label flag, from the cached meta. The map is
     /// generate-on-read, so building the runtime is cheap; the cache is populated on first access from the
@@ -109,24 +131,7 @@ impl WorldRegistry {
         Arc<WorldRules>,
         bool,
     )> {
-        let cached = self.meta.lock().unwrap().get(&world_id).cloned();
-        let meta = match cached {
-            Some(m) => m,
-            None => {
-                let world = world_by_id(&self.pool, world_id).await.ok()??;
-                let m = WorldMeta {
-                    seed: world.seed,
-                    radius: world.radius,
-                    speed: GameSpeed::new(world.speed).ok()?,
-                    rules: self.rules_for(&world.rule_preset)?,
-                    ai_labeled: world.ai_visibility != "disguised",
-                    name: world.name,
-                    preset: world.rule_preset,
-                };
-                self.meta.lock().unwrap().insert(world_id, m.clone());
-                m
-            }
-        };
+        let meta = self.meta_for(world_id).await?;
         let map = Arc::new(WorldMap::new(
             meta.seed as u64,
             meta.radius,
@@ -159,24 +164,7 @@ impl WorldRegistry {
         &self,
         world_id: WorldId,
     ) -> Option<(PgAccountRepository, Arc<WorldRules>)> {
-        let cached = self.meta.lock().unwrap().get(&world_id).cloned();
-        let meta = match cached {
-            Some(m) => m,
-            None => {
-                let world = world_by_id(&self.pool, world_id).await.ok()??;
-                let m = WorldMeta {
-                    seed: world.seed,
-                    radius: world.radius,
-                    speed: GameSpeed::new(world.speed).ok()?,
-                    rules: self.rules_for(&world.rule_preset)?,
-                    ai_labeled: world.ai_visibility != "disguised",
-                    name: world.name,
-                    preset: world.rule_preset,
-                };
-                self.meta.lock().unwrap().insert(world_id, m.clone());
-                m
-            }
-        };
+        let meta = self.meta_for(world_id).await?;
         let repo = PgAccountRepository::new(
             self.pool.clone(),
             world_id,
@@ -197,24 +185,7 @@ impl WorldRegistry {
         &self,
         world_id: WorldId,
     ) -> Option<(String, GameSpeed, Arc<WorldRules>, String)> {
-        let cached = self.meta.lock().unwrap().get(&world_id).cloned();
-        let meta = match cached {
-            Some(m) => m,
-            None => {
-                let world = world_by_id(&self.pool, world_id).await.ok()??;
-                let m = WorldMeta {
-                    seed: world.seed,
-                    radius: world.radius,
-                    speed: GameSpeed::new(world.speed).ok()?,
-                    rules: self.rules_for(&world.rule_preset)?,
-                    ai_labeled: world.ai_visibility != "disguised",
-                    name: world.name,
-                    preset: world.rule_preset,
-                };
-                self.meta.lock().unwrap().insert(world_id, m.clone());
-                m
-            }
-        };
+        let meta = self.meta_for(world_id).await?;
         Some((meta.name, meta.speed, Arc::clone(&meta.rules), meta.preset))
     }
 

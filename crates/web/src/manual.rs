@@ -218,6 +218,14 @@ fn render_markdown(src: &str) -> String {
 fn transform<'a>(events: Vec<Event<'a>>) -> Vec<Event<'a>> {
     let mut out = Vec::with_capacity(events.len());
     let mut i = 0;
+    // Blockquote nesting depth (mirrors `classify_callout`'s own tracking) — the label-stripping
+    // below only ever fires at depth 1, the same scope a callout's classifying strong run lives in.
+    let mut quote_depth = 0i32;
+    // Armed with the callout's label text (e.g. "Tip:") right after entering a classified callout
+    // blockquote; disarmed the moment the matching `Strong` run is stripped. `strip_leading_space`
+    // then eats the one space between the removed label and the rest of the sentence.
+    let mut strip_label: Option<&'static str> = None;
+    let mut strip_leading_space = false;
     while i < events.len() {
         match &events[i] {
             Event::Start(Tag::Heading {
@@ -238,15 +246,54 @@ fn transform<'a>(events: Vec<Event<'a>>) -> Vec<Event<'a>> {
             Event::Start(Tag::BlockQuote(_)) => {
                 let class = classify_callout(&events, i);
                 match class {
-                    Some(c) => out.push(Event::Html(CowStr::from(format!(
-                        "<blockquote class=\"co {c}\">\n"
-                    )))),
+                    Some(c) => {
+                        out.push(Event::Html(CowStr::from(format!(
+                            "<blockquote class=\"co {c}\">\n"
+                        ))));
+                        // The CSS `::before` on `.co-*` already prints the label ("Tip"/"Warning"/
+                        // "Faithful") — arm the strip so the redundant `**Tip:**` bold prefix in the
+                        // prose itself doesn't also render (NIT, 127 review: "double label").
+                        strip_label = CALLOUT_KINDS
+                            .iter()
+                            .find(|(_, kind)| *kind == c)
+                            .map(|(prefix, _)| *prefix);
+                    }
                     None => out.push(Event::Html(CowStr::from("<blockquote>\n"))),
                 }
+                quote_depth += 1;
                 i += 1;
             }
             Event::End(TagEnd::BlockQuote(_)) => {
                 out.push(Event::Html(CowStr::from("</blockquote>\n")));
+                quote_depth -= 1;
+                if quote_depth == 0 {
+                    strip_label = None;
+                }
+                i += 1;
+            }
+            // The first top-level Strong run inside an armed callout is exactly the label
+            // `classify_callout` matched (same depth, same "first strong" rule) — drop the whole
+            // run (`Start(Strong)` .. `End(Strong)`, nested strongs included) rather than emit it.
+            Event::Start(Tag::Strong) if quote_depth == 1 && strip_label.is_some() => {
+                let mut j = i + 1;
+                let mut strong_depth = 1i32;
+                while j < events.len() && strong_depth > 0 {
+                    match &events[j] {
+                        Event::Start(Tag::Strong) => strong_depth += 1,
+                        Event::End(TagEnd::Strong) => strong_depth -= 1,
+                        _ => {}
+                    }
+                    j += 1;
+                }
+                i = j;
+                strip_label = None;
+                strip_leading_space = true;
+            }
+            Event::Text(t) if strip_leading_space => {
+                out.push(Event::Text(CowStr::from(
+                    t.strip_prefix(' ').unwrap_or(t).to_owned(),
+                )));
+                strip_leading_space = false;
                 i += 1;
             }
             Event::Start(Tag::Link {
@@ -346,15 +393,29 @@ fn classify_callout(events: &[Event], start: usize) -> Option<&'static str> {
 /// `<slug>.md[#anchor]` (external URLs, absolute paths, bare anchors) passes through unchanged.
 fn rewrite_link(dest: &str) -> String {
     match rewrite_target(dest) {
-        Some(t) => format!("/manual/{t}"),
+        Some(RewriteTarget::Home) => "/manual".to_owned(),
+        Some(RewriteTarget::Chapter(t)) => format!("/manual/{t}"),
         None => dest.to_owned(),
     }
 }
 
-/// The slug (+ optional `#anchor`) rewrite of a `foo.md`/`foo.md#anchor` link target, or `None` if
-/// `target` isn't that shape (external `://` URL, absolute `/…` path, bare `#anchor`, or anything
-/// with characters outside `[a-z0-9_-]` in the filename part).
-fn rewrite_target(target: &str) -> Option<String> {
+/// Where a `foo.md`/`foo.md#anchor`/`README.md` link target rewrites to.
+#[derive(Debug, PartialEq, Eq)]
+enum RewriteTarget {
+    /// `README.md` (± anchor — the anchor is dropped, the index has no headings of its own) — the
+    /// manual's own contents page isn't a registered chapter, so it rewrites straight to `/manual`
+    /// rather than a dead `/manual/README`.
+    Home,
+    /// An ordinary registered chapter slug (+ optional `#anchor`).
+    Chapter(String),
+}
+
+/// The rewrite of a `foo.md`/`foo.md#anchor` link target, or `None` if `target` isn't that shape
+/// (external `://` URL, absolute `/…` path, bare `#anchor`, or a filename with characters outside
+/// `[a-z0-9_-]` — every registered chapter slug is lowercase, so anything else can never resolve).
+/// `README.md` is the one special case, matched before that lowercase check (`README` itself is
+/// uppercase by convention, and isn't a registered slug at all — see [`RewriteTarget::Home`]).
+fn rewrite_target(target: &str) -> Option<RewriteTarget> {
     if target.is_empty()
         || target.contains("://")
         || target.starts_with('/')
@@ -367,17 +428,40 @@ fn rewrite_target(target: &str) -> Option<String> {
         None => (target, None),
     };
     let slug = path.strip_suffix(".md")?;
+    if slug == "README" {
+        return Some(RewriteTarget::Home);
+    }
     if slug.is_empty()
         || !slug
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
     {
         return None;
     }
-    Some(match anchor {
+    Some(RewriteTarget::Chapter(match anchor {
         Some(a) if !a.is_empty() => format!("{slug}#{a}"),
         _ => slug.to_owned(),
-    })
+    }))
+}
+
+/// Every `href="/manual…"` target rendered into `html`, in appearance order (127 review M1) — the
+/// dead-link regression test scans these across the whole corpus so a broken intra-manual link is a
+/// **build-time test failure**, never a live 404 a reader stumbles into. Test-only (no production
+/// caller), so it's gated the same way the rest of the test-only helpers below are.
+#[cfg(test)]
+fn manual_hrefs(html: &str) -> Vec<&str> {
+    const NEEDLE: &str = "href=\"/manual";
+    let mut out = Vec::new();
+    let mut scanned = 0usize;
+    while let Some(rel) = html[scanned..].find(NEEDLE) {
+        let value_start = scanned + rel + "href=\"".len();
+        let end = html[value_start..]
+            .find('"')
+            .map_or(html.len(), |e| value_start + e);
+        out.push(&html[value_start..end]);
+        scanned = end;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -427,10 +511,13 @@ mod tests {
 
     #[test]
     fn link_rewriting_handles_anchor_and_bare_targets() {
-        assert_eq!(rewrite_target("resources.md"), Some("resources".to_owned()));
+        assert_eq!(
+            rewrite_target("resources.md"),
+            Some(RewriteTarget::Chapter("resources".to_owned()))
+        );
         assert_eq!(
             rewrite_target("resources.md#storage"),
-            Some("resources#storage".to_owned())
+            Some(RewriteTarget::Chapter("resources#storage".to_owned()))
         );
     }
 
@@ -441,6 +528,31 @@ mod tests {
         assert_eq!(rewrite_target("/manual/reference/units"), None);
         assert_eq!(rewrite_target("#anchor-only"), None);
         assert_eq!(rewrite_target("mailto:a@b.com"), None);
+    }
+
+    /// M1 (127 review): `README.md` — the manual's own contents page, linked from every chapter's
+    /// footer — isn't a registered chapter (it has no slug), so it must not become a dead
+    /// `/manual/README`. The anchor (if any) is dropped; the index has no headings to target.
+    #[test]
+    fn link_rewriting_special_cases_readme_to_the_manual_index() {
+        assert_eq!(rewrite_target("README.md"), Some(RewriteTarget::Home));
+        assert_eq!(
+            rewrite_target("README.md#contents"),
+            Some(RewriteTarget::Home)
+        );
+        let html = render_markdown("See the [index](README.md).");
+        assert!(html.contains(r#"href="/manual""#), "{html}");
+        assert!(!html.contains("/manual/README"), "{html}");
+    }
+
+    /// M1 (127 review): the doc comment on `rewrite_target` claims `[a-z0-9_-]` — the code
+    /// previously accepted uppercase too (`is_ascii_alphanumeric`), which was never exercised
+    /// because every real chapter slug is lowercase. Pin the doc's stricter behavior: an uppercase
+    /// filename (other than the special-cased `README`) does not resolve.
+    #[test]
+    fn link_rewriting_rejects_uppercase_outside_the_readme_special_case() {
+        assert_eq!(rewrite_target("Resources.md"), None);
+        assert_eq!(rewrite_target("RESOURCES.md"), None);
     }
 
     #[test]
@@ -462,6 +574,33 @@ mod tests {
         );
     }
 
+    /// M1 (127 review), the class-killing test: every `href="/manual…"` rendered anywhere in the
+    /// whole chapter corpus must resolve — either the bare index, a registered chapter slug, or one
+    /// of the three generated reference pages. A future chapter that links a renamed/removed slug
+    /// fails *this* test, not a reader's click.
+    #[test]
+    fn every_rendered_manual_href_resolves() {
+        let slugs: HashSet<&str> = all_slugs().into_iter().collect();
+        for slug in all_slugs() {
+            let rendered = render(slug).unwrap();
+            for href in manual_hrefs(&rendered.html) {
+                if href == "/manual" {
+                    continue;
+                }
+                let Some(rest) = href.strip_prefix("/manual/") else {
+                    panic!("{slug}: malformed manual href {href}");
+                };
+                let target = rest.split('#').next().unwrap_or(rest);
+                let resolves = slugs.contains(target)
+                    || matches!(
+                        target,
+                        "reference/units" | "reference/buildings" | "reference/mechanics"
+                    );
+                assert!(resolves, "{slug} links to unresolvable {href}");
+            }
+        }
+    }
+
     #[test]
     fn callout_classing_recognizes_all_three_kinds() {
         let tip = render_markdown("> **Tip:** do the thing.");
@@ -472,6 +611,37 @@ mod tests {
 
         let faith = render_markdown("> **Faithful:** just like the original.");
         assert!(faith.contains(r#"class="co co-faith""#), "{faith}");
+    }
+
+    /// NIT (127 review): the CSS `::before` on `.co-tip`/`.co-warn`/`.co-faith` already prints the
+    /// label, so the rendered body must not also show the bold `**Tip:**`/`**Warning:**`/
+    /// `**Faithful:**` prefix — that was a double label. The rest of the sentence (and its own
+    /// bold text, if any) survives untouched.
+    #[test]
+    fn callout_label_prefix_is_stripped_once_not_duplicated() {
+        let tip = render_markdown("> **Tip:** do the **important** thing.");
+        assert!(!tip.contains("Tip:"), "{tip}");
+        assert!(
+            tip.contains("do the <strong>important</strong> thing."),
+            "{tip}"
+        );
+        assert!(tip.contains(r#"class="co co-tip""#), "{tip}");
+
+        let warn = render_markdown("> **Warning:** don't do the thing.");
+        assert!(!warn.contains("Warning:"), "{warn}");
+        assert!(warn.contains("don't do the thing."), "{warn}");
+
+        let faith = render_markdown("> **Faithful:** just like the original.");
+        assert!(!faith.contains("Faithful:"), "{faith}");
+        assert!(faith.contains("just like the original."), "{faith}");
+
+        // A non-matching blockquote keeps its bold text exactly as written — only the classifying
+        // label prefix is ever stripped.
+        let other_strong = render_markdown("> **Not a callout.** Some more text.");
+        assert!(
+            other_strong.contains("<strong>Not a callout.</strong>"),
+            "{other_strong}"
+        );
     }
 
     #[test]
@@ -526,5 +696,69 @@ mod tests {
         assert_eq!(REFERENCE_LINKS.len(), 3);
         let slugs: Vec<_> = REFERENCE_LINKS.iter().map(|r| r.slug).collect();
         assert_eq!(slugs, ["units", "buildings", "mechanics"]);
+    }
+
+    /// M2 (127 review, AC1): `docs/manual/README.md` is the repo-reader's contents page (GitHub never
+    /// runs this code, so it needs its own hand-maintained `## Contents`) — it must mirror the
+    /// registry it's a manual copy of, or the two drift apart unnoticed. Parses the six `### N. Title`
+    /// sections and their `](slug.md)`-style bullet links (in order) and asserts each section's title
+    /// and slug list matches [`SECTIONS`] exactly. The three generated reference pages are linked from
+    /// README as absolute `/manual/reference/...` paths (not `.md`), so they're naturally excluded from
+    /// this `.md`-link scan — consistent with the registry's own `REFERENCE_LINKS` being separate from
+    /// `SECTIONS`.
+    #[test]
+    fn readme_contents_mirrors_the_chapter_registry() {
+        const README: &str = include_str!("../../../docs/manual/README.md");
+
+        let mut readme_sections: Vec<(String, Vec<String>)> = Vec::new();
+        let mut current: Option<(String, Vec<String>)> = None;
+        for line in README.lines() {
+            if let Some(heading) = line.strip_prefix("### ") {
+                if let Some(done) = current.take() {
+                    readme_sections.push(done);
+                }
+                // "1. Getting started" -> "Getting started".
+                let title = heading
+                    .split_once(". ")
+                    .map_or(heading, |(_, t)| t)
+                    .to_owned();
+                current = Some((title, Vec::new()));
+            } else if let Some((_, slugs)) = current.as_mut() {
+                let mut rest = line;
+                while let Some(open) = rest.find("](") {
+                    let after = &rest[open + 2..];
+                    let close = after.find(')').unwrap_or(after.len());
+                    let target = &after[..close];
+                    if let Some(slug) = target.strip_suffix(".md") {
+                        slugs.push(slug.to_owned());
+                    } else if let Some((slug, _anchor)) = target.split_once(".md#") {
+                        slugs.push(slug.to_owned());
+                    }
+                    rest = &after[close..];
+                }
+            }
+        }
+        if let Some(done) = current.take() {
+            readme_sections.push(done);
+        }
+
+        assert_eq!(
+            readme_sections.len(),
+            SECTIONS.len(),
+            "README's section count must mirror the registry: {readme_sections:?}"
+        );
+        for ((readme_title, readme_slugs), section) in readme_sections.iter().zip(SECTIONS.iter()) {
+            assert_eq!(
+                readme_title, section.title,
+                "README section heading order/text must mirror the registry"
+            );
+            let registry_slugs: Vec<&str> = section.chapters.iter().map(|c| c.slug).collect();
+            assert_eq!(
+                readme_slugs.iter().map(String::as_str).collect::<Vec<_>>(),
+                registry_slugs,
+                "README's {} section must link the same chapters, same order, as the registry",
+                section.title
+            );
+        }
     }
 }

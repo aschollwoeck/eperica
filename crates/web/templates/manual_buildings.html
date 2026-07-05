@@ -33,7 +33,7 @@
             <td>{{ b.prerequisites }}</td>
             <td class="num">{{ b.max_level }}</td>
             <td>{% if b.multi %}Yes — stacks{% else %}No — one per village{% endif %}</td>
-            <td class="num">{{ b.cost_wood }}/{{ b.cost_clay }}/{{ b.cost_iron }}/{{ b.cost_crop }}</td>
+            <td class="num">{{ b.cost }}</td>
           </tr>
           {% endfor %}
         </tbody>

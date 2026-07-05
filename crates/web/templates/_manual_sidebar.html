@@ -11,7 +11,7 @@
     {% endfor %}
     {% if section.title == "Reference" %}
     {% for link in ref_links %}
-    <li><a class="manual__link" href="/manual/reference/{{ link.slug }}">{{ link.title }}</a></li>
+    <li><a class="manual__link{% if link.is_active %} manual__link--active{% endif %}" href="/manual/reference/{{ link.slug }}">{{ link.title }}</a></li>
     {% endfor %}
     {% endif %}
   </ul>

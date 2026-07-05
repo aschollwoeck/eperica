@@ -72,6 +72,10 @@ pub struct ManualChapterRow {
 pub struct ManualRefLinkRow {
     pub slug: &'static str,
     pub title: &'static str,
+    /// Highlights this link in the sidebar when its own reference page is the one currently open
+    /// (127 review NIT — previously always `false`, so the three reference pages never lit
+    /// themselves up in their own sidebar).
+    pub is_active: bool,
 }
 
 /// The generated Units reference page (127 T2, AC3/AC4): every tribe's full roster from the resolved
@@ -134,15 +138,16 @@ pub struct ManualBuildingsTemplate {
 /// One building kind's reference row.
 pub struct ManualBuildingRow {
     pub name: &'static str,
-    /// A one-line, prose purpose description (a fixed const table in the handler — not balance data).
-    pub purpose: &'static str,
+    /// A one-line, prose purpose description — fixed text for most kinds, but Embassy/Wonder are
+    /// formatted from the resolved rules at render time (127 review M4), so this is owned rather
+    /// than a `&'static str`.
+    pub purpose: String,
     pub prerequisites: String,
     pub max_level: u8,
     pub multi: bool,
-    pub cost_wood: i64,
-    pub cost_clay: i64,
-    pub cost_iron: i64,
-    pub cost_crop: i64,
+    /// The level-1 cost, "wood/clay/iron/crop" — `"—"` when the kind has no level-1 cost under the
+    /// loaded rules (127 review S1: a missing cost must never silently render as free, `0/0/0/0`).
+    pub cost: String,
 }
 
 /// A `level → value` row shared by the buildings/mechanics curve tables (127 T2) — pre-formatted in

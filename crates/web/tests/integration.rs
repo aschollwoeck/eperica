@@ -13613,6 +13613,74 @@ async fn manual_navigation_breadcrumbs_and_site_links(pool: sqlx::PgPool) {
     );
 }
 
+/// AC6 (127 review M3): a prose spot-check over the chapters that quote **classic** balance figures
+/// directly in their text — resources' field-upgrade costs, conquest's loyalty numbers, and
+/// settling's settler count. These are hand-written prose (unlike the T2 reference pages' rules-
+/// generated tables), so nothing re-checks them against `specs/balance/presets/classic/` at build
+/// time; this test at least pins the current prose so a future balance change is forced to touch it
+/// deliberately, not silently go stale. Matched against stable substrings straight from the chapters
+/// (`docs/manual/resources.md`, `conquest.md`, `settling.md`).
+#[sqlx::test(migrations = "../../migrations")]
+async fn manual_prose_quotes_the_current_classic_balance_figures(pool: sqlx::PgPool) {
+    let base = spawn(pool).await;
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Resources: a level-1 cropland (70/90/70/20 — construction.toml's crop_cost) and the capital's
+    // raised field cap (20, vs. a normal village's 10).
+    let resources_body = anon
+        .get(format!("{base}/manual/resources"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        resources_body.contains("70 wood / 90 clay / 70 iron / 20 crop"),
+        "the level-1 cropland cost ratio (70/90/70/20): {resources_body}"
+    );
+    assert!(
+        resources_body.contains("level 20"),
+        "the capital's raised field cap (20): {resources_body}"
+    );
+
+    // Conquest: an administrator's loyalty drop (20–30, conquest.toml's loyalty_drop_min/max) and the
+    // post-conquest reset (25, post_conquest_loyalty).
+    let conquest_body = anon
+        .get(format!("{base}/manual/conquest"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        conquest_body.contains("20\u{2013}30 points"),
+        "the administrator loyalty-drop range (20-30): {conquest_body}"
+    );
+    assert!(
+        conquest_body.contains("25 loyalty"),
+        "the post-conquest loyalty reset (25): {conquest_body}"
+    );
+
+    // Settling: 3 settlers together found a village (culture.toml's settlers_per_village).
+    let settling_body = anon
+        .get(format!("{base}/manual/settling"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        settling_body.contains("3 settlers together"),
+        "founding a village needs 3 settlers: {settling_body}"
+    );
+}
+
 // ============================================================================
 // 127 T2 — the generated manual reference pages: /manual/reference/{units,buildings,mechanics}.
 // ============================================================================
@@ -13698,6 +13766,26 @@ async fn manual_reference_pages_are_public_and_match_classic_values(pool: sqlx::
     assert!(
         buildings_body.contains("<td>10</td><td class=\"num\">12000</td>"),
         "Warehouse level 10 capacity is 12 000: {buildings_body}"
+    );
+    // Embassy's blurb (127 review M4) is formatted from `AllianceRules` at render time, not
+    // hand-typed — pin it against the classic bundle's own `join_embassy_level`/
+    // `found_embassy_level` so a future preset change is forced to keep the prose honest.
+    let classic = load_world_rules("classic").expect("classic bundle loads");
+    assert!(
+        buildings_body.contains(&format!(
+            "level {} to join an alliance, level {} to found one",
+            classic.alliance.join_embassy_level, classic.alliance.found_embassy_level
+        )),
+        "Embassy's blurb is rules-driven, not hand-typed: {buildings_body}"
+    );
+    // The Wonder's blurb is likewise formatted from the domain `MAX_WONDER_LEVEL` const rather than
+    // a hand-typed "100".
+    assert!(
+        buildings_body.contains(&format!(
+            "raise it to {} to win the round",
+            eperica_domain::MAX_WONDER_LEVEL
+        )),
+        "Wonder's blurb names the real win level: {buildings_body}"
     );
 
     // --- Mechanics: public 200, CP threshold 200, outpost capacities 1..6, ram durabilities per
@@ -13857,5 +13945,30 @@ async fn manual_reference_pages_are_world_aware(pool: sqlx::PgPool) {
     assert!(
         anon_body.contains("protection lasts <b>3 days</b>"),
         "anonymous sees classic's 3-day protection: {anon_body}"
+    );
+
+    // S3 (127 review): logging out must clear the world-selection cookie too, not just the auth
+    // cookie — otherwise `ac`'s now-logged-out session would keep reading Blitzburg's numbers off a
+    // stale `WORLD_COOKIE`, even though it no longer identifies as anyone. `ac` keeps its cookie jar
+    // across the logout (the same `reqwest::Client`), so this exercises exactly that carry-over.
+    let logout = ac.post(format!("{base}/logout")).send().await.unwrap();
+    assert_eq!(logout.status().as_u16(), 303, "logout succeeds");
+    let after_logout_body = ac
+        .get(format!("{base}/manual/reference/mechanics"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        after_logout_body.contains(
+            "Values shown for the classic rules — join a world to see its exact numbers."
+        ),
+        "a logged-out reader is truly anonymous — classic banner, not Blitzburg's: {after_logout_body}"
+    );
+    assert!(
+        after_logout_body.contains("protection lasts <b>3 days</b>"),
+        "a logged-out reader sees classic's 3-day protection, not the speed preset's 1 day: {after_logout_body}"
     );
 }

@@ -2,7 +2,7 @@
 
 use crate::auth::{
     AuthUser, GameContext, MaybeAuthUser, MaybeRealUser, RealUser, WORLD_COOKIE, WorldScope,
-    auth_cookie, clear_cookie, world_cookie,
+    auth_cookie, clear_cookie, clear_world_cookie, world_cookie,
 };
 use crate::state::AppState;
 use crate::templates::{
@@ -68,15 +68,15 @@ use eperica_application::{
     PLAYERS_PER_PAGE, player_villages, players as spectate_player_index, village_detail, world_feed,
 };
 use eperica_domain::{
-    AllianceId, AllianceRight, AllianceRole, AttackMode, BuildTarget, BuildingKind, ChatChannel,
-    Coordinate, DEMOLISH_MIN_MAIN_BUILDING, DiplomacyStance, DiplomacyStatus, Economy, GameSpeed,
-    MedalCategory, MovementKind, OasisBonus, PlayerId, Presence, Quadrant, QuestReward, QueueLane,
-    ReportReason, ResearchDenied, ResourceAmounts, ResourceKind, RightSet, SanctionKind,
-    ScoutTarget, TileKind, Timestamp, TradeKind, Tribe, UnitId, UnitRole, UnitRules, UnitSpec,
-    UpgradeDenied, VILLAGE_BUILDING_SLOTS, Village, VillageId, WorldId, building_at,
-    can_access_channel, can_afford, can_place, can_research, can_upgrade, current_quest,
-    expansion_slots, garrison_upkeep, is_inactive, per_unit_time_secs, prerequisites_met, presence,
-    queue_lane, regenerate_loyalty, reserved_kind, scaled_time_secs,
+    AllianceId, AllianceRight, AllianceRole, AllianceRules, AttackMode, BuildTarget, BuildingKind,
+    ChatChannel, Coordinate, DEMOLISH_MIN_MAIN_BUILDING, DiplomacyStance, DiplomacyStatus, Economy,
+    GameSpeed, MAX_WONDER_LEVEL, MedalCategory, MovementKind, OasisBonus, PlayerId, Presence,
+    Quadrant, QuestReward, QueueLane, ReportReason, ResearchDenied, ResourceAmounts, ResourceKind,
+    RightSet, SanctionKind, ScoutTarget, TileKind, Timestamp, TradeKind, Tribe, UnitId, UnitRole,
+    UnitRules, UnitSpec, UpgradeDenied, VILLAGE_BUILDING_SLOTS, Village, VillageId, WorldId,
+    building_at, can_access_channel, can_afford, can_place, can_research, can_upgrade,
+    current_quest, expansion_slots, garrison_upkeep, is_inactive, per_unit_time_secs,
+    prerequisites_met, presence, queue_lane, regenerate_loyalty, reserved_kind, scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use eperica_infrastructure::{DEFAULT_PRESET, KNOWN_PRESETS, WorldRules, known_preset};
@@ -152,8 +152,26 @@ fn building_label(kind: BuildingKind) -> &'static str {
     }
 }
 
-/// A one-line description of what a building does, for the generic building page (087).
-fn building_blurb(kind: BuildingKind) -> &'static str {
+/// A one-line description of what a building does, for the generic building page (087) and the
+/// buildings reference page (127 T2). Fixed prose for every kind except two whose numbers are
+/// preset-configurable and must track the *loaded* rules, never a hand-typed guess (127 review M4):
+/// Embassy's join/found levels (`AllianceRules`) and the Wonder's win level (`MAX_WONDER_LEVEL`).
+fn building_blurb(kind: BuildingKind, alliance: &AllianceRules) -> String {
+    match kind {
+        BuildingKind::Embassy => format!(
+            "Diplomacy — level {} to join an alliance, level {} to found one.",
+            alliance.join_embassy_level, alliance.found_embassy_level
+        ),
+        BuildingKind::Wonder => {
+            format!("The Wonder of the World — raise it to {MAX_WONDER_LEVEL} to win the round.")
+        }
+        _ => building_blurb_fixed(kind).to_owned(),
+    }
+}
+
+/// The fixed-prose half of [`building_blurb`] — every kind except Embassy/Wonder, which that
+/// wrapper formats from the resolved rules instead (127 review M4).
+fn building_blurb_fixed(kind: BuildingKind) -> &'static str {
     match kind {
         BuildingKind::MainBuilding => {
             "The heart of the village — higher levels speed every construction."
@@ -164,7 +182,6 @@ fn building_blurb(kind: BuildingKind) -> &'static str {
         BuildingKind::Marketplace => {
             "Enables trade; its level sets how many merchants you command."
         }
-        BuildingKind::Embassy => "Diplomacy — level 1 to join an alliance, level 3 to found one.",
         BuildingKind::Wall => "Rings the village in defence; reduced by rams in a siege.",
         BuildingKind::Barracks => "Trains infantry.",
         BuildingKind::Academy => "Researches new unit types so they can be trained.",
@@ -177,7 +194,9 @@ fn building_blurb(kind: BuildingKind) -> &'static str {
         BuildingKind::TownHall => "Produces culture points, which gate founding new villages.",
         BuildingKind::Palace => "Designates your capital and trains settlers/administrators.",
         BuildingKind::Treasury => "Houses a captured artifact, whose power aids your empire.",
-        BuildingKind::Wonder => "The Wonder of the World — raise it to 100 to win the round.",
+        BuildingKind::Embassy | BuildingKind::Wonder => {
+            unreachable!("Embassy/Wonder are handled by building_blurb itself")
+        }
     }
 }
 
@@ -606,7 +625,7 @@ pub async fn terms() -> Response {
 pub async fn manual_index() -> Response {
     page(&ManualIndexTemplate {
         sections: manual_section_rows(None),
-        ref_links: manual_ref_link_rows(),
+        ref_links: manual_ref_link_rows(None),
     })
 }
 
@@ -618,7 +637,7 @@ pub async fn manual_chapter(Path(slug): Path<String>) -> Response {
     };
     page(&ManualChapterTemplate {
         sections: manual_section_rows(Some(&slug)),
-        ref_links: manual_ref_link_rows(),
+        ref_links: manual_ref_link_rows(None),
         section_title: chapter.section,
         title: chapter.title,
         html: chapter.html,
@@ -647,12 +666,17 @@ fn manual_section_rows(active_slug: Option<&str>) -> Vec<ManualSectionRow> {
         .collect()
 }
 
-fn manual_ref_link_rows() -> Vec<ManualRefLinkRow> {
+/// Builds the sidebar's generated-reference-page rows, marking the one matching `active_ref` (if
+/// any) as active — the reference-page counterpart of [`manual_section_rows`]'s `active_slug`
+/// (127 review NIT: previously always built with no active marker at all, even from the reference
+/// pages themselves).
+fn manual_ref_link_rows(active_ref: Option<&str>) -> Vec<ManualRefLinkRow> {
     crate::manual::REFERENCE_LINKS
         .iter()
         .map(|r| ManualRefLinkRow {
             slug: r.slug,
             title: r.title,
+            is_active: active_ref == Some(r.slug),
         })
         .collect()
 }
@@ -739,7 +763,7 @@ pub async fn manual_ref_units(State(state): State<AppState>, jar: PrivateCookieJ
         .collect();
     page(&ManualUnitsTemplate {
         sections: manual_section_rows(None),
-        ref_links: manual_ref_link_rows(),
+        ref_links: manual_ref_link_rows(Some("units")),
         banner: ctx.banner,
         tribes,
     })
@@ -830,17 +854,19 @@ pub async fn manual_ref_buildings(
                     .collect::<Vec<_>>()
                     .join(", ")
             };
-            let cost: ResourceAmounts = build.cost(target, 0).unwrap_or_default();
+            // `None` when the loaded rules define no level-1 cost for this kind — rendered as "—",
+            // never silently defaulted to a free-looking 0/0/0/0 (127 review S1).
+            let cost = build.cost(target, 0).map_or_else(
+                || "—".to_owned(),
+                |c: ResourceAmounts| format!("{}/{}/{}/{}", c.wood, c.clay, c.iron, c.crop),
+            );
             ManualBuildingRow {
                 name: building_label(kind),
-                purpose: building_blurb(kind),
+                purpose: building_blurb(kind, &ctx.rules.alliance),
                 prerequisites,
                 max_level: build.max_level(target),
                 multi: kind.is_multi(),
-                cost_wood: cost.wood,
-                cost_clay: cost.clay,
-                cost_iron: cost.iron,
-                cost_crop: cost.crop,
+                cost,
             }
         })
         .collect();
@@ -880,7 +906,7 @@ pub async fn manual_ref_buildings(
 
     page(&ManualBuildingsTemplate {
         sections: manual_section_rows(None),
-        ref_links: manual_ref_link_rows(),
+        ref_links: manual_ref_link_rows(Some("buildings")),
         banner: ctx.banner,
         rows,
         warehouse_curve,
@@ -969,7 +995,7 @@ pub async fn manual_ref_mechanics(
 
     page(&ManualMechanicsTemplate {
         sections: manual_section_rows(None),
-        ref_links: manual_ref_link_rows(),
+        ref_links: manual_ref_link_rows(Some("mechanics")),
         banner: ctx.banner,
         cp_thresholds,
         expansion_slots,
@@ -1148,9 +1174,13 @@ pub async fn login_submit(
     }
 }
 
-/// Log out: clear the auth cookie (Player) and return to the landing page.
+/// Log out: clear the auth cookie (Player) and the selected-world cookie, then return to the
+/// landing page. Clearing the world cookie too (127 review S3) matters beyond tidiness: the manual's
+/// world-aware reference pages read it even from an anonymous request, so leaving it set after
+/// logout would keep showing a logged-out reader their last-selected world's numbers instead of the
+/// classic fallback a truly anonymous visitor should see.
 pub async fn logout(jar: PrivateCookieJar) -> Response {
-    let jar = jar.remove(clear_cookie());
+    let jar = jar.remove(clear_cookie()).remove(clear_world_cookie());
     (jar, Redirect::to("/")).into_response()
 }
 
@@ -2642,7 +2672,7 @@ pub async fn building_detail(
         eyebrow: "Building",
         art_slug: building_kind_id(kind),
         title: building_label(kind).to_owned(),
-        blurb: building_blurb(kind).to_owned(),
+        blurb: building_blurb(kind, &ctx.rules.alliance),
         icon: format!("i-{}", building_kind_id(kind)),
         upgrade,
         can_demolish,
@@ -2719,7 +2749,7 @@ pub async fn slot_detail(
                 eyebrow: "Building",
                 art_slug: building_kind_id(kind),
                 title: building_label(kind).to_owned(),
-                blurb: building_blurb(kind).to_owned(),
+                blurb: building_blurb(kind, &ctx.rules.alliance),
                 icon: format!("i-{}", building_kind_id(kind)),
                 upgrade,
                 can_demolish,
