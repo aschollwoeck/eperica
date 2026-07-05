@@ -30,6 +30,50 @@ pub struct PrivacyTemplate;
 #[template(path = "terms.html")]
 pub struct TermsTemplate;
 
+/// The manual section index (127 T1): the six sections with their chapter links + a short intro.
+#[derive(Template)]
+#[template(path = "manual_index.html")]
+pub struct ManualIndexTemplate {
+    pub sections: Vec<ManualSectionRow>,
+    pub ref_links: Vec<ManualRefLinkRow>,
+}
+
+/// One rendered manual chapter (127 T1) — the markdown body is pre-rendered and pre-escaped by
+/// [`crate::manual::render`]; see the template for the `|safe` justification.
+#[derive(Template)]
+#[template(path = "manual_chapter.html")]
+pub struct ManualChapterTemplate {
+    pub sections: Vec<ManualSectionRow>,
+    pub ref_links: Vec<ManualRefLinkRow>,
+    pub section_title: &'static str,
+    pub title: &'static str,
+    /// Pre-rendered, pre-escaped chapter HTML — see the template's `|safe` comment for why this is
+    /// safe to insert unescaped.
+    pub html: String,
+    pub prev: Option<ManualChapterRow>,
+    pub next: Option<ManualChapterRow>,
+}
+
+/// A manual sidebar section: its title and the chapters under it, in registry order.
+pub struct ManualSectionRow {
+    pub title: &'static str,
+    pub chapters: Vec<ManualChapterRow>,
+}
+
+/// A chapter link in the manual sidebar/index/prev-next nav.
+pub struct ManualChapterRow {
+    pub slug: &'static str,
+    pub title: &'static str,
+    /// Highlights this chapter in the sidebar when it is the one currently open.
+    pub is_active: bool,
+}
+
+/// A generated reference page link (T2 delivers the route; the link is listed now per plan).
+pub struct ManualRefLinkRow {
+    pub slug: &'static str,
+    pub title: &'static str,
+}
+
 #[derive(Template)]
 #[template(path = "register.html")]
 pub struct RegisterTemplate {

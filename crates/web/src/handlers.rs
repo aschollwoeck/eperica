@@ -13,7 +13,8 @@ use crate::templates::{
     ForceRow, ForumPostRow, ForumTemplate, ForumThreadRow, ForumThreadTemplate, GarrisonRow,
     HistoryPointView, ImpressumTemplate, IncomingRow, IncomingView, IndexTemplate,
     JoinableWorldRow, JoinedWorldRow, LandingWorldRow, LeaderboardRowView, LeaderboardTemplate,
-    LoginTemplate, MapCellView, MapTemplate, MarketTemplate, MedalRowView, MemberStatRow,
+    LoginTemplate, ManualChapterRow, ManualChapterTemplate, ManualIndexTemplate, ManualRefLinkRow,
+    ManualSectionRow, MapCellView, MapTemplate, MarketTemplate, MedalRowView, MemberStatRow,
     MessagesTemplate, ModAccountTemplate, ModQueueTemplate, ModReportRow, MovementRow,
     NotificationRowView, NotificationsTemplate, OasisRow, OutgoingInviteView, PendingInviteView,
     PlayerStatsTemplate, PlotView, PrivacyTemplate, ProfileTemplate, QuestsTemplate, QueueView,
@@ -594,6 +595,71 @@ pub async fn privacy() -> Response {
 /// Legal: terms of service — public, static.
 pub async fn terms() -> Response {
     page(&TermsTemplate)
+}
+
+/// The manual section index (127 T1, AC1): public, no login — mirrors how the legal pages above
+/// need no session data at all (the nav's auth-aware groups are revealed client-side by the `/me`
+/// poll in base.html, not server-rendered).
+pub async fn manual_index() -> Response {
+    page(&ManualIndexTemplate {
+        sections: manual_section_rows(None),
+        ref_links: manual_ref_link_rows(),
+    })
+}
+
+/// A manual chapter (127 T1, AC1/AC2/AC5): rendered server-side from `docs/manual/{slug}.md` via
+/// [`crate::manual::render`]. Unknown slug is the site's normal 404.
+pub async fn manual_chapter(Path(slug): Path<String>) -> Response {
+    let Some(chapter) = crate::manual::render(&slug) else {
+        return not_found();
+    };
+    page(&ManualChapterTemplate {
+        sections: manual_section_rows(Some(&slug)),
+        ref_links: manual_ref_link_rows(),
+        section_title: chapter.section,
+        title: chapter.title,
+        html: chapter.html,
+        prev: chapter.prev.map(manual_nav_row),
+        next: chapter.next.map(manual_nav_row),
+    })
+}
+
+/// Builds the sidebar's section/chapter rows from the compile-time registry, marking the chapter
+/// matching `active_slug` (if any) as active.
+fn manual_section_rows(active_slug: Option<&str>) -> Vec<ManualSectionRow> {
+    crate::manual::SECTIONS
+        .iter()
+        .map(|s| ManualSectionRow {
+            title: s.title,
+            chapters: s
+                .chapters
+                .iter()
+                .map(|c| ManualChapterRow {
+                    slug: c.slug,
+                    title: c.title,
+                    is_active: active_slug == Some(c.slug),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn manual_ref_link_rows() -> Vec<ManualRefLinkRow> {
+    crate::manual::REFERENCE_LINKS
+        .iter()
+        .map(|r| ManualRefLinkRow {
+            slug: r.slug,
+            title: r.title,
+        })
+        .collect()
+}
+
+fn manual_nav_row(n: crate::manual::NavLink) -> ManualChapterRow {
+    ManualChapterRow {
+        slug: n.slug,
+        title: n.title,
+        is_active: false,
+    }
 }
 
 /// Registration form (Visitor).

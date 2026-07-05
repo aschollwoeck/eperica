@@ -19,6 +19,7 @@ use eperica_infrastructure::{
     map_rules, merchant_rules, now, oasis_rules, ranking_rules, run_chat_listener,
     run_notification_listener, scout_rules, starting_village, unit_rules,
 };
+use eperica_web::manual;
 use eperica_web::registry::WorldRegistry;
 use eperica_web::router;
 use eperica_web::state::AppState;
@@ -13424,4 +13425,190 @@ async fn admin_bulk_seeds_agents(pool: sqlx::PgPool) {
             .unwrap();
         assert_eq!(r.status().as_u16(), 401, "fleet-revoked token is rejected");
     }
+}
+
+// ============================================================================
+// 127 T1 — the in-game player manual: public routes, markdown pipeline, navigation & links.
+// ============================================================================
+
+/// AC1: `/manual` and every registered chapter render `200` with no login at all (a bare,
+/// cookie-less client) — iterating the registry via [`manual::all_slugs`] so this test can never
+/// drift out of sync with the chapter list. An unknown slug is the site's normal 404.
+#[sqlx::test(migrations = "../../migrations")]
+async fn manual_index_and_every_chapter_are_public(pool: sqlx::PgPool) {
+    let base = spawn(pool).await;
+    // No cookie store at all — a strictly anonymous request, proving login is never required.
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let index = anon.get(format!("{base}/manual")).send().await.unwrap();
+    assert_eq!(index.status().as_u16(), 200, "GET /manual is public");
+
+    let slugs = manual::all_slugs();
+    assert!(!slugs.is_empty(), "the manual registry must not be empty");
+    for slug in slugs {
+        let res = anon
+            .get(format!("{base}/manual/{slug}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status().as_u16(), 200, "GET /manual/{slug} is public");
+    }
+
+    let missing = anon
+        .get(format!("{base}/manual/no-such-chapter"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        missing.status().as_u16(),
+        404,
+        "an unregistered slug is the site's normal 404"
+    );
+}
+
+/// AC2: a chapter's rendered HTML shows a rewritten intra-manual link (`href="/manual/…"`, not a
+/// raw `docs/manual` filename) and no leftover markdown-link syntax (`](`) — proving the pipeline
+/// actually ran over real HTTP, on top of the direct unit coverage in `manual.rs`. Checked against
+/// every chapter (not one hardcoded slug) so a parallel prose rewrite can't accidentally desync
+/// this test from the corpus.
+#[sqlx::test(migrations = "../../migrations")]
+async fn manual_chapter_links_are_rewritten_to_site_routes(pool: sqlx::PgPool) {
+    let base = spawn(pool).await;
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let mut saw_rewritten_link = false;
+    for slug in manual::all_slugs() {
+        let body = anon
+            .get(format!("{base}/manual/{slug}"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(
+            !body.contains("]("),
+            "{slug} left an unrendered markdown-link artifact"
+        );
+        if body.contains(r#"href="/manual/"#) {
+            saw_rewritten_link = true;
+        }
+    }
+    assert!(
+        saw_rewritten_link,
+        "at least one chapter must show a rewritten intra-manual link"
+    );
+}
+
+/// AC5: the sidebar lists all six sections on both the index and a chapter page, the chapter page
+/// carries breadcrumbs and a valid prev/next footer nav, and the manual is linked from the site
+/// footer and the register page (navigation & appearance).
+#[sqlx::test(migrations = "../../migrations")]
+async fn manual_navigation_breadcrumbs_and_site_links(pool: sqlx::PgPool) {
+    let base = spawn(pool).await;
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let sections = [
+        "Getting started",
+        "Economy",
+        "Military",
+        "Expansion",
+        "Society",
+        "Reference",
+    ];
+
+    let index_body = anon
+        .get(format!("{base}/manual"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    for section in sections {
+        assert!(
+            index_body.contains(section),
+            "manual index sidebar/body must list section {section}"
+        );
+    }
+
+    // The first registered chapter carries breadcrumbs + a prev/next footer.
+    let first_slug = manual::all_slugs()[0];
+    let chapter = manual::render(first_slug).unwrap();
+    let chapter_body = anon
+        .get(format!("{base}/manual/{first_slug}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    for section in sections {
+        assert!(
+            chapter_body.contains(section),
+            "chapter sidebar must still list section {section}"
+        );
+    }
+    assert!(
+        chapter_body.contains("manual__crumbs"),
+        "breadcrumb nav present"
+    );
+    assert!(
+        chapter_body.contains(chapter.title),
+        "breadcrumb/heading shows the chapter title"
+    );
+    // The first chapter has no prev; it does have a next — assert that link's href resolves.
+    let next = chapter.next.expect("first chapter has a next");
+    let next_href = format!(r#"href="/manual/{}""#, next.slug);
+    assert!(
+        chapter_body.contains(&next_href),
+        "next-chapter nav href present: {next_href}"
+    );
+    let next_res = anon
+        .get(format!("{base}/manual/{}", next.slug))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        next_res.status().as_u16(),
+        200,
+        "the next-chapter link resolves"
+    );
+
+    // Site footer + register page both link to the manual (AC5 "linked from the site footer, the
+    // register page, and the in-game nav").
+    let home_body = anon
+        .get(format!("{base}/"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        home_body.contains(r#"href="/manual""#),
+        "the site footer/nav links to /manual"
+    );
+
+    let register_body = anon
+        .get(format!("{base}/register"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        register_body.contains(r#"href="/manual""#),
+        "the register page links to /manual"
+    );
 }
