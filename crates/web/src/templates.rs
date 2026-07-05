@@ -72,6 +72,10 @@ pub struct ManualChapterRow {
 pub struct ManualRefLinkRow {
     pub slug: &'static str,
     pub title: &'static str,
+    /// The fully resolved link target (128: not every entry lives under `/manual/reference/` —
+    /// the API reference link points at `/docs/api` — so the template renders this directly rather
+    /// than assuming the `/manual/reference/{slug}` shape).
+    pub href: &'static str,
     /// Highlights this link in the sidebar when its own reference page is the one currently open
     /// (127 review NIT — previously always `false`, so the three reference pages never lit
     /// themselves up in their own sidebar).
@@ -2077,4 +2081,76 @@ pub struct SpectateVillageTemplate {
     pub reinforcements: Vec<ReinforcementRow>,
     pub loyalty: i64,
     pub researched: Vec<String>,
+}
+
+// ============================================================================
+// 128 T2 — the developer API reference (/docs/api): swagger-style, generated from
+// `apidocs::registry()` (the single source shared with the OpenAPI export at
+// /docs/api/openapi.json, `apidocs::openapi_json`/`apidocs::OPENAPI_DOC`).
+// ============================================================================
+
+/// The developer API reference page (128 T2, AC1/AC3/AC5). Public, no login (Visitor role, like the
+/// manual) — rebuilt fresh per request from [`crate::apidocs::registry`] (cheap, static data, no
+/// I/O; see `handlers::docs_api`'s doc comment for why the HTML page rebuilds fresh while the JSON
+/// export instead reuses a startup-built [`crate::apidocs::OPENAPI_DOC`]).
+#[derive(Template)]
+#[template(path = "docs_api.html")]
+pub struct ApiDocsTemplate {
+    pub groups: Vec<ApiDocGroupRow>,
+}
+
+/// One sidebar/content group — the Agent API or the Spectator API.
+pub struct ApiDocGroupRow {
+    pub name: &'static str,
+    /// The auth scheme explainer shown once at the top of the group (AC5).
+    pub auth_blurb: &'static str,
+    pub endpoints: Vec<ApiDocEndpointRow>,
+}
+
+/// One documented operation: the collapsible `<details class="apidoc__op">` the sidebar links jump
+/// to by [`ApiDocEndpointRow::anchor`].
+pub struct ApiDocEndpointRow {
+    /// The `id` this operation's `<details>` carries, and what its sidebar link's `#anchor` targets —
+    /// slugified from method + path (e.g. `GET /api/me` → `get-api-me`).
+    pub anchor: String,
+    pub method: &'static str,
+    /// `"apidoc__badge--get"` or `"apidoc__badge--post"` — precomputed so the template never string-
+    /// compares `method` itself.
+    pub method_class: &'static str,
+    pub path: &'static str,
+    pub summary: &'static str,
+    pub description: &'static str,
+    pub params: Vec<ApiDocParamRow>,
+    /// The assembled, copyable `curl` line (AC3 — every endpoint, GET included; `{server}` is a
+    /// literal placeholder explained once in the page intro).
+    pub curl: String,
+    /// The POST request body example, pretty-printed (AC3: "POST endpoints show a request-body
+    /// example") — shown as its own pane in addition to being folded into `curl`'s `-d` value.
+    pub request_example: Option<String>,
+    pub responses: Vec<ApiDocResponseRow>,
+    pub errors: Vec<ApiDocErrorRow>,
+}
+
+/// One path/query parameter row for an operation's parameter table.
+pub struct ApiDocParamRow {
+    pub name: &'static str,
+    /// `"path"` or `"query"`.
+    pub location: &'static str,
+    pub ty: &'static str,
+    pub required: bool,
+    pub description: &'static str,
+}
+
+/// One documented success response — a status chip plus its pretty-printed JSON example pane.
+pub struct ApiDocResponseRow {
+    pub status: u16,
+    pub description: &'static str,
+    pub example: &'static str,
+}
+
+/// One documented error case row for an operation's error table.
+pub struct ApiDocErrorRow {
+    pub status: u16,
+    pub code: &'static str,
+    pub when: &'static str,
 }

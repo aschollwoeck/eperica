@@ -27,10 +27,14 @@ pub struct Section {
 }
 
 /// A generated reference page announced in the Reference section (T2 delivers the actual
-/// `/manual/reference/{slug}` routes).
+/// `/manual/reference/{slug}` routes). `href` carries the fully resolved link target so a linked
+/// page doesn't have to live under `/manual/reference/` at all (128: the developer API reference at
+/// `/docs/api` reuses this same list to get its Reference-section link, without forcing the sidebar
+/// template to assume every entry's URL shape).
 pub struct RefLink {
     pub slug: &'static str,
     pub title: &'static str,
+    pub href: &'static str,
 }
 
 /// Defines one [`Chapter`], embedding `docs/manual/<slug>.md` relative to this source file.
@@ -112,20 +116,28 @@ pub static SECTIONS: &[Section] = &[
     },
 ];
 
-/// The three generated reference pages (T2), listed in the Reference section alongside the prose
-/// end-game chapters.
+/// The generated reference pages (T2's three rules-fed pages, plus 128's developer API reference),
+/// listed in the Reference section alongside the prose end-game chapters.
 pub static REFERENCE_LINKS: &[RefLink] = &[
     RefLink {
         slug: "units",
         title: "Full unit stats",
+        href: "/manual/reference/units",
     },
     RefLink {
         slug: "buildings",
         title: "All buildings & prerequisites",
+        href: "/manual/reference/buildings",
     },
     RefLink {
         slug: "mechanics",
         title: "The numbers",
+        href: "/manual/reference/mechanics",
+    },
+    RefLink {
+        slug: "api",
+        title: "API reference (developers)",
+        href: "/docs/api",
     },
 ];
 
@@ -723,9 +735,18 @@ mod tests {
 
     #[test]
     fn reference_links_are_present() {
-        assert_eq!(REFERENCE_LINKS.len(), 3);
+        assert_eq!(REFERENCE_LINKS.len(), 4);
         let slugs: Vec<_> = REFERENCE_LINKS.iter().map(|r| r.slug).collect();
-        assert_eq!(slugs, ["units", "buildings", "mechanics"]);
+        assert_eq!(slugs, ["units", "buildings", "mechanics", "api"]);
+        // 128: the fourth link points off-manual entirely (`/docs/api`, not `/manual/reference/api`)
+        // — hrefs are carried explicitly so a linked page need not live under the generated-reference
+        // route shape at all.
+        let api = REFERENCE_LINKS.iter().find(|r| r.slug == "api").unwrap();
+        assert_eq!(api.href, "/docs/api");
+        for slug in ["units", "buildings", "mechanics"] {
+            let link = REFERENCE_LINKS.iter().find(|r| r.slug == slug).unwrap();
+            assert_eq!(link.href, format!("/manual/reference/{slug}"));
+        }
     }
 
     /// M2 (127 review, AC1): `docs/manual/README.md` is the repo-reader's contents page (GitHub never

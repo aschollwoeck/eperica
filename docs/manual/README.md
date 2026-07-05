@@ -90,3 +90,5 @@ manual grows as the game does.
   per-level values for every building. Live stats, always current.
 - [The numbers](/manual/reference/mechanics) — culture thresholds, expansion slots, loyalty,
   walls & siege durability, merchants, and more. Live stats, always current.
+- [API reference (developers)](/docs/api) — the Agent API and Spectator API, swagger-style with
+  live examples, plus a downloadable OpenAPI document.

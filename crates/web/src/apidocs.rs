@@ -14,6 +14,7 @@
 //! **P11:** the registry and the OpenAPI document are built in memory from static data — no I/O.
 
 use serde_json::{Value, json};
+use std::sync::LazyLock;
 
 /// Where a parameter rides: the path (`{world}`, `{village}`, …) or the query string (`?x=`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1510,6 +1511,14 @@ pub fn openapi_json() -> Value {
         "paths": Value::Object(paths),
     })
 }
+
+/// The OpenAPI document, built exactly once at first access (P11/AC6) — `GET /docs/api/openapi.json`
+/// (T2) clones this already-built [`Value`] per request rather than re-walking [`registry`] and
+/// re-parsing every example literal on every hit. The HTML reference page (T2) instead calls
+/// [`registry`] fresh per request: that page's per-request cost is dominated by Askama rendering
+/// anyway, and keeping it off the shared static avoids the two renderings ever reading the registry
+/// through different code paths.
+pub static OPENAPI_DOC: LazyLock<Value> = LazyLock::new(openapi_json);
 
 #[cfg(test)]
 mod tests {

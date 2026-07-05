@@ -1115,3 +1115,58 @@ a { color: var(--c-gold); }
   .manual__navcard--next { text-align: left; align-items: flex-start; }
   .manual__bldg-fig { float: none; width: 100%; max-width: 260px; margin: 0 0 var(--space-3); }
 }
+
+/* ============================================================================
+   128 — the developer API reference (/docs/api): reuses the manual's grid/sidebar/table shell
+   (`.page.manual`, `.manual__sidebar`, `.manual__section`, `.table`) and adds its own method
+   badges, collapsible operations, and monospace example panes.
+   ============================================================================ */
+.apidoc__navlink { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.apidoc__path { font-family: ui-monospace, monospace; font-size: .84rem; color: var(--c-ink); word-break: break-all; }
+
+/* Method badges — GET reuses the success token (a safe read), POST the warning token (a mutating
+   call) — both within the theme's existing accent tokens rather than inventing new colors. */
+.apidoc__badge {
+  display: inline-block; flex: none; padding: 1px 7px; border-radius: var(--radius-sm);
+  font-family: ui-monospace, monospace; font-size: .68rem; font-weight: 700;
+  letter-spacing: .04em; text-transform: uppercase; line-height: 1.6;
+}
+.apidoc__badge--get {
+  color: var(--c-success); background: color-mix(in srgb, var(--c-success) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-success) 40%, transparent);
+}
+.apidoc__badge--post {
+  color: var(--c-warning); background: color-mix(in srgb, var(--c-warning) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-warning) 40%, transparent);
+}
+
+.apidoc__auth { margin-bottom: var(--space-4); }
+
+/* One collapsible operation — same folded-`<details>` shape as `.manual__lvls`, sized for a full
+   description + tables + example panes rather than one table. */
+.apidoc__op {
+  border: 1px solid var(--c-border); border-radius: var(--radius-md); background: var(--c-panel);
+  margin-bottom: 10px; padding: 0 var(--space-4);
+  scroll-margin-top: calc(var(--topbar-h) + 12px);
+}
+.apidoc__op-summary {
+  cursor: pointer; padding: 12px 0; list-style: none;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.apidoc__op-summary::-webkit-details-marker { display: none; }
+.apidoc__op-summary::before { content: "▸ "; color: var(--c-gold); }
+.apidoc__op[open] .apidoc__op-summary::before { content: "▾ "; }
+.apidoc__op-title { color: var(--c-ink-muted); font-size: .9rem; }
+.apidoc__op-body { padding-bottom: var(--space-4); }
+.apidoc__desc { color: var(--c-ink-muted); max-width: 76ch; }
+.apidoc__h4 { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; color: var(--c-ink-muted); margin: var(--space-4) 0 6px; }
+
+/* Copyable request/response panes (curl lines, JSON bodies) — monospace, horizontally scrollable so
+   a long curl line or wide JSON object never blows out the layout. */
+.apidoc__pane {
+  background: var(--c-panel-alt); border: 1px solid var(--c-border); border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4); overflow-x: auto; font-family: ui-monospace, monospace;
+  font-size: .84rem; white-space: pre; margin: 0 0 var(--space-3);
+}
+.apidoc__resp-desc { margin: 0 0 4px; font-size: .9rem; color: var(--c-ink); }
+.apidoc__status { font-family: ui-monospace, monospace; font-weight: 700; color: var(--c-gold); margin-right: 4px; }

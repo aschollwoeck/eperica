@@ -19,9 +19,12 @@ use eperica_infrastructure::{
     map_rules, merchant_rules, now, oasis_rules, ranking_rules, run_chat_listener,
     run_notification_listener, scout_rules, starting_village, unit_rules,
 };
+use eperica_web::api;
+use eperica_web::apidocs;
 use eperica_web::manual;
 use eperica_web::registry::WorldRegistry;
 use eperica_web::router;
+use eperica_web::spectator_api;
 use eperica_web::state::AppState;
 use reqwest::header::LOCATION;
 use std::sync::Arc;
@@ -14078,5 +14081,197 @@ async fn manual_reference_pages_are_world_aware(pool: sqlx::PgPool) {
     assert!(
         after_logout_body.contains("protection lasts <b>3 days</b>"),
         "a logged-out reader sees classic's 3-day protection, not the speed preset's 1 day: {after_logout_body}"
+    );
+}
+
+// ============================================================================
+// 128 T2 — the developer API reference: /docs/api (swagger-style HTML) + /docs/api/openapi.json.
+// ============================================================================
+
+/// AC1: both routes render `200` for a strictly anonymous client (no cookies at all), the JSON
+/// route's content-type is `application/json`, and the footer links `/docs/api`.
+#[sqlx::test(migrations = "../../migrations")]
+async fn docs_api_and_openapi_are_public_and_linked(pool: sqlx::PgPool) {
+    let base = spawn(pool).await;
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let page = anon.get(format!("{base}/docs/api")).send().await.unwrap();
+    assert_eq!(page.status().as_u16(), 200, "GET /docs/api is public");
+    let page_body = page.text().await.unwrap();
+    assert!(
+        page_body.contains(r#"href="/docs/api/openapi.json""#),
+        "the page must link the OpenAPI document for download: {page_body}"
+    );
+
+    let openapi = anon
+        .get(format!("{base}/docs/api/openapi.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        openapi.status().as_u16(),
+        200,
+        "GET /docs/api/openapi.json is public"
+    );
+    let content_type = openapi
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        content_type.starts_with("application/json"),
+        "openapi.json content-type is {content_type}"
+    );
+    let openapi_text = openapi.text().await.unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&openapi_text).unwrap();
+    assert_eq!(doc["openapi"].as_str(), Some("3.0.3"));
+
+    // Both the site footer and the anonymous manual index link the reference page.
+    let index_body = anon.get(format!("{base}/")).send().await.unwrap();
+    assert_eq!(index_body.status().as_u16(), 200);
+    let index_body = index_body.text().await.unwrap();
+    assert!(
+        index_body.contains(r#"href="/docs/api""#),
+        "the site footer must link /docs/api: {index_body}"
+    );
+
+    let manual_index = anon
+        .get(format!("{base}/manual"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        manual_index.contains(r#"href="/docs/api""#),
+        "the manual's Reference section must link /docs/api: {manual_index}"
+    );
+}
+
+/// AC2 (the coverage test, T2's headline requirement): the registry's `(method, path)` pairs must
+/// equal, in both directions, the real routers' own literal lists (`api::router_paths`,
+/// `spectator_api::router_paths` — hand-maintained immediately beside each `router()`, since
+/// `axum::Router` offers no public introspection). A route added to either router without a matching
+/// registry entry (or vice versa) fails here loudly, instead of the reference page silently going
+/// stale. Pure in-memory comparison — no HTTP, no DB needed, so this is a plain `#[test]`.
+#[test]
+fn docs_api_registry_covers_every_real_route_both_directions() {
+    use std::collections::HashSet;
+
+    let registry: HashSet<(&'static str, String)> = apidocs::registry_paths().into_iter().collect();
+
+    let mut routers: HashSet<(&'static str, String)> = HashSet::new();
+    for (method, path) in api::router_paths() {
+        routers.insert((method, path.to_owned()));
+    }
+    for (method, path) in spectator_api::router_paths() {
+        routers.insert((method, path.to_owned()));
+    }
+
+    let missing_from_registry: Vec<_> = routers.difference(&registry).collect();
+    assert!(
+        missing_from_registry.is_empty(),
+        "routes registered on api::router()/spectator_api::router() but undocumented: {missing_from_registry:?}"
+    );
+    let ghosts_in_registry: Vec<_> = registry.difference(&routers).collect();
+    assert!(
+        ghosts_in_registry.is_empty(),
+        "registry entries with no matching real route: {ghosts_in_registry:?}"
+    );
+    assert_eq!(
+        registry, routers,
+        "registry and real routes must match exactly"
+    );
+}
+
+/// AC3: the attack operation shows a copyable `curl` line with the correct method/path and the
+/// agent bearer scheme, the shared error contract names the 429/`retry_after_secs` rate-budget
+/// rule, and a known response fragment (the attack response's `movement` echo) is present. Quote
+/// characters inside the rendered `<pre>` panes are HTML-entity-escaped by Askama's default
+/// escaper, so assertions below avoid literal `"` in the needles.
+#[sqlx::test(migrations = "../../migrations")]
+async fn docs_api_shows_curl_examples_and_the_error_contract(pool: sqlx::PgPool) {
+    let base = spawn(pool).await;
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let body = anon
+        .get(format!("{base}/docs/api"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    assert!(
+        body.contains("curl -X POST {server}/api/w/{world}/village/{village}/attack"),
+        "the attack op must show its assembled curl line: {body}"
+    );
+    assert!(
+        body.contains("Authorization: Bearer epk_"),
+        "the attack op's curl line must carry the agent bearer header: {body}"
+    );
+    assert!(
+        body.contains("retry_after_secs"),
+        "the central error contract must mention retry_after_secs: {body}"
+    );
+    assert!(
+        body.contains("429"),
+        "the central error contract must mention the 429 rate-limit status: {body}"
+    );
+    assert!(
+        body.contains("movement"),
+        "the attack response example (movement echo) must appear: {body}"
+    );
+}
+
+/// AC5: the sidebar lists both group titles, at least one method-badge class renders, and
+/// collapsible `<details>` operations are present (default collapsed — no `open` attribute).
+#[sqlx::test(migrations = "../../migrations")]
+async fn docs_api_swagger_like_ux_elements_are_present(pool: sqlx::PgPool) {
+    let base = spawn(pool).await;
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let body = anon
+        .get(format!("{base}/docs/api"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    assert!(
+        body.contains("Agent API"),
+        "the Agent API group title must render: {body}"
+    );
+    assert!(
+        body.contains("Spectator API"),
+        "the Spectator API group title must render: {body}"
+    );
+    assert!(
+        body.contains("apidoc__badge--get") || body.contains("apidoc__badge--post"),
+        "at least one method badge class must render: {body}"
+    );
+    assert!(
+        body.contains("class=\"apidoc__op\""),
+        "collapsible operations must render: {body}"
+    );
+    // Default-collapsed (no `open` attribute): pin the exact opening tag for a known operation
+    // (`GET /api/me`'s anchor, `get-api-me`) rather than a fragile absence-of-substring check.
+    assert!(
+        body.contains(r#"<details class="apidoc__op" id="get-api-me">"#),
+        "operations must render collapsed (`<details>` with no `open` attribute): {body}"
     );
 }

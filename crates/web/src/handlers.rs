@@ -8,10 +8,11 @@ use crate::state::AppState;
 use crate::templates::{
     AcademyRow, AcademyTemplate, AchievementRowView, ActiveView, AdminAccountRow, AdminTemplate,
     AdminWorldRow, AgentBotRow, AllianceStatsTemplate, AllianceTemplate, AlliedVillageView,
-    ArtifactRowView, AuditRow, BuildMenuTemplate, BuildRow, ChatLineView, CompletedQuestView,
-    ConversationRow, ConversationTemplate, CurrentQuestView, DetailTemplate, DiploRowView,
-    ForceRow, ForumPostRow, ForumTemplate, ForumThreadRow, ForumThreadTemplate, GarrisonRow,
-    HistoryPointView, ImpressumTemplate, IncomingRow, IncomingView, IndexTemplate,
+    ApiDocEndpointRow, ApiDocErrorRow, ApiDocGroupRow, ApiDocParamRow, ApiDocResponseRow,
+    ApiDocsTemplate, ArtifactRowView, AuditRow, BuildMenuTemplate, BuildRow, ChatLineView,
+    CompletedQuestView, ConversationRow, ConversationTemplate, CurrentQuestView, DetailTemplate,
+    DiploRowView, ForceRow, ForumPostRow, ForumTemplate, ForumThreadRow, ForumThreadTemplate,
+    GarrisonRow, HistoryPointView, ImpressumTemplate, IncomingRow, IncomingView, IndexTemplate,
     JoinableWorldRow, JoinedWorldRow, LandingWorldRow, LeaderboardRowView, LeaderboardTemplate,
     LoginTemplate, ManualBuildingGroup, ManualBuildingLevels, ManualBuildingSection,
     ManualBuildingsTemplate, ManualChapterRow, ManualChapterTemplate, ManualCostRow,
@@ -1017,6 +1018,7 @@ fn manual_ref_link_rows(active_ref: Option<&str>) -> Vec<ManualRefLinkRow> {
         .map(|r| ManualRefLinkRow {
             slug: r.slug,
             title: r.title,
+            href: r.href,
             is_active: active_ref == Some(r.slug),
         })
         .collect()
@@ -1769,6 +1771,152 @@ pub async fn manual_ref_mechanics(
         inactive_after: fmt_days(lifecycle.inactive_after_secs),
         abandon_after: fmt_days(lifecycle.abandon_after_secs),
     })
+}
+
+// ============================================================================
+// 128 T2 — the developer API reference: /docs/api (swagger-style HTML) + /docs/api/openapi.json.
+// Both render from `crate::apidocs`, the single registry shared with the Agent (118/119) and
+// Spectator (125) routers (AC2's coverage test enforces that every route on both is represented).
+// ============================================================================
+
+/// The swagger-style reference page (128 T2, AC1/AC3/AC5). Public, no login — like the manual.
+/// Rebuilt fresh per request from [`crate::apidocs::registry`]: that's static in-memory data (no
+/// I/O, P11/AC6), and per-request cost here is dominated by Askama rendering anyway, so there is no
+/// benefit to caching this side the way [`docs_api_openapi`] caches the OpenAPI document — doing so
+/// would only add a second static holding the same data through a different code path.
+pub async fn docs_api() -> Response {
+    let groups = crate::apidocs::registry()
+        .into_iter()
+        .map(api_doc_group_row)
+        .collect();
+    page(&ApiDocsTemplate { groups })
+}
+
+/// The OpenAPI 3.0.3 export (128 T2, AC1/AC4/AC6). Serves [`crate::apidocs::OPENAPI_DOC`] — built
+/// once at first access, so this handler only clones an already-built [`serde_json::Value`] rather
+/// than re-walking the registry and re-parsing every example literal on every hit (the sharper P11
+/// case of the two renderings: external tooling may poll this far more than a human opens the HTML
+/// page).
+pub async fn docs_api_openapi() -> Response {
+    axum::Json(crate::apidocs::OPENAPI_DOC.clone()).into_response()
+}
+
+fn api_doc_group_row(group: crate::apidocs::ApiGroup) -> ApiDocGroupRow {
+    ApiDocGroupRow {
+        name: group.name,
+        auth_blurb: group.auth_blurb,
+        endpoints: group
+            .endpoints
+            .into_iter()
+            .map(api_doc_endpoint_row)
+            .collect(),
+    }
+}
+
+fn api_doc_endpoint_row(ep: crate::apidocs::Endpoint) -> ApiDocEndpointRow {
+    let anchor = api_doc_anchor(ep.method, ep.path);
+    let method_class = if ep.method == "GET" {
+        "apidoc__badge--get"
+    } else {
+        "apidoc__badge--post"
+    };
+    let bearer_placeholder = if ep.auth == "agent" {
+        "epk_key-id_secret…"
+    } else {
+        "spk_key-id_secret…"
+    };
+    let curl = api_doc_curl(&ep, bearer_placeholder);
+    let params = ep
+        .params
+        .iter()
+        .map(|p| ApiDocParamRow {
+            name: p.name,
+            location: match p.location {
+                crate::apidocs::ParamLocation::Path => "path",
+                crate::apidocs::ParamLocation::Query => "query",
+            },
+            ty: p.ty,
+            required: p.required,
+            description: p.description,
+        })
+        .collect();
+    let request_example = ep.request_example.map(str::to_owned);
+    ApiDocEndpointRow {
+        anchor,
+        method: ep.method,
+        method_class,
+        path: ep.path,
+        summary: ep.summary,
+        description: ep.description,
+        params,
+        curl,
+        request_example,
+        responses: ep
+            .responses
+            .into_iter()
+            .map(|r| ApiDocResponseRow {
+                status: r.status,
+                description: r.description,
+                example: r.example,
+            })
+            .collect(),
+        errors: ep
+            .errors
+            .into_iter()
+            .map(|e| ApiDocErrorRow {
+                status: e.status,
+                code: e.code,
+                when: e.when,
+            })
+            .collect(),
+    }
+}
+
+/// The anchor id an operation's `<details>` carries, and what its sidebar link targets — slugified
+/// from method + path (e.g. `GET /api/me` → `get-api-me`), mirroring `manual::slugify`'s convention
+/// for heading anchors.
+fn api_doc_anchor(method: &str, path: &str) -> String {
+    let raw = format!("{method}-{path}").to_lowercase();
+    let mut out = String::with_capacity(raw.len());
+    let mut prev_dash = true;
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            prev_dash = false;
+        } else if !prev_dash {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    out
+}
+
+/// Assembles the copyable `curl` line (AC3 — every endpoint, GET included). `{server}` is a literal
+/// placeholder (explained once in the page intro) since the actual host is world-operator-specific;
+/// a POST's request example (already validated as JSON by `apidocs.rs`'s own unit tests) is
+/// compacted to one line for the `-d` value.
+fn api_doc_curl(ep: &crate::apidocs::Endpoint, bearer_placeholder: &str) -> String {
+    let mut parts = vec![
+        "curl".to_owned(),
+        "-X".to_owned(),
+        ep.method.to_owned(),
+        format!("{{server}}{}", ep.path),
+        "-H".to_owned(),
+        format!("\"Authorization: Bearer {bearer_placeholder}\""),
+    ];
+    if let Some(body) = ep.request_example {
+        let compact = serde_json::from_str::<serde_json::Value>(body)
+            .map(|v| v.to_string())
+            .unwrap_or_else(|_| body.to_owned());
+        parts.push("-H".to_owned());
+        parts.push("\"Content-Type: application/json\"".to_owned());
+        parts.push("-d".to_owned());
+        parts.push(format!("'{compact}'"));
+    }
+    parts.join(" ")
 }
 
 /// Registration form (Visitor).

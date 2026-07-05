@@ -486,6 +486,11 @@ pub fn router(state: AppState) -> Router {
             "/manual/reference/mechanics",
             get(handlers::manual_ref_mechanics),
         )
+        // The developer API reference (128 T2) — swagger-style HTML + the OpenAPI 3.0 export, both
+        // generated from the `apidocs` registry (the single source shared with the Agent/Spectator
+        // routers below). Fully public, no login, no world-path requirement — like the manual above.
+        .route("/docs/api", get(handlers::docs_api))
+        .route("/docs/api/openapi.json", get(handlers::docs_api_openapi))
         // World-coupled routes live under `/w/{world}/…` (056); the world (its UUID) is read from the path.
         .nest("/w/{world}", world_router())
         // The Agent API (118, ADR 0036) — bearer-key JSON surface for AI agents; world-scoped agent

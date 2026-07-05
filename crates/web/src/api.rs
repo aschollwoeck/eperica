@@ -1955,3 +1955,33 @@ pub fn router() -> axum::Router<AppState> {
             )
         })
 }
+
+/// The literal `(method, path)` list of every route on [`router`] — **keep in lockstep with
+/// `router()` above: the 128 coverage test compares this to the docs registry** (`apidocs::registry`).
+/// `axum::Router` offers no public route introspection, so this hand-maintained constant, placed
+/// immediately beside the router it mirrors, is the drift alarm: add/remove/rename a route here
+/// without registering it above (or vice versa) and the coverage test fails loudly instead of the
+/// registry silently going stale. Paths carry the `/api` mount prefix, matching
+/// `apidocs::registry_paths()`.
+pub fn router_paths() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("GET", "/api/me"),
+        ("GET", "/api/w/{world}/state"),
+        ("GET", "/api/w/{world}/map"),
+        ("POST", "/api/w/{world}/village/{village}/build"),
+        ("POST", "/api/w/{world}/village/{village}/train"),
+        ("POST", "/api/w/{world}/message"),
+        ("GET", "/api/w/{world}/messages"),
+        ("GET", "/api/w/{world}/messages/{account}"),
+        ("POST", "/api/w/{world}/village/{village}/attack"),
+        ("POST", "/api/w/{world}/village/{village}/scout"),
+        ("POST", "/api/w/{world}/village/{village}/reinforce"),
+        ("POST", "/api/w/{world}/village/{village}/return"),
+        ("POST", "/api/w/{world}/village/{village}/trade"),
+        ("POST", "/api/w/{world}/village/{village}/settle"),
+        ("POST", "/api/w/{world}/village/{village}/research"),
+        ("POST", "/api/w/{world}/village/{village}/smithy"),
+        ("GET", "/api/w/{world}/report/{id}"),
+        ("GET", "/api/w/{world}/scout-report/{id}"),
+    ]
+}

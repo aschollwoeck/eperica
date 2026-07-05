@@ -590,3 +590,17 @@ pub fn router() -> axum::Router<AppState> {
             )
         })
 }
+
+/// The literal `(method, path)` list of every route on [`router`] — **keep in lockstep with
+/// `router()` above: the 128 coverage test compares this to the docs registry**
+/// (`apidocs::registry`). See `api::router_paths`'s doc comment for why this hand-maintained
+/// constant, not introspection, is the drift alarm. Paths carry the `/spectator` mount prefix,
+/// matching `apidocs::registry_paths()`.
+pub fn router_paths() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("GET", "/spectator/me"),
+        ("GET", "/spectator/w/{world}/feed"),
+        ("GET", "/spectator/w/{world}/players"),
+        ("GET", "/spectator/w/{world}/village/{id}"),
+    ]
+}
