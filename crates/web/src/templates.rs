@@ -74,6 +74,132 @@ pub struct ManualRefLinkRow {
     pub title: &'static str,
 }
 
+/// The generated Units reference page (127 T2, AC3/AC4): every tribe's full roster from the resolved
+/// `UnitRules` — world-aware via `banner` (the selected world's preset + speed, or the classic
+/// fallback).
+#[derive(Template)]
+#[template(path = "manual_units.html")]
+pub struct ManualUnitsTemplate {
+    pub sections: Vec<ManualSectionRow>,
+    pub ref_links: Vec<ManualRefLinkRow>,
+    pub banner: String,
+    pub tribes: Vec<ManualTribeUnits>,
+}
+
+/// One tribe's full roster on the Units reference page.
+pub struct ManualTribeUnits {
+    pub tribe: &'static str,
+    pub units: Vec<ManualUnitRow>,
+}
+
+/// One unit's full reference row (127 T2 AC3). Every field but `train_time` is a flat preset value
+/// (never speed-scaled, per plan §Risks); `train_time` is `train_secs ÷ world speed`.
+pub struct ManualUnitRow {
+    pub name: String,
+    pub role: &'static str,
+    pub attack: u32,
+    pub def_inf: u32,
+    pub def_cav: u32,
+    pub speed: u32,
+    pub carry: u32,
+    pub upkeep: u32,
+    pub cost_wood: i64,
+    pub cost_clay: i64,
+    pub cost_iron: i64,
+    pub cost_crop: i64,
+    pub train_time: String,
+    pub trained_in: &'static str,
+    pub prerequisites: String,
+}
+
+/// The generated Buildings reference page (127 T2, AC3/AC4): purpose/prerequisites/max-level/
+/// multi-instance/level-1 cost for every buildable kind, plus a few illustrative per-level curves.
+#[derive(Template)]
+#[template(path = "manual_buildings.html")]
+pub struct ManualBuildingsTemplate {
+    pub sections: Vec<ManualSectionRow>,
+    pub ref_links: Vec<ManualRefLinkRow>,
+    pub banner: String,
+    pub rows: Vec<ManualBuildingRow>,
+    /// Warehouse storage capacity at levels 1/5/10.
+    pub warehouse_curve: Vec<ManualLevelRow>,
+    /// Granary storage capacity at levels 1/5/10.
+    pub granary_curve: Vec<ManualLevelRow>,
+    /// Main Building construction-speed factor at levels 1/5/10.
+    pub main_building_curve: Vec<ManualLevelRow>,
+    /// Town Hall culture points/hour, every level.
+    pub town_hall_curve: Vec<ManualLevelRow>,
+}
+
+/// One building kind's reference row.
+pub struct ManualBuildingRow {
+    pub name: &'static str,
+    /// A one-line, prose purpose description (a fixed const table in the handler — not balance data).
+    pub purpose: &'static str,
+    pub prerequisites: String,
+    pub max_level: u8,
+    pub multi: bool,
+    pub cost_wood: i64,
+    pub cost_clay: i64,
+    pub cost_iron: i64,
+    pub cost_crop: i64,
+}
+
+/// A `level → value` row shared by the buildings/mechanics curve tables (127 T2) — pre-formatted in
+/// the handler (matching `fmt_duration`'s convention) so the templates stay dumb about number
+/// formatting.
+pub struct ManualLevelRow {
+    pub level: u8,
+    pub value: String,
+}
+
+/// The generated Mechanics reference page (127 T2, AC3/AC4): the cross-cutting numbers that don't
+/// belong to a single unit/building — culture/expansion, loyalty, walls/siege, merchants, and the
+/// protection/lifecycle windows.
+#[derive(Template)]
+#[template(path = "manual_mechanics.html")]
+pub struct ManualMechanicsTemplate {
+    pub sections: Vec<ManualSectionRow>,
+    pub ref_links: Vec<ManualRefLinkRow>,
+    pub banner: String,
+    /// CP needed to be allowed the Nth village (index 0 skipped — unused; the first village is free).
+    pub cp_thresholds: Vec<ManualLevelRow>,
+    /// Expansion slots a single Residence/Palace grants, by its level.
+    pub expansion_slots: Vec<ManualLevelRow>,
+    pub settlers_per_village: u32,
+    /// Oases an Outpost may hold, by its level.
+    pub outpost_capacity: Vec<ManualLevelRow>,
+    pub loyalty_drop_min: i64,
+    pub loyalty_drop_max: i64,
+    pub loyalty_regen_per_hour: i64,
+    pub loyalty_post_conquest: i64,
+    pub walls: Vec<ManualTribeWall>,
+    pub catapult_durability: String,
+    pub merchants: Vec<ManualTribeMerchant>,
+    /// Merchants at a given Marketplace level (tribe-independent — every tribe shares this table).
+    pub merchants_per_level: Vec<ManualLevelRow>,
+    /// Beginner's-protection **base** duration (before world speed; the banner/template note says so).
+    pub protection_base: String,
+    pub protection_population_threshold: i64,
+    /// Real wall-clock time, not speed-scaled (054) — the template says so explicitly.
+    pub inactive_after: String,
+    pub abandon_after: String,
+}
+
+/// One tribe's Wall reference row: its bonus at level 10 and its ram durability.
+pub struct ManualTribeWall {
+    pub tribe: &'static str,
+    pub bonus_l10_pct: String,
+    pub ram_durability: String,
+}
+
+/// One tribe's merchant profile (capacity + map speed).
+pub struct ManualTribeMerchant {
+    pub tribe: &'static str,
+    pub capacity: u32,
+    pub speed: u32,
+}
+
 #[derive(Template)]
 #[template(path = "register.html")]
 pub struct RegisterTemplate {

@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
+{% block content %}
+<div class="page manual">
+  <aside class="manual__sidebar" aria-label="Manual sections">
+    {% include "_manual_sidebar.html" %}
+  </aside>
+  <div class="manual__content">
+    <nav class="manual__crumbs" aria-label="Breadcrumb"><a href="/manual">Manual</a> › Reference › The numbers</nav>
+    <section class="phead">
+      <div class="phead__eyebrow">Reference</div>
+      <h1 class="phead__title">The numbers</h1>
+      <p class="phead__sub">Culture &amp; expansion, loyalty, walls &amp; siege, merchants, and the
+        protection/lifecycle windows — the cross-cutting figures that don't belong to a single unit or
+        building.</p>
+    </section>
+    <p class="manual__banner">{{ banner }}</p>
+
+    <section class="manual__refsec">
+      <h2>Culture points &amp; expansion</h2>
+      <p>Founding a new village needs settlers (<b>{{ settlers_per_village }}</b> per village) and
+        needs both enough culture points <em>and</em> a free expansion slot from a Residence or
+        Palace.</p>
+      <div class="manual__curves">
+        <div class="manual__curve">
+          <h4>CP needed for the Nth village</h4>
+          <table class="table">
+            <thead><tr><th>Village #</th><th class="num">CP required</th></tr></thead>
+            <tbody>
+              {% for r in cp_thresholds %}
+              <tr><td>{{ r.level }}</td><td class="num">{{ r.value }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="manual__curve">
+          <h4>Expansion slots per Residence/Palace level</h4>
+          <table class="table">
+            <thead><tr><th>Level</th><th class="num">Slots</th></tr></thead>
+            <tbody>
+              {% for r in expansion_slots %}
+              <tr><td>{{ r.level }}</td><td class="num">{{ r.value }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="manual__curve">
+          <h4>Outpost oasis capacity per level</h4>
+          <table class="table">
+            <thead><tr><th>Level</th><th class="num">Oases</th></tr></thead>
+            <tbody>
+              {% for r in outpost_capacity %}
+              <tr><td>{{ r.level }}</td><td class="num">{{ r.value }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="manual__refsec">
+      <h2>Loyalty &amp; conquest</h2>
+      <p>A surviving administrator drops a defended village's loyalty by
+        <b>{{ loyalty_drop_min }}–{{ loyalty_drop_max }}</b> points; loyalty regenerates at
+        <b>{{ loyalty_regen_per_hour }}</b>/hour <em>before</em> world speed (a faster world
+        regenerates proportionally faster). A village conquered at zero loyalty resets to
+        <b>{{ loyalty_post_conquest }}</b> so it isn't instantly re-taken.</p>
+    </section>
+
+    <section class="manual__refsec">
+      <h2>Walls &amp; siege</h2>
+      <div style="overflow-x:auto">
+      <table class="table">
+        <thead><tr><th>Tribe</th><th class="num">Wall bonus at L10</th><th class="num">Ram durability</th></tr></thead>
+        <tbody>
+          {% for w in walls %}
+          <tr><td>{{ w.tribe }}</td><td class="num">{{ w.bonus_l10_pct }}</td><td class="num">{{ w.ram_durability }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <p>Ram durability is the ram attack power needed to raze one Wall level. A catapult needs
+        <b>{{ catapult_durability }}</b> attack power to raze one level of a targeted building.</p>
+    </section>
+
+    <section class="manual__refsec">
+      <h2>Merchants</h2>
+      <div style="overflow-x:auto">
+      <table class="table">
+        <thead><tr><th>Tribe</th><th class="num">Capacity</th><th class="num">Speed</th></tr></thead>
+        <tbody>
+          {% for m in merchants %}
+          <tr><td>{{ m.tribe }}</td><td class="num">{{ m.capacity }}</td><td class="num">{{ m.speed }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <div class="manual__curve">
+        <h4>Merchants per Marketplace level (every tribe)</h4>
+        <table class="table">
+          <thead><tr><th>Level</th><th class="num">Merchants</th></tr></thead>
+          <tbody>
+            {% for r in merchants_per_level %}
+            <tr><td>{{ r.level }}</td><td class="num">{{ r.value }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="manual__refsec">
+      <h2>Protection &amp; a living world</h2>
+      <p>Beginner's protection lasts <b>{{ protection_base }}</b> (base — this scales down with the
+        world's speed, like every other duration on this site) or until you reach
+        <b>{{ protection_population_threshold }}</b> population, whichever comes first.</p>
+      <p>An account greys out on the map (farmable) after <b>{{ inactive_after }}</b> with no login,
+        and is abandoned — its villages freed back to the map — after <b>{{ abandon_after }}</b>.
+        Both are <em>real</em> wall-clock time, not scaled by world speed: a faster world does not
+        grey or abandon idle players any sooner.</p>
+    </section>
+  </div>
+</div>
+{% endblock %}

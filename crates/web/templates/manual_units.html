@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
+{% block content %}
+<div class="page manual">
+  <aside class="manual__sidebar" aria-label="Manual sections">
+    {% include "_manual_sidebar.html" %}
+  </aside>
+  <div class="manual__content">
+    <nav class="manual__crumbs" aria-label="Breadcrumb"><a href="/manual">Manual</a> › Reference › Full unit stats</nav>
+    <section class="phead">
+      <div class="phead__eyebrow">Reference</div>
+      <h1 class="phead__title">Unit stats</h1>
+      <p class="phead__sub">Every unit, straight from the loaded balance rules — attack, defence,
+        speed, carry, upkeep, cost, and how to unlock it.</p>
+    </section>
+    <p class="manual__banner">{{ banner }}</p>
+
+    {% for t in tribes %}
+    <section class="manual__refsec">
+      <h2>{{ t.tribe }}</h2>
+      <div style="overflow-x:auto">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Unit</th><th>Role</th><th class="num">Att</th><th class="num">Def inf</th>
+            <th class="num">Def cav</th><th class="num">Speed</th><th class="num">Carry</th>
+            <th class="num">Upkeep</th><th class="num">Cost (w/c/i/r)</th><th class="num">Train time</th>
+            <th>Trained in</th><th>Prerequisites</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in t.units %}
+          <tr>
+            <td>{{ u.name }}</td>
+            <td>{{ u.role }}</td>
+            <td class="num">{{ u.attack }}</td>
+            <td class="num">{{ u.def_inf }}</td>
+            <td class="num">{{ u.def_cav }}</td>
+            <td class="num">{{ u.speed }}</td>
+            <td class="num">{{ u.carry }}</td>
+            <td class="num">{{ u.upkeep }}</td>
+            <td class="num">{{ u.cost_wood }}/{{ u.cost_clay }}/{{ u.cost_iron }}/{{ u.cost_crop }}</td>
+            <td class="num">{{ u.train_time }}</td>
+            <td>{{ u.trained_in }}</td>
+            <td>{{ u.prerequisites }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </section>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

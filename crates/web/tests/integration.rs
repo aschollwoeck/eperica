@@ -13612,3 +13612,250 @@ async fn manual_navigation_breadcrumbs_and_site_links(pool: sqlx::PgPool) {
         "the register page links to /manual"
     );
 }
+
+// ============================================================================
+// 127 T2 — the generated manual reference pages: /manual/reference/{units,buildings,mechanics}.
+// ============================================================================
+
+/// AC3/AC4 (anonymous half): all three reference pages are public (`200` with no login at all), show
+/// the classic-fallback banner, and every figure equals the loaded classic TOMLs — spot-checked across
+/// all three pages (legionnaire's attack + clubswinger's cost row on Units; the Warehouse L10 capacity
+/// on Buildings; the CP threshold, outpost capacities, wall ram durabilities, catapult durability, and
+/// merchant speeds on Mechanics). Every figure comes straight from the balance data (specs/balance/
+/// presets/classic/), never hand-written on the page (AC3).
+#[sqlx::test(migrations = "../../migrations")]
+async fn manual_reference_pages_are_public_and_match_classic_values(pool: sqlx::PgPool) {
+    let base = spawn(pool).await;
+    // A strictly anonymous client (no cookie store at all) — proving login is never required (AC3).
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // --- Units: public 200, classic banner, legionnaire's attack + clubswinger's cost row. ---
+    let units_res = anon
+        .get(format!("{base}/manual/reference/units"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        units_res.status().as_u16(),
+        200,
+        "Units reference is public"
+    );
+    let units_body = units_res.text().await.unwrap();
+    assert!(
+        units_body.contains(
+            "Values shown for the classic rules — join a world to see its exact numbers."
+        ),
+        "anonymous reader sees the classic-fallback banner: {units_body}"
+    );
+    // Legionnaire (Roman tier-1): attack 40, cost 120/100/150/30, trained at the Barracks, no research.
+    let legionnaire_row = units_body
+        .split("Legionnaire")
+        .nth(1)
+        .expect("a Legionnaire row is rendered");
+    let legionnaire_row = &legionnaire_row[..legionnaire_row
+        .find("</tr>")
+        .unwrap_or(legionnaire_row.len())];
+    assert!(
+        legionnaire_row.contains(">40<"),
+        "legionnaire's attack (40): {legionnaire_row}"
+    );
+    assert!(
+        legionnaire_row.contains("120/100/150/30"),
+        "legionnaire's cost row: {legionnaire_row}"
+    );
+    assert!(
+        legionnaire_row.contains("None — trained from the start"),
+        "legionnaire (tier-1) needs no research: {legionnaire_row}"
+    );
+    // Clubswinger (Teuton tier-1): cost 95/75/40/40.
+    let clubswinger_row = units_body
+        .split("Clubswinger")
+        .nth(1)
+        .expect("a Clubswinger row is rendered");
+    let clubswinger_row = &clubswinger_row[..clubswinger_row
+        .find("</tr>")
+        .unwrap_or(clubswinger_row.len())];
+    assert!(
+        clubswinger_row.contains("95/75/40/40"),
+        "clubswinger's cost row: {clubswinger_row}"
+    );
+
+    // --- Buildings: public 200, Warehouse L10 capacity 12 000. ---
+    let buildings_res = anon
+        .get(format!("{base}/manual/reference/buildings"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        buildings_res.status().as_u16(),
+        200,
+        "Buildings reference is public"
+    );
+    let buildings_body = buildings_res.text().await.unwrap();
+    assert!(
+        buildings_body.contains("<td>10</td><td class=\"num\">12000</td>"),
+        "Warehouse level 10 capacity is 12 000: {buildings_body}"
+    );
+
+    // --- Mechanics: public 200, CP threshold 200, outpost capacities 1..6, ram durabilities per
+    // tribe (90/130/180), catapult durability 110, merchant speeds 16/12/24. ---
+    let mechanics_res = anon
+        .get(format!("{base}/manual/reference/mechanics"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        mechanics_res.status().as_u16(),
+        200,
+        "Mechanics reference is public"
+    );
+    let mechanics_body = mechanics_res.text().await.unwrap();
+    assert!(
+        mechanics_body.contains(">200<"),
+        "a CP threshold of 200 is listed: {mechanics_body}"
+    );
+    // The outpost curve's last row pairs level 10 with capacity 6 (economy.toml:
+    // capacity_per_level = [0,1,1,2,2,3,3,4,4,5,6]).
+    assert!(
+        mechanics_body.contains("<td>10</td><td class=\"num\">6</td>"),
+        "outpost capacity tops out at 6 (level 10): {mechanics_body}"
+    );
+    assert!(
+        mechanics_body.contains(">90<"),
+        "Roman ram durability 90: {mechanics_body}"
+    );
+    assert!(
+        mechanics_body.contains(">130<"),
+        "Gaul ram durability 130: {mechanics_body}"
+    );
+    assert!(
+        mechanics_body.contains(">180<"),
+        "Teuton ram durability 180: {mechanics_body}"
+    );
+    assert!(
+        mechanics_body.contains(">110<"),
+        "catapult durability 110: {mechanics_body}"
+    );
+    assert!(
+        mechanics_body.contains(">16<"),
+        "Roman merchant speed 16: {mechanics_body}"
+    );
+    assert!(
+        mechanics_body.contains(">12<"),
+        "Teuton merchant speed 12: {mechanics_body}"
+    );
+    assert!(
+        mechanics_body.contains(">24<"),
+        "Gaul merchant speed 24: {mechanics_body}"
+    );
+    assert!(
+        mechanics_body.contains("protection lasts <b>3 days</b>"),
+        "classic beginner protection base is 3 days: {mechanics_body}"
+    );
+}
+
+/// AC4: a reader with a **selected world** sees that world's preset + speed named in the banner, and a
+/// value that genuinely differs from the classic default — proving the numbers actually switch with the
+/// world, not just the label. Uses the `speed` preset (052), whose beginner-protection base (1 day) is
+/// shorter than classic's (3 days) — a value the mechanics page shows verbatim (not speed-adjusted, so
+/// the divergence is the **preset**, not the world's chosen speed multiplier).
+#[sqlx::test(migrations = "../../migrations")]
+async fn manual_reference_pages_are_world_aware(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    // A short prefix (unlike e.g. "manualref") — `unique()` appends a nanosecond timestamp plus a
+    // process-wide counter that grows across the whole test binary run, and usernames are capped; a
+    // long prefix can intermittently push the total over the cap when this test runs late in a big
+    // parallel suite (register_client then sees a re-rendered form, not a redirect).
+    let admin_name = unique("mref");
+    let (ac, _admin_id) = register_client(&base, &pool, &admin_name).await;
+    sqlx::query("UPDATE users SET is_admin = TRUE WHERE username = $1")
+        .bind(&admin_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Create a second, `speed`-preset world (052) via the real admin flow (P4 — server-authoritative).
+    let r = ac
+        .post(format!("{base}/admin/world"))
+        .form(&[
+            ("name", "Blitzburg"),
+            ("speed", "2"),
+            ("radius", "40"),
+            ("preset", "speed"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303);
+    let world_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM worlds WHERE name = 'Blitzburg'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Join it (045) — this is what selects it in the session (the `WORLD_COOKIE`, never a client
+    // parameter read directly by the manual, P4). The form takes the plain u128 (not the hyphenated
+    // UUID string) — matches `world_cookie`/`WorldId` parsing (056).
+    let r = ac
+        .post(format!("{base}/worlds/join"))
+        .form(&[
+            ("world", world_id.as_u128().to_string().as_str()),
+            ("tribe", "romans"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 303, "joining the world succeeds");
+
+    let mechanics_body = ac
+        .get(format!("{base}/manual/reference/mechanics"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        mechanics_body.contains("Values for Blitzburg — speed 2×, speed rules"),
+        "the banner names the selected world, its speed, and its preset: {mechanics_body}"
+    );
+    // The `speed` preset's beginner protection base is 1 day (classic: 3 days) — a genuine value
+    // divergence, not just a relabeled default. (`inactive_after` also happens to read "3 days" on the
+    // `speed` preset, so the check is scoped to the protection sentence specifically, not a bare
+    // substring search.)
+    assert!(
+        mechanics_body.contains("protection lasts <b>1 day</b>"),
+        "the speed preset's shorter beginner protection shows: {mechanics_body}"
+    );
+    assert!(
+        !mechanics_body.contains("protection lasts <b>3 days</b>"),
+        "the classic protection duration must not leak through: {mechanics_body}"
+    );
+
+    // An anonymous reader (no session at all) still sees classic — switching worlds never leaks into a
+    // different session.
+    let anon = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let anon_body = anon
+        .get(format!("{base}/manual/reference/mechanics"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        anon_body.contains(
+            "Values shown for the classic rules — join a world to see its exact numbers."
+        ),
+        "anonymous still sees the classic banner: {anon_body}"
+    );
+    assert!(
+        anon_body.contains("protection lasts <b>3 days</b>"),
+        "anonymous sees classic's 3-day protection: {anon_body}"
+    );
+}

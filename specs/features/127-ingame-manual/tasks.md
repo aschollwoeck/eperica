@@ -6,7 +6,7 @@
   compile-time embeds, link rewriting, callouts, anchors, escaping); /manual + /manual/{slug}
   public routes; manual layout (sidebar, breadcrumbs, prev/next) + CSS; footer/register/nav
   links. Unit + AC1/AC2/AC5 integration tests. (AC1, AC2, AC5, AC7)
-- [ ] **T2 — Generated reference.** /manual/reference/{units,buildings,mechanics} native
+- [x] **T2 — Generated reference.** /manual/reference/{units,buildings,mechanics} native
   templates fed from WorldRules; world-aware resolution (session world preset + speed, classic
   fallback) + banner; speed-adjusted durations only. AC3 equality tests vs loaded TOMLs; AC4
   world-switch test with a speed-preset world. (AC3, AC4)

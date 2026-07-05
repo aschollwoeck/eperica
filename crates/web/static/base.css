@@ -1033,6 +1033,24 @@ a { color: var(--c-gold); }
 .co-faith { border-left-color: var(--c-accent); background: color-mix(in srgb, var(--c-accent) 10%, var(--c-panel)); }
 .co-faith::before { content: "Faithful to the original"; color: var(--c-accent); }
 
+/* World-aware banner on a generated reference page (127 T2, AC4) — names whose numbers are shown
+   (the selected world's preset + speed, or the classic fallback). Reuses the callout's accent-border
+   shape rather than inventing a new one. */
+.manual__banner {
+  margin: 0 0 var(--space-5); padding: 10px 16px; border: 1px solid var(--c-border);
+  border-left: 3px solid var(--c-gold); border-radius: var(--radius-sm); background: var(--c-panel);
+  font-size: .88rem; color: var(--c-ink-muted);
+}
+.manual__banner b { color: var(--c-ink); }
+
+/* Reference-page section headings + illustrative curve lists, inside `.manual__content`. */
+.manual__refsec { margin-top: var(--space-6); }
+.manual__refsec:first-of-type { margin-top: 0; }
+.manual__refsec h2 { font-family: var(--c-serif, Georgia, serif); font-size: 1.3rem; margin: 0 0 var(--space-3); color: var(--c-gold); }
+.manual__refsec h3 { font-size: 1.02rem; margin: var(--space-4) 0 var(--space-2); color: var(--c-ink); }
+.manual__curves { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-4); margin: 0 0 var(--space-4); }
+.manual__curve h4 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--c-ink-muted); margin: 0 0 6px; }
+
 /* Prev/next chapter footer nav. */
 .manual__prevnext { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); margin-top: var(--space-6); }
 .manual__navcard {

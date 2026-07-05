@@ -13,20 +13,22 @@ use crate::templates::{
     ForceRow, ForumPostRow, ForumTemplate, ForumThreadRow, ForumThreadTemplate, GarrisonRow,
     HistoryPointView, ImpressumTemplate, IncomingRow, IncomingView, IndexTemplate,
     JoinableWorldRow, JoinedWorldRow, LandingWorldRow, LeaderboardRowView, LeaderboardTemplate,
-    LoginTemplate, ManualChapterRow, ManualChapterTemplate, ManualIndexTemplate, ManualRefLinkRow,
-    ManualSectionRow, MapCellView, MapTemplate, MarketTemplate, MedalRowView, MemberStatRow,
-    MessagesTemplate, ModAccountTemplate, ModQueueTemplate, ModReportRow, MovementRow,
-    NotificationRowView, NotificationsTemplate, OasisRow, OutgoingInviteView, PendingInviteView,
-    PlayerStatsTemplate, PlotView, PrivacyTemplate, ProfileTemplate, QuestsTemplate, QueueView,
-    RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow, ReportRow, ReportTemplate,
-    ReportsTemplate, ResourceRibbon, RosterRowView, ScoutReportTemplate, ScoutResourceRow,
-    SearchHitRow, SearchTemplate, SettingsTemplate, SettingsToggleRow, ShipmentRow, SitterRow,
-    SittingTemplate, SmithyRow, SmithyTemplate, SpectateBuildRow, SpectateFeedTemplate,
-    SpectateMovementRow, SpectatePlayerRow, SpectatePlayersTemplate, SpectateReportRow,
-    SpectateShipmentRow, SpectateTrainingRow, SpectateVillageLink, SpectateVillageTemplate,
-    SpectateWorldRow, SpectateWorldsTemplate, SpectatorHolderRow, StyleGuideTemplate,
-    TermsTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow, VillageTemplate,
-    VillageTrainingRow, WonderStandingView, WonderTemplate, WorldsTemplate,
+    LoginTemplate, ManualBuildingRow, ManualBuildingsTemplate, ManualChapterRow,
+    ManualChapterTemplate, ManualIndexTemplate, ManualLevelRow, ManualMechanicsTemplate,
+    ManualRefLinkRow, ManualSectionRow, ManualTribeMerchant, ManualTribeUnits, ManualTribeWall,
+    ManualUnitRow, ManualUnitsTemplate, MapCellView, MapTemplate, MarketTemplate, MedalRowView,
+    MemberStatRow, MessagesTemplate, ModAccountTemplate, ModQueueTemplate, ModReportRow,
+    MovementRow, NotificationRowView, NotificationsTemplate, OasisRow, OutgoingInviteView,
+    PendingInviteView, PlayerStatsTemplate, PlotView, PrivacyTemplate, ProfileTemplate,
+    QuestsTemplate, QueueView, RallyTemplate, RallyUnitRow, RegisterTemplate, ReinforcementRow,
+    ReportRow, ReportTemplate, ReportsTemplate, ResourceRibbon, RosterRowView, ScoutReportTemplate,
+    ScoutResourceRow, SearchHitRow, SearchTemplate, SettingsTemplate, SettingsToggleRow,
+    ShipmentRow, SitterRow, SittingTemplate, SmithyRow, SmithyTemplate, SpectateBuildRow,
+    SpectateFeedTemplate, SpectateMovementRow, SpectatePlayerRow, SpectatePlayersTemplate,
+    SpectateReportRow, SpectateShipmentRow, SpectateTrainingRow, SpectateVillageLink,
+    SpectateVillageTemplate, SpectateWorldRow, SpectateWorldsTemplate, SpectatorHolderRow,
+    StyleGuideTemplate, TermsTemplate, TrainRow, TroopsTemplate, VillageStatRow, VillageSwitchRow,
+    VillageTemplate, VillageTrainingRow, WonderStandingView, WonderTemplate, WorldsTemplate,
 };
 use askama::Template;
 use axum::Form;
@@ -70,15 +72,16 @@ use eperica_domain::{
     Coordinate, DEMOLISH_MIN_MAIN_BUILDING, DiplomacyStance, DiplomacyStatus, Economy, GameSpeed,
     MedalCategory, MovementKind, OasisBonus, PlayerId, Presence, Quadrant, QuestReward, QueueLane,
     ReportReason, ResearchDenied, ResourceAmounts, ResourceKind, RightSet, SanctionKind,
-    ScoutTarget, TileKind, Timestamp, TradeKind, Tribe, UnitId, UnitRole, UnitRules, UpgradeDenied,
-    VILLAGE_BUILDING_SLOTS, Village, VillageId, WorldId, building_at, can_access_channel,
-    can_afford, can_place, can_research, can_upgrade, current_quest, expansion_slots,
-    garrison_upkeep, is_inactive, per_unit_time_secs, prerequisites_met, presence, queue_lane,
-    regenerate_loyalty, reserved_kind, scaled_time_secs,
+    ScoutTarget, TileKind, Timestamp, TradeKind, Tribe, UnitId, UnitRole, UnitRules, UnitSpec,
+    UpgradeDenied, VILLAGE_BUILDING_SLOTS, Village, VillageId, WorldId, building_at,
+    can_access_channel, can_afford, can_place, can_research, can_upgrade, current_quest,
+    expansion_slots, garrison_upkeep, is_inactive, per_unit_time_secs, prerequisites_met, presence,
+    queue_lane, regenerate_loyalty, reserved_kind, scaled_time_secs,
 };
 use eperica_infrastructure::now;
 use eperica_infrastructure::{DEFAULT_PRESET, KNOWN_PRESETS, WorldRules, known_preset};
 use serde::Deserialize;
+use std::sync::Arc;
 
 fn resource_label(kind: ResourceKind) -> &'static str {
     match kind {
@@ -660,6 +663,331 @@ fn manual_nav_row(n: crate::manual::NavLink) -> ManualChapterRow {
         title: n.title,
         is_active: false,
     }
+}
+
+// ============================================================================
+// 127 T2 — the generated manual reference pages: /manual/reference/{units,buildings,mechanics}.
+// ============================================================================
+
+/// The rule bundle + speed + world-aware banner shared by every reference page (127 T2, AC4): the
+/// session's selected world (from `WORLD_COOKIE`) if it still resolves through the registry, else the
+/// `classic` preset at 1× (plan "Classic fallback via the existing preset loader" — no second source
+/// of balance truth). **Never a client parameter** (P4): the world comes only from the session cookie,
+/// itself re-validated against the live registry on every call — a stale/forged value that no longer
+/// resolves just falls back to the classic banner, it is never trusted blindly.
+struct ManualRulesView {
+    rules: Arc<WorldRules>,
+    speed: GameSpeed,
+    /// "Values for *World* — speed N×, preset rules", or the classic-fallback sentence (AC4).
+    banner: String,
+}
+
+async fn manual_rules_view(state: &AppState, jar: &PrivateCookieJar) -> ManualRulesView {
+    let selected = jar
+        .get(WORLD_COOKIE)
+        .and_then(|c| c.value().parse::<u128>().ok())
+        .map(WorldId);
+    if let Some(world_id) = selected
+        && let Some((name, speed, rules, preset)) =
+            state.world_registry.label_and_rules_for(world_id).await
+    {
+        return ManualRulesView {
+            rules,
+            speed,
+            banner: format!(
+                "Values for {name} — speed {}×, {preset} rules",
+                speed.multiplier()
+            ),
+        };
+    }
+    ManualRulesView {
+        rules: state.world_registry.classic_rules(),
+        speed: GameSpeed::new(1.0).expect("1.0 is a valid speed"),
+        banner: "Values shown for the classic rules — join a world to see its exact numbers."
+            .to_owned(),
+    }
+}
+
+/// A human duration for the mechanics reference page (127 T2): whole days when the value is an exact
+/// multiple of a day (every shipped preset's lifecycle windows are), else the `h:mm:ss` fallback the
+/// rest of the game already uses ([`fmt_duration`]).
+fn fmt_days(secs: i64) -> String {
+    if secs > 0 && secs % 86400 == 0 {
+        let days = secs / 86400;
+        format!("{days} day{}", if days == 1 { "" } else { "s" })
+    } else {
+        fmt_duration(secs)
+    }
+}
+
+/// The generated Units reference page (127 T2, AC3/AC4): every tribe's full roster, read from the
+/// resolved `UnitRules`. Only `train_time` is speed-adjusted (plan §Risks) — every other stat, cost,
+/// and upkeep is a flat preset value.
+pub async fn manual_ref_units(State(state): State<AppState>, jar: PrivateCookieJar) -> Response {
+    let ctx = manual_rules_view(&state, &jar).await;
+    let unit_rules = &ctx.rules.units;
+    let tribes = [Tribe::Romans, Tribe::Teutons, Tribe::Gauls]
+        .into_iter()
+        .map(|tribe| ManualTribeUnits {
+            tribe: tribe_label(Some(tribe)),
+            units: unit_rules
+                .roster(tribe)
+                .iter()
+                .map(|spec| manual_unit_row(spec, ctx.speed))
+                .collect(),
+        })
+        .collect();
+    page(&ManualUnitsTemplate {
+        sections: manual_section_rows(None),
+        ref_links: manual_ref_link_rows(),
+        banner: ctx.banner,
+        tribes,
+    })
+}
+
+/// One unit's reference row: prerequisites read straight off its `ResearchSpec` — `None` (a tier-1
+/// combat unit or a research-free Expansion unit) trains from the start; otherwise the Academy-gated
+/// building requirements it lists.
+fn manual_unit_row(spec: &UnitSpec, speed: GameSpeed) -> ManualUnitRow {
+    let prerequisites = match &spec.research {
+        None => "None — trained from the start".to_owned(),
+        Some(r) if r.requirements.is_empty() => {
+            "Academy research (no building level required)".to_owned()
+        }
+        Some(r) => r
+            .requirements
+            .iter()
+            .map(|(k, l)| format!("{} {l}", building_label(*k)))
+            .collect::<Vec<_>>()
+            .join(", "),
+    };
+    ManualUnitRow {
+        name: spec.name.clone(),
+        role: role_label(spec.role),
+        attack: spec.attack,
+        def_inf: spec.defense_infantry,
+        def_cav: spec.defense_cavalry,
+        speed: spec.speed,
+        carry: spec.carry_capacity,
+        upkeep: spec.crop_upkeep,
+        cost_wood: spec.cost.wood,
+        cost_clay: spec.cost.clay,
+        cost_iron: spec.cost.iron,
+        cost_crop: spec.cost.crop,
+        train_time: fmt_duration(scaled_time_secs(spec.train_secs, speed)),
+        trained_in: building_label(spec.trained_in),
+        prerequisites,
+    }
+}
+
+/// Every buildable kind, in `building.rs`'s declared enum order — `BuildingKind` carries no
+/// enumeration of its own, so the Buildings reference page iterates this fixed list.
+const ALL_BUILDING_KINDS: [BuildingKind; 19] = [
+    BuildingKind::MainBuilding,
+    BuildingKind::RallyPoint,
+    BuildingKind::Warehouse,
+    BuildingKind::Granary,
+    BuildingKind::Marketplace,
+    BuildingKind::Embassy,
+    BuildingKind::Barracks,
+    BuildingKind::Academy,
+    BuildingKind::Smithy,
+    BuildingKind::Stable,
+    BuildingKind::Workshop,
+    BuildingKind::Residence,
+    BuildingKind::Wall,
+    BuildingKind::Cranny,
+    BuildingKind::Outpost,
+    BuildingKind::TownHall,
+    BuildingKind::Palace,
+    BuildingKind::Treasury,
+    BuildingKind::Wonder,
+];
+
+/// The generated Buildings reference page (127 T2, AC3/AC4): purpose, prerequisites, max level,
+/// multi-instance flag, and a level-1 cost row for every kind, plus a few illustrative per-level
+/// curves — all read from the resolved `BuildRules`/`EconomyRules`/`CultureRules`.
+pub async fn manual_ref_buildings(
+    State(state): State<AppState>,
+    jar: PrivateCookieJar,
+) -> Response {
+    let ctx = manual_rules_view(&state, &jar).await;
+    let build = &ctx.rules.build;
+    let econ = &ctx.rules.economy;
+    let culture = &ctx.rules.culture;
+
+    let rows = ALL_BUILDING_KINDS
+        .iter()
+        .map(|&kind| {
+            let target = BuildTarget::Building { slot: 0, kind };
+            let prereqs = build.prerequisites(kind);
+            let prerequisites = if prereqs.is_empty() {
+                "None".to_owned()
+            } else {
+                prereqs
+                    .iter()
+                    .map(|(k, l)| format!("{} {l}", building_label(*k)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            let cost: ResourceAmounts = build.cost(target, 0).unwrap_or_default();
+            ManualBuildingRow {
+                name: building_label(kind),
+                purpose: building_blurb(kind),
+                prerequisites,
+                max_level: build.max_level(target),
+                multi: kind.is_multi(),
+                cost_wood: cost.wood,
+                cost_clay: cost.clay,
+                cost_iron: cost.iron,
+                cost_crop: cost.crop,
+            }
+        })
+        .collect();
+
+    // The illustrative curves (plan: "key per-level values for Warehouse/Granary/Main Building").
+    const CURVE_LEVELS: [u8; 3] = [1, 5, 10];
+    let warehouse_curve = CURVE_LEVELS
+        .iter()
+        .map(|&l| ManualLevelRow {
+            level: l,
+            value: econ.warehouse_capacity(l).to_string(),
+        })
+        .collect();
+    let granary_curve = CURVE_LEVELS
+        .iter()
+        .map(|&l| ManualLevelRow {
+            level: l,
+            value: econ.granary_capacity(l).to_string(),
+        })
+        .collect();
+    let main_building_curve = CURVE_LEVELS
+        .iter()
+        .map(|&l| ManualLevelRow {
+            level: l,
+            value: format!("{:.2}×", build.main_building_factor(l)),
+        })
+        .collect();
+    let town_hall_curve = culture
+        .town_hall_cp_per_level
+        .iter()
+        .enumerate()
+        .map(|(l, &cp)| ManualLevelRow {
+            level: l as u8,
+            value: cp.to_string(),
+        })
+        .collect();
+
+    page(&ManualBuildingsTemplate {
+        sections: manual_section_rows(None),
+        ref_links: manual_ref_link_rows(),
+        banner: ctx.banner,
+        rows,
+        warehouse_curve,
+        granary_curve,
+        main_building_curve,
+        town_hall_curve,
+    })
+}
+
+/// The generated Mechanics reference page (127 T2, AC3/AC4): the cross-cutting numbers that don't
+/// belong to a single unit/building — culture/expansion, loyalty, walls/siege, merchants, and the
+/// protection/lifecycle windows.
+pub async fn manual_ref_mechanics(
+    State(state): State<AppState>,
+    jar: PrivateCookieJar,
+) -> Response {
+    let ctx = manual_rules_view(&state, &jar).await;
+    let culture = &ctx.rules.culture;
+    let econ = &ctx.rules.economy;
+    let loyalty = &ctx.rules.loyalty;
+    let combat = &ctx.rules.combat;
+    let merchant = &ctx.rules.merchant;
+    let lifecycle = &ctx.rules.lifecycle;
+
+    // Index 0 is unused (the balance data's own convention — the first village is free at index 1).
+    let cp_thresholds = culture
+        .cp_thresholds
+        .iter()
+        .enumerate()
+        .skip(1)
+        .map(|(n, &cp)| ManualLevelRow {
+            level: n as u8,
+            value: cp.to_string(),
+        })
+        .collect();
+    let expansion_slots = culture
+        .expansion_slots_per_level
+        .iter()
+        .enumerate()
+        .map(|(l, &slots)| ManualLevelRow {
+            level: l as u8,
+            value: slots.to_string(),
+        })
+        .collect();
+    let outpost_capacity = econ
+        .outpost_capacity_per_level
+        .iter()
+        .enumerate()
+        .map(|(l, &cap)| ManualLevelRow {
+            level: l as u8,
+            value: cap.to_string(),
+        })
+        .collect();
+
+    let walls = [Tribe::Romans, Tribe::Teutons, Tribe::Gauls]
+        .into_iter()
+        .map(|tribe| ManualTribeWall {
+            tribe: tribe_label(Some(tribe)),
+            bonus_l10_pct: format!("{:.1}%", combat.wall_bonus(tribe, 10) * 100.0),
+            ram_durability: combat
+                .walls
+                .get(&tribe)
+                .map_or_else(|| "—".to_owned(), |w| format!("{:.0}", w.ram_durability)),
+        })
+        .collect();
+
+    let merchants = [Tribe::Romans, Tribe::Teutons, Tribe::Gauls]
+        .into_iter()
+        .map(|tribe| {
+            let p = merchant.profile(tribe);
+            ManualTribeMerchant {
+                tribe: tribe_label(Some(tribe)),
+                capacity: p.capacity,
+                speed: p.speed,
+            }
+        })
+        .collect();
+    // Tribe-independent (one shared table) — rendered 0..=10, matching the shipped presets' tables;
+    // levels beyond a shorter table clamp to its last entry (still the correct count).
+    let merchants_per_level = (0u8..=10)
+        .map(|l| ManualLevelRow {
+            level: l,
+            value: merchant.merchants_total(l).to_string(),
+        })
+        .collect();
+
+    page(&ManualMechanicsTemplate {
+        sections: manual_section_rows(None),
+        ref_links: manual_ref_link_rows(),
+        banner: ctx.banner,
+        cp_thresholds,
+        expansion_slots,
+        settlers_per_village: culture.settlers_per_village,
+        outpost_capacity,
+        loyalty_drop_min: loyalty.drop_min,
+        loyalty_drop_max: loyalty.drop_max,
+        loyalty_regen_per_hour: loyalty.regen_per_hour,
+        loyalty_post_conquest: loyalty.post_conquest_loyalty,
+        walls,
+        catapult_durability: format!("{:.0}", combat.catapult_durability),
+        merchants,
+        merchants_per_level,
+        protection_base: fmt_days(lifecycle.beginner_protection_secs),
+        protection_population_threshold: lifecycle.protection_population_threshold,
+        inactive_after: fmt_days(lifecycle.inactive_after_secs),
+        abandon_after: fmt_days(lifecycle.abandon_after_secs),
+    })
 }
 
 /// Registration form (Visitor).

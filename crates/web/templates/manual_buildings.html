@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
+{% block content %}
+<div class="page manual">
+  <aside class="manual__sidebar" aria-label="Manual sections">
+    {% include "_manual_sidebar.html" %}
+  </aside>
+  <div class="manual__content">
+    <nav class="manual__crumbs" aria-label="Breadcrumb"><a href="/manual">Manual</a> › Reference › All buildings &amp; prerequisites</nav>
+    <section class="phead">
+      <div class="phead__eyebrow">Reference</div>
+      <h1 class="phead__title">Buildings</h1>
+      <p class="phead__sub">Every building's purpose, prerequisites, and level-1 cost, straight from
+        the loaded balance rules.</p>
+    </section>
+    <p class="manual__banner">{{ banner }}</p>
+
+    <section class="manual__refsec">
+      <h2>All buildings</h2>
+      <div style="overflow-x:auto">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Building</th><th>Purpose</th><th>Prerequisites</th><th class="num">Max level</th>
+            <th>Multi?</th><th class="num">Level 1 cost (w/c/i/r)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for b in rows %}
+          <tr>
+            <td>{{ b.name }}</td>
+            <td>{{ b.purpose }}</td>
+            <td>{{ b.prerequisites }}</td>
+            <td class="num">{{ b.max_level }}</td>
+            <td>{% if b.multi %}Yes — stacks{% else %}No — one per village{% endif %}</td>
+            <td class="num">{{ b.cost_wood }}/{{ b.cost_clay }}/{{ b.cost_iron }}/{{ b.cost_crop }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </section>
+
+    <section class="manual__refsec">
+      <h2>Key per-level curves</h2>
+      <div class="manual__curves">
+        <div class="manual__curve">
+          <h4>Warehouse capacity</h4>
+          <table class="table">
+            <thead><tr><th>Level</th><th class="num">Capacity</th></tr></thead>
+            <tbody>
+              {% for r in warehouse_curve %}
+              <tr><td>{{ r.level }}</td><td class="num">{{ r.value }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="manual__curve">
+          <h4>Granary capacity</h4>
+          <table class="table">
+            <thead><tr><th>Level</th><th class="num">Capacity</th></tr></thead>
+            <tbody>
+              {% for r in granary_curve %}
+              <tr><td>{{ r.level }}</td><td class="num">{{ r.value }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="manual__curve">
+          <h4>Main Building speed factor</h4>
+          <table class="table">
+            <thead><tr><th>Level</th><th class="num">Factor</th></tr></thead>
+            <tbody>
+              {% for r in main_building_curve %}
+              <tr><td>{{ r.level }}</td><td class="num">{{ r.value }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="manual__curve">
+          <h4>Town Hall CP/hour</h4>
+          <table class="table">
+            <thead><tr><th>Level</th><th class="num">CP/h</th></tr></thead>
+            <tbody>
+              {% for r in town_hall_curve %}
+              <tr><td>{{ r.level }}</td><td class="num">{{ r.value }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}
