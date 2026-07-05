@@ -1,99 +1,90 @@
 # Settling — culture points, settlers, and founding new villages
 
 You start with **one** village. To grow into an empire you **settle** new ones: build up **culture
-points**, train **settlers**, and send them to an empty **valley** on the map to found a brand-new
-village of your own. Build a **Palace** and one village becomes your **capital** — your unconquerable
-heartland, where your fields can grow taller than anywhere else.
+points**, train **settlers**, and send them to an empty **valley** on the map to found a village of
+your own. Build a **Palace** and one village becomes your **capital** — your unconquerable
+heartland, where fields can grow taller than anywhere else.
 
 ## Culture points
 
-**Culture points (CP)** measure your civilisation's influence. Unlike resources, CP is **pooled across
-all your villages** — there's one shared total, shown in the **Culture & expansion** panel on your
-village page. CP **builds up over time** and is **never spent**; it's a threshold you have to reach to be
-*allowed* another village.
+**Culture points (CP)** measure your civilisation's influence, and gate how many villages you're
+allowed to hold. Unlike resources, CP is **pooled across all your villages** — one shared total,
+shown in the **Culture & expansion** panel on your village page. CP **builds up on its own** and is
+**never spent**; it's a threshold you have to clear to be allowed another village.
 
-- Every village you own produces a small amount of CP per hour, all on its own.
-- The **Town Hall** is the culture building: the higher its level, the faster that village adds CP. Build
-  and upgrade Town Halls to expand sooner.
+- Every village you own adds a small trickle of CP per hour, all by itself.
+- The **Town Hall** is the culture building: the higher its level, the faster that village adds CP.
+  Build and upgrade Town Halls to expand sooner.
 
-Your panel shows your current CP, how fast it's growing, and the CP needed for your **next** village.
-
-**Culture point thresholds** (cumulative CP needed to be allowed that village number):
-
-| Village # | CP needed |
-|-----------|-----------|
-| 1st | 0 (free) |
-| 2nd | 200 |
-| 3rd | 500 |
-| 4th | 1 000 |
-| 5th | 1 800 |
-| 6th | 3 000 |
-| 7th | 4 800 |
-| 8th | 7 400 |
-| 9th | 11 000 |
-| 10th | 16 000 |
+Your panel shows your current CP, how fast it's growing, and how much you need for your **next**
+village. The full threshold list climbs steeply — the first village is free, the second needs
+**200 CP**, the third **500**, and it keeps rising from there. See
+[the numbers](/manual/reference/mechanics) for the complete list.
 
 ## Expansion slots
 
 How many villages you may hold at once is the **smaller** of two limits:
 
-1. **Culture** — your CP must reach the threshold for that village number (the first village is free, the
-   second costs some CP, the third more, and so on).
-2. **Capacity** — your **Residence** or **Palace** buildings grant **expansion slots** by their level.
-   Without a Residence or Palace you can't expand at all, no matter how much culture you have.
+1. **Culture** — your CP must reach the threshold for that village number.
+2. **Capacity** — your **Residence** or **Palace** grants **expansion slots** by its level: level
+   1–4 gives you 1 slot, 5–9 gives 2, and level 10 gives 3. Without a Residence or Palace you can't
+   expand at all, no matter how much culture you have.
 
-   **Expansion slots by Residence/Palace level:**
+> **Tip:** Level 5 is the upgrade to chase first — it opens your second slot, letting you hold a
+> third village.
 
-   | Level | Slots granted |
-   |-------|---------------|
-   | 1–4 | 1 |
-   | 5–9 | 2 |
-   | 10 | 3 |
-
-   Level 5 is the key upgrade — it opens your second expansion slot, letting you hold a third village.
-
-The panel shows this as **villages used / allowed** (e.g. *1 / 2*). When *used* is below *allowed*, you
-have a **free slot** and can found a new village.
+The panel shows this as **villages used / allowed** (e.g. *1 / 2*). When *used* is below *allowed*,
+you have a free slot and can found a new village.
 
 ## The Residence and the Palace
 
-Both are new central buildings that **train settlers** and grant **expansion slots**:
+Both **train settlers** and grant expansion slots, but only one can stand in a given village:
 
 - The **Residence** is your everyday expansion building.
-- The **Palace** does everything the Residence does **and** marks that village your **capital**. You may
-  have **only one Palace** at a time.
+- The **Palace** does everything the Residence does **and** marks that village your **capital**.
+  You may have only **one Palace** at a time.
 
-A village holds **at most one** of the two.
+See [Building & upgrading](buildings.md) for where they sit among your other slots.
 
-## Training settlers
+## Training and sending settlers
 
-Once a village has a **Residence or Palace**, train **settlers** there like any other troop batch
-(they're trained in the Residence/Palace). You need **3 settlers** to found a village — all three must
-be sent together. Settlers carry **no attack and give no defence** — they exist only to found villages —
-and they travel **slowly**, so a settling trip is long and vulnerable.
+Once a village has a Residence or Palace, train **settlers** there like any other troop batch. You
+need **3 settlers together** to found a village — send them as one group. Settlers carry no attack
+and give no defence; they exist purely to found villages, and they travel slowly, so a settling
+trip is long and worth escorting or timing carefully.
 
-## Founding a new village
+To found a village:
 
-1. Find a free **valley** (a `·` tile) on the **map** that no one owns.
-2. Make sure you have a **free expansion slot** and a group of **settlers** in the village.
-3. Go to the **Rally Point**, choose the **Settle** order (it only appears when you have a free slot),
-   enter the valley's coordinates, and send.
+1. Find a free **valley** (a `·` tile) on the [map](the-map.md) that no one owns.
+2. Make sure you have a free expansion slot and a group of settlers at home.
+3. Open the **Rally Point**, choose **Settle** (it only appears with a free slot), enter the
+   valley's coordinates, and send.
 
-Your settlers march to the tile. **On arrival**, if the valley is **still empty** and you **still** have
-a free slot, a **new village is founded** there — yours, with its own starting resources, fields, and
-buildings. If the tile was **taken** in the meantime, or you **lost** the slot to another settling party,
-the settlers simply **turn around and come home** — nothing is lost.
+On arrival, if the valley is **still empty** and you **still** have a free slot, a new village is
+founded there — yours, with its own starting resources, fields, and buildings. If someone beat you
+to the tile, or you lost your slot to another settling party in the meantime, your settlers simply
+turn around and come home — nothing is lost.
 
-Each village you own is fully **independent**: its own resources, build and training queues, garrison,
-and economy. Switch between them with the **village switcher** at the top of the village page.
+Each village you own runs fully independently: its own resources, build and training queues,
+garrison, and economy. Switch between them with the **village switcher** at the top of the village
+page.
 
 ## The capital
 
-Build a **Palace** to make that village your **capital**:
+Build a **Palace** to make that village your capital:
 
-- The capital may raise its **resource fields beyond the normal cap**, so it can out-produce your other
-  villages.
-- It is marked with a **★ Capital** badge on the village page and stands out on the **map**.
-- It cannot be conquered. See [Conquest](conquest.md) for how village capture works on non-capital villages.
+- Its resource fields can rise **beyond the normal cap**, so it out-produces your other villages.
+- It carries a **★ Capital** badge on the village page and stands out on the map.
+- It **cannot be conquered** — see [Conquest](conquest.md) for how village capture works everywhere
+  else.
 
-Build a Palace in a **different** village and the capital **moves** there — you always have exactly one.
+Build a Palace in a different village and the capital **moves** there — you always have exactly
+one.
+
+## See also
+
+- [Building & upgrading](buildings.md) — the Residence, Palace, and Town Hall among your slots.
+- [Conquest](conquest.md) — the other way to add a village, and why your capital is exempt.
+- [The world map](the-map.md) — spotting free valleys to settle.
+- [The numbers](/manual/reference/mechanics) — the full culture-point threshold list.
+- [Player Manual index](README.md)
