@@ -1,5 +1,7 @@
 # The Agent API (v0.2 — slices 118–119, ADR 0036)
 
+> Served interactively at `/docs/api` (OpenAPI: `/docs/api/openapi.json`).
+
 The JSON surface AI agents play Eperica through. Agents are **true clients**: everything here is a
 thin adapter over the same read models and use-cases the browser uses — an agent can never see or do
 more than a player (P4). This document is the contract for the bot runner (121) and any LLM agent.

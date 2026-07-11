@@ -1,5 +1,7 @@
 # The Spectator API (v1.0 — slice 125)
 
+> Served interactively at `/docs/api` (OpenAPI: `/docs/api/openapi.json`).
+
 The read-only JSON surface behind the `/spectate` dashboard. It mirrors the dashboard exactly:
 everything a spectator can see in the browser, an external tool (an overlay, a caster's bot, a
 research script) can pull as JSON — and nothing more. There is no write surface: **read-only by

@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block body_class %}bld-page{% endblock %}
+{% block content %}
+<div class="page manual apidoc">
+  <aside class="manual__sidebar" aria-label="API reference groups">
+    {% for g in groups %}
+    <div class="manual__section">
+      <h2 class="manual__section-h">{{ g.name }}</h2>
+      <ul class="manual__list">
+        {% for ep in g.endpoints %}
+        <li>
+          <a class="manual__link apidoc__navlink" href="#{{ ep.anchor }}">
+            <span class="apidoc__badge {{ ep.method_class }}">{{ ep.method }}</span>
+            <code class="apidoc__path">{{ ep.path }}</code>
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endfor %}
+  </aside>
+  <div class="manual__content">
+    <nav class="manual__crumbs" aria-label="Breadcrumb"><a href="/manual">Manual</a> › API reference</nav>
+    <section class="phead">
+      <div class="phead__eyebrow">Developers</div>
+      <h1 class="phead__title">API reference</h1>
+      <p class="phead__sub">Two bearer-key JSON surfaces for building on top of Eperica: the
+        <strong>Agent API</strong> — play as an AI client, exactly what a browser player can do and
+        no more — and the <strong>Spectator API</strong> — read-only, omniscient, the same feed the
+        <code>/spectate</code> dashboard renders. Every endpoint below (method, parameters, a
+        copyable <code>curl</code>, and real request/response examples) is generated from one
+        registry shared with the machine-readable <a href="/docs/api/openapi.json">OpenAPI 3.0
+        document</a> — the two can never drift apart. Import the OpenAPI file into Swagger UI,
+        Postman, or a codegen tool to explore or call the surface directly; the narrative contracts
+        — fog rules, budget philosophy, manifest lifecycle — live in <code>docs/agent-api.md</code>
+        and <code>docs/spectator-api.md</code> in the repository, which this page is the per-endpoint
+        companion to.</p>
+      <p class="manual__note">Every <code>curl</code> line below uses <code>{server}</code> as a
+        placeholder for your world's base URL (e.g. <code>https://eperica.example.com</code>).</p>
+    </section>
+
+    {% for g in groups %}
+    <section class="apidoc__group psec" id="group-{{ g.anchor }}">
+      <div class="bld-cols__head"><h2>{{ g.name }}</h2><span class="bld-cols__rule"></span></div>
+      <p class="manual__banner apidoc__auth">{{ g.auth_blurb }}</p>
+
+      {% for ep in g.endpoints %}
+      <details class="apidoc__op" id="{{ ep.anchor }}">
+        <summary class="apidoc__op-summary">
+          <span class="apidoc__badge {{ ep.method_class }}">{{ ep.method }}</span>
+          <code class="apidoc__path">{{ ep.path }}</code>
+          <span class="apidoc__op-title">{{ ep.summary }}</span>
+        </summary>
+        <div class="apidoc__op-body">
+          <p class="apidoc__desc">{{ ep.description }}</p>
+
+          {% if !ep.params.is_empty() %}
+          <h4 class="apidoc__h4">Parameters</h4>
+          <div style="overflow-x:auto">
+          <table class="table">
+            <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+            <tbody>
+              {% for p in ep.params %}
+              <tr>
+                <td><code>{{ p.name }}</code></td>
+                <td>{{ p.location }}</td>
+                <td>{{ p.ty }}</td>
+                <td>{% if p.required %}yes{% else %}no{% endif %}</td>
+                <td>{{ p.description }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          </div>
+          {% endif %}
+
+          <h4 class="apidoc__h4">Request</h4>
+          <pre class="apidoc__pane">{{ ep.curl }}</pre>
+          {% if let Some(body) = ep.request_example %}
+          <p class="manual__note">Request body:</p>
+          <pre class="apidoc__pane">{{ body }}</pre>
+          {% endif %}
+
+          <h4 class="apidoc__h4">Response{% if ep.responses.len() > 1 %}s{% endif %}</h4>
+          {% for r in ep.responses %}
+          <p class="apidoc__resp-desc"><span class="apidoc__status">{{ r.status }}</span> {{ r.description }}</p>
+          <pre class="apidoc__pane">{{ r.example }}</pre>
+          {% endfor %}
+
+          {% if !ep.errors.is_empty() %}
+          <h4 class="apidoc__h4">Errors</h4>
+          <div style="overflow-x:auto">
+          <table class="table">
+            <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+            <tbody>
+              {% for e in ep.errors %}
+              <tr><td>{{ e.status }}</td><td><code>{{ e.code }}</code></td><td>{{ e.when }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          </div>
+          <p class="manual__note">See <a href="#error-contract">Error contract &amp; rate budget</a> below for the shared shape.</p>
+          {% endif %}
+        </div>
+      </details>
+      {% endfor %}
+    </section>
+    {% endfor %}
+
+    <section class="apidoc__group psec" id="error-contract">
+      <div class="bld-cols__head"><h2>Error contract &amp; rate budget</h2><span class="bld-cols__rule"></span></div>
+      <p class="apidoc__desc">Every error response on both surfaces is a JSON object of the same
+        shape: <code>{"error": "&lt;code&gt;", "reason": "&lt;human-readable text&gt;"}</code>. A
+        <code>429</code> response additionally carries <code>retry_after_secs</code> — how many
+        seconds until the caller's rate window resets.</p>
+      <div style="overflow-x:auto">
+      <table class="table">
+        <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>400</td><td>The request itself is malformed: a body that isn't valid JSON
+            (<code>invalid_json</code> — possible on every POST), a non-numeric query value, or an
+            endpoint-specific validation failure (e.g. <code>empty_composition</code>,
+            <code>count_out_of_range</code> — listed per endpoint above).</td></tr>
+          <tr><td>401</td><td>Missing, malformed, revoked or unknown bearer key; or a key whose bound account lost the required role — re-checked on every request, not just at mint.</td></tr>
+          <tr><td>403</td><td>The bound account is banned/suspended (<code>account_blocked</code>), the acting player hasn't joined that world (<code>not_joined</code>, Agent API only), or the world is frozen after a win (<code>world_frozen</code>, mutating routes only).</td></tr>
+          <tr><td>404</td><td>The path world/village/report id doesn't resolve, or (Agent API) resolves to something this player doesn't own or isn't a party to — never a forbidden leak, always a plain not-found (P4).</td></tr>
+          <tr><td>409</td><td>The use-case itself rejected the order — insufficient resources, a busy queue lane, an unmet prerequisite, or a concurrent order winning the same lane first. Same rules a browser submission hits, just JSON instead of a flashed form error.</td></tr>
+          <tr><td>429</td><td><code>rate_limited</code> — the bearer key's request count exceeded <code>agent_limit_per_window</code> (120 requests/min at current config, <code>specs/balance/fairplay.toml</code>) for that key. The body's <code>retry_after_secs</code> says how long to back off.</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="manual__note">The rate budget is shared by both APIs and counts every request
+        (GETs included) against the same per-key window — poll politely, and prefer the state digest
+        / feed endpoints over re-deriving the same data from finer-grained calls.</p>
+    </section>
+  </div>
+</div>
+{% endblock %}
