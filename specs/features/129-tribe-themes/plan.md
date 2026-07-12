@@ -13,23 +13,22 @@ client cosmetics); P11 unaffected (CSS + one cached probe already made for the n
 Discipline: **one bold signature per theme (the primary-action button); everything else is quiet
 token work.** All motion `prefers-reduced-motion`-gated; only transform/opacity/filter animate.
 
-### Romans — "Aged Triumph" (sepia, matches the painted plates)
+### Romans — "Aged Triumph" (LIGHT parchment — per operator direction, "creamy, almost white")
 
 | Token | Value | Note |
 |---|---|---|
-| ground / panel | `#2b2214` / `#332818` | warm sepia (lifted a step toward dusty cream on operator feedback); the ground renders as a sun-haze gradient + dust mottle, never flat |
-| panel highlight | `#4a3a26` | dusty-cream plate-light |
-| border | `#75603f` | dusty bronze |
-| accent | `#d9bc85` | parchment-gold, creamier per operator feedback (the plates' highlight ladder #c0a080→#f0e0c0) |
-| secondary | `#9a4a32` | terracotta-brick — the cape; the plates' red is earthen, not blood |
-| text | `#f0e4cb` | dusty cream |
+| ground | `#efe6d1` | parchment, almost white; rendered as a sun-through-linen haze (#faf4e4→#ecdfc2→#dcc9a2) + warm dust mottle, never flat |
+| panel | `#f4edda` / alt `#faf5e8` | lit parchment cards with per-panel mottle + cream top light |
+| border | `#c8b28a` | sun-bleached bronze |
+| accent | `#8a6d35` | deep antique gold — readable on cream (AA) |
+| secondary | `#9a4a32` | terracotta-brick — the cape |
+| text | `#3a2d1a` / muted `#7a6748` | dark sepia ink on parchment |
 | radius | 2px | crisp imperial edges |
 
-Signature button: **cape swing** — a terracotta drape (skewed gradient pseudo-element hanging from
-the button's top edge) sways once (`rotate(-2deg→1.5deg→0)`, transform-origin top) on hover;
-gold hairline top border. Header ornament: a laurel sprig (inline SVG data-URI) left of section
-titles. Extra touches: table-row hover in gold at 8% alpha; nav active = thin straight gold rule;
-countdown/progress accents in aged gold; status-strip cards get the parchment top edge.
+The one LIGHT theme of the three (Teutons/Gauls stay dark) — components that hardcode the dark
+chrome (`.gauge`, `.vquick a`, `.vchip`, `.vplan`/`.vcanvas`) carry explicit parchment overrides.
+Signature button: **cape swing** — terracotta drape, unchanged mechanics. Header ornament: laurel
+sprig in deep gold. Extra touches per the checklist, re-based on the light ground.
 
 ### Teutons — "Iron & Ember"
 

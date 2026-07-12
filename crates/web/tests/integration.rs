@@ -1195,7 +1195,7 @@ fn base_css_carries_tribe_theme_blocks() {
 
     // Each block's ground + accent tokens (plan-pinned hexes).
     assert!(
-        css.contains("#2b2214") && css.contains("#d9bc85"),
+        css.contains("#efe6d1") && css.contains("#8a6d35"),
         "romans ground+accent"
     );
     assert!(
