@@ -7258,6 +7258,7 @@ pub async fn me(
     State(state): State<AppState>,
     MaybeAuthUser(effective): MaybeAuthUser,
     MaybeRealUser(real): MaybeRealUser,
+    jar: PrivateCookieJar,
 ) -> Response {
     use eperica_application::AccountRepository;
     // Moderator follows the *effective* player (035 — sitting a moderator lets you moderate as them).
@@ -7293,9 +7294,34 @@ pub async fn me(
     };
     let authed = effective.is_some();
     let moderator = eff_rec.as_ref().is_some_and(|u| u.is_moderator);
-    // 115: the account's tribe ("chosen once, for keeps") so base.html can set `data-tribe` on <body>
-    // for tribe-specific theming (e.g. the primary button's per-tribe colours).
-    let tribe = eff_rec.as_ref().map(|u| u.tribe.slug());
+    // 129: the acting player's tribe in the **selected world** (`WORLD_COOKIE`, same source
+    // `manual_rules_view` reads) — not an account-level default, since a player may run a different
+    // tribe per world (`world_me`'s note) — so base.html's pre-paint theme script can drive the
+    // world skin off this single probe. `None` with no world selected, or no player there yet. Two
+    // single-row `players`-table lookups on the already-loaded home repo (no per-world repo/map
+    // build, unlike full `GameContext` resolution) — cheap enough for a per-page poll.
+    let tribe = match effective {
+        Some(account) => {
+            let selected = jar
+                .get(WORLD_COOKIE)
+                .and_then(|c| c.value().parse::<u128>().ok())
+                .map(WorldId);
+            match selected {
+                Some(world_id) => match state.accounts.player_in_world(account, world_id).await {
+                    Ok(Some(player)) => state
+                        .accounts
+                        .player_tribe(player)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|t| t.slug()),
+                    _ => None,
+                },
+                None => None,
+            }
+        }
+        None => None,
+    };
     axum::Json(serde_json::json!({
         "authed": authed,
         "moderator": moderator,

@@ -5,6 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Eperica</title>
   <link rel="icon" href="/static/favicon.svg">
+  <!-- 129: tribe theme pre-paint (flash-free theming) — runs before the stylesheets below ever apply,
+       so a cached tribe theme paints immediately on a world page instead of flashing neutral first. -->
+  <script>
+    (function () {
+      var d = document.documentElement, onWorld = /^\/w\//.test(location.pathname);
+      var t = onWorld && localStorage.getItem("eperica-theme");
+      if (t === "romans" || t === "teutons" || t === "gauls") d.dataset.theme = t;
+      else d.removeAttribute("data-theme");
+    })();
+  </script>
   <link rel="stylesheet" href="/static/base.css">
   <link rel="stylesheet" href="/static/theme-steel.css">
   {% block head %}{% endblock %}
@@ -177,6 +187,20 @@
           // a race (a player can run a different tribe per world).
           if (me.tribe && !/^\/w\//.test(window.location.pathname)) {
             document.body.setAttribute("data-tribe", me.tribe);
+          }
+          // 129: tribe theme probe extension — the full-skin `data-theme` on <html>, world-scoped
+          // only, sourced from this same probe's (now world-aware) tribe field. Cache the value for
+          // the pre-paint snippet above; on a non-world page just drop the attribute and leave the
+          // cache alone (it is still valid for the next world visit).
+          var onWorld = /^\/w\//.test(window.location.pathname);
+          var validTribe =
+            me.tribe === "romans" || me.tribe === "teutons" || me.tribe === "gauls";
+          if (onWorld && validTribe) {
+            document.documentElement.dataset.theme = me.tribe;
+            localStorage.setItem("eperica-theme", me.tribe);
+          } else {
+            document.documentElement.removeAttribute("data-theme");
+            if (onWorld) localStorage.removeItem("eperica-theme");
           }
         })
         .catch(function () {});

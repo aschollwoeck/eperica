@@ -2,7 +2,7 @@
 
 **Status:** Draft. Gates per task: fmt, clippy -D warnings, cargo test --workspace.
 
-- [ ] **T1 — Theme wiring.** /me exposes the selected world's tribe; base.html probe sets/clears
+- [x] **T1 — Theme wiring.** /me exposes the selected world's tribe; base.html probe sets/clears
   data-theme on the root (path-gated to /w/), localStorage pre-paint snippet; integration tests
   (AC1). (AC1)
 - [ ] **T2 — The three skins + signatures.** The full token/component blocks per the plan's

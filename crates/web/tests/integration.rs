@@ -1004,7 +1004,7 @@ async fn me_probe_reports_auth_and_moderator(pool: sqlx::PgPool) {
         .unwrap();
     assert!(body.contains("\"authed\":false"), "got: {body}");
     assert!(body.contains("\"moderator\":false"), "got: {body}");
-    // 115: no account ⇒ no tribe for the theming (base.html falls back to the default palette).
+    // 129: no account ⇒ no selected-world tribe for the theming (base.html stays neutral).
     assert!(body.contains("\"tribe\":null"), "got: {body}");
 
     // A logged-in player: authed, but not a moderator.
@@ -1031,8 +1031,10 @@ async fn me_probe_reports_auth_and_moderator(pool: sqlx::PgPool) {
         .unwrap();
     assert!(body.contains("\"authed\":true"), "got: {body}");
     assert!(body.contains("\"moderator\":false"), "got: {body}");
-    // 115: the account tribe is exposed for base.html theming (registered as Gauls above).
-    assert!(body.contains("\"tribe\":\"gauls\""), "got: {body}");
+    // 129: registration alone never selects a world (`WORLD_COOKIE` is only set by `/worlds/join`), so
+    // the probe still reports no tribe here even though the home-world player already exists — see
+    // `me_probe_reports_selected_world_tribe` for the tribe-present case.
+    assert!(body.contains("\"tribe\":null"), "got: {body}");
 
     // Promote to moderator → the probe now reports it (drives the Moderation nav link).
     sqlx::query("UPDATE users SET is_moderator = TRUE WHERE username = $1")
@@ -1050,6 +1052,123 @@ async fn me_probe_reports_auth_and_moderator(pool: sqlx::PgPool) {
         .unwrap();
     assert!(body.contains("\"authed\":true"), "got: {body}");
     assert!(body.contains("\"moderator\":true"), "got: {body}");
+}
+
+/// 129 (AC1): `/me` carries the **selected world's** tribe (`WORLD_COOKIE`), not merely "is logged in" —
+/// registration alone never selects a world, so the probe stays tribe-less until the account explicitly
+/// selects one (`/worlds/join`, idempotent for an already-joined world); it then reports that world's
+/// player tribe, the field base.html's full-skin theming reads.
+#[sqlx::test(migrations = "../../migrations")]
+async fn me_probe_reports_selected_world_tribe(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home_uuid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT id FROM worlds ORDER BY created_at, id LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    // `/worlds/join`'s form parses `world` as the raw decimal `u128` (matching `WorldsTemplate`'s
+    // `JoinableWorldRow::id`), unlike the hyphenated UUID string the `/w/{world}/…` path routes use.
+    let home_dec = home_uuid.as_u128().to_string();
+    let (c, _user) = register_client(&base, &pool, &unique("wtribe")).await;
+
+    // No world selected yet — registration alone doesn't set `WORLD_COOKIE` — so no tribe, even though
+    // the home-world player already exists.
+    let body = c
+        .get(format!("{base}/me"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("\"tribe\":null"), "got: {body}");
+
+    // Select the (already-joined) home world — `/worlds/join` sets `WORLD_COOKIE`; re-joining a world
+    // the account already has a player in is idempotent (`RepoError::Duplicate`).
+    let r = c
+        .post(format!("{base}/worlds/join"))
+        .form(&[("world", home_dec.as_str()), ("tribe", "gauls")])
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        r.status().is_redirection(),
+        "join should redirect: {}",
+        r.status()
+    );
+
+    // The probe now reports the selected world's tribe (registered — and joined — as Gauls above).
+    let body = c
+        .get(format!("{base}/me"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains("\"tribe\":\"gauls\""),
+        "selected world's tribe should be reported: {body}"
+    );
+}
+
+/// 129 (AC1): base.html's tribe-theme hooks — the flash-free pre-paint snippet and the `/me` probe
+/// extension that drives `data-theme` — render on every page (base.html is shared across world and
+/// public pages), but both are gated to world-scoped paths (`/w/`) rather than firing unconditionally.
+/// Checked on a world page (where the gate is live) and a public page (`/manual`, which never gets the
+/// attribute at runtime even though the hooks are present in the shared markup).
+#[sqlx::test(migrations = "../../migrations")]
+async fn base_html_carries_tribe_theme_hooks_everywhere(pool: sqlx::PgPool) {
+    let base = spawn(pool.clone()).await;
+    let home = home_world(&pool).await;
+    let (c, user) = register_client(&base, &pool, &unique("themehook")).await;
+    let home_vid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM villages WHERE owner_id = $1")
+        .bind(user)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let world_body = c
+        .get(format!("{base}/w/{home}/village/{home_vid}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        world_body.contains("129: tribe theme pre-paint"),
+        "world page missing the pre-paint snippet marker"
+    );
+    assert!(
+        world_body.contains("129: tribe theme probe extension"),
+        "world page missing the probe extension marker"
+    );
+    // The path gate itself, pinned to the exact source each hook uses — proves both are conditional on
+    // `/w/`, never unconditional.
+    assert!(
+        world_body.contains("onWorld = /^\\/w\\//.test(location.pathname)"),
+        "pre-paint snippet should gate on the /w/ path: {world_body}"
+    );
+    assert!(
+        world_body.contains("onWorld = /^\\/w\\//.test(window.location.pathname)"),
+        "probe extension should gate on the /w/ path: {world_body}"
+    );
+
+    // A public page shares the same base.html — the hooks (and their gate) render there too, since the
+    // gate is evaluated client-side against the runtime path, not templated per-route.
+    let manual_body = c
+        .get(format!("{base}/manual"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(manual_body.contains("129: tribe theme pre-paint"));
+    assert!(manual_body.contains("129: tribe theme probe extension"));
+    assert!(manual_body.contains("onWorld = /^\\/w\\//.test(location.pathname)"));
 }
 
 /// 115: `/w/{world}/me` reports the player's tribe IN THAT WORLD (base.html themes the primary button by
