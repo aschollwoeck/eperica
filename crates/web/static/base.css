@@ -1204,16 +1204,16 @@ a { color: var(--c-gold); }
 
 /* ---- Romans — "Aged Triumph" (sepia, matches the painted plates) ---- */
 :root[data-theme="romans"] {
-  --c-bg: #d4c29a;          /* aged papyrus — creamy, not white */          /* warm umber ground */
-  --c-panel: #ddcca6;
-  --c-panel-alt: #e9dcbb;   /* parchment-light panel highlight */
-  --c-border: #a88d5e;      /* aged bronze-brown */
-  --c-gold: #7f6228;        /* deep antique gold */        /* aged gold accent */
-  --c-accent: #7f6228;
-  --c-ink: #352918;         /* dark sepia ink */         /* parchment white */
-  --c-ink-muted: #6b5940;
-  --c-warning: #7f6228;     /* countdown/progress accents in aged gold */
-  --c-ember: #a06a28;
+  --c-bg: #ab9161;          /* worn leather — sun-dark tan */          /* warm umber ground */
+  --c-panel: #b09967;
+  --c-panel-alt: #bfa974;   /* parchment-light panel highlight */
+  --c-border: #7e6740;      /* aged bronze-brown */
+  --c-gold: #4f3d16;        /* dark bronze — gold no longer reads as text at this depth */        /* aged gold accent */
+  --c-accent: #4f3d16;
+  --c-ink: #2b2112;         /* near-black sepia ink */         /* parchment white */
+  --c-ink-muted: #453723;
+  --c-warning: #4f3d16;     /* countdown/progress accents in aged gold */
+  --c-ember: #7a5a1e;
   --c-secondary: #9a4a32;   /* muted crimson — the cape, sparingly */
   --radius-sm: 2px;         /* crisp imperial edges */
   --radius-md: 2px;
@@ -1230,11 +1230,11 @@ a { color: var(--c-gold); }
     /* dust-cloud mottle: low-frequency turbulence, warm-blended, page-fixed */
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='700' height='700'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.45  0 0 0 0 0.33  0 0 0 0 0.18  0 0 0 0.10 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E")
       fixed,
-    radial-gradient(130% 110% at 50% -20%, #e5d5ae 0%, #cdba8e 45%, #ab9366 100%) fixed;
+    radial-gradient(130% 110% at 50% -20%, #c2ab7c 0%, #a48c5c 45%, #7c6740 100%) fixed;
 }
 :root[data-theme="romans"] body::before {
   /* warm the vignette — dusk through dust, not black soot */
-  background: radial-gradient(132% 120% at 50% 30%, transparent 52%, rgba(94, 72, 40, 0.34) 100%);
+  background: radial-gradient(132% 120% at 50% 30%, transparent 52%, rgba(70, 52, 26, 0.4) 100%);
 }
 :root[data-theme="romans"] body::after {
   /* sandier grain: two scales of warm noise, clearly present */
@@ -1250,43 +1250,47 @@ a { color: var(--c-gold); }
   background:
     /* the same dust mottle, per-panel, over a lit sand gradient — no flat layer anywhere */
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.42  0 0 0 0 0.31  0 0 0 0 0.17  0 0 0 0.085 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E"),
-    linear-gradient(180deg, rgba(255, 248, 228, 0.5) 0%, rgba(255, 248, 228, 0.12) 30%, rgba(94, 72, 40, 0.07) 100%),
-    linear-gradient(200deg, #e4d6b0 0%, #dbc9a1 55%, #d2be92 100%);
+    linear-gradient(180deg, rgba(255, 245, 220, 0.38) 0%, rgba(255, 245, 220, 0.1) 30%, rgba(70, 52, 26, 0.08) 100%),
+    linear-gradient(200deg, #b49d6b 0%, #a99160 55%, #9f8756 100%);
 }
 :root[data-theme="romans"] .phead {
   background:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.42  0 0 0 0 0.31  0 0 0 0 0.17  0 0 0 0.085 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E"),
-    linear-gradient(180deg, rgba(255, 248, 228, 0.55) 0%, transparent 55%),
-    linear-gradient(160deg, #e2d3aa 0%, #d5c294 70%);
+    linear-gradient(180deg, rgba(255, 245, 220, 0.42) 0%, transparent 55%),
+    linear-gradient(160deg, #b29b69 0%, #a38b58 70%);
 }
 :root[data-theme="romans"] .vtop__card {
   background:
-    linear-gradient(180deg, rgba(255, 248, 228, 0.5) 0%, rgba(94, 72, 40, 0.05) 100%),
-    linear-gradient(190deg, #e0d1a8 0%, #d6c396 100%);
+    linear-gradient(180deg, rgba(255, 245, 220, 0.38) 0%, rgba(70, 52, 26, 0.05) 100%),
+    linear-gradient(190deg, #af9765 0%, #a28a58 100%);
 }
 
 /* the village-plan canvas: warm the cold blue grid + glow into the sand world */
 :root[data-theme="romans"] .vcanvas {
-  background-image: radial-gradient(48% 42% at 50% 50%, rgba(245, 235, 208, 0.5), transparent 72%),
-    linear-gradient(#ab9364 1px, transparent 1px), linear-gradient(90deg, #ab9364 1px, transparent 1px);
+  background-image: radial-gradient(48% 42% at 50% 50%, rgba(230, 214, 178, 0.45), transparent 72%),
+    linear-gradient(#7c6640 1px, transparent 1px), linear-gradient(90deg, #7c6640 1px, transparent 1px);
 }
 :root[data-theme="romans"] .vplan {
-  background: linear-gradient(180deg, #d8c69c, #cbb686);
+  background: linear-gradient(180deg, #a58c58, #997f4c);
 }
 /* components that hardcode the dark chrome (#0d1217 cards) join the parchment world */
 :root[data-theme="romans"] .gauge {
-  background: linear-gradient(180deg, #e4d6b0, #d6c396);
-  border-color: #a88d5e;
+  background: linear-gradient(180deg, #b49d6b, #a58c58);
+  border-color: #7e6740;
 }
 :root[data-theme="romans"] .vquick a,
 :root[data-theme="romans"] .vchip {
-  background: #e0d1a8;
-  border-color: #a88d5e;
+  background: #ad9563;
+  border-color: #7e6740;
 }
+/* deep-tan readability: pale resource-rate text + pale canvas zone labels wash out on leather */
+:root[data-theme="romans"] .gauge__rate { color: var(--c-ink-muted); }
+:root[data-theme="romans"] .vcanvas__label { color: rgba(43, 33, 18, 0.55); }
+
 :root[data-theme="romans"] .vquick a:hover {
-  color: #352918;
-  border-color: #7f6228;
-  background: #eaddbd;
+  color: #2b2112;
+  border-color: #4f3d16;
+  background: #bfa97a;
 }
 
 /* table-row hover in gold at 8% alpha */

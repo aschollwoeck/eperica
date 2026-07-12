@@ -13,16 +13,16 @@ client cosmetics); P11 unaffected (CSS + one cached probe already made for the n
 Discipline: **one bold signature per theme (the primary-action button); everything else is quiet
 token work.** All motion `prefers-reduced-motion`-gated; only transform/opacity/filter animate.
 
-### Romans — "Aged Triumph" (aged papyrus — the midpoint the operator landed on after trying dark sepia and near-white)
+### Romans — "Aged Triumph" (worn leather — one step below papyrus; the operator's landing after dark sepia → sand → near-white → papyrus)
 
 | Token | Value | Note |
 |---|---|---|
-| ground | `#d4c29a` | aged papyrus; rendered as a sun-baked haze (#e5d5ae→#cdba8e→#ab9366) + warm dust mottle, never flat |
-| panel | `#ddcca6` / alt `#e9dcbb` | sun-baked parchment cards with per-panel mottle + cream top light |
-| border | `#a88d5e` | sun-bleached bronze |
-| accent | `#7f6228` | deep antique gold — AA on papyrus |
+| ground | `#ab9161` | worn leather; rendered as a sun-dark haze (#c2ab7c→#a48c5c→#7c6740) + warm dust mottle, never flat |
+| panel | `#b09967` / alt `#bfa974` | leather cards with per-panel mottle + cream top light |
+| border | `#7e6740` | worn bronze |
+| accent | `#4f3d16` | dark bronze — at this depth gold no longer reads as text; ornament stays golden in spirit |
 | secondary | `#9a4a32` | terracotta-brick — the cape |
-| text | `#352918` / muted `#6b5940` | dark sepia ink |
+| text | `#2b2112` / muted `#453723` | near-black sepia ink |
 | radius | 2px | crisp imperial edges |
 
 The one LIGHT theme of the three (Teutons/Gauls stay dark) — components that hardcode the dark
