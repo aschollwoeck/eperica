@@ -1203,7 +1203,7 @@ a { color: var(--c-gold); }
    ============================================================================ */
 
 /* ---- Romans — "Aged Triumph" (sepia, matches the painted plates) ---- */
-[data-theme="romans"] {
+:root[data-theme="romans"] {
   --c-bg: #1f1811;          /* warm umber ground */
   --c-panel: #2a2118;
   --c-panel-alt: #3a2e1f;   /* parchment-light panel highlight */
@@ -1220,19 +1220,19 @@ a { color: var(--c-gold); }
 }
 
 /* table-row hover in gold at 8% alpha */
-[data-theme="romans"] .table tbody tr:hover { background: color-mix(in srgb, #c9a227 8%, transparent); }
+:root[data-theme="romans"] .table tbody tr:hover { background: color-mix(in srgb, #c9a227 8%, transparent); }
 /* nav active = thin straight gold rule (leaderboard tabs / manual sidebar) */
-[data-theme="romans"] .tab--active { border-bottom-width: 2px; }
-[data-theme="romans"] .manual__link--active { border-left-width: 2px; }
+:root[data-theme="romans"] .tab--active { border-bottom-width: 2px; }
+:root[data-theme="romans"] .manual__link--active { border-left-width: 2px; }
 /* status-strip cards get the parchment top edge */
-[data-theme="romans"] .vtop__card { box-shadow: inset 0 2px 0 var(--c-panel-alt), inset 0 1px 0 rgba(255, 255, 255, .03); }
+:root[data-theme="romans"] .vtop__card { box-shadow: inset 0 2px 0 var(--c-panel-alt), inset 0 1px 0 rgba(255, 255, 255, .03); }
 
 /* Header ornament — a laurel sprig left of section titles (.phead__title / the building
    roster section head), a static SVG data-URI by default; entrance gated behind
    prefers-reduced-motion. Baked to the accent hex directly (not currentColor — SVG
    background-images don't reliably inherit an ancestor's `color` cross-browser). */
-[data-theme="romans"] .phead__title::before,
-[data-theme="romans"] .bld-cols__head h2::before {
+:root[data-theme="romans"] .phead__title::before,
+:root[data-theme="romans"] .bld-cols__head h2::before {
   content: "";
   display: inline-block;
   width: 18px; height: 18px;
@@ -1252,15 +1252,15 @@ a { color: var(--c-gold); }
 /* Signature button — cape swing. The base .btn--primary (the wine war-banner) is a
    neutral-page look; themed pages get their own build: a crimson drape hangs from the
    button's top edge and sways once on hover, over a plain aged-gold-hairlined banner. */
-[data-theme="romans"] .btn--primary::before { content: none; }
-[data-theme="romans"] .btn--primary {
+:root[data-theme="romans"] .btn--primary::before { content: none; }
+:root[data-theme="romans"] .btn--primary {
   background: linear-gradient(180deg, var(--c-secondary), color-mix(in srgb, var(--c-secondary) 55%, #1f1811));
   box-shadow: inset 0 2px 0 var(--c-gold);
   border-radius: var(--radius-md);
   color: var(--c-ink);
 }
-[data-theme="romans"] .btn--primary:hover { color: #fff; }
-[data-theme="romans"] .btn--primary::after {
+:root[data-theme="romans"] .btn--primary:hover { color: #fff; }
+:root[data-theme="romans"] .btn--primary::after {
   content: "";
   position: absolute; inset: auto; left: 50%; top: -3px; z-index: -1;
   width: 30px; height: 18px;
@@ -1273,7 +1273,7 @@ a { color: var(--c-gold); }
   animation: none; /* neutralize the neutral banner's embers-rise (same pseudo-element) */
 }
 /* the base rule's `:hover::after` still fires embers-rise unless explicitly cleared here */
-[data-theme="romans"] .btn--primary:hover::after { opacity: 1; animation: none; }
+:root[data-theme="romans"] .btn--primary:hover::after { opacity: 1; animation: none; }
 @media (prefers-reduced-motion: no-preference) {
   [data-theme="romans"] .btn--primary:hover::after { animation: romans-cape-swing .5s ease; }
 }
@@ -1284,7 +1284,7 @@ a { color: var(--c-gold); }
 }
 
 /* ---- Teutons — "Iron & Ember" ---- */
-[data-theme="teutons"] {
+:root[data-theme="teutons"] {
   --c-bg: #191b1e;          /* cold steel ground */
   --c-panel: #22262a;
   --c-panel-alt: #2b3036;   /* worn metal sheen */
@@ -1301,17 +1301,17 @@ a { color: var(--c-gold); }
 }
 
 /* table-row hover in ember at 7% alpha */
-[data-theme="teutons"] .table tbody tr:hover { background: color-mix(in srgb, #d9622b 7%, transparent); }
+:root[data-theme="teutons"] .table tbody tr:hover { background: color-mix(in srgb, #d9622b 7%, transparent); }
 /* nav active = thick blunt ember rule */
-[data-theme="teutons"] .tab--active { border-bottom-width: 4px; }
-[data-theme="teutons"] .manual__link--active { border-left-width: 4px; }
+:root[data-theme="teutons"] .tab--active { border-bottom-width: 4px; }
+:root[data-theme="teutons"] .manual__link--active { border-left-width: 4px; }
 /* status-strip: steel borders with an ember left edge (mirrors .vtop__card--alert's own
    inset-left-bar treatment elsewhere in this file) */
-[data-theme="teutons"] .vtop__card { box-shadow: inset 3px 0 0 var(--c-gold); }
+:root[data-theme="teutons"] .vtop__card { box-shadow: inset 3px 0 0 var(--c-gold); }
 
 /* Header ornament — twin rune strokes, blunt square caps. */
-[data-theme="teutons"] .phead__title::before,
-[data-theme="teutons"] .bld-cols__head h2::before {
+:root[data-theme="teutons"] .phead__title::before,
+:root[data-theme="teutons"] .bld-cols__head h2::before {
   content: "";
   display: inline-block;
   width: 18px; height: 18px;
@@ -1331,15 +1331,15 @@ a { color: var(--c-gold); }
 /* Signature button — forge ember. A smoldering inset edge that breathes on hover: the
    box-shadow itself stays static (box-shadow can't animate on the compositor), the
    "breathing" is opacity + filter on the glow layer, which are compositor-friendly. */
-[data-theme="teutons"] .btn--primary::before { content: none; }
-[data-theme="teutons"] .btn--primary {
+:root[data-theme="teutons"] .btn--primary::before { content: none; }
+:root[data-theme="teutons"] .btn--primary {
   background: linear-gradient(180deg, var(--c-panel-alt), var(--c-bg));
   box-shadow: inset 0 0 0 2px var(--c-gold);
   border-radius: var(--radius-md);
   color: var(--c-ink);
 }
-[data-theme="teutons"] .btn--primary:hover { color: #fff; }
-[data-theme="teutons"] .btn--primary::after {
+:root[data-theme="teutons"] .btn--primary:hover { color: #fff; }
+:root[data-theme="teutons"] .btn--primary::after {
   content: "";
   position: absolute; inset: 0; z-index: -1;
   box-shadow: inset 0 0 0 2px var(--c-gold), inset 0 0 14px var(--c-glow);
@@ -1347,7 +1347,7 @@ a { color: var(--c-gold); }
   filter: brightness(1);
   animation: none; /* neutralize the neutral banner's embers-rise (same pseudo-element) */
 }
-[data-theme="teutons"] .btn--primary:hover::after { opacity: .95; filter: brightness(1.2); animation: none; }
+:root[data-theme="teutons"] .btn--primary:hover::after { opacity: .95; filter: brightness(1.2); animation: none; }
 @media (prefers-reduced-motion: no-preference) {
   [data-theme="teutons"] .btn--primary:hover::after { animation: teutons-forge-ember 1s ease-in-out infinite alternate; }
 }
@@ -1357,7 +1357,7 @@ a { color: var(--c-gold); }
 }
 
 /* ---- Gauls — "Moss & Bronze" ---- */
-[data-theme="gauls"] {
+:root[data-theme="gauls"] {
   --c-bg: #16201a;          /* deep forest ground */
   --c-panel: #1e2b22;
   --c-panel-alt: #27392c;   /* moss light */
@@ -1374,16 +1374,16 @@ a { color: var(--c-gold); }
 }
 
 /* table-row hover in leaf green at 7% alpha */
-[data-theme="gauls"] .table tbody tr:hover { background: color-mix(in srgb, #6fae6a 7%, transparent); }
+:root[data-theme="gauls"] .table tbody tr:hover { background: color-mix(in srgb, #6fae6a 7%, transparent); }
 /* nav active = soft rounded bronze rule */
-[data-theme="gauls"] .tab--active { border-bottom-width: 3px; border-radius: 3px 3px 0 0; }
-[data-theme="gauls"] .manual__link--active { border-left-width: 3px; border-radius: 0 8px 8px 0; }
+:root[data-theme="gauls"] .tab--active { border-bottom-width: 3px; border-radius: 3px 3px 0 0; }
+:root[data-theme="gauls"] .manual__link--active { border-left-width: 3px; border-radius: 0 8px 8px 0; }
 /* status-strip cards fully rounded with moss borders */
-[data-theme="gauls"] .vtop__card { border-radius: 16px; border-color: var(--c-border); }
+:root[data-theme="gauls"] .vtop__card { border-radius: 16px; border-color: var(--c-border); }
 
 /* Header ornament — a knot loop, rounded organic strokes. */
-[data-theme="gauls"] .phead__title::before,
-[data-theme="gauls"] .bld-cols__head h2::before {
+:root[data-theme="gauls"] .phead__title::before,
+:root[data-theme="gauls"] .bld-cols__head h2::before {
   content: "";
   display: inline-block;
   width: 18px; height: 18px;
@@ -1405,16 +1405,16 @@ a { color: var(--c-gold); }
    animation), so a plain `transition` — not `@keyframes` — is the compositor-friendly,
    reduced-motion-gated tool for a one-shot reveal (no loop, so nothing to neutralize from
    the neutral banner's own `embers-rise` beyond `animation: none` below). */
-[data-theme="gauls"] .btn--primary::before { content: none; }
-[data-theme="gauls"] .btn--primary {
+:root[data-theme="gauls"] .btn--primary::before { content: none; }
+:root[data-theme="gauls"] .btn--primary {
   background: linear-gradient(180deg, var(--c-panel-alt), var(--c-panel));
   box-shadow: inset 0 0 0 1px var(--c-gold);
   border-radius: var(--radius-md);
   color: var(--c-ink);
   overflow: hidden;
 }
-[data-theme="gauls"] .btn--primary:hover { color: #16201a; }
-[data-theme="gauls"] .btn--primary::after {
+:root[data-theme="gauls"] .btn--primary:hover { color: #16201a; }
+:root[data-theme="gauls"] .btn--primary::after {
   content: "";
   position: absolute; inset: 0; z-index: -1;
   background: linear-gradient(90deg, var(--c-gold), var(--c-secondary));
@@ -1424,7 +1424,7 @@ a { color: var(--c-gold); }
   transition: transform .3s ease-out;
   animation: none; /* neutralize the neutral banner's embers-rise (same pseudo-element) */
 }
-[data-theme="gauls"] .btn--primary:hover::after { transform: translateX(0); opacity: 1; animation: none; }
+:root[data-theme="gauls"] .btn--primary:hover::after { transform: translateX(0); opacity: 1; animation: none; }
 @media (prefers-reduced-motion: reduce) {
   [data-theme="gauls"] .btn--primary::after { transition: none; }
 }

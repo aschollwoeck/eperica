@@ -1152,8 +1152,8 @@ async fn base_html_carries_tribe_theme_hooks_everywhere(pool: sqlx::PgPool) {
         "pre-paint snippet should gate on the /w/ path: {world_body}"
     );
     assert!(
-        world_body.contains("onWorld = /^\\/w\\//.test(window.location.pathname)"),
-        "probe extension should gate on the /w/ path: {world_body}"
+        world_body.contains("window.location.pathname.match(/^\\/w\\/([0-9a-f-]{36})\\//)"),
+        "probe extension should extract the world from the /w/ path: {world_body}"
     );
 
     // A public page shares the same base.html — the hooks (and their gate) render there too, since the

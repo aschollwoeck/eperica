@@ -189,18 +189,29 @@
             document.body.setAttribute("data-tribe", me.tribe);
           }
           // 129: tribe theme probe extension — the full-skin `data-theme` on <html>, world-scoped
-          // only, sourced from this same probe's (now world-aware) tribe field. Cache the value for
-          // the pre-paint snippet above; on a non-world page just drop the attribute and leave the
-          // cache alone (it is still valid for the next world visit).
-          var onWorld = /^\/w\//.test(window.location.pathname);
-          var validTribe =
-            me.tribe === "romans" || me.tribe === "teutons" || me.tribe === "gauls";
-          if (onWorld && validTribe) {
-            document.documentElement.dataset.theme = me.tribe;
-            localStorage.setItem("eperica-theme", me.tribe);
+          // only. Sourced from the PATH-scoped `/w/{world}/me` (115) rather than the global
+          // probe's cookie-derived tribe: the URL is the truth of which world this page acts in
+          // (a deep link works before any lobby selection ever set the world cookie). Cache the
+          // value for the pre-paint snippet above; on a non-world page just drop the attribute
+          // and leave the cache alone (it is still valid for the next world visit).
+          var m = window.location.pathname.match(/^\/w\/([0-9a-f-]{36})\//);
+          if (m) {
+            fetch("/w/" + m[1] + "/me", { headers: { Accept: "application/json" } })
+              .then(function (r) { return r.ok ? r.json() : { tribe: null }; })
+              .then(function (w) {
+                var validTribe =
+                  w.tribe === "romans" || w.tribe === "teutons" || w.tribe === "gauls";
+                if (validTribe) {
+                  document.documentElement.dataset.theme = w.tribe;
+                  localStorage.setItem("eperica-theme", w.tribe);
+                } else {
+                  document.documentElement.removeAttribute("data-theme");
+                  localStorage.removeItem("eperica-theme");
+                }
+              })
+              .catch(function () {});
           } else {
             document.documentElement.removeAttribute("data-theme");
-            if (onWorld) localStorage.removeItem("eperica-theme");
           }
         })
         .catch(function () {});
