@@ -1204,15 +1204,15 @@ a { color: var(--c-gold); }
 
 /* ---- Romans — "Aged Triumph" (sepia, matches the painted plates) ---- */
 :root[data-theme="romans"] {
-  --c-bg: #efe6d1;          /* parchment, almost white */          /* warm umber ground */
-  --c-panel: #f4edda;
-  --c-panel-alt: #faf5e8;   /* parchment-light panel highlight */
-  --c-border: #c8b28a;      /* aged bronze-brown */
-  --c-gold: #8a6d35;        /* deep antique gold — readable on cream */        /* aged gold accent */
-  --c-accent: #8a6d35;
-  --c-ink: #3a2d1a;         /* dark sepia text on cream */         /* parchment white */
-  --c-ink-muted: #7a6748;
-  --c-warning: #8a6d35;     /* countdown/progress accents in aged gold */
+  --c-bg: #d4c29a;          /* aged papyrus — creamy, not white */          /* warm umber ground */
+  --c-panel: #ddcca6;
+  --c-panel-alt: #e9dcbb;   /* parchment-light panel highlight */
+  --c-border: #a88d5e;      /* aged bronze-brown */
+  --c-gold: #7f6228;        /* deep antique gold */        /* aged gold accent */
+  --c-accent: #7f6228;
+  --c-ink: #352918;         /* dark sepia ink */         /* parchment white */
+  --c-ink-muted: #6b5940;
+  --c-warning: #7f6228;     /* countdown/progress accents in aged gold */
   --c-ember: #a06a28;
   --c-secondary: #9a4a32;   /* muted crimson — the cape, sparingly */
   --radius-sm: 2px;         /* crisp imperial edges */
@@ -1230,16 +1230,16 @@ a { color: var(--c-gold); }
     /* dust-cloud mottle: low-frequency turbulence, warm-blended, page-fixed */
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='700' height='700'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.45  0 0 0 0 0.33  0 0 0 0 0.18  0 0 0 0.10 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E")
       fixed,
-    radial-gradient(130% 110% at 50% -20%, #faf4e4 0%, #ecdfc2 45%, #dcc9a2 100%) fixed;
+    radial-gradient(130% 110% at 50% -20%, #e5d5ae 0%, #cdba8e 45%, #ab9366 100%) fixed;
 }
 :root[data-theme="romans"] body::before {
   /* warm the vignette — dusk through dust, not black soot */
-  background: radial-gradient(132% 120% at 50% 30%, transparent 52%, rgba(122, 94, 56, 0.28) 100%);
+  background: radial-gradient(132% 120% at 50% 30%, transparent 52%, rgba(94, 72, 40, 0.34) 100%);
 }
 :root[data-theme="romans"] body::after {
   /* sandier grain: two scales of warm noise, clearly present */
-  opacity: 0.10;
-  filter: sepia(1) saturate(1.3) brightness(0.9);
+  opacity: 0.12;
+  filter: sepia(1) saturate(1.3) brightness(0.85);
   background-size: 90px 90px, 220px 220px;
   background-image:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
@@ -1250,43 +1250,43 @@ a { color: var(--c-gold); }
   background:
     /* the same dust mottle, per-panel, over a lit sand gradient — no flat layer anywhere */
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.42  0 0 0 0 0.31  0 0 0 0 0.17  0 0 0 0.085 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E"),
-    linear-gradient(180deg, rgba(255, 252, 244, 0.7) 0%, rgba(255, 252, 244, 0.15) 30%, rgba(120, 94, 56, 0.06) 100%),
-    linear-gradient(200deg, #f8f2e2 0%, #f2e9d2 55%, #eee3c8 100%);
+    linear-gradient(180deg, rgba(255, 248, 228, 0.5) 0%, rgba(255, 248, 228, 0.12) 30%, rgba(94, 72, 40, 0.07) 100%),
+    linear-gradient(200deg, #e4d6b0 0%, #dbc9a1 55%, #d2be92 100%);
 }
 :root[data-theme="romans"] .phead {
   background:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.42  0 0 0 0 0.31  0 0 0 0 0.17  0 0 0 0.085 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E"),
-    linear-gradient(180deg, rgba(255, 252, 244, 0.75) 0%, transparent 55%),
-    linear-gradient(160deg, #f7f0dd 0%, #eee3c8 70%);
+    linear-gradient(180deg, rgba(255, 248, 228, 0.55) 0%, transparent 55%),
+    linear-gradient(160deg, #e2d3aa 0%, #d5c294 70%);
 }
 :root[data-theme="romans"] .vtop__card {
   background:
-    linear-gradient(180deg, rgba(255, 252, 244, 0.7) 0%, rgba(120, 94, 56, 0.05) 100%),
-    linear-gradient(190deg, #f6efdc 0%, #efe4ca 100%);
+    linear-gradient(180deg, rgba(255, 248, 228, 0.5) 0%, rgba(94, 72, 40, 0.05) 100%),
+    linear-gradient(190deg, #e0d1a8 0%, #d6c396 100%);
 }
 
 /* the village-plan canvas: warm the cold blue grid + glow into the sand world */
 :root[data-theme="romans"] .vcanvas {
-  background-image: radial-gradient(48% 42% at 50% 50%, rgba(255, 250, 238, 0.55), transparent 72%),
-    linear-gradient(#cdbb88 1px, transparent 1px), linear-gradient(90deg, #cdbb88 1px, transparent 1px);
+  background-image: radial-gradient(48% 42% at 50% 50%, rgba(245, 235, 208, 0.5), transparent 72%),
+    linear-gradient(#ab9364 1px, transparent 1px), linear-gradient(90deg, #ab9364 1px, transparent 1px);
 }
 :root[data-theme="romans"] .vplan {
-  background: linear-gradient(180deg, #eee3c8, #e4d5b0);
+  background: linear-gradient(180deg, #d8c69c, #cbb686);
 }
 /* components that hardcode the dark chrome (#0d1217 cards) join the parchment world */
 :root[data-theme="romans"] .gauge {
-  background: linear-gradient(180deg, #f8f2e2, #efe4ca);
-  border-color: #c8b28a;
+  background: linear-gradient(180deg, #e4d6b0, #d6c396);
+  border-color: #a88d5e;
 }
 :root[data-theme="romans"] .vquick a,
 :root[data-theme="romans"] .vchip {
-  background: #f6efdc;
-  border-color: #c8b28a;
+  background: #e0d1a8;
+  border-color: #a88d5e;
 }
 :root[data-theme="romans"] .vquick a:hover {
-  color: #3a2d1a;
-  border-color: #8a6d35;
-  background: #fbf6ea;
+  color: #352918;
+  border-color: #7f6228;
+  background: #eaddbd;
 }
 
 /* table-row hover in gold at 8% alpha */

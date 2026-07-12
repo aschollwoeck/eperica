@@ -13,16 +13,16 @@ client cosmetics); P11 unaffected (CSS + one cached probe already made for the n
 Discipline: **one bold signature per theme (the primary-action button); everything else is quiet
 token work.** All motion `prefers-reduced-motion`-gated; only transform/opacity/filter animate.
 
-### Romans — "Aged Triumph" (LIGHT parchment — per operator direction, "creamy, almost white")
+### Romans — "Aged Triumph" (aged papyrus — the midpoint the operator landed on after trying dark sepia and near-white)
 
 | Token | Value | Note |
 |---|---|---|
-| ground | `#efe6d1` | parchment, almost white; rendered as a sun-through-linen haze (#faf4e4→#ecdfc2→#dcc9a2) + warm dust mottle, never flat |
-| panel | `#f4edda` / alt `#faf5e8` | lit parchment cards with per-panel mottle + cream top light |
-| border | `#c8b28a` | sun-bleached bronze |
-| accent | `#8a6d35` | deep antique gold — readable on cream (AA) |
+| ground | `#d4c29a` | aged papyrus; rendered as a sun-baked haze (#e5d5ae→#cdba8e→#ab9366) + warm dust mottle, never flat |
+| panel | `#ddcca6` / alt `#e9dcbb` | sun-baked parchment cards with per-panel mottle + cream top light |
+| border | `#a88d5e` | sun-bleached bronze |
+| accent | `#7f6228` | deep antique gold — AA on papyrus |
 | secondary | `#9a4a32` | terracotta-brick — the cape |
-| text | `#3a2d1a` / muted `#7a6748` | dark sepia ink on parchment |
+| text | `#352918` / muted `#6b5940` | dark sepia ink |
 | radius | 2px | crisp imperial edges |
 
 The one LIGHT theme of the three (Teutons/Gauls stay dark) — components that hardcode the dark
