@@ -1171,6 +1171,57 @@ async fn base_html_carries_tribe_theme_hooks_everywhere(pool: sqlx::PgPool) {
     assert!(manual_body.contains("onWorld = /^\\/w\\//.test(location.pathname)"));
 }
 
+/// 129 T2 (AC2/AC3/AC4/AC6): `base.css` carries the three `[data-theme]` skins — a static pin on the
+/// stylesheet's own text, no browser involved. Read straight off disk (via `CARGO_MANIFEST_DIR`, resolved
+/// at compile time) rather than through `/static/base.css`: `ServeDir::new("crates/web/static")` in
+/// `lib.rs` is a path relative to the process's *runtime* working directory, which `cargo test` sets to
+/// the crate root (`crates/web`) rather than the workspace root — so the route 404s under `cargo test`
+/// today (pre-existing, unrelated to this slice; `responses_send_no_cache` doesn't notice because the
+/// no-cache header is applied to every response, 404 included). Reading the file directly sidesteps that
+/// and is a more direct "static pin" regardless. Each block's ground+accent tokens (plan-pinned hexes),
+/// the reduced-motion guard, and the three signature-button identifiers must all be present.
+#[test]
+fn base_css_carries_tribe_theme_blocks() {
+    let css = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/static/base.css"))
+        .expect("base.css should be readable");
+
+    // The three theme blocks exist.
+    for tribe in ["romans", "teutons", "gauls"] {
+        assert!(
+            css.contains(&format!("[data-theme=\"{tribe}\"]")),
+            "missing the [data-theme=\"{tribe}\"] block"
+        );
+    }
+
+    // Each block's ground + accent tokens (plan-pinned hexes).
+    assert!(
+        css.contains("#1f1811") && css.contains("#c9a227"),
+        "romans ground+accent"
+    );
+    assert!(
+        css.contains("#191b1e") && css.contains("#d9622b"),
+        "teutons ground+accent"
+    );
+    assert!(
+        css.contains("#16201a") && css.contains("#b08d3f"),
+        "gauls ground+accent"
+    );
+
+    // Reduced-motion is respected within the themed section (AC6).
+    assert!(
+        css.matches("prefers-reduced-motion").count() >= 1,
+        "themed section should gate motion behind prefers-reduced-motion"
+    );
+
+    // The three signature buttons (AC3) — a stable identifier per tribe.
+    assert!(css.contains("romans-cape-swing"), "romans signature button");
+    assert!(
+        css.contains("teutons-forge-ember"),
+        "teutons signature button"
+    );
+    assert!(css.contains("gauls-leaf-unfurl"), "gauls signature button");
+}
+
 /// 115: `/w/{world}/me` reports the player's tribe IN THAT WORLD (base.html themes the primary button by
 /// the world tribe, not the account tribe). Like every world-scoped route it denies a caller with no
 /// session — a visitor is redirected to /login and never reaches the world scope (P4 / Roles table).
