@@ -1221,39 +1221,48 @@ a { color: var(--c-gold); }
 
 /* ——— Roman "sand" surfaces (operator direction + docs/art prompt language: "warm sepia and
    dusty cream tones", "sun-hazed", "gentle drifting dust", "hazy backlight") — no solid fills.
-   The ground is a sun-haze: warm light bleeding from above into umber, darkening toward the
-   edges; the neutral soot grain re-tints to warm sand and thickens slightly; panels carry a
-   dusty-cream top light over layered umber rather than one flat color. All gradient/SVG work —
-   no binary assets, no layout impact. */
+   Two texture scales do the work: a LOW-frequency mottle (dust clouds / parchment staining —
+   the large tonal movement that actually kills the "solid" read) and the fine sand grain on
+   top; plus a wide-range sun-haze ground so the warmth is visible across the whole viewport.
+   All gradient/SVG work — no binary assets, no layout impact. */
 :root[data-theme="romans"] body {
-  background: radial-gradient(130% 100% at 50% -20%, #4a3a24 0%, #2b2115 48%, #191309 100%)
-    fixed;
+  background:
+    /* dust-cloud mottle: low-frequency turbulence, warm-blended, page-fixed */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='700' height='700'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.72  0 0 0 0 0.58  0 0 0 0 0.38  0 0 0 0.16 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E")
+      fixed,
+    radial-gradient(130% 110% at 50% -20%, #5a4730 0%, #382b1b 45%, #221a10 100%) fixed;
 }
 :root[data-theme="romans"] body::before {
   /* warm the vignette — dusk through dust, not black soot */
-  background: radial-gradient(132% 120% at 50% 30%, transparent 52%, rgba(26, 15, 5, 0.6) 100%);
+  background: radial-gradient(132% 120% at 50% 30%, transparent 50%, rgba(30, 18, 6, 0.55) 100%);
 }
 :root[data-theme="romans"] body::after {
-  /* sandier grain: warmer, a touch denser than the neutral soot */
-  opacity: 0.09;
-  filter: sepia(1) saturate(1.4) brightness(1.1);
+  /* sandier grain: two scales of warm noise, clearly present */
+  opacity: 0.16;
+  filter: sepia(1) saturate(1.5) brightness(1.15);
+  background-size: 90px 90px, 220px 220px;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.45' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 :root[data-theme="romans"] .panel,
 :root[data-theme="romans"] .bld-form .panel {
   background:
-    linear-gradient(180deg, rgba(232, 220, 196, 0.055) 0%, rgba(232, 220, 196, 0.015) 34%, transparent 62%),
-    linear-gradient(200deg, rgba(74, 58, 36, 0.35) 0%, transparent 55%),
-    #2a2118;
+    /* the same dust mottle, per-panel, over a lit sand gradient — no flat layer anywhere */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.78  0 0 0 0 0.64  0 0 0 0 0.42  0 0 0 0.12 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E"),
+    linear-gradient(180deg, rgba(232, 220, 196, 0.10) 0%, rgba(232, 220, 196, 0.03) 30%, rgba(0, 0, 0, 0.08) 100%),
+    linear-gradient(200deg, #3a2d1c 0%, #2e2417 55%, #292014 100%);
 }
 :root[data-theme="romans"] .phead {
   background:
-    linear-gradient(180deg, rgba(232, 220, 196, 0.06) 0%, transparent 55%),
-    linear-gradient(160deg, #3a2d1c 0%, #2a2118 70%);
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.78  0 0 0 0 0.64  0 0 0 0 0.42  0 0 0 0.12 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E"),
+    linear-gradient(180deg, rgba(232, 220, 196, 0.11) 0%, transparent 55%),
+    linear-gradient(160deg, #43331f 0%, #2e2417 70%);
 }
 :root[data-theme="romans"] .vtop__card {
   background:
-    linear-gradient(180deg, rgba(232, 220, 196, 0.05) 0%, transparent 50%),
-    #2a2118;
+    linear-gradient(180deg, rgba(232, 220, 196, 0.08) 0%, rgba(0, 0, 0, 0.06) 100%),
+    linear-gradient(190deg, #362a19 0%, #2b2115 100%);
 }
 
 /* table-row hover in gold at 8% alpha */
