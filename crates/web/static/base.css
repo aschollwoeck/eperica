@@ -1219,6 +1219,43 @@ a { color: var(--c-gold); }
   --radius-md: 2px;
 }
 
+/* ——— Roman "sand" surfaces (operator direction + docs/art prompt language: "warm sepia and
+   dusty cream tones", "sun-hazed", "gentle drifting dust", "hazy backlight") — no solid fills.
+   The ground is a sun-haze: warm light bleeding from above into umber, darkening toward the
+   edges; the neutral soot grain re-tints to warm sand and thickens slightly; panels carry a
+   dusty-cream top light over layered umber rather than one flat color. All gradient/SVG work —
+   no binary assets, no layout impact. */
+:root[data-theme="romans"] body {
+  background: radial-gradient(130% 100% at 50% -20%, #4a3a24 0%, #2b2115 48%, #191309 100%)
+    fixed;
+}
+:root[data-theme="romans"] body::before {
+  /* warm the vignette — dusk through dust, not black soot */
+  background: radial-gradient(132% 120% at 50% 30%, transparent 52%, rgba(26, 15, 5, 0.6) 100%);
+}
+:root[data-theme="romans"] body::after {
+  /* sandier grain: warmer, a touch denser than the neutral soot */
+  opacity: 0.09;
+  filter: sepia(1) saturate(1.4) brightness(1.1);
+}
+:root[data-theme="romans"] .panel,
+:root[data-theme="romans"] .bld-form .panel {
+  background:
+    linear-gradient(180deg, rgba(232, 220, 196, 0.055) 0%, rgba(232, 220, 196, 0.015) 34%, transparent 62%),
+    linear-gradient(200deg, rgba(74, 58, 36, 0.35) 0%, transparent 55%),
+    #2a2118;
+}
+:root[data-theme="romans"] .phead {
+  background:
+    linear-gradient(180deg, rgba(232, 220, 196, 0.06) 0%, transparent 55%),
+    linear-gradient(160deg, #3a2d1c 0%, #2a2118 70%);
+}
+:root[data-theme="romans"] .vtop__card {
+  background:
+    linear-gradient(180deg, rgba(232, 220, 196, 0.05) 0%, transparent 50%),
+    #2a2118;
+}
+
 /* table-row hover in gold at 8% alpha */
 :root[data-theme="romans"] .table tbody tr:hover { background: color-mix(in srgb, #d2b077 8%, transparent); }
 /* nav active = thin straight gold rule (leaderboard tabs / manual sidebar) */
