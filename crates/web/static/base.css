@@ -1204,15 +1204,15 @@ a { color: var(--c-gold); }
 
 /* ---- Romans — "Aged Triumph" (sepia, matches the painted plates) ---- */
 :root[data-theme="romans"] {
-  --c-bg: #1f1811;          /* warm umber ground */
-  --c-panel: #2a2118;
-  --c-panel-alt: #3e3222;   /* parchment-light panel highlight */
-  --c-border: #63503a;      /* aged bronze-brown */
-  --c-gold: #d2b077;        /* aged gold accent */
-  --c-accent: #d2b077;
-  --c-ink: #e8dcc4;         /* parchment white */
-  --c-ink-muted: #a89372;
-  --c-warning: #d2b077;     /* countdown/progress accents in aged gold */
+  --c-bg: #2b2214;          /* warm umber ground */
+  --c-panel: #332818;
+  --c-panel-alt: #4a3a26;   /* parchment-light panel highlight */
+  --c-border: #75603f;      /* aged bronze-brown */
+  --c-gold: #d9bc85;        /* aged gold accent */
+  --c-accent: #d9bc85;
+  --c-ink: #f0e4cb;         /* parchment white */
+  --c-ink-muted: #bda887;
+  --c-warning: #d9bc85;     /* countdown/progress accents in aged gold */
   --c-ember: #b8862c;
   --c-secondary: #9a4a32;   /* muted crimson — the cape, sparingly */
   --radius-sm: 2px;         /* crisp imperial edges */
@@ -1230,7 +1230,7 @@ a { color: var(--c-gold); }
     /* dust-cloud mottle: low-frequency turbulence, warm-blended, page-fixed */
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='700' height='700'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.72  0 0 0 0 0.58  0 0 0 0 0.38  0 0 0 0.16 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E")
       fixed,
-    radial-gradient(130% 110% at 50% -20%, #5a4730 0%, #382b1b 45%, #221a10 100%) fixed;
+    radial-gradient(130% 110% at 50% -20%, #6b563a 0%, #453521 45%, #2b2114 100%) fixed;
 }
 :root[data-theme="romans"] body::before {
   /* warm the vignette — dusk through dust, not black soot */
@@ -1250,23 +1250,32 @@ a { color: var(--c-gold); }
   background:
     /* the same dust mottle, per-panel, over a lit sand gradient — no flat layer anywhere */
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.78  0 0 0 0 0.64  0 0 0 0 0.42  0 0 0 0.12 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E"),
-    linear-gradient(180deg, rgba(232, 220, 196, 0.10) 0%, rgba(232, 220, 196, 0.03) 30%, rgba(0, 0, 0, 0.08) 100%),
-    linear-gradient(200deg, #3a2d1c 0%, #2e2417 55%, #292014 100%);
+    linear-gradient(180deg, rgba(240, 228, 203, 0.14) 0%, rgba(240, 228, 203, 0.04) 30%, rgba(0, 0, 0, 0.07) 100%),
+    linear-gradient(200deg, #4a3a24 0%, #3a2d1c 55%, #332818 100%);
 }
 :root[data-theme="romans"] .phead {
   background:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.78  0 0 0 0 0.64  0 0 0 0 0.42  0 0 0 0.12 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E"),
-    linear-gradient(180deg, rgba(232, 220, 196, 0.11) 0%, transparent 55%),
-    linear-gradient(160deg, #43331f 0%, #2e2417 70%);
+    linear-gradient(180deg, rgba(240, 228, 203, 0.15) 0%, transparent 55%),
+    linear-gradient(160deg, #52402a 0%, #3a2d1c 70%);
 }
 :root[data-theme="romans"] .vtop__card {
   background:
-    linear-gradient(180deg, rgba(232, 220, 196, 0.08) 0%, rgba(0, 0, 0, 0.06) 100%),
-    linear-gradient(190deg, #362a19 0%, #2b2115 100%);
+    linear-gradient(180deg, rgba(240, 228, 203, 0.12) 0%, rgba(0, 0, 0, 0.05) 100%),
+    linear-gradient(190deg, #453521 0%, #362a19 100%);
+}
+
+/* the village-plan canvas: warm the cold blue grid + glow into the sand world */
+:root[data-theme="romans"] .vcanvas {
+  background-image: radial-gradient(48% 42% at 50% 50%, rgba(90, 71, 48, 0.4), transparent 72%),
+    linear-gradient(#3a2f1e 1px, transparent 1px), linear-gradient(90deg, #3a2f1e 1px, transparent 1px);
+}
+:root[data-theme="romans"] .vplan {
+  background: linear-gradient(180deg, #2b2114, #221a10);
 }
 
 /* table-row hover in gold at 8% alpha */
-:root[data-theme="romans"] .table tbody tr:hover { background: color-mix(in srgb, #d2b077 8%, transparent); }
+:root[data-theme="romans"] .table tbody tr:hover { background: color-mix(in srgb, #d9bc85 8%, transparent); }
 /* nav active = thin straight gold rule (leaderboard tabs / manual sidebar) */
 :root[data-theme="romans"] .tab--active { border-bottom-width: 2px; }
 :root[data-theme="romans"] .manual__link--active { border-left-width: 2px; }

@@ -17,12 +17,12 @@ token work.** All motion `prefers-reduced-motion`-gated; only transform/opacity/
 
 | Token | Value | Note |
 |---|---|---|
-| ground / panel | `#1f1811` / `#2a2118` | warm umber, replaces the neutral navy |
-| panel highlight | `#3e3222` | tan plate-light, gradient top edge |
-| border | `#63503a` | the plates' #504030/#605040 mid ladder |
-| accent | `#d2b077` | antique parchment-gold — retuned to the measured plate palette (the art holds no saturated gold; its highlight ladder is #c0a080→#f0e0c0) |
+| ground / panel | `#2b2214` / `#332818` | warm sepia (lifted a step toward dusty cream on operator feedback); the ground renders as a sun-haze gradient + dust mottle, never flat |
+| panel highlight | `#4a3a26` | dusty-cream plate-light |
+| border | `#75603f` | dusty bronze |
+| accent | `#d9bc85` | parchment-gold, creamier per operator feedback (the plates' highlight ladder #c0a080→#f0e0c0) |
 | secondary | `#9a4a32` | terracotta-brick — the cape; the plates' red is earthen, not blood |
-| text | `#e8dcc4` | parchment white |
+| text | `#f0e4cb` | dusty cream |
 | radius | 2px | crisp imperial edges |
 
 Signature button: **cape swing** — a terracotta drape (skewed gradient pseudo-element hanging from
