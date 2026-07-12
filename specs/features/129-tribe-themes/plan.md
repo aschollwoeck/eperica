@@ -18,14 +18,14 @@ token work.** All motion `prefers-reduced-motion`-gated; only transform/opacity/
 | Token | Value | Note |
 |---|---|---|
 | ground / panel | `#1f1811` / `#2a2118` | warm umber, replaces the neutral navy |
-| panel highlight | `#3a2e1f` | parchment light, gradient top edge |
-| border | `#5a4632` | aged bronze-brown |
-| accent | `#c9a227` | aged gold (duller than the neutral gold) |
-| secondary | `#8e3b2f` | muted crimson — the cape, sparingly |
+| panel highlight | `#3e3222` | tan plate-light, gradient top edge |
+| border | `#63503a` | the plates' #504030/#605040 mid ladder |
+| accent | `#d2b077` | antique parchment-gold — retuned to the measured plate palette (the art holds no saturated gold; its highlight ladder is #c0a080→#f0e0c0) |
+| secondary | `#9a4a32` | terracotta-brick — the cape; the plates' red is earthen, not blood |
 | text | `#e8dcc4` | parchment white |
 | radius | 2px | crisp imperial edges |
 
-Signature button: **cape swing** — a crimson drape (skewed gradient pseudo-element hanging from
+Signature button: **cape swing** — a terracotta drape (skewed gradient pseudo-element hanging from
 the button's top edge) sways once (`rotate(-2deg→1.5deg→0)`, transform-origin top) on hover;
 gold hairline top border. Header ornament: a laurel sprig (inline SVG data-URI) left of section
 titles. Extra touches: table-row hover in gold at 8% alpha; nav active = thin straight gold rule;

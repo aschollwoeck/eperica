@@ -1206,21 +1206,21 @@ a { color: var(--c-gold); }
 :root[data-theme="romans"] {
   --c-bg: #1f1811;          /* warm umber ground */
   --c-panel: #2a2118;
-  --c-panel-alt: #3a2e1f;   /* parchment-light panel highlight */
-  --c-border: #5a4632;      /* aged bronze-brown */
-  --c-gold: #c9a227;        /* aged gold accent */
-  --c-accent: #c9a227;
+  --c-panel-alt: #3e3222;   /* parchment-light panel highlight */
+  --c-border: #63503a;      /* aged bronze-brown */
+  --c-gold: #d2b077;        /* aged gold accent */
+  --c-accent: #d2b077;
   --c-ink: #e8dcc4;         /* parchment white */
   --c-ink-muted: #a89372;
-  --c-warning: #c9a227;     /* countdown/progress accents in aged gold */
+  --c-warning: #d2b077;     /* countdown/progress accents in aged gold */
   --c-ember: #b8862c;
-  --c-secondary: #8e3b2f;   /* muted crimson — the cape, sparingly */
+  --c-secondary: #9a4a32;   /* muted crimson — the cape, sparingly */
   --radius-sm: 2px;         /* crisp imperial edges */
   --radius-md: 2px;
 }
 
 /* table-row hover in gold at 8% alpha */
-:root[data-theme="romans"] .table tbody tr:hover { background: color-mix(in srgb, #c9a227 8%, transparent); }
+:root[data-theme="romans"] .table tbody tr:hover { background: color-mix(in srgb, #d2b077 8%, transparent); }
 /* nav active = thin straight gold rule (leaderboard tabs / manual sidebar) */
 :root[data-theme="romans"] .tab--active { border-bottom-width: 2px; }
 :root[data-theme="romans"] .manual__link--active { border-left-width: 2px; }
