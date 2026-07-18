@@ -13,13 +13,13 @@ client cosmetics); P11 unaffected (CSS + one cached probe already made for the n
 Discipline: **one bold signature per theme (the primary-action button); everything else is quiet
 token work.** All motion `prefers-reduced-motion`-gated; only transform/opacity/filter animate.
 
-### Romans — "Aged Triumph" (worn leather — one step below papyrus; the operator's landing after dark sepia → sand → near-white → papyrus)
+### Romans — "Aged Triumph" (the painted ground — the operator supplied a reference painting, static/roman_back_style.png, which IS the page background; every prior round was an approximation of it)
 
 | Token | Value | Note |
 |---|---|---|
-| ground | `#ab9161` | worn leather; rendered as a sun-dark haze (#c2ab7c→#a48c5c→#7c6740) + warm dust mottle, never flat |
-| panel | `#b09967` / alt `#bfa974` | leather cards with per-panel mottle + cream top light |
-| border | `#7e6740` | worn bronze |
+| ground | `static/roman_back_style.png` (avg `#c4a77f`) | the painting, cover/fixed — warm sandy haze with light sweeping through dust; a soft vignette + whisper of grain knit the UI to it |
+| panel | translucent sand `rgba(230,212,172,.78)` + backdrop blur (opaque fallback `#d6c095`) | the painting glows through every surface |
+| border | `#8a7148` | worn bronze |
 | accent | `#4f3d16` | dark bronze — at this depth gold no longer reads as text; ornament stays golden in spirit |
 | secondary | `#9a4a32` | terracotta-brick — the cape |
 | text | `#2b2112` / muted `#453723` | near-black sepia ink |

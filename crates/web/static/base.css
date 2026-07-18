@@ -1204,14 +1204,14 @@ a { color: var(--c-gold); }
 
 /* ---- Romans — "Aged Triumph" (sepia, matches the painted plates) ---- */
 :root[data-theme="romans"] {
-  --c-bg: #ab9161;          /* worn leather — sun-dark tan */          /* warm umber ground */
-  --c-panel: #b09967;
-  --c-panel-alt: #bfa974;   /* parchment-light panel highlight */
-  --c-border: #7e6740;      /* aged bronze-brown */
+  --c-bg: #c4a77f;          /* the painted swatch average */          /* warm umber ground */
+  --c-panel: #d6c095;       /* opaque fallback under the translucent cards */
+  --c-panel-alt: #e4d2ab;   /* parchment-light panel highlight */
+  --c-border: #8a7148;      /* aged bronze-brown */
   --c-gold: #4f3d16;        /* dark bronze — gold no longer reads as text at this depth */        /* aged gold accent */
   --c-accent: #4f3d16;
   --c-ink: #2b2112;         /* near-black sepia ink */         /* parchment white */
-  --c-ink-muted: #453723;
+  --c-ink-muted: #4a3b25;
   --c-warning: #4f3d16;     /* countdown/progress accents in aged gold */
   --c-ember: #7a5a1e;
   --c-secondary: #9a4a32;   /* muted crimson — the cape, sparingly */
@@ -1219,70 +1219,64 @@ a { color: var(--c-gold); }
   --radius-md: 2px;
 }
 
-/* ——— Roman "sand" surfaces (operator direction + docs/art prompt language: "warm sepia and
-   dusty cream tones", "sun-hazed", "gentle drifting dust", "hazy backlight") — no solid fills.
-   Two texture scales do the work: a LOW-frequency mottle (dust clouds / parchment staining —
-   the large tonal movement that actually kills the "solid" read) and the fine sand grain on
-   top; plus a wide-range sun-haze ground so the warmth is visible across the whole viewport.
-   All gradient/SVG work — no binary assets, no layout impact. */
+/* ——— Roman surfaces: the operator's painted reference (static/roman_back_style.png — warm
+   sandy haze, light sweeping through dust) IS the ground. Panels are translucent sand with a
+   backdrop blur, so the painting glows through every surface instead of being simulated by
+   gradients. The swatch is small (129×177); scaled to cover it reads as soft atmospheric
+   haze — exactly its nature. Opaque fallbacks kept for no-backdrop-filter engines. */
 :root[data-theme="romans"] body {
-  background:
-    /* dust-cloud mottle: low-frequency turbulence, warm-blended, page-fixed */
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='700' height='700'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.45  0 0 0 0 0.33  0 0 0 0 0.18  0 0 0 0.10 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E")
-      fixed,
-    radial-gradient(130% 110% at 50% -20%, #c2ab7c 0%, #a48c5c 45%, #7c6740 100%) fixed;
+  background: url("/static/roman_back_style.png") center / cover fixed no-repeat, #c4a77f;
 }
 :root[data-theme="romans"] body::before {
-  /* warm the vignette — dusk through dust, not black soot */
-  background: radial-gradient(132% 120% at 50% 30%, transparent 52%, rgba(70, 52, 26, 0.4) 100%);
+  /* soft warm vignette over the painting */
+  background: radial-gradient(132% 120% at 50% 30%, transparent 55%, rgba(70, 52, 26, 0.3) 100%);
 }
 :root[data-theme="romans"] body::after {
-  /* sandier grain: two scales of warm noise, clearly present */
-  opacity: 0.12;
-  filter: sepia(1) saturate(1.3) brightness(0.85);
-  background-size: 90px 90px, 220px 220px;
-  background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.45' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  /* a whisper of grain to knit UI and painting together */
+  opacity: 0.06;
+  filter: sepia(1) saturate(1.2) brightness(0.9);
 }
 :root[data-theme="romans"] .panel,
 :root[data-theme="romans"] .bld-form .panel {
-  background:
-    /* the same dust mottle, per-panel, over a lit sand gradient — no flat layer anywhere */
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.42  0 0 0 0 0.31  0 0 0 0 0.17  0 0 0 0.085 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E"),
-    linear-gradient(180deg, rgba(255, 245, 220, 0.38) 0%, rgba(255, 245, 220, 0.1) 30%, rgba(70, 52, 26, 0.08) 100%),
-    linear-gradient(200deg, #b49d6b 0%, #a99160 55%, #9f8756 100%);
+  background: rgba(230, 212, 172, 0.78);
+  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
 }
 :root[data-theme="romans"] .phead {
-  background:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.42  0 0 0 0 0.31  0 0 0 0 0.17  0 0 0 0.085 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E"),
-    linear-gradient(180deg, rgba(255, 245, 220, 0.42) 0%, transparent 55%),
-    linear-gradient(160deg, #b29b69 0%, #a38b58 70%);
+  background: rgba(226, 206, 162, 0.8);
+  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
 }
 :root[data-theme="romans"] .vtop__card {
-  background:
-    linear-gradient(180deg, rgba(255, 245, 220, 0.38) 0%, rgba(70, 52, 26, 0.05) 100%),
-    linear-gradient(190deg, #af9765 0%, #a28a58 100%);
-}
-
-/* the village-plan canvas: warm the cold blue grid + glow into the sand world */
-:root[data-theme="romans"] .vcanvas {
-  background-image: radial-gradient(48% 42% at 50% 50%, rgba(230, 214, 178, 0.45), transparent 72%),
-    linear-gradient(#7c6640 1px, transparent 1px), linear-gradient(90deg, #7c6640 1px, transparent 1px);
+  background: rgba(233, 216, 178, 0.8);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
 }
 :root[data-theme="romans"] .vplan {
-  background: linear-gradient(180deg, #a58c58, #997f4c);
+  background: rgba(214, 192, 149, 0.62);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
 }
-/* components that hardcode the dark chrome (#0d1217 cards) join the parchment world */
+:root[data-theme="romans"] .vcanvas {
+  background-image: radial-gradient(48% 42% at 50% 50%, rgba(255, 245, 220, 0.3), transparent 72%),
+    linear-gradient(rgba(90, 72, 44, 0.35) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(90, 72, 44, 0.35) 1px, transparent 1px);
+}
 :root[data-theme="romans"] .gauge {
-  background: linear-gradient(180deg, #b49d6b, #a58c58);
-  border-color: #7e6740;
+  background: rgba(228, 209, 168, 0.85);
+  border-color: #8a7148;
 }
 :root[data-theme="romans"] .vquick a,
 :root[data-theme="romans"] .vchip {
-  background: #ad9563;
-  border-color: #7e6740;
+  background: rgba(224, 204, 160, 0.9);
+  border-color: #8a7148;
 }
+:root[data-theme="romans"] .vquick a:hover {
+  color: #2b2112;
+  border-color: #4f3d16;
+  background: rgba(238, 222, 184, 0.95);
+}
+
 /* deep-tan readability: pale resource-rate text + pale canvas zone labels wash out on leather */
 :root[data-theme="romans"] .gauge__rate { color: var(--c-ink-muted); }
 :root[data-theme="romans"] .vcanvas__label { color: rgba(43, 33, 18, 0.55); }
