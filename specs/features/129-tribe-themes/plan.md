@@ -13,22 +13,21 @@ client cosmetics); P11 unaffected (CSS + one cached probe already made for the n
 Discipline: **one bold signature per theme (the primary-action button); everything else is quiet
 token work.** All motion `prefers-reduced-motion`-gated; only transform/opacity/filter animate.
 
-### Romans — "Aged Triumph" (the painted ground — the operator supplied a reference painting, static/roman_back_style.png, which IS the page background; every prior round was an approximation of it)
+### Romans — character only (background reverted)
 
-| Token | Value | Note |
-|---|---|---|
-| ground | pure CSS (from the reference painting, avg `#c4a77f`) | the painting reconstructed as measured gradient layers: bloom `#f9ead2` @(56%,27%), dark corner `#776449` lower-left, base ramp #d7ba8d→#806a4e at 160°, diagonal streak + speck layers — applies anywhere without shipping the asset (the PNG remains in static/ as the reference) |
-| panel | translucent sand `rgba(230,212,172,.78)` + backdrop blur (opaque fallback `#d6c095`) | the painting glows through every surface |
-| border | `#8a7148` | worn bronze |
-| accent | `#4f3d16` | dark bronze — at this depth gold no longer reads as text; ornament stays golden in spirit |
-| secondary | `#9a4a32` | terracotta-brick — the cape |
-| text | `#2b2112` / muted `#453723` | near-black sepia ink |
-| radius | 2px | crisp imperial edges |
+**Operator decision after seven background rounds** (dark sepia → measured retune → sand
+textures → near-white parchment → papyrus → leather → the painted ground and its pure-CSS
+recreation): none landed — **all Roman background/palette work is reverted**. Roman players see
+the NEUTRAL chrome. What Rome keeps is its characterful set:
 
-The one LIGHT theme of the three (Teutons/Gauls stay dark) — components that hardcode the dark
-chrome (`.gauge`, `.vquick a`, `.vchip`, `.vplan`/`.vcanvas`) carry explicit parchment overrides.
-Signature button: **cape swing** — terracotta drape, unchanged mechanics. Header ornament: laurel
-sprig in deep gold. Extra touches per the checklist, re-based on the light ground.
+- the **cape-swing signature button** (terracotta drape `--c-secondary: #9a4a32`, gold hairline,
+  one-sway hover, reduced-motion gated),
+- the **laurel header ornament** (aged-gold sprig, entrance-gated),
+- the flavor touches: gold-tinted table-row hover, the nav-active rules.
+
+The reference painting (`static/roman_back_style.png`) and this history stay recorded for a
+future design round. The pin test asserts the ABSENCE of a romans body background so the revert
+cannot silently regress.
 
 ### Teutons — "Iron & Ember"
 

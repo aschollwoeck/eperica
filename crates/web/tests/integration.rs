@@ -1194,9 +1194,16 @@ fn base_css_carries_tribe_theme_blocks() {
     }
 
     // Each block's ground + accent tokens (plan-pinned hexes).
+    // Romans: the background/palette is intentionally NEUTRAL (operator decision — every
+    // surface iteration reverted); what remains is the characterful set. Pin the cape token
+    // and the ABSENCE of any romans body-background rule so the revert can't silently regress.
     assert!(
-        css.contains("#f9ead2") && css.contains("#4f3d16"),
-        "romans ground+accent"
+        css.contains("--c-secondary: #9a4a32") && css.contains("romans-ornament-in"),
+        "romans character set (cape token + laurel ornament)"
+    );
+    assert!(
+        !css.contains(":root[data-theme=\"romans\"] body"),
+        "romans must have NO themed body background (reverted by operator decision)"
     );
     assert!(
         css.contains("#191b1e") && css.contains("#d9622b"),
