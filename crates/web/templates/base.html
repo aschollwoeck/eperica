@@ -5,6 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Eperica</title>
   <link rel="icon" href="/static/favicon.svg">
+  <!-- 129: tribe theme pre-paint (flash-free theming) — runs before the stylesheets below ever apply,
+       so a cached tribe theme paints immediately on a world page instead of flashing neutral first. -->
+  <script>
+    (function () {
+      var d = document.documentElement, onWorld = /^\/w\//.test(location.pathname);
+      var t = onWorld && localStorage.getItem("eperica-theme");
+      if (t === "romans" || t === "teutons" || t === "gauls") d.dataset.theme = t;
+      else d.removeAttribute("data-theme");
+    })();
+  </script>
   <link rel="stylesheet" href="/static/base.css">
   <link rel="stylesheet" href="/static/theme-steel.css">
   {% block head %}{% endblock %}
@@ -177,6 +187,31 @@
           // a race (a player can run a different tribe per world).
           if (me.tribe && !/^\/w\//.test(window.location.pathname)) {
             document.body.setAttribute("data-tribe", me.tribe);
+          }
+          // 129: tribe theme probe extension — the full-skin `data-theme` on <html>, world-scoped
+          // only. Sourced from the PATH-scoped `/w/{world}/me` (115) rather than the global
+          // probe's cookie-derived tribe: the URL is the truth of which world this page acts in
+          // (a deep link works before any lobby selection ever set the world cookie). Cache the
+          // value for the pre-paint snippet above; on a non-world page just drop the attribute
+          // and leave the cache alone (it is still valid for the next world visit).
+          var m = window.location.pathname.match(/^\/w\/([0-9a-f-]{36})\//);
+          if (m) {
+            fetch("/w/" + m[1] + "/me", { headers: { Accept: "application/json" } })
+              .then(function (r) { return r.ok ? r.json() : { tribe: null }; })
+              .then(function (w) {
+                var validTribe =
+                  w.tribe === "romans" || w.tribe === "teutons" || w.tribe === "gauls";
+                if (validTribe) {
+                  document.documentElement.dataset.theme = w.tribe;
+                  localStorage.setItem("eperica-theme", w.tribe);
+                } else {
+                  document.documentElement.removeAttribute("data-theme");
+                  localStorage.removeItem("eperica-theme");
+                }
+              })
+              .catch(function () {});
+          } else {
+            document.documentElement.removeAttribute("data-theme");
           }
         })
         .catch(function () {});
