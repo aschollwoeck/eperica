@@ -17,7 +17,7 @@ token work.** All motion `prefers-reduced-motion`-gated; only transform/opacity/
 
 | Token | Value | Note |
 |---|---|---|
-| ground | `static/roman_back_style.png` (avg `#c4a77f`) | the painting, cover/fixed — warm sandy haze with light sweeping through dust; a soft vignette + whisper of grain knit the UI to it |
+| ground | pure CSS (from the reference painting, avg `#c4a77f`) | the painting reconstructed as measured gradient layers: bloom `#f9ead2` @(56%,27%), dark corner `#776449` lower-left, base ramp #d7ba8d→#806a4e at 160°, diagonal streak + speck layers — applies anywhere without shipping the asset (the PNG remains in static/ as the reference) |
 | panel | translucent sand `rgba(230,212,172,.78)` + backdrop blur (opaque fallback `#d6c095`) | the painting glows through every surface |
 | border | `#8a7148` | worn bronze |
 | accent | `#4f3d16` | dark bronze — at this depth gold no longer reads as text; ornament stays golden in spirit |
